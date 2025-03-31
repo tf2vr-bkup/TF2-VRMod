@@ -15,7 +15,7 @@ $MacroRequired "GAMENAME"
 
 $Include "$SRCDIR\vpc_scripts\source_dll_base.vpc"
 $include "$SRCDIR\vpc_scripts\protobuf_builder.vpc"
-$Include "$SRCDIR\vpc_scripts\source_replay.vpc"	[$TF]
+$Include "$SRCDIR\vpc_scripts\source_replay.vpc"	[$TF||$TFVR]
 $Include "$SRCDIR\game\protobuf_include.vpc"
 
 $Configuration	"Debug"
@@ -73,7 +73,7 @@ $Configuration
 		$SystemFrameworks				"Carbon" [$OSXALL]
 		$SystemLibraries				"rt;z" [$LINUXALL]
 		$IgnoreImportLibrary			"TRUE"
-		$AdditionalDependencies			"$BASE winmm.lib"	[$WINDOWS]
+		$AdditionalDependencies			"$BASE winmm.lib d3d9.lib"	[$WINDOWS]
 		$AdditionalDependencies			"$BASE wsock32.lib Ws2_32.lib" [$BUILD_REPLAY&&$WINDOWS]
 	}
 }
@@ -1272,6 +1272,8 @@ $Project
 		
 		$Libexternal $LIBCOMMON/libcrypto [$OSXALL]
 		$Libexternal "$SRCDIR\lib\common\$CRYPTOPPDIR\libcryptopp" [$LINUXALL&&!$SOURCESDK]
+		$Libexternal "$(VULKAN_SDK)\lib\vulkan-1" [$WINDOWS]
+		$Libexternal "$(OPENXR_SDK)\src\loader\Release\openxr_loader" [$WINDOWS]
 		$Lib   "libz" [$WINDOWS]
 
 		//$Libexternal	libz [$LINUXALL]

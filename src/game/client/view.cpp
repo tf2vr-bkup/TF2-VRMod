@@ -45,6 +45,7 @@
 #include "ScreenSpaceEffects.h"
 #include "sourcevr/isourcevirtualreality.h"
 #include "client_virtualreality.h"
+#include "tfvr/openxr_manager.h"
 
 #if defined( REPLAY_ENABLED )
 #include "replay/ireplaysystem.h"
@@ -62,6 +63,7 @@
 	
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+#include <tfvr/vr_integration.h>
 		  
 void ToolFramework_AdjustEngineViewport( int& x, int& y, int& width, int& height );
 bool ToolFramework_SetupEngineView( Vector &origin, QAngle &angles, float &fov );
@@ -70,6 +72,8 @@ bool ToolFramework_SetupEngineMicrophone( Vector &origin, QAngle &angles );
 
 extern ConVar default_fov;
 extern bool g_bRenderingScreenshot;
+
+extern COpenXRManager* g_pOpenXRManager;
 
 #if !defined( _X360 )
 #define SAVEGAME_SCREENSHOT_WIDTH	180
@@ -477,10 +481,7 @@ void CViewRender::DriftPitch (void)
 
 StereoEye_t		CViewRender::GetFirstEye() const
 {
-	if( UseVR() )
-		return STEREO_EYE_LEFT;
-	else
-		return STEREO_EYE_MONO;
+	return STEREO_EYE_MONO;
 }
 
 StereoEye_t		CViewRender::GetLastEye() const
@@ -499,6 +500,12 @@ StereoEye_t		CViewRender::GetLastEye() const
 void CViewRender::OnRenderStart()
 {
 	VPROF_("CViewRender::OnRenderStart", 2, VPROF_BUDGETGROUP_OTHER_UNACCOUNTED, false, 0);
+
+	if (g_pOpenXRManager)
+	{
+		g_pOpenXRManager->BeginFrame();
+		g_pOpenXRManager->UpdateOpenXRViewData();
+	}
 
     SetUpViews();
 
@@ -644,7 +651,7 @@ void CViewRender::SetUpViews()
 	viewEye.fov				= default_fov.GetFloat();
 
 	viewEye.m_bOrtho			= false;
-	viewEye.m_bViewToProjectionOverride = false;
+	viewEye.m_bViewToProjectionOverride = true;
 	viewEye.m_eStereoEye		= STEREO_EYE_MONO;
 
 	// Enable spatial partition access to edicts
@@ -656,6 +663,7 @@ void CViewRender::SetUpViews()
 	bool bCalcViewModelView = false;
 	Vector ViewModelOrigin;
 	QAngle ViewModelAngles;
+
 
 	if ( engine->IsHLTV() )
 	{
@@ -1066,7 +1074,7 @@ void CViewRender::Render( vrect_t *rect )
     // Set for console commands, etc.
     render->SetMainView ( m_View.origin, m_View.angles );
 
-    for( StereoEye_t eEye = GetFirstEye(); eEye <= GetLastEye(); eEye = (StereoEye_t)(eEye+1) )
+    for (StereoEye_t eEye = GetLastEye(); eEye >= GetFirstEye(); eEye = (StereoEye_t)(eEye - 1))
 	{
 		CViewSetup &viewEye = GetView( eEye );
 
@@ -1084,7 +1092,7 @@ void CViewRender::Render( vrect_t *rect )
 		viewEye.fovViewmodel = ScaleFOVByWidthRatio( viewEye.fovViewmodel, aspectRatio );
 
 	    // Let the client mode hook stuff.
-	    g_pClientMode->PreRender(&viewEye );
+	    g_pClientMode->PreRender(&viewEye);
 
 	    g_pClientMode->AdjustEngineViewport( vr.x, vr.y, vr.width, vr.height );
 
@@ -1121,7 +1129,7 @@ void CViewRender::Render( vrect_t *rect )
 			case STEREO_EYE_RIGHT:
 			case STEREO_EYE_LEFT:
 			{
-				g_pSourceVR->GetViewportBounds( (ISourceVirtualReality::VREye)(eEye - 1 ), &viewEye.x, &viewEye.y, &viewEye.width, &viewEye.height );
+				g_pOpenXRManager->GetViewportBounds( (ISourceVirtualReality::VREye)(eEye - 1 ), &viewEye.x, &viewEye.y, &viewEye.width, &viewEye.height );
 				viewEye.m_nUnscaledWidth = viewEye.width;
 				viewEye.m_nUnscaledHeight = viewEye.height;
 				viewEye.m_nUnscaledX = viewEye.x;
@@ -1135,8 +1143,7 @@ void CViewRender::Render( vrect_t *rect )
 		}
 
 		// if we still don't have an aspect ratio, compute it from the view size
-		if( viewEye.m_flAspectRatio <= 0.f )
-			viewEye.m_flAspectRatio	= (float)viewEye.width / (float)viewEye.height;
+		viewEye.m_flAspectRatio	= (float)viewEye.width / (float)viewEye.height;
 
 	    int nClearFlags = VIEW_CLEAR_DEPTH | VIEW_CLEAR_STENCIL;
 
@@ -1187,7 +1194,7 @@ void CViewRender::Render( vrect_t *rect )
 	    }
 
 	    int flags = 0;
-		if( eEye == STEREO_EYE_MONO || eEye == STEREO_EYE_LEFT || ( g_ClientVirtualReality.ShouldRenderHUDInWorld() ) )
+		if ( eEye == STEREO_EYE_LEFT || !UseVR() )
 		{
 			flags = RENDERVIEW_DRAWHUD;
 		}
@@ -1227,6 +1234,12 @@ void CViewRender::Render( vrect_t *rect )
 		}
     }
 
+	if (VRIntegration::IsVRActive())
+	{
+		// Use the main view as a base for our stereo views
+		// RenderStereoViews(m_View, VIEW_CLEAR_COLOR | VIEW_CLEAR_DEPTH, 3);
+	}
+
 
 	// TODO: should these be inside or outside the stereo eye stuff?
 	g_pClientMode->PostRender();
@@ -1236,12 +1249,11 @@ void CViewRender::Render( vrect_t *rect )
 	// Stop stubbing the material system so we can see the budget panel
 	matStub.End();
 #endif
-
-
+	
 	// Draw all of the UI stuff "fullscreen"
     // (this is not health, ammo, etc. Nor is it pre-game briefing interface stuff - this is the stuff that appears when you hit Esc in-game)
 	// In stereo mode this is rendered inside of RenderView so it goes into the render target
-	if( !g_ClientVirtualReality.ShouldRenderHUDInWorld() )
+	if (!g_ClientVirtualReality.ShouldRenderHUDInWorld())
 	{
 		CViewSetup view2d;
 		view2d.x				= rect->x;
@@ -1254,7 +1266,7 @@ void CViewRender::Render( vrect_t *rect )
 		render->PopView( GetFrustum() );
 	}
 
-
+	materials->EndFrame();
 }
 
 

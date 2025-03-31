@@ -22,6 +22,7 @@
 #include "tier0/vprof_telemetry.h"
 #include <time.h>
 #include "steam/steam_api.h"
+#include <tfvr/openxr_manager.h>
 
 const char *COM_GetModDirectory(); // return the mod dir (rather than the complete -game param, which can be a path)
 
@@ -33,7 +34,7 @@ EXPOSE_SINGLE_INTERFACE_GLOBALVAR( CClientVirtualReality, IClientVirtualReality,
 // --------------------------------------------------------------------
 // A huge pile of VR convars
 // --------------------------------------------------------------------
-ConVar vr_activate_default( "vr_activate_default",		"0", FCVAR_ARCHIVE, "If this is true the game will switch to VR mode once startup is complete." );
+ConVar vr_activate_default( "vr_activate_default",		"1", FCVAR_ARCHIVE, "If this is true the game will switch to VR mode once startup is complete." );
 
 
 ConVar vr_moveaim_mode      ( "vr_moveaim_mode",      "3", FCVAR_ARCHIVE, "0=move+shoot from face. 1=move with torso. 2,3,4=shoot with face+mouse cursor. 5+ are probably not that useful." );
@@ -91,6 +92,15 @@ ConVar vr_force_windowed ( "vr_force_windowed", "0", FCVAR_ARCHIVE );
 
 ConVar vr_first_person_uses_world_model ( "vr_first_person_uses_world_model", "1", 0, "Causes the third person model to be drawn instead of the view model" );
 
+extern ConVar tfvr_menu_forward;
+extern ConVar tfvr_menu_scale;
+
+extern ConVar tfvr_hud_onwrist;
+extern ConVar tfvr_hud_forward;
+extern ConVar tfvr_hud_scale;
+extern ConVar tfvr_hud_axis_lock_to_world;
+extern ConVar tfvr_hud_height_adjust;
+
 // --------------------------------------------------------------------
 // Purpose: Cycle through the aim & move modes.
 // --------------------------------------------------------------------
@@ -135,9 +145,9 @@ CON_COMMAND( vr_deactivate, "Switch from VR mode to normal mode" )
 }
 CON_COMMAND( vr_toggle, "Toggles VR mode" )
 {
-	if( g_pSourceVR )
+	if( g_pOpenXRManager )
 	{
-		if( g_pSourceVR->ShouldRunInVR() )
+		if( g_pOpenXRManager->IsActive() )
 			g_ClientVirtualReality.Deactivate();
 		else
 			g_ClientVirtualReality.Activate();
@@ -187,6 +197,10 @@ bool IsOrthonormal ( VMatrix Mat, float fTolerance )
 	return true;
 }
 
+static bool IsMenuUp()
+{
+	return (enginevgui && enginevgui->IsGameUIVisible()) || vgui::surface()->IsCursorVisible();
+}
 
 // --------------------------------------------------------------------
 // Purpose: Computes the FOV from the projection matrix
@@ -337,7 +351,7 @@ void CClientVirtualReality::DrawMainMenu()
 	// have to draw the UI in stereo via the render texture or it won't fuse properly
 
 	// Draw it into the render target first
-	ITexture *pTexture = materials->FindTexture( "_rt_gui", NULL, false );
+	ITexture *pTexture = materials->FindTexture( "_rt_vgui", NULL, false );
 	Assert( pTexture );
 	if( !pTexture) 
 		return;
@@ -383,8 +397,8 @@ void CClientVirtualReality::DrawMainMenu()
 	pRenderContext->Flush();
 
 	int leftX, leftY, leftW, leftH, rightX, rightY, rightW, rightH;
-	g_pSourceVR->GetViewportBounds( ISourceVirtualReality::VREye_Left, &leftX, &leftY, &leftW, &leftH );
-	g_pSourceVR->GetViewportBounds( ISourceVirtualReality::VREye_Right, &rightX, &rightY, &rightW, &rightH );
+	g_pOpenXRManager->GetViewportBounds( ISourceVirtualReality::VREye_Left, &leftX, &leftY, &leftW, &leftH );
+	g_pOpenXRManager->GetViewportBounds( ISourceVirtualReality::VREye_Right, &rightX, &rightY, &rightW, &rightH );
 
 
 	// render the main view
@@ -417,8 +431,8 @@ void CClientVirtualReality::DrawMainMenu()
 		CMatRenderContextPtr pRenderContextMat( materials );
 		PIXEvent pixEvent( pRenderContextMat, nView == STEREO_EYE_LEFT ? "left eye" : "right eye" );
 
-		ITexture *pColor = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(nView-1), ISourceVirtualReality::RT_Color );
-		ITexture *pDepth = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(nView-1), ISourceVirtualReality::RT_Depth );
+		ITexture *pColor = g_pOpenXRManager->GetRenderTarget();
+		ITexture *pDepth = g_pOpenXRManager->GetRenderTarget();
 		render->Push3DView( viewEye[nView], VIEW_CLEAR_DEPTH|VIEW_CLEAR_COLOR, pColor, NULL, pDepth );
 		RenderHUDQuad( false,  false );
 		render->PopView( NULL );
@@ -479,14 +493,17 @@ bool CClientVirtualReality::OverrideView ( CViewSetup *pViewMiddle, Vector *pVie
 	//// Scale translation e.g. to allow big in-game leans with only a small head movement.
 	//// Clamp HMD movement to a reasonable amount to avoid wallhacks, vis problems, etc.
 	float limit = vr_translation_limit.GetFloat();
-	VMatrix matMideyeZeroFromMideyeCurrent = g_pSourceVR->GetMideyePose();
+	VMatrix matMideyeZeroFromMideyeCurrent = g_pOpenXRManager->GetMideyePose();
 	Vector viewTranslation = matMideyeZeroFromMideyeCurrent.GetTranslation();
+
+	/*
 	if ( viewTranslation.IsLengthGreaterThan ( limit ) )
 	{
 		viewTranslation.NormalizeInPlace();
 		viewTranslation *= limit;
 		matMideyeZeroFromMideyeCurrent.SetTranslation( viewTranslation );
 	}
+	*/
 
 	// Now figure out the three principal matrices: m_TorsoFromMideye, m_WorldFromMidEye, m_WorldFromWeapon
 	// m_TorsoFromMideye is done so that OverridePlayerMotion knows what to do with WASD.
@@ -605,28 +622,22 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 		return false;
 	}
 
-	VMatrix matOffsetLeft = g_pSourceVR->GetMidEyeFromEye( ISourceVirtualReality::VREye_Left );
-	VMatrix matOffsetRight = g_pSourceVR->GetMidEyeFromEye( ISourceVirtualReality::VREye_Right );
+	const VMatrix viewAsMatrix = SetupMatrixOrgAngles(pViewMiddle->origin, pViewMiddle->angles);
 
-	// Move eyes to IPD positions.
-	VMatrix worldFromLeftEye  = m_WorldFromMidEye * matOffsetLeft;
-	VMatrix worldFromRightEye = m_WorldFromMidEye * matOffsetRight;
+	VMatrix leftEyeView = viewAsMatrix * g_pOpenXRManager->GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye_Left);
+	VMatrix rightEyeView = viewAsMatrix * g_pOpenXRManager->GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye_Right);
 
-	Assert ( IsOrthonormal ( worldFromLeftEye, 0.001f ) );
-	Assert ( IsOrthonormal ( worldFromRightEye, 0.001f ) );
+	MatrixToAngles(leftEyeView, pViewLeft->angles);
+	pViewLeft->origin = leftEyeView.GetTranslation();
 
-	// Finally convert back to origin+angles.
-	MatrixAngles( worldFromLeftEye.As3x4(),  pViewLeft->angles, pViewLeft->origin );
-	MatrixAngles( worldFromRightEye.As3x4(),  pViewRight->angles, pViewRight->origin );
+	MatrixToAngles(rightEyeView, pViewRight->angles);
+	pViewRight->origin = rightEyeView.GetTranslation();
 
 	// Find the projection matrices.
-
-	// TODO: this isn't the fastest thing in the world. Cache them?
-	float headtrackFovScale = m_WorldZoomScale;
 	pViewLeft->m_bViewToProjectionOverride = true;
 	pViewRight->m_bViewToProjectionOverride = true;
-	g_pSourceVR->GetEyeProjectionMatrix (  &pViewLeft->m_ViewToProjection, ISourceVirtualReality::VREye_Left,  pViewMiddle->zNear, pViewMiddle->zFar, 1.0f/headtrackFovScale );
-	g_pSourceVR->GetEyeProjectionMatrix ( &pViewRight->m_ViewToProjection, ISourceVirtualReality::VREye_Right, pViewMiddle->zNear, pViewMiddle->zFar, 1.0f/headtrackFovScale );
+	g_pOpenXRManager->GetEyeProjectionMatrix(pViewLeft->m_ViewToProjection, ISourceVirtualReality::VREye_Left, pViewMiddle->zNear, pViewMiddle->zFar);
+	g_pOpenXRManager->GetEyeProjectionMatrix(pViewRight->m_ViewToProjection, ISourceVirtualReality::VREye_Right, pViewMiddle->zNear, pViewMiddle->zFar);
 
 	// And bodge together some sort of average for our cyclops friends.
 	pViewMiddle->m_bViewToProjectionOverride = true;
@@ -669,31 +680,20 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 	CalcFovFromProjection ( &(pViewRight ->fov), pViewRight ->m_ViewToProjection );
 	CalcFovFromProjection ( &(pViewMiddle->fov), pViewMiddle->m_ViewToProjection );
 
-	// if we don't know the HUD FOV, figure that out now
-	if( m_fHudHorizontalFov == 0.f )
-	{
-		// Figure out the current HUD FOV.
-		m_fHudHorizontalFov = pViewLeft->fov * vr_hud_display_ratio.GetFloat();
-		if( m_fHudHorizontalFov > vr_hud_max_fov.GetFloat() )
-		{
-			m_fHudHorizontalFov = vr_hud_max_fov.GetFloat();
-		}
-	}
+	// Figure out the current HUD FOV.
+	m_fHudHorizontalFov = pViewLeft->fov * (IsMenuUp() ? tfvr_menu_scale : tfvr_hud_scale).GetFloat();
 
 	// remember the view angles so we can limit the weapon to something near those
 	m_PlayerViewAngle = pViewMiddle->angles;
-	m_PlayerViewOrigin = pViewMiddle->origin;
-
-
+	m_PlayerViewOrigin = pViewMiddle->origin + Vector(0, 0, tfvr_hud_height_adjust.GetFloat());
 
 	// Figure out the HUD vectors and frustum.
-
 	// The aspect ratio of the HMD may be something bizarre (e.g. Rift is 640x800), and the pixels may not be square, so don't use that!
 	static const float fAspectRatio = 4.f/3.f;
 	float fHFOV = m_fHudHorizontalFov;
 	float fVFOV = m_fHudHorizontalFov / fAspectRatio;
 
-	const float fHudForward = vr_hud_forward.GetFloat();
+	const float fHudForward = (IsMenuUp() ? tfvr_menu_forward : tfvr_hud_forward).GetFloat();
 	m_fHudHalfWidth = tan( DEG2RAD( fHFOV * 0.5f ) ) * fHudForward * m_WorldZoomScale;
 	m_fHudHalfHeight = tan( DEG2RAD( fVFOV * 0.5f ) ) * fHudForward * m_WorldZoomScale;
 
@@ -720,7 +720,7 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 	}
 
 	// This is a bitfield. A set bit means lock to the world, a clear bit means don't.
-	int iVrHudAxisLockToWorld = vr_hud_axis_lock_to_world.GetInt();
+	int iVrHudAxisLockToWorld = tfvr_hud_axis_lock_to_world.GetInt();
 	if ( ( iVrHudAxisLockToWorld & (1<<ROLL) ) != 0 )
 	{
 		HudAngles[ROLL] = 0.0f;
@@ -1047,14 +1047,7 @@ void CClientVirtualReality::CancelTorsoTransformOverride()
 
 bool CClientVirtualReality::CanOverlayHudQuad()
 {
-	bool bCanOverlay = true;
-
-	bCanOverlay = bCanOverlay && vr_render_hud_in_world.GetBool();
-	bCanOverlay = bCanOverlay && ( ! vr_hud_never_overlay.GetBool() );
-	bCanOverlay = bCanOverlay && ( vr_hud_axis_lock_to_world.GetInt() == 0 );
-	bCanOverlay = bCanOverlay && ( m_hmmMovementActual != HMM_SHOOTFACE_MOVETORSO );
-
-	return bCanOverlay;
+	return false;
 }
 
 
@@ -1102,6 +1095,11 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout, bool bTranslucent )
 		}
 		Assert( !mymat->IsErrorMaterial() );
 
+		if (!mymat->IsPrecached()) {
+			PrecacheMaterial(mymat->GetName());
+			mymat->IncrementReferenceCount();
+		}
+
 		IMesh *pMesh = pRenderContext->GetDynamicMesh( true, NULL, NULL, mymat );
 
 		CMeshBuilder meshBuilder;
@@ -1127,7 +1125,7 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout, bool bTranslucent )
 		pMesh->Draw();
 	}
 
-	if( bBlackout )
+	if( false && bBlackout )
 	{
 		Vector vbUL, vbUR, vbLL, vbLR;
 		// "Reflect" the HUD bounds through the viewer to find the ones behind the head.
@@ -1137,6 +1135,7 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout, bool bTranslucent )
 		vbLR = 2 * vHead - vUL;
 
 		IMaterial *mymat = materials->FindMaterial( "vgui/black", TEXTURE_GROUP_VGUI );
+		mymat->IncrementReferenceCount();
 		IMesh *pMesh = pRenderContext->GetDynamicMesh( true, NULL, NULL, mymat );
 
 		// Tube around the outside.
@@ -1227,8 +1226,8 @@ bool CClientVirtualReality::ProcessCurrentTrackingState( float fGameFOV )
 		// Therefore... (remembering that a zoom > 1.0 means you zoom *out*)
 		m_WorldZoomScale = wantedGameTanfov / overlayActualPhysicalTanfov;
 	}
-
-	return g_pSourceVR->SampleTrackingState( fGameFOV, 0.f /* seconds to predict */ );
+	return false;
+	// return g_pSourceVR->SampleTrackingState( fGameFOV, 0.f /* seconds to predict */ );
 }
 
 
@@ -1258,7 +1257,7 @@ void CClientVirtualReality::GetTorsoRelativeAim( Vector *pPosition, QAngle *pAng
 // --------------------------------------------------------------------
 float CClientVirtualReality::GetHUDDistance()
 {
-	return vr_hud_forward.GetFloat();
+	return tfvr_hud_forward.GetFloat();
 }
 
 
@@ -1268,7 +1267,7 @@ float CClientVirtualReality::GetHUDDistance()
 // --------------------------------------------------------------------
 bool CClientVirtualReality::ShouldRenderHUDInWorld()
 {
-	return UseVR() && vr_render_hud_in_world.GetBool();
+	return UseVR();
 }
 
 
@@ -1294,13 +1293,7 @@ void CClientVirtualReality::OverrideViewModelTransform( Vector & vmorigin, QAngl
 // --------------------------------------------------------------------
 void CClientVirtualReality::AlignTorsoAndViewToWeapon()
 {
-	if( !UseVR() )
-		return;
-
-	if( g_pSourceVR->WillDriftInYaw() )
-	{
-		m_iAlignTorsoAndViewToWeaponCountdown = 2;
-	}
+	return;
 }
 
 
@@ -1312,7 +1305,7 @@ void CClientVirtualReality::PostProcessFrame( StereoEye_t eEye )
 	if( !UseVR() )
 		return;
 
-	g_pSourceVR->DoDistortionProcessing( eEye == STEREO_EYE_LEFT ? ISourceVirtualReality::VREye_Left : ISourceVirtualReality::VREye_Right );
+	// g_pSourceVR->DoDistortionProcessing( eEye == STEREO_EYE_LEFT ? ISourceVirtualReality::VREye_Left : ISourceVirtualReality::VREye_Right );
 }
 
 
@@ -1351,9 +1344,8 @@ void CClientVirtualReality::OverlayHUDQuadWithUndistort( const CViewSetup &eyeVi
 	ndcHudBounds[2] = Max ( Max( pUL.x, pUR.x ), Max( pLL.x, pLR.x ) );
 	ndcHudBounds[3] = Max ( Max( pUL.y, pUR.y ), Max( pLL.y, pLR.y ) );
 
-	ISourceVirtualReality::VREye sourceVrEye = ( eyeView.m_eStereoEye == STEREO_EYE_LEFT ) ? ISourceVirtualReality::VREye_Left : ISourceVirtualReality::VREye_Right;
-
-	g_pSourceVR->CompositeHud ( sourceVrEye, ndcHudBounds, bDoUndistort, bBlackout, bTranslucent );
+	// ISourceVirtualReality::VREye sourceVrEye = ( eyeView.m_eStereoEye == STEREO_EYE_LEFT ) ? ISourceVirtualReality::VREye_Left : ISourceVirtualReality::VREye_Right;
+	// g_pSourceVR->CompositeHud ( sourceVrEye, ndcHudBounds, bDoUndistort, bBlackout, bTranslucent );
 }
 
 
@@ -1362,64 +1354,14 @@ void CClientVirtualReality::OverlayHUDQuadWithUndistort( const CViewSetup &eyeVi
 // --------------------------------------------------------------------
 void CClientVirtualReality::Activate()
 {
-	// we can only do this if a headtrack DLL is loaded
-	if( !g_pSourceVR )
+	if( !g_pOpenXRManager->Initialize() )
 		return;
 
-	// These checks don't apply if we're in VR mode because Steam said so.
-	if ( !ShouldForceVRActive() )
-	{
-		// see if VR mode is even enabled
-		if ( materials->GetCurrentConfigForVideoCard().m_nVRModeAdapter == -1 )
-		{
-			Warning( "Enable VR mode in the video options before trying to use it.\n" );
-			return;
-		}
+	// General all-game stuff
+	engine->ExecuteClientCmd("mat_reset_rendertargets\n");
 
-		// See if we have an actual adapter
-		int32 nVRModeAdapter = g_pSourceVR->GetVRModeAdapter();
-		if ( nVRModeAdapter == -1 )
-		{
-			Warning( "Unable to get VRMode adapter from OpenVR. VR mode cannot be enabled. Try restarting and then enabling VR again.\n" );
-			return;
-		}
-
-		// we can only activate if we've got a VR device
-		if ( materials->GetCurrentConfigForVideoCard().m_nVRModeAdapter != nVRModeAdapter )
-		{
-			Warning( "VR Mode expects adapter %d which is different from %d which we are currently using. Try restarting and enabling VR mode again.\n",
-				nVRModeAdapter, materials->GetCurrentConfigForVideoCard().m_nVRModeAdapter );
-			engine->ExecuteClientCmd( "mat_enable_vrmode 0\n" );
-			return;
-		}
-	}
-
-
-	// can't activate twice
-	if( UseVR() )
-		return;
-
-	// remember where we were
-	m_bNonVRWindowed = g_pMaterialSystem->GetCurrentConfigForVideoCard().Windowed();
-	vgui::surface()->GetScreenSize( m_nNonVRWidth, m_nNonVRHeight );
-#if defined( USE_SDL )
-    static ConVarRef sdl_displayindex( "sdl_displayindex" );
-    m_nNonVRSDLDisplayIndex = sdl_displayindex.GetInt();
-#endif
-
-	if( !g_pSourceVR->Activate() )
-	{
-		// we couldn't activate, so just punt on this whole thing
-		return;
-	}
-
-	// general all-game stuff
-	engine->ExecuteClientCmd( "mat_reset_rendertargets\n" );
-
-	// game specific VR config
-	CUtlString sCmd;
-	sCmd.Format( "exec sourcevr_%s.cfg\n", COM_GetModDirectory() );
-	engine->ExecuteClientCmd( sCmd.Get() );
+	// Game specific VR config
+	engine->ExecuteClientCmd("exec tfvr\n");
 
     vgui::surface()->SetSoftwareCursor( true );
 
@@ -1432,27 +1374,11 @@ void CClientVirtualReality::Activate()
 	mat_vsync.SetValue( 0 );
 #endif
 
-	g_pMatSystemSurface->ForceScreenSizeOverride(true, 640, 480 );
-	int nViewportWidth, nViewportHeight;
+	vgui::ivgui()->SetVRMode(true);
+	uint32_t width, height;
+	g_pOpenXRManager->GetSpectatorScreenDims(width, height);
 
-	g_pSourceVR->GetViewportBounds( ISourceVirtualReality::VREye_Left, NULL, NULL, &nViewportWidth, &nViewportHeight );
-	g_pMatSystemSurface->SetFullscreenViewportAndRenderTarget( 0, 0, nViewportWidth, nViewportHeight, g_pSourceVR->GetRenderTarget( ISourceVirtualReality::VREye_Left, ISourceVirtualReality::RT_Color ) );
-
-	vgui::ivgui()->SetVRMode( true );
-
-	// we can skip this extra mode change if we've always been in VR mode
-	if ( !ShouldForceVRActive() )
-	{
-		VRRect_t rect;
-		if ( g_pSourceVR->GetDisplayBounds( &rect ) )
-		{
-
-			// set mode
-			char szCmd[256];
-			Q_snprintf( szCmd, sizeof(szCmd), "mat_setvideomode %i %i %i\n", rect.nWidth, rect.nHeight, vr_force_windowed.GetBool() ? 1 : 0 );
-			engine->ClientCmd_Unrestricted( szCmd );
-		}
-	}
+	g_pMatSystemSurface->SetFullscreenViewportAndRenderTarget( 0, 0, width, height, NULL );
 }
 
 
@@ -1462,11 +1388,7 @@ void CClientVirtualReality::Deactivate()
 	if( !UseVR() )
 		return;
 
-	g_pSourceVR->Deactivate();
-
-	g_pMatSystemSurface->ForceScreenSizeOverride(false, 0, 0 );
-	g_pMaterialSystem->GetRenderContext()->Viewport( 0, 0, m_nNonVRWidth, m_nNonVRHeight );
-	g_pMatSystemSurface->SetFullscreenViewportAndRenderTarget( 0, 0, m_nNonVRWidth, m_nNonVRHeight, NULL );
+	g_pOpenXRManager->Shutdown();
 
     static ConVarRef cl_software_cursor( "cl_software_cursor" );
     vgui::surface()->SetSoftwareCursor( cl_software_cursor.GetBool() );
@@ -1481,6 +1403,7 @@ void CClientVirtualReality::Deactivate()
     m_rawinput.SetValue( m_bNonVRRawInput );
 #endif
 
+	/*
     // Make sure the client .dll root panel is at the proper point before doing the "SolveTraverse" calls
 	vgui::VPANEL root = enginevgui->GetPanel( PANEL_CLIENTDLL );
 	if ( root != 0 )
@@ -1496,14 +1419,16 @@ void CClientVirtualReality::Deactivate()
 
 	int viewWidth, viewHeight;
 	vgui::surface()->GetScreenSize( viewWidth, viewHeight );
+	*/
 
 	engine->ExecuteClientCmd( "mat_reset_rendertargets\n" );
 
 	// set mode
+	/*
 	char szCmd[ 256 ];
 	Q_snprintf( szCmd, sizeof( szCmd ), "mat_setvideomode %i %i %i\n", m_nNonVRWidth, m_nNonVRHeight, m_bNonVRWindowed ? 1 : 0 );
 	engine->ClientCmd_Unrestricted( szCmd );
-
+	*/
 }
 
 

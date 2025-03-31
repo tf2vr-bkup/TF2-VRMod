@@ -1,0 +1,31 @@
+﻿---
+UseTab: Always
+TabWidth: 4
+IndentWidth: 4
+ColumnLimit: 200
+
+---
+Language: Cpp
+AlignAfterOpenBracket: DontAlign
+AllowShortBlocksOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+BreakBeforeBraces: Allman
+CompactNamespaces: false
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+IndentCaseLabels: false
+IndentPPDirectives: None
+NamespaceIndentation: None
+PointerAlignment: Right
+SpaceAfterCStyleCast: false
+SpaceAfterTemplateKeyword: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+...

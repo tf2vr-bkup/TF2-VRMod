@@ -318,7 +318,7 @@ public:
 	void			AddViewToScene( CRendering3dView *pView ) { m_SimpleExecutor.AddView( pView ); }
 protected:
 	// Sets up the view parameters for all views (left, middle and right eyes).
-    void            SetUpViews();
+    virtual void    SetUpViews();
 
 	// Sets up the view parameters of map overview mode (cl_leveloverview)
 	void			SetUpOverView();
@@ -364,6 +364,9 @@ public:
 	virtual void	RenderPlayerSprites();
 	virtual void	Render2DEffectsPreHUD( const CViewSetup &view );
 	virtual void	Render2DEffectsPostHUD( const CViewSetup &view );
+
+	void RenderHUD(const CViewSetup &view);
+	void RenderMenuTextureToScreen(const CViewSetup &view, bool isCinema);
 
 
 	void			DisableFog( void );
@@ -433,6 +436,8 @@ private:
 
 	void			DrawMonitors( const CViewSetup &cameraView );
 
+	void			RenderStereoViews(const CViewSetup& baseView, int nClearFlags, int whatToDraw);
+
 	bool			DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_PointCamera *pCameraEnt, const CViewSetup &cameraView, C_BasePlayer *localPlayer, 
 						int x, int y, int width, int height );
 
@@ -442,10 +447,18 @@ private:
 
 	void			PerformScreenSpaceEffects( int x, int y, int w, int h );
 
+	// Helper function to save a render target to a TGA file
+	void        SaveRenderTargetToTGA(ITexture* pRenderTarget, const char* filename);
+
+	// Sets the view parameters for water reflections
+	void		SetReflectionViewParameters( const ViewCustomVisibility_t& viewCustomVisibility, CViewSetup &waterView, bool bViewToProjectionOverride, const VMatrix &viewToProjection );
+
 	// Overlays
 	void			SetScreenOverlayMaterial( IMaterial *pMaterial );
 	IMaterial		*GetScreenOverlayMaterial( );
 	void			PerformScreenOverlay( int x, int y, int w, int h );
+
+	void			RenderVREyeToScreen(const CViewSetup &view, StereoEye_t eye);
 
 	void DrawUnderwaterOverlay( void );
 

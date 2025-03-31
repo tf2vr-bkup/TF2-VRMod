@@ -1,0 +1,138 @@
+#ifndef OPENXR_MANAGER_H
+#define OPENXR_MANAGER_H
+
+#include <vulkan/vulkan.h>
+
+#include "../public/openxr/openxr.h"
+#define XR_USE_GRAPHICS_API_VULKAN
+#include "../public/openxr/openxr_platform.h"
+
+#include "materialsystem/itexture.h"
+#include "vr_integration.h"
+#include "client_virtualreality.h"
+#include "sourcevr/isourcevirtualreality.h"
+
+class COpenXRManager : public CAutoGameSystemPerFrame
+{
+public:
+    COpenXRManager();
+    ~COpenXRManager();
+
+    bool Initialize();
+    void Shutdown();
+    bool IsActive() const { return m_vrActive; }
+
+    bool BeginFrame();
+    bool EndFrame();
+
+    bool GetEyeViewData(VRViewData_t eyeData[2]);
+    void UpdateOpenXRViewData();
+    bool GetEyeViewLocations(VMatrix& leftEyePose, VMatrix& rightEyePose);
+
+    void Update(float frametime) override;
+    
+    // Function to recenter the VR view to match the game's camera
+    void RecenterView();
+
+    VMatrix CreateVRProjectionMatrix(XrFovf fov, float zNear, float zFar);
+    
+    // Add method to create and get shared render target
+    ITexture* GetSharedRenderTarget();
+
+    IMaterial* GetRenderTargetMat();
+    ITexture* GetRenderTarget(int index = -1);
+
+    // Function to adjust viewmodel position for VR
+    Vector AdjustViewModelPosition(const Vector& originalPos, const QAngle& headAngles);
+
+    XrSession GetSession() const { return m_session; }
+    XrSpace GetReferenceSpace() const { return m_referenceSpace; }
+    XrSpace GetHeadSpace() const { return m_headSpace; }
+    XrSpaceLocation GetHeadLocation() const { return m_headLocation; }
+
+    void GetSpectatorScreenDims(uint32_t& width, uint32_t& height);
+
+    void GetEyeProjectionMatrix(VMatrix& pResult, ISourceVirtualReality::VREye eye, float zNear, float zFar);
+
+    VMatrix GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye eye);
+
+    VMatrix GetMideyePose();
+
+    void GetViewportBounds(ISourceVirtualReality::VREye eye, int* pnX, int* pnY, int* pnWidth, int* pnHeight);
+
+    Vector2D GetBufferSize();
+
+private:
+    // OpenXR Resources
+    XrInstance m_instance = nullptr;
+    XrSession m_session = nullptr;
+    XrSystemId m_systemId = XR_NULL_SYSTEM_ID;
+    XrSpace m_referenceSpace = nullptr;
+    XrSpace m_headSpace = nullptr;
+    std::vector<XrSwapchain> m_swapchains;
+    bool m_vrActive = false;
+    
+    bool m_sessionRunning = false;
+
+    // Recentering data
+    Quaternion m_recenterQuaternion;  // Stores the quaternion to adjust HMD orientation
+    Vector m_recenterPosition;        // Stores position offset for recentering
+    bool m_hasRecenterData = false;   // Flag to check if recenter data has been initialized
+
+    // View configuration (added to store recommended resolutions)
+    XrViewConfigurationView m_viewConfigs[2] = { {XR_TYPE_VIEW_CONFIGURATION_VIEW}, {XR_TYPE_VIEW_CONFIGURATION_VIEW} };
+
+    // Helper functions
+    bool CreateOpenXRInstance();
+    bool GetSystem();
+    bool CreateSession();
+    bool CreateReferenceSpace();
+    bool CreateHeadSpace();
+    void ReleaseResources();
+
+    bool CreateVulkanContext(XrGraphicsRequirementsVulkan2KHR* pRequirements);
+
+    bool m_frameStarted = false;
+    XrFrameState m_frameState;
+    XrSpace m_viewSpace = XR_NULL_HANDLE;
+
+    XrView* m_views;
+    XrSpaceLocation m_headLocation;
+
+    uint32_t m_viewCount;
+
+    uint32_t m_spectatorScreenWidth = 1280;
+	uint32_t m_spectatorScreenHeight = 720;
+
+    ITexture* m_pEyeRenderTargets[2] = { nullptr, nullptr };
+    ITexture* m_pSharedRenderTarget = nullptr; // Shared render target for both eyes
+    bool InitializeSharedRenderTarget(); // Initialize the shared render target
+
+    // OpenXR Function bindings
+    PFN_xrGetVulkanGraphicsRequirements2KHR m_pfnGetVulkanGraphicsRequirements2KHR;
+    PFN_xrCreateVulkanInstanceKHR m_pfnCreateVulkanInstanceKHR;
+    PFN_xrCreateVulkanDeviceKHR m_pfnCreateVulkanDeviceKHR;
+    PFN_xrGetVulkanGraphicsDevice2KHR m_pfnGetVulkanGraphicsDevice2KHR;
+
+    // Vulkan related
+    VkInstance m_vkInstance;
+    VkPhysicalDevice m_vkPhysicalDevice;
+    VkDevice m_vkDevice;
+    VkQueue m_vkQueue;
+    uint32_t m_vkQueueFamilyIndex;
+
+    uint32_t m_currentRenderBufferIndex;
+};
+
+static ConVar vr_quat_x_sign("vr_quat_x_sign", "1", FCVAR_ARCHIVE, "Sign for X quaternion component (0=negative, 1=positive)");
+static ConVar vr_quat_y_sign("vr_quat_y_sign", "1", FCVAR_ARCHIVE, "Sign for Y quaternion component (0=negative, 1=positive)");
+static ConVar vr_quat_z_sign("vr_quat_z_sign", "0", FCVAR_ARCHIVE, "Sign for Z quaternion component (0=negative, 1=positive)");
+static ConVar vr_quat_w_sign("vr_quat_w_sign", "0", FCVAR_ARCHIVE, "Sign for W quaternion component (0=negative, 1=positive)");
+static ConVar vr_position_scale("vr_position_scale", "50.0", FCVAR_ARCHIVE, "Scales head position movement in VR");
+static ConVar vr_floor_offset("vr_floor_offset", "0", FCVAR_ARCHIVE, "Padded pre-scaled distance from floor");
+static ConVar vr_follow_game_camera("vr_follow_game_camera", "1", FCVAR_ARCHIVE, "Follow game camera in VR");
+static ConVar vr_eye_height_adjust("vr_eye_height_adjust", "0", FCVAR_ARCHIVE, "Adjust eye height in VR");
+
+extern COpenXRManager* g_pOpenXRManager;
+
+#endif // OPENXR_MANAGER_H

@@ -1,0 +1,293 @@
+#include "cbase.h"
+#include "vr_rendertargets.h"
+#include "materialsystem\imaterialsystem.h"
+#include "rendertexture.h"
+#include "../public/materialsystem/itexture.h"
+#include "hmdWrapper.h"
+#include "openxr_manager.h"
+
+extern ConVar tfvr_msaa;
+
+#define TARGET_DIVISOR 1.3f	//This was 2, but 1 seems to work. The blur function seems to bleed out enough.
+							//We may at some point want a value betweem 1 and 2
+
+ITexture* CVrRenderTargets::CreateVGuiTexture(IMaterialSystem* pMaterialSystem)
+{
+	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+		"_rt_vgui",
+		1280, 720,
+		RT_SIZE_LITERAL,
+		pMaterialSystem->GetBackBufferFormat(),
+		MATERIAL_RT_DEPTH_SEPARATE,
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+		CREATERENDERTARGETFLAGS_HDR);
+}
+
+ITexture* CVrRenderTargets::CreateVRTwoEyesHMDRenderTarget(IMaterialSystem* pMaterialSystem, int i)
+{
+	dxvkSetRenderTextureSize(g_pOpenXRManager->GetBufferSize().x * 2, g_pOpenXRManager->GetBufferSize().y, m_currentMsaa);
+    const char* name = backBufferNamePerIndex(i);
+    return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+        name,
+        g_pOpenXRManager->GetBufferSize().x * 2,
+        g_pOpenXRManager->GetBufferSize().y,
+        RT_SIZE_LITERAL, 
+		IMAGE_FORMAT_BGRA8888,
+        MATERIAL_RT_DEPTH_SEPARATE,
+        TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT | TEXTUREFLAGS_SRGB,
+        0);
+}
+								//No longer quater, but a pain in the ass to change
+ITexture* CVrRenderTargets::CreateVROneEyeTextureQuarterSize(IMaterialSystem* pMaterialSystem)	
+{
+    return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+        "_rt_one_eye_quarter_size_1_VR",
+		(int)floor(g_pOpenXRManager->GetBufferSize().x / TARGET_DIVISOR), (int)floor(g_pOpenXRManager->GetBufferSize().y / TARGET_DIVISOR),
+        RT_SIZE_LITERAL,
+        pMaterialSystem->GetBackBufferFormat(),
+        MATERIAL_RT_DEPTH_SEPARATE,
+        TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+        CREATERENDERTARGETFLAGS_HDR);
+}
+
+ITexture* CVrRenderTargets::CreateWaterReflectionTexture( IMaterialSystem* pMaterialSystem, int iSize )
+{
+	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+		"_rt_WaterReflection",
+		iSize, iSize, RT_SIZE_LITERAL,
+		pMaterialSystem->GetBackBufferFormat(),
+		MATERIAL_RT_DEPTH_NONE,
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+		CREATERENDERTARGETFLAGS_HDR );
+}
+
+ITexture* CVrRenderTargets::CreateVRWaterReflectionTexture( IMaterialSystem* pMaterialSystem, int iSize )
+{
+	// needed to work around a base game bug that's causing stereo mismatch in VR
+	// see VRViewRender::CopyProperWaterReflectionForEye()
+	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+		"_rt_WaterReflectionVR",
+		2*iSize, iSize, RT_SIZE_LITERAL,
+		pMaterialSystem->GetBackBufferFormat(),
+		MATERIAL_RT_DEPTH_SEPARATE,
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+		CREATERENDERTARGETFLAGS_HDR );
+}
+
+ITexture* CVrRenderTargets::CreateWaterRefractionTexture( IMaterialSystem* pMaterialSystem, int iSize )
+{
+	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+		"_rt_WaterRefraction",
+		iSize, iSize, RT_SIZE_LITERAL,
+		// This is different than reflection because it has to have alpha for fog factor.
+		IMAGE_FORMAT_RGBA8888,
+		MATERIAL_RT_DEPTH_SEPARATE,
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+		CREATERENDERTARGETFLAGS_HDR );
+}
+
+ITexture* CVrRenderTargets::CreateVRScreenEffectTexture( IMaterialSystem* pMaterialSystem, int iSize )
+{
+	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+		"_rt_VRScreenEffect",
+		iSize, iSize, RT_SIZE_LITERAL,
+		pMaterialSystem->GetBackBufferFormat(),
+		MATERIAL_RT_DEPTH_SEPARATE,
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+		CREATERENDERTARGETFLAGS_HDR );
+}
+
+ITexture *CVrRenderTargets::GetVRRenderTarget(int i)
+{
+	return m_VRTwoEyesHMDRenderTargets[i];
+}
+
+static void GetDesiredFullFrameBufferDimensions(int &width, int &height)
+{
+	width = g_pOpenXRManager->GetBufferSize().x;
+	height = g_pOpenXRManager->GetBufferSize().y;
+}
+
+void CVrRenderTargets::UpdateVRRenderTargets()
+{
+	int newMsaa = tfvr_msaa.GetInt();
+	bool msaaChanged = newMsaa != m_currentMsaa;
+	int desiredWidth = g_pOpenXRManager->GetBufferSize().x * 2;
+	int desiredHeight = g_pOpenXRManager->GetBufferSize().y;
+	int fullFrameWidth, fullFrameHeight;
+	GetDesiredFullFrameBufferDimensions(fullFrameWidth, fullFrameHeight);
+	
+	ITexture *tex = m_VRTwoEyesHMDRenderTargets[0];
+	if (tex == nullptr)
+		return;
+
+	ITexture *fullFrameTex0 = materials->FindTexture("_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET, false);
+	bool baseTexturesNeedUpdate = fullFrameTex0 && (fullFrameTex0->GetActualWidth() != fullFrameWidth || fullFrameTex0->GetActualHeight() != fullFrameHeight);
+
+	if (tex->GetActualWidth() != desiredWidth || tex->GetActualHeight() != desiredHeight || msaaChanged || baseTexturesNeedUpdate)
+	{
+		ConVarRef mat_queue_mode("mat_queue_mode");
+		if (mat_queue_mode.GetInt() != 0)
+		{
+			// if we try to recreate the render targets in threaded mode, we will crash
+			// so we have to switch to single-threaded mode, then wait until the next frame
+			m_origThreadMode = mat_queue_mode.GetInt();
+			m_changedThreadMode = true;
+			mat_queue_mode.SetValue(0);
+			return;
+		}
+
+		Log("Updating render textures...\n");
+
+		m_currentMsaa = newMsaa;
+		materials->BeginRenderTargetAllocation();
+		for (int i = 0; i < VR_NUM_BUFFERS; ++i)
+		{
+			m_VRTwoEyesHMDRenderTargets[i].Init(CreateVRTwoEyesHMDRenderTarget(materials, i));
+		}
+		m_VROneEyeTextureQuarterSize.Init(CreateVROneEyeTextureQuarterSize(materials));
+
+		m_VGuiTexture.Init(CreateVGuiTexture(materials));
+
+		UpdateBaseGameTextures(g_pMaterialSystem);
+
+		materials->EndRenderTargetAllocation();
+
+		if (m_changedThreadMode)
+		{
+			mat_queue_mode.SetValue(m_origThreadMode);
+			m_changedThreadMode = false;
+		}
+
+		Log("Render textures updated.\n");
+	}
+}
+
+// need to get access to the reference count of the textures
+abstract_class ITextureInternal : public ITexture
+{
+public:
+	virtual void Func0() = 0;
+	virtual void Func1() = 0;
+	virtual int GetReferenceCount() = 0;
+};
+
+
+void CVrRenderTargets::UpdateBaseGameRenderTexture(const char *name, int desiredWidth, int desiredHeight, int flags, bool requiresDepth, IMaterialSystem *pMaterialSystem)
+{
+	ITextureInternal *tex = (ITextureInternal*)pMaterialSystem->FindTexture(name, TEXTURE_GROUP_RENDER_TARGET, false);
+
+	if (tex->GetActualWidth() != desiredWidth || tex->GetActualHeight() != desiredHeight)
+	{
+		char tempName[256];
+		sprintf(tempName, "%s_temp", name);
+		ITextureInternal *replacement = (ITextureInternal*)pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+			tempName,
+			desiredWidth,
+			desiredHeight,
+			RT_SIZE_LITERAL,
+			tex->GetImageFormat(),
+			// FIXME: probably need separate depth textures?! otherwise it's using the window's depth buffer
+			requiresDepth ? MATERIAL_RT_DEPTH_SEPARATE : MATERIAL_RT_DEPTH_NONE,
+			TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+			flags);
+
+		int origRefCount = tex->GetReferenceCount();
+
+		replacement->SwapContents(tex);
+		// swapping contents also swaps the reference counts, we need to fix that after the fact
+		while (tex->GetReferenceCount() < origRefCount)
+			tex->IncrementReferenceCount();
+		while (tex->GetReferenceCount() > origRefCount)
+			tex->DecrementReferenceCount();
+
+		while (replacement->GetReferenceCount() > 0)
+			replacement->DecrementReferenceCount();
+		replacement->DeleteIfUnreferenced();
+
+		Log("Replaced base game render target %s\n", name);
+	}
+}
+
+void CVrRenderTargets::UpdateBaseGameTextures(IMaterialSystem* pMaterialSystem)
+{
+	int desiredWidth, desiredHeight;
+	GetDesiredFullFrameBufferDimensions(desiredWidth, desiredHeight);
+	int quarterWidth = desiredWidth / 4;
+	int quarterHeight = desiredHeight / 4;
+
+	UpdateBaseGameRenderTexture("_rt_FullFrameFB", desiredWidth, desiredHeight, CREATERENDERTARGETFLAGS_HDR, true, pMaterialSystem);
+	UpdateBaseGameRenderTexture("_rt_FullFrameFB1", desiredWidth, desiredHeight, CREATERENDERTARGETFLAGS_HDR, true, pMaterialSystem);
+	UpdateBaseGameRenderTexture("_rt_Fullscreen", desiredWidth, desiredHeight, 0, false, pMaterialSystem);
+	UpdateBaseGameRenderTexture("_rt_SmallFB0", quarterWidth, quarterHeight, 0, false, pMaterialSystem);
+	UpdateBaseGameRenderTexture("_rt_SmallFB1", quarterWidth, quarterHeight, 0, false, pMaterialSystem);
+	UpdateBaseGameRenderTexture("_rt_PowerOfTwoFB", 1024, 1024, CREATERENDERTARGETFLAGS_HDR, true, pMaterialSystem);
+}
+
+
+extern ConVar vr_activate_default;
+
+//-----------------------------------------------------------------------------
+// Purpose: Called by the engine in material system init and shutdown.
+//			Clients should override this in their inherited version, but the base
+//			is to init all standard render targets for use.
+// Input  : pMaterialSystem - the engine's material system (our singleton is not yet inited at the time this is called)
+//			pHardwareConfig - the user hardware config, useful for conditional render target setup
+//-----------------------------------------------------------------------------
+void CVrRenderTargets::InitClientRenderTargets( IMaterialSystem* pMaterialSystem, IMaterialSystemHardwareConfig* pHardwareConfig )
+{
+	if (vr_activate_default.GetBool())
+	{
+		m_VGuiTexture.Init(CreateVGuiTexture(pMaterialSystem));
+
+		m_currentMsaa = tfvr_msaa.GetInt();
+		for (int i = 0; i < VR_NUM_BUFFERS; i++)
+		{
+			m_VRTwoEyesHMDRenderTargets[i].Init(
+				CreateVRTwoEyesHMDRenderTarget(pMaterialSystem, i));
+		}
+
+		m_VROneEyeTextureQuarterSize.Init(CreateVROneEyeTextureQuarterSize(pMaterialSystem));
+
+		UpdateBaseGameTextures(pMaterialSystem);
+
+		m_origThreadMode = ConVarRef("mat_queue_mode").GetInt();
+		m_changedThreadMode = false;
+	}
+
+	// Water effects
+	m_WaterReflectionTexture.Init( CreateWaterReflectionTexture( pMaterialSystem ) );
+	m_VRWaterReflectionTexture.Init( CreateVRWaterReflectionTexture( pMaterialSystem ) );
+	m_WaterRefractionTexture.Init( CreateWaterRefractionTexture( pMaterialSystem ) );
+	m_VRScreenEffectTexture.Init( CreateVRScreenEffectTexture( pMaterialSystem ) );
+
+	// Monitors
+	m_CameraTexture.Init( CreateCameraTexture( pMaterialSystem ) );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Shut down each CTextureReference we created in InitClientRenderTargets.
+//			Called by the engine in material system shutdown.
+// Input  :  - 
+//-----------------------------------------------------------------------------
+void CVrRenderTargets::ShutdownClientRenderTargets()
+{ 
+    m_VGuiTexture.Shutdown();
+	m_VRWaterReflectionTexture.Shutdown();
+	m_VRScreenEffectTexture.Shutdown();
+
+	for (int i = 0; i < VR_NUM_BUFFERS; i++)
+	{
+		m_VRTwoEyesHMDRenderTargets[i].Shutdown();
+	}
+
+    m_VROneEyeTextureQuarterSize.Shutdown();
+
+    // Clean up standard HL2 RTs (camera and water) 
+    BaseClass::ShutdownClientRenderTargets();
+}
+ 
+//add the interface!
+static CVrRenderTargets g_pVrRenderTargets;
+EXPOSE_SINGLE_INTERFACE_GLOBALVAR( CVrRenderTargets, IClientRenderTargets, CLIENTRENDERTARGETS_INTERFACE_VERSION, g_pVrRenderTargets  );
+CVrRenderTargets* vrRenderTargets = &g_pVrRenderTargets;

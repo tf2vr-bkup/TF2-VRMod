@@ -130,6 +130,8 @@
 
 #include "secure_command_line.h"
 
+#include "tfvr/vr_integration.h"
+
 // NVNT includes
 #include "hud_macros.h"
 #include "haptics/ihaptics.h"
@@ -1531,7 +1533,9 @@ void CHLClient::View_Render( vrect_t *rect )
 	if ( rect->width == 0 || rect->height == 0 )
 		return;
 
-	view->Render( rect );
+
+	view->Render(rect);
+
 	UpdatePerfStats();
 }
 
