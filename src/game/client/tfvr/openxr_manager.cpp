@@ -1,9 +1,13 @@
 ﻿#include "cbase.h"
 #include "openxr_manager.h"
+#include "openxr_input.h"
 #include "hmdWrapper.h"
-#include "vr_rendertargets.h"]
+#include "vr_rendertargets.h"
 #include "cdll_client_int.h"
 #include "ienginevgui.h"
+#include "iclientmode.h"
+#include "vr_input.h"
+#include "iinput.h"
 
 #include "mathlib/mathlib.h"
 
@@ -90,35 +94,10 @@ void InitializeOpenXRManager()
     }
 }
 
-void TestOpenXR(const CCommand& args) 
-{
-    if (args.ArgC() < 2) 
-    {
-        DevMsg("Usage: cl_test_openxr <1/0> (enable/disable OpenXR)\n");
-        return;
-    }
-
-    bool enable = atoi(args[1]) != 0;
-    if (enable) 
-    {
-        InitializeOpenXRManager();
-        if (g_pOpenXRManager && g_pOpenXRManager->IsActive()) 
-        {
-            DevMsg("OpenXR enabled.\n");
-        }
-    }
-    else 
-    {
-        ShutdownOpenXRManager();
-        DevMsg("OpenXR disabled.\n");
-    }
-}
-
-ConCommand cl_test_openxr("vr_openxr_enabled", TestOpenXR, "Toggle OpenXR VR mode (1 to enable, 0 to disable)", FCVAR_NONE);
-
 COpenXRManager::COpenXRManager() 
 {
     m_vrActive = false;
+    m_inputManager = nullptr;
 }
 
 COpenXRManager::~COpenXRManager() 
@@ -146,6 +125,17 @@ bool COpenXRManager::Initialize()
     if (!CreateSession()) return false;
     if (!CreateReferenceSpace()) return false;
     if (!CreateHeadSpace()) return false;
+
+    // Initialize input system
+    m_inputManager = new COpenXRInputManager(this);
+    if (!m_inputManager->Initialize())
+    {
+        DevMsg("Failed to initialize input system\n");
+        delete m_inputManager;
+        m_inputManager = nullptr;
+        return false;
+    }
+
     if (!dxvkInitOpenXR(m_instance, m_systemId, m_session, m_referenceSpace, m_headSpace))
     {
         DevMsg("Failed to send OpenXR info to DXVK");
@@ -160,6 +150,14 @@ bool COpenXRManager::Initialize()
 void COpenXRManager::Shutdown() 
 {
     if (!m_vrActive) return;
+
+    // Clean up input system
+    if (m_inputManager)
+    {
+        m_inputManager->Shutdown();
+        delete m_inputManager;
+        m_inputManager = nullptr;
+    }
 
     ReleaseResources();
 
@@ -954,22 +952,30 @@ bool g_firstUpdateVR = true;
 bool g_firstUpdateNonVR = false;
 void COpenXRManager::Update(float frametime)
 {
-    VPROF("VRManager::Update", VPROF_BUDGETGROUP_WORLD_RENDERING);
+	VPROF("VRManager::Update", VPROF_BUDGETGROUP_WORLD_RENDERING);
 
 	if (!g_pOpenXRManager->IsActive())
-    {
-        if (g_firstUpdateNonVR)
-        {
-            g_firstUpdateNonVR = false;
-            g_firstUpdateVR = true;
-        }
-        return;
-    }
+	{
+		if (g_firstUpdateNonVR)
+		{
+			g_firstUpdateNonVR = false;
+			g_firstUpdateVR = true;
+		}
+		return;
+	}
 
-    if (g_firstUpdateVR)
-    {
-        g_firstUpdateVR = false;
-        g_firstUpdateNonVR = true;
+	if (g_firstUpdateVR)
+	{
+		g_firstUpdateVR = false;
+		g_firstUpdateNonVR = true;
+
+		// Swap input system
+		if (::input != nullptr)
+		{
+			g_OriginalNonVRInputPtr = ::input;
+		}
+		::input = (IInput*)&g_VRInput;
+		::input->Init_All();
 
 		for (m_currentRenderBufferIndex = 0; m_currentRenderBufferIndex < VR_NUM_BUFFERS; ++m_currentRenderBufferIndex)
 		{
@@ -978,11 +984,11 @@ void COpenXRManager::Update(float frametime)
 		}
 
 		m_currentRenderBufferIndex = 0;
-    }
+	}
 
-    m_currentRenderBufferIndex = (++m_currentRenderBufferIndex) % VR_NUM_BUFFERS;
+	m_currentRenderBufferIndex = (++m_currentRenderBufferIndex) % VR_NUM_BUFFERS;
 
-    // Poll OpenXR events
+	// Poll OpenXR events
 	XrEventDataBuffer eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};
 	while (m_sessionRunning && xrPollEvent(m_instance, &eventBuffer) == XR_SUCCESS)
 	{
@@ -1043,7 +1049,7 @@ void COpenXRManager::Update(float frametime)
 		eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};
 	}
 
-    // UpdateOpenXRViewData();
+	// UpdateOpenXRViewData();
 
 	vrRenderTargets->UpdateVRRenderTargets();
 
@@ -1057,6 +1063,22 @@ void COpenXRManager::Update(float frametime)
 	{
 		r_lod.SetValue(-1);
 	}
+
+	// Poll input state
+	if (m_inputManager)
+	{
+		m_inputManager->PollInput();
+	}
+
+    if (WasButtonPressed("left_trigger")) 
+    {
+		DevMsg("Left Trigger pressed!\n");
+    }
+
+    if (WasButtonPressed("right_trigger"))
+	{
+		DevMsg("Right Trigger pressed!\n");
+	}
 }
 
 char* backBufferNamePerIndex(int i)
@@ -1069,6 +1091,34 @@ char* backBufferNamePerIndex(int i)
 	}
 	sprintf(&name[sizeof(VR_BACK_BUFFER_X) - 1], "%i", i);
 	return name;
+}
+
+void COpenXRManager::PollInput()
+{
+    if (m_inputManager)
+    {
+        m_inputManager->PollInput();
+    }
+}
+
+bool COpenXRManager::IsButtonPressed(const char* actionName)
+{
+    return m_inputManager ? m_inputManager->IsButtonPressed(actionName) : false;
+}
+
+bool COpenXRManager::WasButtonPressed(const char* actionName)
+{
+    return m_inputManager ? m_inputManager->WasButtonPressed(actionName) : false;
+}
+
+bool COpenXRManager::WasButtonReleased(const char* actionName)
+{
+    return m_inputManager ? m_inputManager->WasButtonReleased(actionName) : false;
+}
+
+float COpenXRManager::GetAnalogValue(const char* actionName)
+{
+    return m_inputManager ? m_inputManager->GetAnalogValue(actionName) : 0.0f;
 }
 
 COpenXRManager g_TFVR;

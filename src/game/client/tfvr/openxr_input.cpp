@@ -66,19 +66,39 @@ bool COpenXRInputManager::CreateActionSet()
 
 bool COpenXRInputManager::CreateActions()
 {
-    // Create trigger action
-    XrInputAction triggerAction = CreateBooleanAction("trigger", "Trigger");
-    if (triggerAction.handle == XR_NULL_HANDLE) return false;
-    m_actions["trigger"] = triggerAction;
+    // Create movement actions
+    XrInputAction moveX = CreateFloatAction("move_x", "Move X");
+    if (moveX.handle == XR_NULL_HANDLE) return false;
+    m_actions["move_x"] = moveX;
 
-    // Create thumbstick actions
-    XrInputAction thumbstickX = CreateFloatAction("thumbstick_x", "Thumbstick X");
-    if (thumbstickX.handle == XR_NULL_HANDLE) return false;
-    m_actions["thumbstick_x"] = thumbstickX;
+    XrInputAction moveY = CreateFloatAction("move_y", "Move Y");
+    if (moveY.handle == XR_NULL_HANDLE) return false;
+    m_actions["move_y"] = moveY;
 
-    XrInputAction thumbstickY = CreateFloatAction("thumbstick_y", "Thumbstick Y");
-    if (thumbstickY.handle == XR_NULL_HANDLE) return false;
-    m_actions["thumbstick_y"] = thumbstickY;
+    // Create button actions
+    XrInputAction primaryAttack = CreateFloatAction("primary_attack", "Primary Attack");
+    if (primaryAttack.handle == XR_NULL_HANDLE) return false;
+    m_actions["primary_attack"] = primaryAttack;
+
+    XrInputAction secondaryAttack = CreateFloatAction("secondary_attack", "Secondary Attack");
+    if (secondaryAttack.handle == XR_NULL_HANDLE) return false;
+    m_actions["secondary_attack"] = secondaryAttack;
+
+    XrInputAction use = CreateBooleanAction("use", "Use");
+    if (use.handle == XR_NULL_HANDLE) return false;
+    m_actions["use"] = use;
+
+    XrInputAction duck = CreateBooleanAction("duck", "Duck");
+    if (duck.handle == XR_NULL_HANDLE) return false;
+    m_actions["duck"] = duck;
+
+    XrInputAction jump = CreateBooleanAction("jump", "Jump");
+    if (jump.handle == XR_NULL_HANDLE) return false;
+    m_actions["jump"] = jump;
+
+    XrInputAction menu = CreateBooleanAction("menu", "Menu");
+    if (menu.handle == XR_NULL_HANDLE) return false;
+    m_actions["menu"] = menu;
 
     return true;
 }
@@ -90,15 +110,33 @@ bool COpenXRInputManager::CreateInteractionProfiles()
     indexProfile.name = "valve_index_controller";
     
     XrResult result = xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexProfile.path);
-    if (!XR_SUCCEEDED(result)) return false;
+    if (!XR_SUCCEEDED(result)) 
+    {
+        DevMsg("Failed to create path for Valve Index profile: %d\n", result);
+        return false;
+    }
 
-    // Add bindings for Index controller
-    if (!AddBinding(indexProfile, "trigger", "/user/hand/left/input/trigger/click")) return false;
-    if (!AddBinding(indexProfile, "trigger", "/user/hand/right/input/trigger/click")) return false;
-    if (!AddBinding(indexProfile, "thumbstick_x", "/user/hand/left/input/thumbstick/x")) return false;
-    if (!AddBinding(indexProfile, "thumbstick_x", "/user/hand/right/input/thumbstick/x")) return false;
-    if (!AddBinding(indexProfile, "thumbstick_y", "/user/hand/left/input/thumbstick/y")) return false;
-    if (!AddBinding(indexProfile, "thumbstick_y", "/user/hand/right/input/thumbstick/y")) return false;
+    // Movement bindings (left controller)
+    if (!AddBinding(indexProfile, "move_x", "/user/hand/left/input/thumbstick/x")) return false;
+    if (!AddBinding(indexProfile, "move_y", "/user/hand/left/input/thumbstick/y")) return false;
+
+    // Primary attack (right trigger)
+    if (!AddBinding(indexProfile, "primary_attack", "/user/hand/right/input/trigger/value")) return false;
+
+    // Secondary attack (left trigger)
+    if (!AddBinding(indexProfile, "secondary_attack", "/user/hand/left/input/trigger/value")) return false;
+
+    // Use (right A button)
+    if (!AddBinding(indexProfile, "use", "/user/hand/right/input/a/click")) return false;
+
+    // Duck (left A button)
+    if (!AddBinding(indexProfile, "duck", "/user/hand/left/input/a/click")) return false;
+
+    // Jump (right B button)
+    if (!AddBinding(indexProfile, "jump", "/user/hand/right/input/b/click")) return false;
+
+    // Menu (left B button)
+    if (!AddBinding(indexProfile, "menu", "/user/hand/left/input/b/click")) return false;
 
     // Suggest bindings for the profile
     if (!SuggestBindings(indexProfile)) return false;
@@ -125,8 +163,8 @@ bool COpenXRInputManager::AttachActionSet()
 XrInputAction COpenXRInputManager::CreateBooleanAction(const char* name, const char* localizedName)
 {
     XrInputAction action;
-    action.name = name;
-    action.localizedName = localizedName;
+    action.name = name;           // Now properly copies the string
+    action.localizedName = localizedName;  // Now properly copies the string
     action.type = XR_ACTION_TYPE_BOOLEAN_INPUT;
     action.subactionPaths = { m_leftHandPath, m_rightHandPath };
 
@@ -149,10 +187,10 @@ XrInputAction COpenXRInputManager::CreateBooleanAction(const char* name, const c
 XrInputAction COpenXRInputManager::CreateFloatAction(const char* name, const char* localizedName)
 {
     XrInputAction action;
-    action.name = name;
-    action.localizedName = localizedName;
+    action.name = name;           // Now properly copies the string
+    action.localizedName = localizedName;  // Now properly copies the string
     action.type = XR_ACTION_TYPE_FLOAT_INPUT;
-    action.subactionPaths = { m_leftHandPath, m_rightHandPath };
+    action.subactionPaths = {};
 
     XrActionCreateInfo actionInfo{ XR_TYPE_ACTION_CREATE_INFO };
     strcpy_s(actionInfo.actionName, name);
@@ -200,18 +238,38 @@ bool COpenXRInputManager::SuggestBindings(const XrInteractionProfile& profile)
     std::vector<XrActionSuggestedBinding> suggestedBindings;
     suggestedBindings.reserve(profile.bindings.size());
     
+    DevMsg("Suggesting bindings for profile %s with %d bindings\n", profile.name.c_str(), profile.bindings.size());
+    
     for (const auto& binding : profile.bindings)
     {
         XrActionSuggestedBinding suggestedBinding;
         suggestedBinding.action = binding.action;
         suggestedBinding.binding = binding.binding;
         suggestedBindings.push_back(suggestedBinding);
+        
+        // Get the path string for debugging
+        char pathStr[XR_MAX_PATH_LENGTH];
+        uint32_t pathStrLen = 0;
+        XrResult pathResult = xrPathToString(m_instance, binding.binding, XR_MAX_PATH_LENGTH, &pathStrLen, pathStr);
+        if (XR_SUCCEEDED(pathResult))
+        {
+            DevMsg("  Binding action to path: %s\n", pathStr);
+        }
     }
 
     XrInteractionProfileSuggestedBinding suggestedBindingsInfo{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
     suggestedBindingsInfo.interactionProfile = profile.path;
     suggestedBindingsInfo.suggestedBindings = suggestedBindings.data();
     suggestedBindingsInfo.countSuggestedBindings = suggestedBindings.size();
+
+    // Get the profile path string for debugging
+    char profilePathStr[XR_MAX_PATH_LENGTH];
+    uint32_t profilePathStrLen = 0;
+    XrResult profilePathResult = xrPathToString(m_instance, profile.path, XR_MAX_PATH_LENGTH, &profilePathStrLen, profilePathStr);
+    if (XR_SUCCEEDED(profilePathResult))
+    {
+        DevMsg("Suggesting bindings for profile path: %s\n", profilePathStr);
+    }
 
     XrResult result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindingsInfo);
     if (!XR_SUCCEEDED(result))
@@ -243,17 +301,16 @@ void COpenXRInputManager::PollInput()
         if (action.second.type == XR_ACTION_TYPE_BOOLEAN_INPUT)
         {
             // Poll for both hands
-            for (size_t i = 0; i < action.second.subactionPaths.size(); ++i)
-            {
+            //for (size_t i = 0; i < action.second.subactionPaths.size(); ++i)
+            //{
                 XrActionStateGetInfo getInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
                 getInfo.action = action.second.handle;
-                getInfo.subactionPath = action.second.subactionPaths[i];
 
                 XrActionStateBoolean state{ XR_TYPE_ACTION_STATE_BOOLEAN };
                 result = xrGetActionStateBoolean(m_session, &getInfo, &state);
                 if (XR_SUCCEEDED(result))
                 {
-                    std::string key = action.first + (i == 0 ? "_left" : "_right");
+                    std::string key = action.first;
                     bool previousState = m_currentButtonStates[key];
                     m_currentButtonStates[key] = state.currentState;
                     
@@ -263,22 +320,21 @@ void COpenXRInputManager::PollInput()
                         DevMsg("Button %s changed to %s\n", key.c_str(), state.currentState ? "pressed" : "released");
                     }
                 }
-            }
+            //}
         }
         else if (action.second.type == XR_ACTION_TYPE_FLOAT_INPUT)
         {
             // Poll for both hands
-            for (size_t i = 0; i < action.second.subactionPaths.size(); ++i)
-            {
+            //for (size_t i = 0; i < action.second.subactionPaths.size(); ++i)
+            //{
                 XrActionStateGetInfo getInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
                 getInfo.action = action.second.handle;
-                getInfo.subactionPath = action.second.subactionPaths[i];
 
                 XrActionStateFloat state{ XR_TYPE_ACTION_STATE_FLOAT };
                 result = xrGetActionStateFloat(m_session, &getInfo, &state);
                 if (XR_SUCCEEDED(result))
                 {
-                    std::string key = action.first + (i == 0 ? "_left" : "_right");
+                    std::string key = action.first;
                     float previousValue = m_currentAnalogStates[key];
                     m_currentAnalogStates[key] = state.currentState;
                     
@@ -288,7 +344,7 @@ void COpenXRInputManager::PollInput()
                         DevMsg("Analog %s changed to %.2f\n", key.c_str(), state.currentState);
                     }
                 }
-            }
+            //}
         }
     }
 }

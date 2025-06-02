@@ -12,6 +12,8 @@
 #include "client_virtualreality.h"
 #include "sourcevr/isourcevirtualreality.h"
 
+class COpenXRInputManager;
+
 class COpenXRManager : public CAutoGameSystemPerFrame
 {
 public:
@@ -46,6 +48,7 @@ public:
     Vector AdjustViewModelPosition(const Vector& originalPos, const QAngle& headAngles);
 
     XrSession GetSession() const { return m_session; }
+    XrInstance GetInstance() const { return m_instance; }
     XrSpace GetReferenceSpace() const { return m_referenceSpace; }
     XrSpace GetHeadSpace() const { return m_headSpace; }
     XrSpaceLocation GetHeadLocation() const { return m_headLocation; }
@@ -61,6 +64,13 @@ public:
     void GetViewportBounds(ISourceVirtualReality::VREye eye, int* pnX, int* pnY, int* pnWidth, int* pnHeight);
 
     Vector2D GetBufferSize();
+
+    // Input handling
+    void PollInput();
+    bool IsButtonPressed(const char* actionName);
+    bool WasButtonPressed(const char* actionName);
+    bool WasButtonReleased(const char* actionName);
+    float GetAnalogValue(const char* actionName);
 
 private:
     // OpenXR Resources
@@ -122,6 +132,9 @@ private:
     uint32_t m_vkQueueFamilyIndex;
 
     uint32_t m_currentRenderBufferIndex;
+
+    // Input system
+    COpenXRInputManager* m_inputManager;
 };
 
 static ConVar vr_quat_x_sign("vr_quat_x_sign", "1", FCVAR_ARCHIVE, "Sign for X quaternion component (0=negative, 1=positive)");
