@@ -131,6 +131,8 @@ private:
 	Vector			m_PlayerTorsoOrigin;
 	Vector			m_PlayerLastMovement;
 
+	Vector			m_PrevHmdPosition;
+
 	// The player's current view angles/pos in the world.
 	QAngle			m_PlayerViewAngle;
 	Vector			m_PlayerViewOrigin;
@@ -147,6 +149,8 @@ private:
 	int				m_iAlignTorsoAndViewToWeaponCountdown;
 
 	bool			m_bMotionUpdated;
+
+	bool			m_bRunYet;
 
 	RTime32			m_rtLastMotionSample;
 

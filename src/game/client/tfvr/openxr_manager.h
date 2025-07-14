@@ -59,11 +59,13 @@ public:
 
     VMatrix GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye eye);
 
-    VMatrix GetMideyePose();
+    VMatrix GetMideyePose() const;
 
     void GetViewportBounds(ISourceVirtualReality::VREye eye, int* pnX, int* pnY, int* pnWidth, int* pnHeight);
 
     Vector2D GetBufferSize();
+
+    void GetHMDInChaperone(class Vector &origin, QAngle &angles) const;
 
     // Input handling
     void PollInput();

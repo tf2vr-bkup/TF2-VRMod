@@ -508,7 +508,7 @@ bool COpenXRManager::GetEyeViewData(VRViewData_t eyeData[2])
         return false;
     }
 
-    float scale = vr_position_scale ? vr_position_scale->GetFloat() : 1.0f;
+    float scale = METERS_TO_GAME_UNITS;
 
     // Get player position and base camera angles
     C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
@@ -924,12 +924,18 @@ VMatrix COpenXRManager::GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye ey
     return result;
 }
 
-VMatrix COpenXRManager::GetMideyePose()
+VMatrix COpenXRManager::GetMideyePose() const
 {
 	if (!IsActive())
 	    return VMatrix();
 
     return ToSourceCoordinateSystem(m_headLocation.pose);
+}
+
+void COpenXRManager::GetHMDInChaperone(class Vector& origin, QAngle& angles) const
+{
+    origin = GetMideyePose().GetTranslation();
+    MatrixToAngles(GetMideyePose(), angles);
 }
 
 void COpenXRManager::GetViewportBounds(ISourceVirtualReality::VREye eye, int* pnX, int* pnY, int* pnWidth, int* pnHeight)

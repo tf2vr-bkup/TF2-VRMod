@@ -843,6 +843,9 @@ IMPLEMENT_SERVERCLASS_ST( CTFPlayer, DT_TFPlayer )
 	SendPropInt( SENDINFO( m_iPlayerSkinOverride ) ),
 	SendPropBool( SENDINFO( m_bViewingCYOAPDA ) ),
 	SendPropBool( SENDINFO( m_bRegenerating ) ),
+
+	// VR Related
+	SendPropVector(SENDINFO(m_roomscaleOffset), -1, SPROP_CHANGES_OFTEN | SPROP_NOSCALE),
 END_SEND_TABLE()
 
 // -------------------------------------------------------------------------------- //
@@ -3192,6 +3195,9 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
 			m_flNextAllowTauntRemapInputTime = gpGlobals->curtime + flSceneDuration;
 		}
 	}
+
+	m_headInPlayerA = ucmd->playerToHmdAngles;
+    m_headInPlayerO = ucmd->playerToHmdOrigin;
 }
 
 //-----------------------------------------------------------------------------
@@ -3499,6 +3505,13 @@ CON_COMMAND_F( verifyloadout, "Cause the server to verify the player's items on 
 	pPlayer->VerifySOCache();
 }
 #endif // DEBUG
+
+CON_COMMAND(tfvr_recalibrate_view, "Recalibrate VR view")
+{
+	CTFPlayer *player = ToTFPlayer(UTIL_GetCommandClient());
+	if (player)
+		player->RecalibrateView();
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -23087,4 +23100,20 @@ void CTFPlayer::ScriptEquipWearableViewModel( HSCRIPT hWearableViewModel )
 void CTFPlayer::ScriptStunPlayer( float flTime, float flReductionAmount, int iStunFlags /* = TF_STUN_MOVEMENT */, HSCRIPT hAttacker /* = NULL */ )
 {
 	m_Shared.StunPlayer( flTime, flReductionAmount, iStunFlags, ScriptToEntClass< CTFPlayer >( hAttacker ) );
+}
+
+void CTFPlayer::RecalibrateView()
+{
+	Log("Server: recalibrating view\n");
+	// apply HMD yaw to the player
+	QAngle angles = GetAbsAngles();
+	angles[YAW] += m_headInPlayerA[YAW];
+	m_headInPlayerA[YAW] = 0;
+
+	m_roomscaleOffset = vec3_origin;
+
+	engine->ClientCommand(edict(), "tfvr_cl_recalibrate_view\n");
+
+	// use teleport to properly apply new player angles
+	Teleport(nullptr, &angles, nullptr);
 }

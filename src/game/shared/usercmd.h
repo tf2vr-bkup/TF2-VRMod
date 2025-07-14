@@ -43,6 +43,9 @@ public:
 		command_number = 0;
 		tick_count = 0;
 		viewangles.Init();
+		postFullBodyIKDeltaOrigin.Init();
+		playerToHmdOrigin.Init();
+		playerToHmdAngles.Init();
 		forwardmove = 0.0f;
 		sidemove = 0.0f;
 		upmove = 0.0f;
@@ -71,6 +74,9 @@ public:
 		command_number		= src.command_number;
 		tick_count			= src.tick_count;
 		viewangles			= src.viewangles;
+		postFullBodyIKDeltaOrigin = src.postFullBodyIKDeltaOrigin;
+		playerToHmdOrigin = src.playerToHmdOrigin;
+		playerToHmdAngles = src.playerToHmdAngles;
 		forwardmove			= src.forwardmove;
 		sidemove			= src.sidemove;
 		upmove				= src.upmove;
@@ -107,6 +113,9 @@ public:
 		CRC32_ProcessBuffer( &crc, &command_number, sizeof( command_number ) );
 		CRC32_ProcessBuffer( &crc, &tick_count, sizeof( tick_count ) );
 		CRC32_ProcessBuffer( &crc, &viewangles, sizeof( viewangles ) );    
+		CRC32_ProcessBuffer( &crc, &postFullBodyIKDeltaOrigin, sizeof( postFullBodyIKDeltaOrigin ) );
+		CRC32_ProcessBuffer( &crc, &playerToHmdOrigin, sizeof( playerToHmdOrigin ) );
+		CRC32_ProcessBuffer( &crc, &playerToHmdAngles, sizeof( playerToHmdAngles ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
 		CRC32_ProcessBuffer( &crc, &sidemove, sizeof( sidemove ) );      
 		CRC32_ProcessBuffer( &crc, &upmove, sizeof( upmove ) );         
@@ -141,6 +150,12 @@ public:
 	
 	// Player instantaneous view angles.
 	QAngle	viewangles;     
+	
+	// HMD Tracking
+	Vector	postFullBodyIKDeltaOrigin;
+	Vector	playerToHmdOrigin;
+	QAngle	playerToHmdAngles;
+	
 	// Intended velocities
 	//	forward velocity.
 	float	forwardmove;   

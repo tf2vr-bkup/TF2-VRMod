@@ -144,7 +144,9 @@ void CPlayerMove::SetupMove( CBasePlayer *player, CUserCmd *ucmd, IMoveHelper *p
 
 	// Prepare the usercmd fields
 	move->m_nImpulseCommand		= ucmd->impulse;	
-	move->m_vecViewAngles		= ucmd->viewangles;
+	
+	//move->m_vecViewAngles		= ucmd->viewangles;
+	move->m_vecViewAngles = player->EyeAngles();
 
 	CBaseEntity *pMoveParent = player->GetMoveParent();
 	if (!pMoveParent)
@@ -174,6 +176,11 @@ void CPlayerMove::SetupMove( CBasePlayer *player, CUserCmd *ucmd, IMoveHelper *p
 		move->m_flSideMove			= ucmd->sidemove;
 		move->m_flUpMove				= ucmd->upmove;
 	}
+
+	// Copy VR fields
+	move->m_postFullBodyIKDeltaOrigin = ucmd->postFullBodyIKDeltaOrigin;
+	//move->m_playerToHmdOrigin = ucmd->playerToHmdOrigin;
+	//move->m_playerToHmdAngles = ucmd->playerToHmdAngles;
 
 	// Prepare remaining fields
 	move->m_flClientMaxSpeed		= player->m_flMaxspeed;

@@ -11,8 +11,8 @@
 #include "c_BaseTFPlayer.h"
 #include "clientmode_commander.h"
 #include "hud_commander_statuspanel.h"
-#include <KeyValues.h>
-#include "commanderoverlaypanel.h"
+#include <KeyValues.hv>
+#include "commanderoerlaypanel.h"
 #include <vgui/IVGui.h>
 #include "cdll_util.h"
 #include "view.h"

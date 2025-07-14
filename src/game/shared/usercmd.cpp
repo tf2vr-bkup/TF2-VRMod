@@ -16,6 +16,40 @@
 // TF2 specific, need enough space for OBJ_LAST items from tf_shareddefs.h
 #define WEAPON_SUBTYPE_BITS	6
 
+template<typename Vec3>
+static void WriteVec3Diff( bf_write *buf, const Vec3 &to, const Vec3 &from )
+{
+	if (to[0] != from[0])
+	{
+		buf->WriteOneBit(1);
+		buf->WriteFloat(to[0]);
+	}
+	else
+	{
+		buf->WriteOneBit(0);
+	}
+
+	if (to[1] != from[1])
+	{
+		buf->WriteOneBit(1);
+		buf->WriteFloat(to[1]);
+	}
+	else
+	{
+		buf->WriteOneBit(0);
+	}
+
+	if (to[2] != from[2])
+	{
+		buf->WriteOneBit(1);
+		buf->WriteFloat(to[2]);
+	}
+	else
+	{
+		buf->WriteOneBit(0);
+	}
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Write a delta compressed user command.
 // Input  : *buf - 
@@ -169,6 +203,10 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 		buf->WriteOneBit( 0 );
 	}
 
+	WriteVec3Diff(buf, to->playerToHmdOrigin, from->playerToHmdOrigin);
+	WriteVec3Diff(buf, to->playerToHmdAngles, from->playerToHmdAngles);
+	WriteVec3Diff(buf, to->postFullBodyIKDeltaOrigin, from->postFullBodyIKDeltaOrigin);
+
 #if defined( HL2_CLIENT_DLL )
 	if ( to->entitygroundcontact.Count() != 0 )
 	{
@@ -187,6 +225,23 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 		buf->WriteOneBit( 0 );
 	}
 #endif
+}
+
+template<typename Vec3>
+static void ReadVec3Diff( bf_read *buf, Vec3 &to )
+{
+	if (buf->ReadOneBit())
+	{
+		to[0] = buf->ReadFloat();
+	}
+	if (buf->ReadOneBit())
+	{
+		to[1] = buf->ReadFloat();
+	}
+	if (buf->ReadOneBit())
+	{
+		to[2] = buf->ReadFloat();
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -276,7 +331,6 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 		}
 	}
 
-
 	move->random_seed = MD5_PseudoRandom( move->command_number ) & 0x7fffffff;
 
 	if ( buf->ReadOneBit() )
@@ -288,6 +342,10 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	{
 		move->mousedy = buf->ReadShort();
 	}
+
+	ReadVec3Diff(buf, move->playerToHmdOrigin);
+	ReadVec3Diff(buf, move->playerToHmdAngles);
+	ReadVec3Diff(buf, move->postFullBodyIKDeltaOrigin);
 
 #if defined( HL2_DLL )
 	if ( buf->ReadOneBit() )

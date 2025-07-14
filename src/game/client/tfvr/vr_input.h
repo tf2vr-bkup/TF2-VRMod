@@ -24,11 +24,14 @@ public:
     void CreateMove(int sequence_number, float input_sample_frametime, bool active) override;
     void ExtraMouseSample(float frametime, bool active) override;
 
+    static void CopyVRPosesToUserCmd(CUserCmd* cmd);
+
 protected:
     // Helper functions for VR input processing
     void ProcessVRControllerInput(CUserCmd* cmd);
     void ProcessVRViewAngles(CUserCmd* cmd);
     void ProcessVRMovement(CUserCmd* cmd);
+    
 };
 
 // Global instances - declared after class definition

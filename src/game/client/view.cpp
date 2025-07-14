@@ -46,6 +46,7 @@
 #include "sourcevr/isourcevirtualreality.h"
 #include "client_virtualreality.h"
 #include "tfvr/openxr_manager.h"
+#include "tfvr/vr_input.h"
 
 #if defined( REPLAY_ENABLED )
 #include "replay/ireplaysystem.h"
@@ -64,6 +65,7 @@
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 #include <tfvr/vr_integration.h>
+#include <c_tf_player.h>
 		  
 void ToolFramework_AdjustEngineViewport( int& x, int& y, int& width, int& height );
 bool ToolFramework_SetupEngineView( Vector &origin, QAngle &angles, float &fov );
@@ -493,7 +495,7 @@ StereoEye_t		CViewRender::GetLastEye() const
 }
 
 
-
+extern bool g_bExtraMouseSample;
 
 // This is called by cdll_client_int to setup view model origins. This has to be done before
 // simulation so entities can access attachment points on view models during simulation.
@@ -501,16 +503,29 @@ void CViewRender::OnRenderStart()
 {
 	VPROF_("CViewRender::OnRenderStart", 2, VPROF_BUDGETGROUP_OTHER_UNACCOUNTED, false, 0);
 
-	if (g_pOpenXRManager)
+	if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
 	{
 		g_pOpenXRManager->BeginFrame();
 		g_pOpenXRManager->UpdateOpenXRViewData();
 	}
 
+	C_TFPlayer *player = dynamic_cast<C_TFPlayer*>(C_BasePlayer::GetLocalPlayer());
+
+	if (player)
+	{
+		// update head poses with the latest poses from SteamVR
+		
+		CUserCmd cmd;
+		CVRInput::CopyVRPosesToUserCmd(&cmd);
+		g_bExtraMouseSample = true;
+		player->ComputeFullBodyIK(&cmd);
+		// player->UpdateHandsInPlayer(&cmd);
+		g_bExtraMouseSample = false;
+		//player->PreRenderUpdatePoses();
+	}
+
     SetUpViews();
 
-	// Adjust mouse sensitivity based upon the current FOV
-	C_BasePlayer *player = C_BasePlayer::GetLocalPlayer();
 	if ( player )
 	{
 		default_fov.SetValue( player->m_iDefaultFOV );
@@ -750,7 +765,7 @@ void CViewRender::SetUpViews()
 		}
 
 		HeadtrackMovementMode_t hmmOverrideMode = g_pClientMode->ShouldOverrideHeadtrackControl();
-		g_ClientVirtualReality.OverrideView( &m_View, &ViewModelOrigin, &ViewModelAngles, hmmOverrideMode );
+		// g_ClientVirtualReality.OverrideView( &m_View, &ViewModelOrigin, &ViewModelAngles, hmmOverrideMode );
 
 		// left and right stereo views should default to being the same as the mono/middle view
 		m_ViewLeft = m_View;
@@ -1233,13 +1248,6 @@ void CViewRender::Render( vrect_t *rect )
 			}
 		}
     }
-
-	if (VRIntegration::IsVRActive())
-	{
-		// Use the main view as a base for our stereo views
-		// RenderStereoViews(m_View, VIEW_CLEAR_COLOR | VIEW_CLEAR_DEPTH, 3);
-	}
-
 
 	// TODO: should these be inside or outside the stereo eye stuff?
 	g_pClientMode->PostRender();

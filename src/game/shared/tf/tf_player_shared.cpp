@@ -14661,6 +14661,30 @@ CTFDroppedWeapon* CTFPlayer::GetDroppedWeaponInRange()
 	return pDroppedWeapon;
 }
 
+float CTFPlayer::VRHeightOffset()
+{
+	float vecViewZ = VEC_VIEW.z;
+	float vecViewOffsetZ = GetViewOffset().z;
+	return vecViewOffsetZ;
+}
+
+Vector CTFPlayer::EyePosition()
+{
+	Vector rotatedLocalHead;
+	QAngle angles = GetAbsAngles();
+	Vector basePos = GetAbsOrigin() + Vector(0, 0, VRHeightOffset());
+	Vector localHeadPos = m_headInPlayerO - m_roomscaleOffset;
+	VectorRotate(localHeadPos, angles, rotatedLocalHead);
+	return basePos + rotatedLocalHead;
+}
+
+const QAngle &CTFPlayer::EyeAngles()
+{
+	m_cachedEyeAngles = BaseClass::EyeAngles();
+	m_cachedEyeAngles += m_headInPlayerA;
+	return m_cachedEyeAngles;
+}
+
 
 //-----------------------------------------------------------------------------
 // Purpose: Returns true if player is inspecting

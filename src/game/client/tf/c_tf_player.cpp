@@ -115,6 +115,8 @@
 #include "soundstartparams.h"
 #include "SoundEmitterSystem/isoundemittersystembase.h"
 
+#include "tfvr/openxr_manager.h"
+
 
 #if defined( REPLAY_ENABLED )
 #include "replay/ienginereplay.h"
@@ -219,6 +221,14 @@ ConVar tf_taunt_first_person( "tf_taunt_first_person", "0", FCVAR_NONE, "1 = tau
 
 ConVar tf_romevision_opt_in( "tf_romevision_opt_in", "0", FCVAR_ARCHIVE, "Enable Romevision in Mann vs. Machine mode when available." );
 ConVar tf_romevision_skip_prompt( "tf_romevision_skip_prompt", "0", FCVAR_ARCHIVE, "If nonzero, skip the prompt about sharing Romevision." );
+
+CON_COMMAND(tfvr_cl_recalibrate_view, "Recalibrate the VR view")
+{
+	if (C_TFPlayer *vrPlayer = dynamic_cast<C_TFPlayer *>(C_BasePlayer::GetLocalPlayer()))
+	{
+		vrPlayer->RecalibrateView();
+	}
+}
 
 
 #define BDAY_HAT_MODEL		"models/effects/bday_hat.mdl"
@@ -536,6 +546,8 @@ IMPLEMENT_CLIENTCLASS_DT_NOBASE( C_TFRagdoll, DT_TFRagdoll, CTFRagdoll )
 	RecvPropFloat( RECVINFO( m_flHeadScale ) ),
 	RecvPropFloat( RECVINFO( m_flTorsoScale ) ),
 	RecvPropFloat( RECVINFO( m_flHandScale ) ),
+
+
 END_RECV_TABLE()
 
 //-----------------------------------------------------------------------------
@@ -3736,7 +3748,6 @@ IMPLEMENT_CLIENTCLASS_DT( C_TFPlayer, DT_TFPlayer, CTFPlayer )
 
 	RecvPropBool( RECVINFO( m_bUseBossHealthBar ) ),
 
-	RecvPropBool( RECVINFO( m_bUsingVRHeadset ) ),
 
 	RecvPropBool( RECVINFO( m_bForcedSkin ) ),
 	RecvPropInt( RECVINFO( m_nForcedSkin ) ),
@@ -3756,6 +3767,12 @@ IMPLEMENT_CLIENTCLASS_DT( C_TFPlayer, DT_TFPlayer, CTFPlayer )
 	RecvPropInt( RECVINFO( m_iPlayerSkinOverride ) ),
 	RecvPropBool( RECVINFO( m_bViewingCYOAPDA ) ),
 	RecvPropBool( RECVINFO( m_bRegenerating ) ),
+
+	// VR Related
+	RecvPropBool( RECVINFO( m_bUsingVRHeadset ) ),
+	RecvPropVector(RECVINFO(m_roomscaleOffset)),
+
+
 END_RECV_TABLE()
 
 
@@ -3776,6 +3793,7 @@ BEGIN_PREDICTION_DATA( C_TFPlayer )
 	DEFINE_PRED_FIELD( m_flVehicleReverseTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_flInspectTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_flHelpmeButtonPressTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_roomscaleOffset, FIELD_VECTOR, FTYPEDESC_INSENDTABLE ),
 END_PREDICTION_DATA()
 
 // ------------------------------------------------------------------------------------------ //
@@ -3784,6 +3802,7 @@ END_PREDICTION_DATA()
 
 C_TFPlayer::C_TFPlayer() : 
 	m_iv_angEyeAngles( "C_TFPlayer::m_iv_angEyeAngles" ),
+	m_iv_roomscaleOffset( "C_TFPlayer::m_roomscaleOffset" ),
 	m_mapOverheadEffects( DefLessFunc( const char * ) )
 {
 	m_pAttributes = this;
@@ -3941,6 +3960,13 @@ C_TFPlayer::C_TFPlayer() :
 	m_pPasstimeAskForBallReticle = NULL;
 
 	m_iPlayerSkinOverride = 0;
+
+	m_headInPlayerO = vec3_origin;
+    m_headInPlayerA = vec3_angle;
+	m_roomscaleOffset = vec3_origin;
+	m_localRoomscaleOffset = vec3_origin;
+
+	AddVar(&m_roomscaleOffset, &m_iv_roomscaleOffset, LATCH_SIMULATION_VAR);
 
 	ListenForGameEvent( "player_hurt" );
 	ListenForGameEvent( "hltv_changed_mode" );
@@ -6483,6 +6509,83 @@ void C_TFPlayer::AvoidPlayers( CUserCmd *pCmd )
 	//Msg( "Pforwardmove=%f, sidemove=%f\n", pCmd->forwardmove, pCmd->sidemove );
 }
 
+extern bool g_bExtraMouseSample;
+ConVar tfvr_roomscale_movement("tfvr_roomscale_movement", "1");
+ConVar tfvr_roomscale_debug("tfvr_roomscale_debug", "0");
+
+void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
+{
+	if (!m_isCalibrated)
+	{
+		Log("Calibrating VR base position\n");
+		m_calibratedHmdXYPosition = g_pOpenXRManager->GetMideyePose().GetTranslation();
+		m_calibratedHmdXYPosition.z = 0; // cancel out the original vertical position so we don't correct for it
+
+		QAngle tempYawContainer;
+		MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), tempYawContainer);
+		m_calibratedHmdYaw = tempYawContainer[YAW];
+		m_isCalibrated = true;
+	}
+
+	// world here is aligned with the identity rotation and has origin the player spawn;
+	Vector currentHmdInWorldO;
+	QAngle currentHmdInWorldA;
+
+	const Vector currentHmdPosInOriginal = g_pOpenXRManager->GetMideyePose().GetTranslation() - m_calibratedHmdXYPosition;
+
+	VectorRotate(currentHmdPosInOriginal, QAngle(0, -m_calibratedHmdYaw, 0), currentHmdInWorldO);
+
+	MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), currentHmdInWorldA);
+	currentHmdInWorldA[YAW] -= m_calibratedHmdYaw;
+
+	// For now, simplest full body roomscale...
+	// Snap the player to the desired changes... Meaning that head in player x_y and all angles are 0
+	// also meaning that the player rotation and x_y origin will follow the headset exactly
+
+	if (!g_bExtraMouseSample)
+	{
+		// Use local accumulation with periodic server correction
+		Vector deltaHeadOrigin = currentHmdInWorldO - m_localRoomscaleOffset;
+		deltaHeadOrigin.z = currentHmdInWorldO.z;
+
+		m_headInPlayerO = currentHmdInWorldO;
+		m_headInPlayerA = currentHmdInWorldA;
+
+		pCmd->playerToHmdOrigin = m_headInPlayerO;
+		pCmd->playerToHmdAngles = m_headInPlayerA;
+		if (tfvr_roomscale_movement.GetBool())
+			pCmd->postFullBodyIKDeltaOrigin = deltaHeadOrigin;
+		pCmd->postFullBodyIKDeltaOrigin.z = 0;
+
+		// Apply client-side prediction - accumulate the movement locally
+		m_localRoomscaleOffset += deltaHeadOrigin;
+
+		// Periodically correct based on server offset (smooth correction to avoid snapping)
+		Vector serverOffset = m_roomscaleOffset;
+		Vector offsetError = serverOffset - m_localRoomscaleOffset;
+		float errorMagnitude = offsetError.Length2D();
+		
+		// Only apply correction if error is significant and gradually
+		if (errorMagnitude > 1.0f) // 1 unit threshold
+		{
+			float correctionRate = MIN(0.1f, errorMagnitude * 0.01f); // Smooth correction
+			m_localRoomscaleOffset += offsetError * correctionRate;
+		}
+
+		DevMsg("Client Roomscale: Input=%.2f,%.2f LocalOffset=%.2f,%.2f ServerOffset=%.2f,%.2f Error=%.2f\n", 
+			deltaHeadOrigin.x, deltaHeadOrigin.y,
+			m_localRoomscaleOffset.x, m_localRoomscaleOffset.y,
+			serverOffset.x, serverOffset.y,
+			errorMagnitude);
+	}
+	else
+	{
+		// However, if we are in extraMouseSample, then we've likely received an update from the hmd between ticks
+		// Update m_headInPlayerO so that the view is correctly modified for frames rendered in between client <-> server updates
+		m_headInPlayerO = currentHmdInWorldO;
+		m_headInPlayerA = currentHmdInWorldA;
+	}
+}
 
 
 //-----------------------------------------------------------------------------
@@ -6591,11 +6694,14 @@ bool C_TFPlayer::CreateMove( float flInputSampleTime, CUserCmd *pCmd )
 
 	BaseClass::CreateMove( flInputSampleTime, pCmd );
 
+	ComputeFullBodyIK(pCmd);
+
 	// Don't avoid players if in the middle of a high five. This prevents high-fivers from becoming separated.
 	if ( !bInTaunt || ( !m_bIsReadyToHighFive && !CTFPlayerSharedUtils::ConceptIsPartnerTaunt( m_Shared.m_iTauntConcept ) ) )
 	{
 		AvoidPlayers( pCmd );
 	}
+
 
 	return bNoTaunt;
 }
@@ -7169,21 +7275,6 @@ float C_TFPlayer::GetMinFOV() const
 {
 	// Min FOV for Sniper Rifle
 	return 20;
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-//-----------------------------------------------------------------------------
-const QAngle& C_TFPlayer::EyeAngles()
-{
-	if ( IsLocalPlayer() && g_nKillCamMode == OBS_MODE_NONE )
-	{
-		return BaseClass::EyeAngles();
-	}
-	else
-	{
-		return m_angEyeAngles;
-	}
 }
 
 //-----------------------------------------------------------------------------
@@ -9484,6 +9575,8 @@ void C_TFPlayer::CalcView( Vector &eyeOrigin, QAngle &eyeAngles, float &zNear, f
 {
 	HandleTaunting();
 	BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
+	eyeOrigin = EyePosition();
+	eyeAngles = EyeAngles();
 }
 
 void SelectDisguise( int iClass, int iTeam );
@@ -10747,7 +10840,6 @@ bool C_TFPlayer::ShouldPlayEffect( EBonusEffectFilter_t filter, const C_TFPlayer
 	};
 }
 
-
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
@@ -11631,6 +11723,14 @@ void C_TFPlayer::ClientAdjustVOPitch( int& pitch )
 			pitch *= flVoicePitchScale;
 		}
 	}
+}
+
+void C_TFPlayer::RecalibrateView()
+{
+	Log("Client recalibrating view\n");
+	m_isCalibrated = false;
+	m_roomscaleOffset = vec3_origin;
+	m_iv_roomscaleOffset.Reset();
 }
 
 

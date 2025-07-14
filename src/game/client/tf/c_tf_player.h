@@ -159,7 +159,8 @@ public:
 
 	virtual float GetMinFOV() const;
 
-	virtual const QAngle& EyeAngles();
+	virtual Vector EyePosition() override;
+	const QAngle &EyeAngles() override;
 
 	bool	ShouldDrawSpyAsDisguised();
 	virtual int GetBody( void );
@@ -304,6 +305,8 @@ public:
 
 	virtual void OverrideView( CViewSetup *pSetup );
 
+	void			RecalibrateView();
+
 	bool			CanAirDash( void ) const;
 	bool			CanGetWet() const;
 
@@ -340,6 +343,9 @@ public:
 	// ITFMvMBossProgressUser
 	virtual const char* GetBossProgressImageName() const OVERRIDE;
 	virtual float GetBossStatusProgress() const OVERRIDE;
+
+	// VR Related
+	void			ComputeFullBodyIK( CUserCmd *pCmd );
 
 protected:
 	CNetworkVarEmbedded(	CAttributeContainerPlayer, m_AttributeManager );
@@ -577,6 +583,24 @@ private:
 	bool				m_bOldCustomModelVisible;
 
 	CHandle< C_BaseCombatWeapon > m_hOldActiveWeapon;
+
+public:
+
+	// VR Related
+	bool				m_isCalibrated = false;
+	Vector				m_calibratedHmdXYPosition;
+	float				m_calibratedHmdYaw;
+	Vector				m_roomscaleOffset;
+	Vector				m_localRoomscaleOffset;
+	CInterpolatedVar<Vector> m_iv_roomscaleOffset;
+	Vector				m_headInPlayerO;
+	QAngle				m_headInPlayerA;
+
+	QAngle				m_cachedEyeAngles;
+
+	float               VRHeightOffset();
+
+private:
 
 	// Look At
 	/*
@@ -1128,6 +1152,7 @@ private:
 	CUtlVector< CHandle< CEconWearable > > m_hClientWearables;	// wearables on the ragdoll that are "following" it
 
 	bool  m_bCreatedWhilePlaybackSkipping;
+	
 };
 
 #endif // C_TF_PLAYER_H

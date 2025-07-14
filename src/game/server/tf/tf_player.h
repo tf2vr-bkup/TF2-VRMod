@@ -1586,6 +1586,22 @@ public:
 
 	virtual bool BCanCallVote() OVERRIDE;
 	bool m_bFirstSpawnAndCanCallVote = false;
+
+	// Begin VR
+public:
+	Vector 					m_headInPlayerO;
+	QAngle                  m_headInPlayerA;
+
+	QAngle                  m_cachedEyeAngles;
+
+	CNetworkVar(Vector, m_roomscaleOffset);
+
+	virtual Vector			EyePosition();			// position of eyes
+    const QAngle			&EyeAngles();
+
+	void					RecalibrateView();
+
+	float					VRHeightOffset();
 };
 
 //-----------------------------------------------------------------------------

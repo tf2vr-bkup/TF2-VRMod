@@ -436,8 +436,6 @@ private:
 
 	void			DrawMonitors( const CViewSetup &cameraView );
 
-	void			RenderStereoViews(const CViewSetup& baseView, int nClearFlags, int whatToDraw);
-
 	bool			DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_PointCamera *pCameraEnt, const CViewSetup &cameraView, C_BasePlayer *localPlayer, 
 						int x, int y, int width, int height );
 

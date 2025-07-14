@@ -28,53 +28,50 @@ CVRInput::~CVRInput()
 {
 }
 
+void CVRInput::CopyVRPosesToUserCmd(CUserCmd *cmd)
+{
+    g_pOpenXRManager->GetHMDInChaperone(cmd->playerToHmdOrigin, cmd->playerToHmdAngles);
+}
+
 void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, bool active)
 {
     // Get the command for this sequence
     CUserCmd* cmd = &m_pCommands[sequence_number % MULTIPLAYER_BACKUP];
     CVerifiedUserCmd* pVerified = &m_pVerifiedCommands[sequence_number % MULTIPLAYER_BACKUP];
     
-    DevMsg("VR CreateMove: Starting with sequence %d, active=%d\n", sequence_number, active);
-    
     // Let base input system handle everything first
     CInput::CreateMove(sequence_number, input_sample_frametime, active);
-    
-    DevMsg("VR CreateMove: After base input - forward=%.2f side=%.2f buttons=%d\n", 
-           cmd->forwardmove, cmd->sidemove, cmd->buttons);
     
     // Only process VR input if active
     if (active && g_pOpenXRManager && g_pOpenXRManager->IsActive())
     {
-        DevMsg("VR CreateMove: Processing VR input\n");
-        
         // Process VR-specific input
         ProcessVRControllerInput(cmd);
         
         // Only process VR view angles if explicitly enabled
         if (tfvr_use_hmd_angles.GetBool())
         {
-            ProcessVRViewAngles(cmd);
+            // ProcessVRViewAngles(cmd);
         }
         
         // Process VR movement
         ProcessVRMovement(cmd);
-        
-        DevMsg("VR CreateMove: After VR input - forward=%.2f side=%.2f buttons=%d\n", 
-               cmd->forwardmove, cmd->sidemove, cmd->buttons);
     }
 
+    CopyVRPosesToUserCmd(cmd);
+
     // Let the game mode process the command
-    if (g_pClientMode)
-    {
-        g_pClientMode->CreateMove(input_sample_frametime, cmd);
-        DevMsg("VR CreateMove: After game mode - forward=%.2f side=%.2f buttons=%d\n", 
-               cmd->forwardmove, cmd->sidemove, cmd->buttons);
-    }
+    //if (g_pClientMode)
+    //{
+    //    g_pClientMode->CreateMove(input_sample_frametime, cmd);
+    //}
 
     // Store the command for verification
     pVerified->m_cmd = *cmd;
     pVerified->m_crc = cmd->GetChecksum();
 }
+
+bool g_bExtraMouseSample = false;
 
 void CVRInput::ExtraMouseSample(float frametime, bool active)
 {
@@ -159,21 +156,21 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd)
     float moveX = g_pOpenXRManager->GetAnalogValue("move_x");
     float moveY = g_pOpenXRManager->GetAnalogValue("move_y");
 
-    DevMsg("VR Movement: Raw values - x=%.2f y=%.2f\n", moveX, moveY);
+    // DevMsg("VR Movement: Raw values - x=%.2f y=%.2f\n", moveX, moveY);
 
     // Apply deadzone
     float deadzone = tfvr_thumbstick_deadzone.GetFloat();
     if (fabs(moveX) < deadzone) moveX = 0;
     if (fabs(moveY) < deadzone) moveY = 0;
 
-    DevMsg("VR Movement: After deadzone - x=%.2f y=%.2f\n", moveX, moveY);
+    //DevMsg("VR Movement: After deadzone - x=%.2f y=%.2f\n", moveX, moveY);
 
     // Apply sensitivity
     float sensitivity = tfvr_move_sensitivity.GetFloat();
     moveX *= sensitivity;
     moveY *= sensitivity;
 
-    DevMsg("VR Movement: After sensitivity - x=%.2f y=%.2f\n", moveX, moveY);
+    //DevMsg("VR Movement: After sensitivity - x=%.2f y=%.2f\n", moveX, moveY);
 
     // Get current movement values before modification
     float oldForward = cmd->forwardmove;
@@ -183,7 +180,7 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd)
     float forwardSpeed = cl_forwardspeed.GetFloat();
     float sideSpeed = cl_sidespeed.GetFloat();
     
-    DevMsg("VR Movement: Speed values - forward=%.2f side=%.2f\n", forwardSpeed, sideSpeed);
+    // DevMsg("VR Movement: Speed values - forward=%.2f side=%.2f\n", forwardSpeed, sideSpeed);
 
     // Add VR movement to existing values
     cmd->forwardmove += moveY * forwardSpeed;
@@ -195,6 +192,6 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd)
     cmd->sidemove = clamp(cmd->sidemove, -maxSpeed, maxSpeed);
 
     // Debug output for movement values
-    DevMsg("VR Movement: Final values - forward=%.2f->%.2f side=%.2f->%.2f\n", 
-           oldForward, cmd->forwardmove, oldSide, cmd->sidemove);
+    //DevMsg("VR Movement: Final values - forward=%.2f->%.2f side=%.2f->%.2f\n", 
+    //       oldForward, cmd->forwardmove, oldSide, cmd->sidemove);
 } 

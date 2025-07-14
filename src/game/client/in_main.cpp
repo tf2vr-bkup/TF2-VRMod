@@ -26,6 +26,8 @@
 #include <voice_status.h>
 #include "cam_thirdperson.h"
 
+#include "tfvr/openxr_manager.h"
+
 #ifdef SIXENSE
 #include "sixense/in_sixense.h"
 #endif
@@ -1103,6 +1105,12 @@ void CInput::ExtraMouseSample( float frametime, bool active )
 
 			cmd->viewangles = newViewangles;
 			prediction->SetLocalViewAngles( cmd->viewangles );
+
+			cmd->playerToHmdOrigin = g_pOpenXRManager->GetMideyePose().GetTranslation();
+
+            QAngle rotation;
+            MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), rotation);
+            cmd->playerToHmdAngles = rotation;
 		}
 	}
 
@@ -1257,6 +1265,12 @@ void CInput::CreateMove ( int sequence_number, float input_sample_frametime, boo
 				cmd->sidemove = newMotion[1];
 				cmd->upmove = newMotion[2];
 				cmd->viewangles = newViewangles;
+
+				cmd->playerToHmdOrigin = g_pOpenXRManager->GetMideyePose().GetTranslation();
+
+				QAngle rotation;
+                MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), rotation);
+                cmd->playerToHmdAngles = rotation;
 			}
 			else
 			{
