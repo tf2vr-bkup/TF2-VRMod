@@ -23104,6 +23104,8 @@ void CTFPlayer::ScriptStunPlayer( float flTime, float flReductionAmount, int iSt
 
 void CTFPlayer::RecalibrateView()
 {
+	//TODO: Need absolute yaw rather than calibrated hmd yaw
+
 	Log("Server: recalibrating view\n");
 	// apply HMD yaw to the player
 	QAngle angles = GetAbsAngles();
@@ -23112,8 +23114,8 @@ void CTFPlayer::RecalibrateView()
 
 	m_roomscaleOffset = vec3_origin;
 
-	engine->ClientCommand(edict(), "tfvr_cl_recalibrate_view\n");
+	// engine->ClientCommand(edict(), "tfvr_cl_recalibrate_view\n");
 
 	// use teleport to properly apply new player angles
-	Teleport(nullptr, &angles, nullptr);
+	// Teleport(nullptr, &angles, nullptr);
 }

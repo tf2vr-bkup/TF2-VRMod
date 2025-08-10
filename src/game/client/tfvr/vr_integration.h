@@ -20,7 +20,6 @@ namespace VRIntegration
     bool IsVRActive();
     bool BeginFrame();
     bool EndFrame();
-    bool GetEyeViewData(VRViewData_t eyeData[2]);
     ITexture* GetEyeRenderTarget(int eye);
     ITexture* GetSharedRenderTarget();
 }

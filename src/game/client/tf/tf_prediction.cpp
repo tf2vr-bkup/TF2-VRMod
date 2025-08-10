@@ -14,6 +14,8 @@
 static CMoveData g_MoveData;
 CMoveData *g_pMoveData = &g_MoveData;
 
+// VR rotation control
+extern ConVar tfvr_hmd_drive_rotation;
 
 class CTFPrediction : public CPrediction
 {

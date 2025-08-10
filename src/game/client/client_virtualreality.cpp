@@ -837,7 +837,9 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
     //Override rotation, disabled as it's done later per the weapon
     //g_pVRManager->OverrideWeaponMatrix(m_WorldFromWeapon); 
 
-    MatrixAngles(m_WorldFromWeapon.As3x4(), *pNewAngles);
+    //MatrixAngles(m_WorldFromWeapon.As3x4(), *pNewAngles);
+	// *pNewAngles = pPlayer->EyeAngles();
+	*pNewAngles = QAngle(0, curAngles.y, 0);
 
     // Restore the translation.
     m_WorldFromWeapon.SetTranslation(vWeaponOrigin);
@@ -846,7 +848,7 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
     VMatrix mideyeFromWorld = m_WorldFromMidEye.InverseTR();
     VMatrix newMidEyeFromWeapon = mideyeFromWorld * m_WorldFromWeapon;
     newMidEyeFromWeapon.SetTranslation(Vector(0.0f, 0.0f, 0.0f));;
-    *pNewMotion = newMidEyeFromWeapon * curMotion;
+    //*pNewMotion = newMidEyeFromWeapon * curMotion;
 
 	// Whatever position is already here (set up by OverrideView) needs to be preserved.
 	/*

@@ -1189,7 +1189,12 @@ bool C_BasePlayer::CreateMove( float flInputSampleTime, CUserCmd *pCmd )
 		if ( pVehicle )
 		{
 			pVehicle->UpdateViewAngles( this, pCmd );
-			engine->SetViewAngles( pCmd->viewangles );
+			// Don't override VR rotation if it's enabled
+			extern ConVar tfvr_hmd_drive_rotation;
+			if (!UseVR() || !tfvr_hmd_drive_rotation.GetBool())
+			{
+				engine->SetViewAngles( pCmd->viewangles );
+			}
 		}
 	}
 	else 
@@ -1219,7 +1224,12 @@ bool C_BasePlayer::CreateMove( float flInputSampleTime, CUserCmd *pCmd )
 		{
 			// Stomp the new viewangles with old ones
 			pCmd->viewangles = m_vecOldViewAngles;
-			engine->SetViewAngles( pCmd->viewangles );
+			// Don't override VR rotation if it's enabled
+			extern ConVar tfvr_hmd_drive_rotation;
+			if (!UseVR() || !tfvr_hmd_drive_rotation.GetBool())
+			{
+				engine->SetViewAngles( pCmd->viewangles );
+			}
 		}
 		else
 		{

@@ -631,6 +631,7 @@ public:
 	void SetUseBossHealthBar( bool bUseBossHealthBar ) { m_bUseBossHealthBar = bUseBossHealthBar; }
 
 	void SetUsingVRHeadset( bool bState ){ m_bUsingVRHeadset = bState; }
+	bool IsUsingVRHeadset( void ){ return m_bUsingVRHeadset; }
 
 	static bool m_bTFPlayerNeedsPrecache;
 

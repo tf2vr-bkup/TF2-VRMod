@@ -1,6 +1,7 @@
 #include "cbase.h"
 #include "vr_input.h"
 #include "in_buttons.h"
+#include "prediction.h"
 #include "mathlib/mathlib.h"
 #include "iinput.h"
 #include "iclientmode.h"
@@ -58,7 +59,7 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
         ProcessVRMovement(cmd);
     }
 
-    CopyVRPosesToUserCmd(cmd);
+    // CopyVRPosesToUserCmd(cmd);
 
     // Let the game mode process the command
     //if (g_pClientMode)
@@ -75,14 +76,52 @@ bool g_bExtraMouseSample = false;
 
 void CVRInput::ExtraMouseSample(float frametime, bool active)
 {
-    // Only disable mouse sampling if VR is active AND we're using HMD angles
-    if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_use_hmd_angles.GetBool())
-    {
-        return;
-    }
+    CUserCmd dummy;
+    CUserCmd *cmd = &dummy;
 
-    // Otherwise, allow normal mouse input
     CInput::ExtraMouseSample(frametime, active);
+
+   cmd->Reset();
+
+   QAngle viewangles;
+   engine->GetViewAngles(viewangles);
+   QAngle originalViewangles = viewangles;
+
+   if (active)
+   {
+       // Process VR-specific input
+       ProcessVRControllerInput(cmd);
+        
+       // Only process VR view angles if explicitly enabled
+       if (tfvr_use_hmd_angles.GetBool())
+       {
+           // ProcessVRViewAngles(cmd);
+       }
+       
+       // Process VR movement
+       ProcessVRMovement(cmd);
+   }
+
+   // Retreive view angles from engine ( could have been set in IN_AdjustAngles above )
+   engine->GetViewAngles(viewangles);
+
+   cmd->buttons = GetButtonBits(0);
+
+   VectorCopy(m_angPreviousViewAngles, cmd->viewangles);
+
+   //CopyVRPosesToUserCmd(cmd);
+
+   g_bExtraMouseSample = true;
+
+   // Let the move manager override anything it wants to.
+   if (g_pClientMode->CreateMove(frametime, cmd))
+   {
+       // Get current view angles after the client mode tweaks with it
+       //engine->SetViewAngles( cmd->viewangles );
+       prediction->SetLocalViewAngles(cmd->viewangles);
+   }
+
+   g_bExtraMouseSample = false;
 }
 
 void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)

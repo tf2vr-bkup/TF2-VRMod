@@ -1495,7 +1495,7 @@ void CTFPlayerShared::SyncConditions( int nPreviousConditions, int nNewCondition
 			{
 				OnConditionRemoved((ETFCond)(nBaseCondBit + i));
 			}
-			OnConditionAdded((ETFCond)(nBaseCondBit + i));
+			OnConditionAdded( (ETFCond)(nBaseCondBit + i) );
 		}
 		else
 		{
@@ -2574,7 +2574,7 @@ void CTFPlayerShared::ConditionGameRulesThink( void )
 
 								// Add this to the one-second-healing counter
 								m_aHealers[i].flHealedLastSecond += flHealAmount;
-					
+								
 								HandleRageGain( m_pOuter, kRageBuffFlag_OnMedicHealingReceived, flHealAmount / 2.f, 1.0f );
 								
 								float flRage = flHealAmount;
@@ -2898,7 +2898,7 @@ void CTFPlayerShared::ConditionGameRulesThink( void )
 				{
 					flBurnDamage *= tf_afterburn_mult_second_degree;
 				}
-		
+	
 				// Halloween Spell
 				if ( TF_IsHolidayActive( kHoliday_HalloweenOrFullMoon ) )
 				{
@@ -14675,13 +14675,30 @@ Vector CTFPlayer::EyePosition()
 	Vector basePos = GetAbsOrigin() + Vector(0, 0, VRHeightOffset());
 	Vector localHeadPos = m_headInPlayerO - m_roomscaleOffset;
 	VectorRotate(localHeadPos, angles, rotatedLocalHead);
-	return basePos + rotatedLocalHead;
+	return basePos + localHeadPos;
 }
 
 const QAngle &CTFPlayer::EyeAngles()
 {
 	m_cachedEyeAngles = BaseClass::EyeAngles();
-	m_cachedEyeAngles += m_headInPlayerA;
+	
+#ifdef CLIENT_DLL
+	// In VR mode with HMD rotation enabled, use HMD yaw directly for immediate response
+	extern ConVar tfvr_hmd_drive_rotation;
+	if (tfvr_hmd_drive_rotation.GetBool())
+	{
+		// Use HMD data for all three axes to ensure they're all immediate
+		m_cachedEyeAngles.x = m_headInPlayerA.x;  // HMD pitch
+		m_cachedEyeAngles.y = m_headInPlayerA.y;  // HMD yaw  
+		m_cachedEyeAngles.z = m_headInPlayerA.z;  // HMD roll
+	}
+	else
+#endif
+	{
+		// Standard VR mode: base yaw + HMD pitch/roll
+		QAngle HMDPitchRoll(m_headInPlayerA.x, 0, m_headInPlayerA.z);
+		m_cachedEyeAngles += HMDPitchRoll;
+	}
 	return m_cachedEyeAngles;
 }
 

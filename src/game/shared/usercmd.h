@@ -135,6 +135,8 @@ public:
 	void MakeInert( void )
 	{
 		viewangles = vec3_angle;
+		playerToHmdOrigin.Init();
+        playerToHmdAngles.Init();
 		forwardmove = 0.f;
 		sidemove = 0.f;
 		upmove = 0.f;

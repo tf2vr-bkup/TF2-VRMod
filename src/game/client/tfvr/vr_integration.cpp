@@ -26,15 +26,6 @@ namespace VRIntegration
 
         return g_pOpenXRManager->EndFrame();
     }
-
-    bool GetEyeViewData(VRViewData_t eyeData[2])
-    {
-        if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
-            return false;
-
-        // Get view transforms from OpenXR
-        return g_pOpenXRManager->GetEyeViewData(eyeData);
-    }
     
     ITexture* GetSharedRenderTarget()
     {

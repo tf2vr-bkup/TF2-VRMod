@@ -51,6 +51,7 @@
 #include "glow_outline_effect.h"
 #include "vgui/IInput.h"
 #include "tf_hud_mainmenuoverride.h"
+#include "tfvr/openxr_manager.h"
 #include "tf_controls.h"
 #include "econ_notifications.h"
 #include "rtime.h"
@@ -76,6 +77,11 @@
 #include "tf_quickplay_shared.h"
 #include "sourcevr/isourcevirtualreality.h"
 #include "client_virtualreality.h"
+#include "igameevents.h"
+#include "GameEventListener.h"
+
+// VR rotation control
+extern ConVar tfvr_hmd_drive_rotation;
 
 #include "econ_gcmessages.h"
 
@@ -2437,11 +2443,16 @@ USER_MESSAGE( ForcePlayerViewAngles )
 		QAngle viewangles;
 		msg.ReadBitAngles( viewangles );
 
-		// Set the magic angles here!
-		pPlayer->SetLocalAngles( viewangles );
-		pPlayer->SetAbsAngles( viewangles );
-		pPlayer->SetTauntYaw( viewangles[YAW] );
-		pPlayer->m_Shared.SetVehicleMoveAngles( viewangles );
+		// Only force view angles if VR rotation is not being driven by our system
+		extern ConVar tfvr_hmd_drive_rotation;
+		if (!tfvr_hmd_drive_rotation.GetBool())
+		{
+			// Set the magic angles here!
+			pPlayer->SetLocalAngles( viewangles );
+			pPlayer->SetAbsAngles( viewangles );
+			pPlayer->SetTauntYaw( viewangles[YAW] );
+			pPlayer->m_Shared.SetVehicleMoveAngles( viewangles );
+		}
 	}
 }
 

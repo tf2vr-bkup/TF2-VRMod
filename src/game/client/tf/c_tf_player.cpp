@@ -87,6 +87,11 @@
 #include "player_vs_environment/c_tf_upgrades.h"
 #include "sourcevr/isourcevirtualreality.h"
 #include "tempent.h"
+#include "cliententitylist.h"
+#include "tier0/vprof.h"
+
+// VR rotation control
+extern ConVar tfvr_hmd_drive_rotation;
 #include "confirm_dialog.h"
 #include "c_tf_weapon_builder.h"
 #include "tf_shared_content_manager.h"
@@ -4418,6 +4423,8 @@ void C_TFPlayer::OnDataChanged( DataUpdateType_t updateType )
 
 	GetAttributeManager()->OnDataChanged( updateType );
 
+	
+
 	// Check for full health and remove decals.
 	if ( ( m_iHealth > m_iOldHealth && m_iHealth >= GetMaxHealth() ) || m_Shared.IsInvulnerable() )
 	{
@@ -6515,17 +6522,18 @@ ConVar tfvr_roomscale_debug("tfvr_roomscale_debug", "0");
 
 void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 {
-	if (!m_isCalibrated)
-	{
-		Log("Calibrating VR base position\n");
-		m_calibratedHmdXYPosition = g_pOpenXRManager->GetMideyePose().GetTranslation();
-		m_calibratedHmdXYPosition.z = 0; // cancel out the original vertical position so we don't correct for it
+		if (!m_isCalibrated)
+		{
+			Log("Calibrating VR base position\n");
+			m_calibratedHmdXYPosition = g_pOpenXRManager->GetMideyePose().GetTranslation();
+			m_calibratedHmdXYPosition.z = 0; // cancel out the original vertical position so we don't correct for it
 
-		QAngle tempYawContainer;
-		MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), tempYawContainer);
-		m_calibratedHmdYaw = tempYawContainer[YAW];
-		m_isCalibrated = true;
-	}
+			QAngle tempYawContainer;
+			MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), tempYawContainer);
+			m_calibratedHmdYaw = tempYawContainer[YAW];
+			m_isCalibrated = true;
+			DevMsg("VR: Initial calibration - HMD Yaw: %.1f\n", m_calibratedHmdYaw);
+		}
 
 	// world here is aligned with the identity rotation and has origin the player spawn;
 	Vector currentHmdInWorldO;
@@ -6534,6 +6542,7 @@ void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 	const Vector currentHmdPosInOriginal = g_pOpenXRManager->GetMideyePose().GetTranslation() - m_calibratedHmdXYPosition;
 
 	VectorRotate(currentHmdPosInOriginal, QAngle(0, -m_calibratedHmdYaw, 0), currentHmdInWorldO);
+	//currentHmdInWorldO = currentHmdPosInOriginal;
 
 	MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), currentHmdInWorldA);
 	currentHmdInWorldA[YAW] -= m_calibratedHmdYaw;
@@ -6553,8 +6562,27 @@ void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 
 		pCmd->playerToHmdOrigin = m_headInPlayerO;
 		pCmd->playerToHmdAngles = m_headInPlayerA;
+		// DevMsg("Client playerToHmdAngles: %f %f %f\n", pCmd->playerToHmdAngles.x, pCmd->playerToHmdAngles.y, pCmd->playerToHmdAngles.z);
 		if (tfvr_roomscale_movement.GetBool())
+		{
+			// Send movement in calibrated world space
 			pCmd->postFullBodyIKDeltaOrigin = deltaHeadOrigin;
+
+						
+			/*
+			DevMsg("Client roomscale debug:\n");
+			DevMsg("  deltaHeadOrigin: %.2f %.2f %.2f\n", 
+				deltaHeadOrigin.x, deltaHeadOrigin.y, deltaHeadOrigin.z);
+			DevMsg("  currentHmdInWorldO: %.2f %.2f %.2f\n", 
+				currentHmdInWorldO.x, currentHmdInWorldO.y, currentHmdInWorldO.z);
+			DevMsg("  player abs angles: %.2f %.2f %.2f\n", 
+				GetAbsAngles().x, GetAbsAngles().y, GetAbsAngles().z);
+			DevMsg("  calibrated HMD yaw: %.2f\n", m_calibratedHmdYaw);
+			DevMsg("  head in player angles: %.2f %.2f %.2f\n", 
+				m_headInPlayerA.x, m_headInPlayerA.y, m_headInPlayerA.z);
+			*/
+
+		}
 		pCmd->postFullBodyIKDeltaOrigin.z = 0;
 
 		// Apply client-side prediction - accumulate the movement locally
@@ -6571,12 +6599,6 @@ void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 			float correctionRate = MIN(0.1f, errorMagnitude * 0.01f); // Smooth correction
 			m_localRoomscaleOffset += offsetError * correctionRate;
 		}
-
-		DevMsg("Client Roomscale: Input=%.2f,%.2f LocalOffset=%.2f,%.2f ServerOffset=%.2f,%.2f Error=%.2f\n", 
-			deltaHeadOrigin.x, deltaHeadOrigin.y,
-			m_localRoomscaleOffset.x, m_localRoomscaleOffset.y,
-			serverOffset.x, serverOffset.y,
-			errorMagnitude);
 	}
 	else
 	{
@@ -7965,6 +7987,25 @@ void C_TFPlayer::ClientPlayerRespawn( void )
 
 		// make sure the chat window has been restored to the appropriate place
 		g_pClientMode->GetViewportAnimationController()->StartAnimationSequence( "CompetitiveGame_RestoreChatWindow", false );
+		
+		// For VR, capture spawn angles and apply immediately
+		if (UseVR() && tfvr_hmd_drive_rotation.GetBool())
+		{
+			// Store the current eye angles as spawn angles (these come from server)
+			m_spawnViewAngles = m_angEyeAngles;
+			
+			// Get current HMD angles and immediately recalibrate
+			QAngle hmdAngles;
+			MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), hmdAngles);
+			
+			// Immediately align HMD with spawn rotation
+			float oldCalibratedYaw = m_calibratedHmdYaw;
+			m_calibratedHmdYaw = hmdAngles.y - m_spawnViewAngles.y;
+			
+			// Set spawn time for VR rotation code
+			m_flSpawnTime = gpGlobals->curtime;
+		
+		}
 	}
 
 	UpdateVisibility();
@@ -11834,3 +11875,4 @@ static void cc_helpme_released( const CCommand &args )
 	engine->ServerCmdKeyValues( kv );
 }
 static ConCommand helpme_released( "-helpme", cc_helpme_released );
+

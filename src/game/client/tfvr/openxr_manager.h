@@ -27,7 +27,6 @@ public:
     bool BeginFrame();
     bool EndFrame();
 
-    bool GetEyeViewData(VRViewData_t eyeData[2]);
     void UpdateOpenXRViewData();
     bool GetEyeViewLocations(VMatrix& leftEyePose, VMatrix& rightEyePose);
 

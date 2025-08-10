@@ -27,6 +27,9 @@
 
 #include "tier0/vprof.h"
 
+// VR rotation control
+extern ConVar tfvr_hmd_drive_rotation;
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -627,6 +630,7 @@ void CPrediction::SetupMove( C_BasePlayer *player, CUserCmd *ucmd, IMoveHelper *
 	move->m_flOldForwardMove = player->m_Local.m_flOldForwardMove;
 	move->m_flClientMaxSpeed = player->m_flMaxspeed;
 
+	ucmd->viewangles 		= player->EyeAngles();
 	move->m_vecAngles		= ucmd->viewangles;
 	move->m_vecViewAngles	= ucmd->viewangles;
 	move->m_nImpulseCommand = ucmd->impulse;	

@@ -513,10 +513,8 @@ void CViewRender::OnRenderStart()
 
 	if (player)
 	{
-		// update head poses with the latest poses from SteamVR
-		
 		CUserCmd cmd;
-		CVRInput::CopyVRPosesToUserCmd(&cmd);
+		// update head poses with the latest poses from SteamVR
 		g_bExtraMouseSample = true;
 		player->ComputeFullBodyIK(&cmd);
 		// player->UpdateHandsInPlayer(&cmd);
@@ -764,7 +762,7 @@ void CViewRender::SetUpViews()
 			g_ClientVirtualReality.ProcessCurrentTrackingState ( viewEye.fov );
 		}
 
-		HeadtrackMovementMode_t hmmOverrideMode = g_pClientMode->ShouldOverrideHeadtrackControl();
+		// HeadtrackMovementMode_t hmmOverrideMode = g_pClientMode->ShouldOverrideHeadtrackControl();
 		// g_ClientVirtualReality.OverrideView( &m_View, &ViewModelOrigin, &ViewModelAngles, hmmOverrideMode );
 
 		// left and right stereo views should default to being the same as the mono/middle view

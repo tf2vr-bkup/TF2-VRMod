@@ -1984,7 +1984,7 @@ void CTFGameMovement::ProcessRoomscaleMovement(ProcessMoveFunc processMove)
 		return;
 
 	Vector roomscaleMove = mv->m_postFullBodyIKDeltaOrigin;
-	// VectorRotate(mv->m_postFullBodyIKDeltaOrigin, m_pTFPlayer->GetAbsAngles(), roomscaleMove);
+	// VectorRotate(mv->m_postFullBodyIKDeltaOrigin, m_pTFPlayer->EyeAngles(), roomscaleMove);
 	roomscaleMove.z = 0;
 
 	// limit the amount of movement in one frame
@@ -2034,11 +2034,13 @@ void CTFGameMovement::ProcessRoomscaleMovement(ProcessMoveFunc processMove)
 	//if (gpGlobals->curtime - lastDebugTime > 0.1f) // Print every 100ms
 	//{
 #ifdef GAME_DLL
+/*
 		DevMsg("Server Roomscale: Input=%.2f,%.2f Moved=%.2f,%.2f Fraction=%.2f Offset=%.2f,%.2f RoomscaleMove=%.2f,%.2f\n", 
 			mv->m_postFullBodyIKDeltaOrigin.x, mv->m_postFullBodyIKDeltaOrigin.y,
 			diff.x, diff.y, fraction,
 			vrPlayer->m_roomscaleOffset.Get().x, vrPlayer->m_roomscaleOffset.Get().y,
 			roomscaleMove.x, roomscaleMove.y);
+*/
 #endif
 		lastDebugTime = gpGlobals->curtime;
 	//}

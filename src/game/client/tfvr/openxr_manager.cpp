@@ -489,135 +489,6 @@ bool COpenXRManager::GetEyeViewLocations(VMatrix& leftEyePose, VMatrix& rightEye
     return true;
 }
 
-bool COpenXRManager::GetEyeViewData(VRViewData_t eyeData[2])
-{
-    static ConVar* vr_quat_x_sign = cvar->FindVar("vr_quat_x_sign");
-    static ConVar* vr_quat_y_sign = cvar->FindVar("vr_quat_y_sign");
-    static ConVar* vr_quat_z_sign = cvar->FindVar("vr_quat_z_sign");
-    static ConVar* vr_quat_w_sign = cvar->FindVar("vr_quat_w_sign");
-    static ConVar* vr_position_scale = cvar->FindVar("vr_position_scale");
-    static ConVar* vr_floor_offset = cvar->FindVar("vr_floor_offset");
-    static ConVar* vr_follow_game_camera = cvar->FindVar("vr_follow_game_camera");
-    static ConVar* vr_eye_height_adjust = cvar->FindVar("vr_eye_height_adjust");
-
-    uint32_t viewCount;
-    dxvkGetViews(m_views, m_headLocation, viewCount);
-
-    if (!m_vrActive || !m_session || !m_views)
-    {
-        return false;
-    }
-
-    float scale = METERS_TO_GAME_UNITS;
-
-    // Get player position and base camera angles
-    C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
-
-    Vector playerPos = pPlayer ? pPlayer->EyePosition() : Vector(0, 0, 0);
-    QAngle playerAngles = pPlayer ? pPlayer->EyeAngles() : QAngle(0, 0, 0);
-
-    // Convert player angles to quaternion for camera-relative transformations
-    Quaternion playerQuat;
-    AngleQuaternion(playerAngles, playerQuat);
-
-    XrFovf centerFov;
-
-    for (int i = 0; i < 2; i++) 
-    {
-        eyeData[i].viewSetup.x = 0;
-        eyeData[i].viewSetup.y = 0;
-        eyeData[i].viewSetup.width = m_viewConfigs[i].recommendedImageRectWidth;
-        eyeData[i].viewSetup.height = m_viewConfigs[i].recommendedImageRectHeight;
-        eyeData[i].viewSetup.m_bOrtho = false;
-        eyeData[i].viewSetup.zNear = 1.0f;
-        eyeData[i].viewSetup.zFar = 10000.0f;
-
-        // Get headset rotation
-        XrPosef eyePose = m_views[i].pose;
-
-        Quaternion headQuat
-        (
-            vr_quat_x_sign->GetBool() ? eyePose.orientation.z : -eyePose.orientation.z,
-            vr_quat_y_sign->GetBool() ? eyePose.orientation.x : -eyePose.orientation.x,
-            vr_quat_z_sign->GetBool() ? eyePose.orientation.y : -eyePose.orientation.y,
-            vr_quat_w_sign->GetBool() ? eyePose.orientation.w : -eyePose.orientation.w
-        );
-        
-        // Store the original HMD orientation before any modifications
-        Quaternion originalHeadQuat = headQuat;
-        
-        // Apply recentering if enabled and available
-        if (m_hasRecenterData) 
-        {
-            QuaternionMult(m_recenterQuaternion, headQuat, headQuat);
-        }
-        
-        // Always make HMD movement relative to the game camera when following is enabled
-        if (vr_follow_game_camera->GetBool()) 
-        {
-            Quaternion finalQuat;
-            QuaternionMult(playerQuat, headQuat, finalQuat);
-            headQuat = finalQuat;
-        }
-        
-        QAngle headAngles;
-        QuaternionAngles(headQuat, headAngles);
-        
-        // Set the final angles for the view
-        eyeData[i].angles = headAngles;
-        eyeData[i].viewSetup.angles = headAngles;
-        
-        // Calculate pitch for height adjustment to prevent floor clipping
-        float pitchFactor = 0.0f;
-        if (vr_eye_height_adjust && vr_eye_height_adjust->GetFloat() != 0.0f) 
-        {
-            // Apply a gradual height adjustment based on looking up/down
-            // This prevents the camera from clipping into the floor when looking up
-            pitchFactor = sin(DEG2RAD(MAX(-45.0f, MIN(45.0f, headAngles.x)))) * vr_eye_height_adjust->GetFloat();
-        }
-        
-        // Handle position from HMD
-        Vector rawEyeOffset(
-            -eyePose.position.z * scale,
-            -eyePose.position.x * scale,
-            eyePose.position.y  * scale
-        );
-        
-        // Apply position recentering if enabled
-        Vector eyeOffset = rawEyeOffset;
-        if (m_hasRecenterData) 
-        {
-            eyeOffset += m_recenterPosition * scale;
-        }
-        
-        // Transform the position offset to be relative to the player's view
-        if (vr_follow_game_camera->GetBool()) 
-        {
-            // Rotate the eye offset by the player's orientation
-            matrix3x4_t playerRotMatrix;
-            AngleMatrix(playerAngles, playerRotMatrix);
-            Vector rotatedOffset;
-            VectorRotate(eyeOffset, playerRotMatrix, rotatedOffset);
-            
-            // Use the rotated offset instead
-            eyeOffset = rotatedOffset;
-            
-            // For the position, we use player's position as the base and add the rotated eye offset
-            eyeData[i].origin = playerPos + rotatedOffset;
-        } 
-        else 
-        {
-            // Original behavior - just add offsets
-            eyeData[i].origin = playerPos + eyeOffset;
-        }
-        
-        eyeData[i].viewSetup.origin = eyeData[i].origin;
-
-        eyeData[i].viewSetup.m_ViewToProjection = CreateVRProjectionMatrix(m_views[i].fov, 1.0f, 10000.0f);
-        eyeData[i].viewSetup.m_bViewToProjectionOverride = true;
-    }
-    return true;
-}
 
 VMatrix COpenXRManager::CreateVRProjectionMatrix(XrFovf fov, float zNear, float zFar)
 {
@@ -1055,7 +926,7 @@ void COpenXRManager::Update(float frametime)
 		eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};
 	}
 
-	// UpdateOpenXRViewData();
+	UpdateOpenXRViewData();
 
 	vrRenderTargets->UpdateVRRenderTargets();
 

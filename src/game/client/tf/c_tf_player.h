@@ -598,6 +598,13 @@ public:
 
 	QAngle				m_cachedEyeAngles;
 
+	// VR recalibration on spawn
+	bool				m_bNeedsVRRecalibration = false;
+	float				m_flVRRecalibrationTime = 0.0f;
+	QAngle				m_spawnViewAngles; // Store spawn angles before VR processing
+	bool				m_bWasVRRotationEnabled = false; // Store original VR rotation state
+	float				m_flSpawnTime = 0.0f; // Time when player spawned
+
 	float               VRHeightOffset();
 
 private:

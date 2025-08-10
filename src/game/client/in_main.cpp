@@ -19,6 +19,7 @@
 #include "bitbuf.h"
 #include "checksum_md5.h"
 #include "hltvcamera.h"
+#include "c_tf_player.h"
 #if defined( REPLAY_ENABLED )
 #include "replay/replaycamera.h"
 #endif
@@ -88,6 +89,8 @@ ConVar thirdperson_platformer( "thirdperson_platformer", "0", 0, "Player will ai
 ConVar thirdperson_screenspace( "thirdperson_screenspace", "0", 0, "Movement will be relative to the camera, eg: left means screen-left" );
 
 ConVar sv_noclipduringpause( "sv_noclipduringpause", "0", FCVAR_REPLICATED | FCVAR_CHEAT, "If cheats are enabled, then you can noclip with the game paused (for doing screenshots, etc.)." );
+
+ConVar tfvr_hmd_drive_rotation( "tfvr_hmd_drive_rotation", "1", FCVAR_REPLICATED | FCVAR_CHEAT, "Drive player rotation using HMD YAW in VR" );
 
 extern ConVar cl_mouselook;
 
@@ -1017,8 +1020,22 @@ void CInput::ExtraMouseSample( float frametime, bool active )
 
 	if ( active )
 	{
-		// Determine view angles
-		AdjustAngles ( frametime );
+		// Skip mouse input processing if VR HMD rotation is enabled
+		if (!UseVR() || !tfvr_hmd_drive_rotation.GetBool())
+		{
+			// Determine view angles
+			AdjustAngles ( frametime );
+		}
+		else
+		{
+			// Reset mouse accumulators in VR mode to prevent drift
+			if (!m_fCameraInterceptingMouse && m_fMouseActive)
+			{
+				float mx, my;
+				GetAccumulatedMouseDeltasAndResetAccumulators(&mx, &my);
+				ResetMouse();
+			}
+		}
 
 		// Determine sideways movement
 		ComputeSideMove( cmd );
@@ -1077,7 +1094,6 @@ void CInput::ExtraMouseSample( float frametime, bool active )
 	// Let the move manager override anything it wants to.
 	if ( g_pClientMode->CreateMove( frametime, cmd ) )
 	{
-		// Get current view angles after the client mode tweaks with it
 		engine->SetViewAngles( cmd->viewangles );
 		prediction->SetLocalViewAngles( cmd->viewangles );
 	}
@@ -1090,29 +1106,61 @@ void CInput::ExtraMouseSample( float frametime, bool active )
 		C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
 		if( pPlayer && !pPlayer->GetVehicle() )
 		{
-			QAngle curViewangles, newViewangles;
-			Vector curMotion, newMotion;
-			engine->GetViewAngles( curViewangles );
-			curMotion.Init ( 
-				cmd->forwardmove,
-				cmd->sidemove,
-				cmd->upmove );
-			g_ClientVirtualReality.OverridePlayerMotion ( frametime, originalViewangles, curViewangles, curMotion, &newViewangles, &newMotion );
-			engine->SetViewAngles( newViewangles );
-			cmd->forwardmove = newMotion[0];
-			cmd->sidemove = newMotion[1];
-			cmd->upmove = newMotion[2];
+					// Always populate HMD data for other systems to use
+		cmd->playerToHmdOrigin = g_pOpenXRManager->GetMideyePose().GetTranslation();
+        QAngle rotation;
+        MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), rotation);
+        cmd->playerToHmdAngles = rotation;
 
-			cmd->viewangles = newViewangles;
-			prediction->SetLocalViewAngles( cmd->viewangles );
+		// Handle VR rotation - either through the VR system or direct HMD yaw
+		if (tfvr_hmd_drive_rotation.GetBool())
+		{
+			// Apply HMD yaw directly via m_headInPlayerA for immediate response like pitch/roll
+			C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+			if (pTFPlayer && pTFPlayer->m_isCalibrated)
+			{
+				// Force OpenXR to update to the absolute latest pose data
+				g_pOpenXRManager->UpdateOpenXRViewData();
+				
+				// Get the absolute freshest HMD data possible
+				QAngle freshRotation;
+				MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), freshRotation);
+				
+				// Apply HMD yaw directly to m_headInPlayerA for immediate response
+				// This bypasses the engine view angle system that causes lag
+				pTFPlayer->m_headInPlayerA.y = freshRotation.y - pTFPlayer->m_calibratedHmdYaw;
+				
+				// Also update engine view angles for consistency (but this isn't what EyeAngles() uses for yaw)
+				QAngle currentViewAngles;
+				engine->GetViewAngles(currentViewAngles);
+				currentViewAngles.y = pTFPlayer->m_headInPlayerA.y;
+				engine->SetViewAngles(currentViewAngles);
+				cmd->viewangles = currentViewAngles;
+			}
+		}
+			else
+			{
+				// Use the VR motion system
+				QAngle curViewangles, newViewangles;
+				Vector curMotion, newMotion;
+				engine->GetViewAngles( curViewangles );
+				curMotion.Init ( 
+					cmd->forwardmove,
+					cmd->sidemove,
+					cmd->upmove );
+				g_ClientVirtualReality.OverridePlayerMotion ( frametime, originalViewangles, curViewangles, curMotion, &newViewangles, &newMotion );
+				engine->SetViewAngles( newViewangles );
+				cmd->forwardmove = newMotion[0];
+				cmd->sidemove = newMotion[1];
+				cmd->upmove = newMotion[2];
 
-			cmd->playerToHmdOrigin = g_pOpenXRManager->GetMideyePose().GetTranslation();
-
-            QAngle rotation;
-            MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), rotation);
-            cmd->playerToHmdAngles = rotation;
+				cmd->viewangles = newViewangles;
+				prediction->SetLocalViewAngles( cmd->viewangles );
+			}
 		}
 	}
+
+
 
 }
 
@@ -1236,20 +1284,23 @@ void CInput::CreateMove ( int sequence_number, float input_sample_frametime, boo
 	if ( g_pClientMode->CreateMove( input_sample_frametime, cmd ) )
 	{
 		// Get current view angles after the client mode tweaks with it
-#ifdef SIXENSE
-		// Only set the engine angles if sixense is not enabled. It is done in SixenseInput::SetView otherwise.
-		if( !g_pSixenseInput->IsEnabled() )
+		// Don't set engine view angles here if VR is active - let VR system handle it
+		if (!UseVR() || !tfvr_hmd_drive_rotation.GetBool())
 		{
-			engine->SetViewAngles( cmd->viewangles );
-		}
+#ifdef SIXENSE
+			// Only set the engine angles if sixense is not enabled. It is done in SixenseInput::SetView otherwise.
+			if( !g_pSixenseInput->IsEnabled() )
+			{
+				engine->SetViewAngles( cmd->viewangles );
+			}
 #else
-		engine->SetViewAngles( cmd->viewangles );
-
+			engine->SetViewAngles( cmd->viewangles );
 #endif
+		}
 
 		if ( UseVR() )
 		{
-			C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+			C_TFPlayer *pPlayer = ToTFPlayer(C_BasePlayer::GetLocalPlayer());
 			if( pPlayer && !pPlayer->GetVehicle() )
 			{
 				QAngle curViewangles, newViewangles;
@@ -1260,17 +1311,33 @@ void CInput::CreateMove ( int sequence_number, float input_sample_frametime, boo
 					cmd->sidemove,
 					cmd->upmove );
 				g_ClientVirtualReality.OverridePlayerMotion ( input_sample_frametime, originalViewangles, curViewangles, curMotion, &newViewangles, &newMotion );
-				engine->SetViewAngles( newViewangles );
 				cmd->forwardmove = newMotion[0];
 				cmd->sidemove = newMotion[1];
 				cmd->upmove = newMotion[2];
-				cmd->viewangles = newViewangles;
 
 				cmd->playerToHmdOrigin = g_pOpenXRManager->GetMideyePose().GetTranslation();
 
 				QAngle rotation;
                 MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), rotation);
                 cmd->playerToHmdAngles = rotation;
+
+				// Drive player's absolute rotation using HMD YAW
+				if (tfvr_hmd_drive_rotation.GetBool())
+				{
+					// HMD yaw rotation is handled in ExtraMouseSample for high-frequency updates
+					// Just sync the current angles without reprocessing
+					QAngle currentAngles;
+					engine->GetViewAngles(currentAngles);
+					cmd->viewangles = currentAngles;
+					// Note: Skip SetLocalViewAngles here to avoid prediction conflicts
+				}
+				else
+				{
+					// Use VR motion system view angles if HMD rotation is disabled
+					cmd->viewangles = newViewangles;
+					engine->SetViewAngles(cmd->viewangles);
+					prediction->SetLocalViewAngles(cmd->viewangles);
+				}
 			}
 			else
 			{
@@ -1284,6 +1351,7 @@ void CInput::CreateMove ( int sequence_number, float input_sample_frametime, boo
 	m_flLastForwardMove = cmd->forwardmove;
 
 	cmd->random_seed = MD5_PseudoRandom( sequence_number ) & 0x7fffffff;
+	
 
 	HLTVCamera()->CreateMove( cmd );
 #if defined( REPLAY_ENABLED )
