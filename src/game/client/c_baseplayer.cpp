@@ -2984,7 +2984,13 @@ void C_BasePlayer::BuildFirstPersonMeathookTransformations( CStudioHdr *hdr, Vec
 		// The head bone is the neck pivot point of the in-game character.
 
 		Vector vRealMidEyePos = mWorldFromMideye.GetTranslation();
-		vRealPivotPoint = vRealMidEyePos - ( mWorldFromMideye.GetUp() * cl_meathook_neck_pivot_ingame_up.GetFloat() ) - ( mWorldFromMideye.GetForward() * cl_meathook_neck_pivot_ingame_fwd.GetFloat() );
+		
+		// VR MODIFICATION: Keep the body Z position aligned with the TF2 character class's height, not the VR head Z
+		// Use the head X,Y position but the character class's proper torso Z position for natural body positioning
+		Vector vBodyBasePos = vRealMidEyePos;
+		vBodyBasePos.z = GetAbsOrigin().z + (GetViewOffset().z); // Use character's floor + 75% of class height (roughly torso level)
+		
+		vRealPivotPoint = vBodyBasePos - ( mWorldFromMideye.GetUp() * cl_meathook_neck_pivot_ingame_up.GetFloat() ) - ( mWorldFromMideye.GetForward() * cl_meathook_neck_pivot_ingame_fwd.GetFloat() );
 	}
 	else
 	{

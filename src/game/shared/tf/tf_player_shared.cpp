@@ -14670,11 +14670,8 @@ float CTFPlayer::VRHeightOffset()
 
 Vector CTFPlayer::EyePosition()
 {
-	Vector rotatedLocalHead;
-	QAngle angles = GetAbsAngles();
 	Vector basePos = GetAbsOrigin() + Vector(0, 0, VRHeightOffset());
 	Vector localHeadPos = m_headInPlayerO - m_roomscaleOffset;
-	VectorRotate(localHeadPos, angles, rotatedLocalHead);
 	return basePos + localHeadPos;
 }
 

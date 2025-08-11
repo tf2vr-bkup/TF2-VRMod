@@ -605,11 +605,20 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 	Assert ( pAimOrigin != NULL );
 	Assert ( pAimDirection != NULL );
 
-	// So give it some nice high-fps numbers, not the low-fps ones we get from the game.
-	*pAimOrigin = m_WorldFromWeapon.GetTranslation();
-	*pAimDirection = m_WorldFromWeapon.GetForward();
+	// For now, use the player's current view position and angles for crosshair
+	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+	if ( pPlayer )
+	{
+		*pAimOrigin = pPlayer->EyePosition();
+		
+		Vector forward;
+		AngleVectors( pPlayer->EyeAngles(), &forward );
+		*pAimDirection = forward;
+		
+		return true;
+	}
 
-	return true;
+	return false;
 }
 
 
@@ -816,23 +825,44 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
     g_pOpenXRManager->rotationOffset += m_PlayerTorsoAngle.y;
 	*/
 
-    m_PlayerTorsoAngle = QAngle(0, 0, 0);
+    if ( pPlayer )
+    {
+        // CRITICAL FIX: Match OverrideView behavior exactly
+        // The torso origin should be the VIEW origin, not EyePosition()
+        m_PlayerTorsoOrigin = pPlayer->EyePosition();  // This was the view origin in OverrideView
+        
+        m_PlayerTorsoAngle = pPlayer->EyeAngles();
+        m_PlayerTorsoAngle[PITCH] = 0.0f;  // Don't tilt the body up/down
+        m_PlayerTorsoAngle[ROLL] = 0.0f;   // Don't roll the body
+		
+		// Apply the VR torso transform to the local player model
+		OverrideTorsoTransform( m_PlayerTorsoOrigin, m_PlayerTorsoAngle );
+    }
+    else
+    {
+        m_PlayerTorsoAngle = QAngle(0, 0, 0);
+		m_PlayerTorsoOrigin = Vector(0, 0, 0);
+    }
     
-	/*
-    if (g_pOpenXRManager->rotationOffset > 180)
-    {
-        g_pOpenXRManager->rotationOffset -= 360;
-    }
+    // CRITICAL FIX: Recreate the exact matrix setup from OverrideView
+    worldFromTorso.SetupMatrixOrgAngles(m_PlayerTorsoOrigin, m_PlayerTorsoAngle);
 
-    if (g_pOpenXRManager->rotationOffset < -180)
-    {
-        g_pOpenXRManager->rotationOffset += 360;
-    }
-	*/
-    worldFromTorso.SetupMatrixAngles(m_PlayerTorsoAngle);
+    // CRITICAL: Recreate the missing m_WorldFromMidEye that c_baseplayer.cpp needs
+    // Since matMideyeZeroFromMideyeCurrent was used as identity in most cases,
+    // m_WorldFromMidEye should just be worldFromTorso 
+    m_TorsoFromMideye.Identity();
+    m_WorldFromMidEye = worldFromTorso;
 
     // Weapon view = mideye view, so apply that to the torso to find the world view direction.
-    m_WorldFromWeapon = worldFromTorso * m_TorsoFromMideye;
+    // Set up m_WorldFromWeapon with correct VR position and orientation
+    if ( pPlayer )
+    {
+        m_WorldFromWeapon.SetupMatrixOrgAngles( m_PlayerTorsoOrigin, pPlayer->EyeAngles() );
+    }
+    else
+    {
+        m_WorldFromWeapon.SetupMatrixOrgAngles( Vector(0,0,0), QAngle(0,0,0) );
+    }
 
     //Override rotation, disabled as it's done later per the weapon
     //g_pVRManager->OverrideWeaponMatrix(m_WorldFromWeapon); 
@@ -841,14 +871,13 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
 	// *pNewAngles = pPlayer->EyeAngles();
 	*pNewAngles = QAngle(0, curAngles.y, 0);
 
-    // Restore the translation.
-    m_WorldFromWeapon.SetTranslation(vWeaponOrigin);
-
     // Figure out player motion. It says weapon, but it's the HMD
     VMatrix mideyeFromWorld = m_WorldFromMidEye.InverseTR();
     VMatrix newMidEyeFromWeapon = mideyeFromWorld * m_WorldFromWeapon;
     newMidEyeFromWeapon.SetTranslation(Vector(0.0f, 0.0f, 0.0f));;
     //*pNewMotion = newMidEyeFromWeapon * curMotion;
+
+	m_WorldFromMidEyeNoDebugCam = m_WorldFromMidEye;
 
 	// Whatever position is already here (set up by OverrideView) needs to be preserved.
 	/*
