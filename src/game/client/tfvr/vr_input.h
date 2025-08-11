@@ -30,8 +30,10 @@ protected:
     // Helper functions for VR input processing
     void ProcessVRControllerInput(CUserCmd* cmd);
     void ProcessVRViewAngles(CUserCmd* cmd);
-    void ProcessVRMovement(CUserCmd* cmd);
+    void ProcessVRMovement(CUserCmd* cmd, float frametime);
     
+private:
+    // No private members needed for this class
 };
 
 // Global instances - declared after class definition

@@ -244,7 +244,7 @@ void CPlayerMove::FinishMove( CBasePlayer *player, CUserCmd *ucmd, CMoveData *mo
 		QAngle eyeAngles = tfPlayer->EyeAngles();
 		
 		// Force the absolute angles to match eye angles for VR
-		tfPlayer->SetAbsAngles(eyeAngles);
+		// tfPlayer->SetAbsAngles(eyeAngles);
 	}
 
 	// The class had better not have changed during the move!!

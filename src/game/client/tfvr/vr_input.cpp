@@ -13,6 +13,13 @@ ConVar tfvr_move_sensitivity("tfvr_move_sensitivity", "1.0", FCVAR_ARCHIVE, "Sen
 ConVar tfvr_thumbstick_deadzone("tfvr_thumbstick_deadzone", "0.1", FCVAR_ARCHIVE, "Deadzone for thumbstick movement");
 ConVar tfvr_use_hmd_angles("tfvr_use_hmd_angles", "0", FCVAR_ARCHIVE, "Use HMD angles for view");
 
+// VR Turning ConVars
+ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap" );
+ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "90", FCVAR_ARCHIVE, "Smooth turning rate in degrees per second" );
+ConVar tfvr_snap_turn_angle( "tfvr_snap_turn_angle", "30", FCVAR_ARCHIVE, "Snap turning angle in degrees" );
+ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.3", FCVAR_ARCHIVE, "Deadzone for turning input (0.0-1.0)" );
+ConVar tfvr_snap_turn_delay( "tfvr_snap_turn_delay", "0.25", FCVAR_ARCHIVE, "Delay between snap turns in seconds" );
+
 // Movement speed ConVars
 extern ConVar cl_forwardspeed;
 extern ConVar cl_sidespeed;
@@ -21,8 +28,12 @@ extern ConVar cl_sidespeed;
 CVRInput g_VRInput;
 IInput* g_OriginalNonVRInputPtr = nullptr;
 
+// Global variable for snap turning (shared with in_main.cpp)
+float s_flLastSnapTurnTime = 0.0f;
+
 CVRInput::CVRInput()
 {
+    // Constructor - no initialization needed
 }
 
 CVRInput::~CVRInput()
@@ -56,7 +67,9 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
         }
         
         // Process VR movement
-        ProcessVRMovement(cmd);
+        ProcessVRMovement(cmd, input_sample_frametime);
+        
+        // VR turning is now handled in the main input system
     }
 
     // CopyVRPosesToUserCmd(cmd);
@@ -99,7 +112,9 @@ void CVRInput::ExtraMouseSample(float frametime, bool active)
        }
        
        // Process VR movement
-       ProcessVRMovement(cmd);
+       ProcessVRMovement(cmd, frametime);
+       
+       // VR turning is now handled in the main input system
    }
 
    // Retreive view angles from engine ( could have been set in IN_AdjustAngles above )
@@ -189,7 +204,7 @@ void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
     DevMsg("VR View: pitch=%.1f yaw=%.1f roll=%.1f\n", angles.x, angles.y, angles.z);
 }
 
-void CVRInput::ProcessVRMovement(CUserCmd* cmd)
+void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
 {
     // Get movement values
     float moveX = g_pOpenXRManager->GetAnalogValue("move_x");
@@ -233,4 +248,6 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd)
     // Debug output for movement values
     //DevMsg("VR Movement: Final values - forward=%.2f->%.2f side=%.2f->%.2f\n", 
     //       oldForward, cmd->forwardmove, oldSide, cmd->sidemove);
-} 
+}
+
+ 

@@ -49,7 +49,6 @@ private:
 
     XrInputAction CreateBooleanAction(const char* name, const char* localizedName);
     XrInputAction CreateFloatAction(const char* name, const char* localizedName);
-    XrInputAction CreateVector2Action(const char* name, const char* localizedName);
     XrInputAction CreatePoseAction(const char* name, const char* localizedName);
 
     bool AddBinding(XrInteractionProfile& profile, const char* actionName, const char* bindingPath);

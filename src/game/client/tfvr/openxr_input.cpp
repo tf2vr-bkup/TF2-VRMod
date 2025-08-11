@@ -75,6 +75,11 @@ bool COpenXRInputManager::CreateActions()
     if (moveY.handle == XR_NULL_HANDLE) return false;
     m_actions["move_y"] = moveY;
 
+    // Create turning actions for smooth/snap turning
+    XrInputAction turnX = CreateFloatAction("turn_x", "Turn X");
+    if (turnX.handle == XR_NULL_HANDLE) return false;
+    m_actions["turn_x"] = turnX;
+
     // Create button actions
     XrInputAction primaryAttack = CreateFloatAction("primary_attack", "Primary Attack");
     if (primaryAttack.handle == XR_NULL_HANDLE) return false;
@@ -119,6 +124,9 @@ bool COpenXRInputManager::CreateInteractionProfiles()
     // Movement bindings (left controller)
     if (!AddBinding(indexProfile, "move_x", "/user/hand/left/input/thumbstick/x")) return false;
     if (!AddBinding(indexProfile, "move_y", "/user/hand/left/input/thumbstick/y")) return false;
+
+    // Turning bindings (right controller)
+    if (!AddBinding(indexProfile, "turn_x", "/user/hand/right/input/thumbstick/x")) return false;
 
     // Primary attack (right trigger)
     if (!AddBinding(indexProfile, "primary_attack", "/user/hand/right/input/trigger/value")) return false;
