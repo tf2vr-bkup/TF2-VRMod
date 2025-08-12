@@ -27,9 +27,11 @@ public:
     // Main menu input handling function
     void HandleMenuInput();
 
+    // Public method to check if menu is visible (for external access)
+    bool IsMenuVisible();
+
 private:
     // Helper functions
-    bool IsMenuVisible();
     void UpdateCursorPosition();
     void HandleMenuButtonInput();
     

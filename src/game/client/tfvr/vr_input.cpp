@@ -7,6 +7,7 @@
 #include "iclientmode.h"
 #include "input.h"
 #include "convar.h"
+#include "vr_menu_manager.h"
 
 // ConVars for input sensitivity and deadzone
 ConVar tfvr_move_sensitivity("tfvr_move_sensitivity", "1.0", FCVAR_ARCHIVE, "Sensitivity multiplier for VR movement");
@@ -144,6 +145,45 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     // Store original button state
     int oldButtons = cmd->buttons;
     
+    // Get current menu button state first
+    bool bMenu = g_pOpenXRManager->IsButtonPressed("menu");
+    
+    // Track button press events
+    static bool bLastMenuButtonState = false;
+    bool bMenuButtonPressed = bMenu && !bLastMenuButtonState;
+    
+    // Check if menu is visible
+    bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
+    
+    // Track menu state changes
+    static bool lastMenuState = false;
+    if (bMenuVisible != lastMenuState)
+    {
+        lastMenuState = bMenuVisible;
+    }
+    
+    // Handle menu button press to toggle menu state
+    if (bMenuButtonPressed)
+    {
+        if (bMenuVisible)
+        {
+            engine->ClientCmd_Unrestricted("gameui_hide\n");
+        }
+        else
+        {
+            engine->ClientCmd_Unrestricted("gameui_activate\n");
+        }
+    }
+    
+    // If menu is visible, block all gameplay actions except menu controls
+    if (bMenuVisible)
+    {
+        // Menu interaction (cursor control) is handled separately by the menu manager
+        bLastMenuButtonState = bMenu;
+        return;
+    }
+    
+    // Normal gameplay input processing (only when menu is not visible)
     // Primary attack
     bool bPrimaryAttack = g_pOpenXRManager->GetAnalogValue("primary_attack") > 0.5f;
     if (bPrimaryAttack)
@@ -169,16 +209,8 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     if (bJump)
         cmd->buttons |= IN_JUMP;
 
-    // Menu
-    bool bMenu = g_pOpenXRManager->IsButtonPressed("menu");
-    if (bMenu)
-        cmd->buttons |= IN_USE;
-
-    // Debug output for button states
-    if (cmd->buttons != oldButtons)
-    {
-        DevMsg("VR Input: buttons changed %d->%d\n", oldButtons, cmd->buttons);
-    }
+    // Update button state tracking
+    bLastMenuButtonState = bMenu;
 }
 
 void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
@@ -186,6 +218,14 @@ void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
     // Only process view angles if explicitly enabled
     if (!tfvr_use_hmd_angles.GetBool())
         return;
+
+    // Check if menu is visible - if so, disable view angle changes
+    bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
+    if (bMenuVisible)
+    {
+        // Don't process view angle changes when menu is open
+        return;
+    }
 
     // Get HMD orientation
     VMatrix hmdMatrix = g_pOpenXRManager->GetMideyePose();
@@ -206,6 +246,14 @@ void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
 
 void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
 {
+    // Check if menu is visible - if so, disable movement
+    bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
+    if (bMenuVisible)
+    {
+        // Don't process any movement when menu is open
+        return;
+    }
+    
     // Get movement values
     float moveX = g_pOpenXRManager->GetAnalogValue("move_x");
     float moveY = g_pOpenXRManager->GetAnalogValue("move_y");

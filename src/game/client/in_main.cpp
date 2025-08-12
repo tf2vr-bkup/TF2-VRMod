@@ -28,6 +28,7 @@
 #include "cam_thirdperson.h"
 
 #include "tfvr/openxr_manager.h"
+#include "tfvr/vr_menu_manager.h"
 
 #ifdef SIXENSE
 #include "sixense/in_sixense.h"
@@ -1017,6 +1018,14 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
 {
     if (!UseVR() || !g_pOpenXRManager)
         return;
+
+    // Check if menu is visible - if so, disable turning
+    bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
+    if (bMenuVisible)
+    {
+        // Don't process turning when menu is open
+        return;
+    }
 
     int turningMode = tfvr_turning_mode.GetInt();
     if (turningMode == 0) // Turning disabled

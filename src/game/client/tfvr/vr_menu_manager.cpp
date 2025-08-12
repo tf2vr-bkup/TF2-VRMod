@@ -115,8 +115,6 @@ void CVRMenuManager::HandleMenuInput()
             
             // Set the custom HUD bounds in the VR system
             g_ClientVirtualReality.SetCustomHUDBounds(m_fixedMenuPosition, ul, ur, ll, lr);
-            
-            DevMsg("VR Menu: Fixed position captured, menu locked in place\n");
         }
     }
     // If menu just became hidden, reset the fixed position
@@ -126,8 +124,6 @@ void CVRMenuManager::HandleMenuInput()
         
         // Clear the custom HUD bounds to restore normal VR system behavior
         g_ClientVirtualReality.ClearCustomHUDBounds();
-        
-        DevMsg("VR Menu: Fixed position reset, menu unlocked\n");
     }
     
     if (!menuVisible || m_savedPlayerViewOrigin == Vector(0, 0, 0))
@@ -147,7 +143,13 @@ void CVRMenuManager::HandleMenuInput()
 
 bool CVRMenuManager::IsMenuVisible()
 {
-    return enginevgui && enginevgui->IsGameUIVisible();
+    // Check multiple conditions to be more robust
+    bool bGameUIVisible = enginevgui && enginevgui->IsGameUIVisible();
+    bool bCursorVisible = vgui::surface() && vgui::surface()->IsCursorVisible();
+    bool bNotInGame = engine && (!engine->IsInGame() || !engine->IsConnected());
+    
+    // Menu is considered visible if any of these conditions are true
+    return bGameUIVisible || bCursorVisible || bNotInGame;
 }
 
 void CVRMenuManager::HandleMenuButtonInput()

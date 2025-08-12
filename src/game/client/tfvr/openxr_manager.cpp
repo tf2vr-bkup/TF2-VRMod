@@ -11,6 +11,9 @@
 
 #include "mathlib/mathlib.h"
 
+// Forward declaration for global menu manager pointer
+extern class CVRMenuManager* g_pVRMenuManager;
+
 ConVar tfvr_worldscale("tfvr_worldscale", "40", FCVAR_ARCHIVE | FCVAR_REPLICATED, "This scales everything.");
 #define METERS_TO_GAME_UNITS tfvr_worldscale.GetFloat()
 
@@ -146,6 +149,9 @@ bool COpenXRManager::Initialize()
     // Initialize VR Menu Manager
     m_menuManager = new CVRMenuManager();
     m_menuManager->Initialize();
+    
+    // Set the global pointer for external access
+    g_pVRMenuManager = m_menuManager;
 
     m_vrActive = true;
     DevMsg("OpenXR VR mode initialized successfully!\n");
@@ -170,6 +176,7 @@ void COpenXRManager::Shutdown()
         m_menuManager->Shutdown();
         delete m_menuManager;
         m_menuManager = nullptr;
+        g_pVRMenuManager = nullptr; // Clear global pointer
     }
 
     ReleaseResources();
