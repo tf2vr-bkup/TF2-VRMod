@@ -983,6 +983,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_rendertargets.h"
 			$File   "tfvr\hmdWrapper.h"
 			$File   "tfvr\stCommon.h"
+			$File   "tfvr\vr_menu_manager.h"
+			$File   "tfvr\vr_menu_manager.cpp"
 		}
 
 		$Folder	"game_controls"

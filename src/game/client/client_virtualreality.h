@@ -85,6 +85,8 @@ public:
 	void CancelTorsoTransformOverride( ) ;
 	bool CanOverlayHudQuad();
 	void GetHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR );
+	void SetCustomHUDBounds( const Vector& viewer, const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr );
+	void ClearCustomHUDBounds();
 	void RenderHUDQuad( bool bBlackout, bool bTranslucent );
 	float GetZoomedModeMagnification();
 	bool ProcessCurrentTrackingState( float fGameFOV );
@@ -116,6 +118,14 @@ private:
 	VMatrix			m_HudProjectionFromWorld;
 	float			m_fHudHalfWidth;
 	float			m_fHudHalfHeight;
+	
+	// Custom HUD bounds for fixed menu positioning
+	bool			m_bCustomHUDBoundsSet;
+	Vector			m_CustomHUDViewer;
+	Vector			m_CustomHUDUL;
+	Vector			m_CustomHUDUR;
+	Vector			m_CustomHUDLL;
+	Vector			m_CustomHUDLR;
 
 	// Where the current mideye is relative to the zero (torso) (currently always the same as m_MideyeZeroFromMideyeCurrent!)
 	VMatrix			m_TorsoFromMideye;

@@ -98,6 +98,7 @@ COpenXRManager::COpenXRManager()
 {
     m_vrActive = false;
     m_inputManager = nullptr;
+    m_menuManager = nullptr;
 }
 
 COpenXRManager::~COpenXRManager() 
@@ -142,6 +143,10 @@ bool COpenXRManager::Initialize()
         return false;
     }
 
+    // Initialize VR Menu Manager
+    m_menuManager = new CVRMenuManager();
+    m_menuManager->Initialize();
+
     m_vrActive = true;
     DevMsg("OpenXR VR mode initialized successfully!\n");
     return true;
@@ -157,6 +162,14 @@ void COpenXRManager::Shutdown()
         m_inputManager->Shutdown();
         delete m_inputManager;
         m_inputManager = nullptr;
+    }
+
+    // Clean up menu manager
+    if (m_menuManager)
+    {
+        m_menuManager->Shutdown();
+        delete m_menuManager;
+        m_menuManager = nullptr;
     }
 
     ReleaseResources();
@@ -864,6 +877,12 @@ void COpenXRManager::Update(float frametime)
 	}
 
 	m_currentRenderBufferIndex = (++m_currentRenderBufferIndex) % VR_NUM_BUFFERS;
+
+	// Update VR Menu Manager
+	if (m_menuManager)
+	{
+		m_menuManager->Update();
+	}
 
 	// Poll OpenXR events
 	XrEventDataBuffer eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};

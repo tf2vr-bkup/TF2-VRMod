@@ -273,6 +273,14 @@ CClientVirtualReality::CClientVirtualReality()
 	m_WorldZoomScale = 1.0f;
 	m_hmmMovementActual = HMM_SHOOTFACE_MOVEFACE;
 	m_iAlignTorsoAndViewToWeaponCountdown = 0;
+	
+	// Initialize custom HUD bounds
+	m_bCustomHUDBoundsSet = false;
+	m_CustomHUDViewer.Init();
+	m_CustomHUDUL.Init();
+	m_CustomHUDUR.Init();
+	m_CustomHUDLL.Init();
+	m_CustomHUDLR.Init();
 
 	m_rtLastMotionSample = 0;
 	m_bMotionUpdated = false;
@@ -869,7 +877,7 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
 
     //MatrixAngles(m_WorldFromWeapon.As3x4(), *pNewAngles);
 	// *pNewAngles = pPlayer->EyeAngles();
-	*pNewAngles = QAngle(0, curAngles.y, 0);
+	// *pNewAngles = QAngle(0, curAngles.y, 0);
 
     // Figure out player motion. It says weapon, but it's the HMD
     VMatrix mideyeFromWorld = m_WorldFromMidEye.InverseTR();
@@ -1148,6 +1156,17 @@ bool CClientVirtualReality::CanOverlayHudQuad()
 // --------------------------------------------------------------------
 void CClientVirtualReality::GetHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR )
 {
+	// If custom HUD bounds are set, use those instead of the dynamic head-based bounds
+	if ( m_bCustomHUDBoundsSet )
+	{
+		*pViewer = m_CustomHUDViewer;
+		*pUL = m_CustomHUDUL;
+		*pUR = m_CustomHUDUR;
+		*pLL = m_CustomHUDLL;
+		*pLR = m_CustomHUDLR;
+		return;
+	}
+
 	Vector vHalfWidth = m_WorldFromHud.GetLeft() * -m_fHudHalfWidth;
 	Vector vHalfHeight = m_WorldFromHud.GetUp() * m_fHudHalfHeight;
 	Vector vHUDOrigin = m_PlayerViewOrigin + m_WorldFromHud.GetForward() * vr_hud_forward.GetFloat();
@@ -1157,6 +1176,23 @@ void CClientVirtualReality::GetHUDBounds( Vector *pViewer, Vector *pUL, Vector *
 	*pUR = vHUDOrigin + vHalfWidth + vHalfHeight;
 	*pLL = vHUDOrigin - vHalfWidth - vHalfHeight;
 	*pLR = vHUDOrigin + vHalfWidth - vHalfHeight;
+}
+
+// --------------------------------------------------------------------
+void CClientVirtualReality::SetCustomHUDBounds( const Vector& viewer, const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr )
+{
+	m_bCustomHUDBoundsSet = true;
+	m_CustomHUDViewer = viewer;
+	m_CustomHUDUL = ul;
+	m_CustomHUDUR = ur;
+	m_CustomHUDLL = ll;
+	m_CustomHUDLR = lr;
+}
+
+// --------------------------------------------------------------------
+void CClientVirtualReality::ClearCustomHUDBounds()
+{
+	m_bCustomHUDBoundsSet = false;
 }
 
 

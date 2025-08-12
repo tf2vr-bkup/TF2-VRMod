@@ -1050,7 +1050,6 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
         
         // Update engine and command angles
         engine->SetViewAngles(currentAngles);
-        cmd->viewangles = currentAngles;
         
         // Update HMD calibration if HMD rotation is enabled
         if (tfvr_hmd_drive_rotation.GetBool())
@@ -1061,11 +1060,25 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
                 // Update calibrated yaw so rotation calculations use current position as pivot
                 pPlayer->m_calibratedHmdYaw -= deltaYaw;
                 
+                // CRITICAL: Update m_headInPlayerA.y to match new yaw for hitscan weapons
+                pPlayer->m_headInPlayerA.y += deltaYaw;
+                
                 // Also update the calibrated position to current HMD position to fix pivot point
                 Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
                 currentHmdPos.z = 0; // Keep Z at zero like original calibration
                 pPlayer->m_calibratedHmdXYPosition = currentHmdPos;
+                
+                // CRITICAL: Sync cmd->viewangles with what EyeAngles() will return for server consistency
+                cmd->viewangles = pPlayer->EyeAngles();
             }
+            else
+            {
+                cmd->viewangles = currentAngles;
+            }
+        }
+        else
+        {
+            cmd->viewangles = currentAngles;
         }
     }
     else if (turningMode == 2) // Snap turning
@@ -1089,7 +1102,6 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
             
             // Update engine and command angles
             engine->SetViewAngles(currentAngles);
-            cmd->viewangles = currentAngles;
             
             // Update HMD calibration if HMD rotation is enabled
             if (tfvr_hmd_drive_rotation.GetBool())
@@ -1100,11 +1112,25 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
                     // Update calibrated yaw so rotation calculations use current position as pivot
                     pPlayer->m_calibratedHmdYaw -= snapAngle;
                     
+                    // CRITICAL: Update m_headInPlayerA.y to match new yaw for hitscan weapons
+                    pPlayer->m_headInPlayerA.y += snapAngle;
+                    
                     // Also update the calibrated position to current HMD position to fix pivot point
                     Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
                     currentHmdPos.z = 0; // Keep Z at zero like original calibration
                     pPlayer->m_calibratedHmdXYPosition = currentHmdPos;
+                    
+                    // CRITICAL: Sync cmd->viewangles with what EyeAngles() will return for server consistency
+                    cmd->viewangles = pPlayer->EyeAngles();
                 }
+                else
+                {
+                    cmd->viewangles = currentAngles;
+                }
+            }
+            else
+            {
+                cmd->viewangles = currentAngles;
             }
             
             s_flLastSnapTurnTime = currentTime;

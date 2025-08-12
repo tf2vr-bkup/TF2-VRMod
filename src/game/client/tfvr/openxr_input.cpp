@@ -105,6 +105,11 @@ bool COpenXRInputManager::CreateActions()
     if (menu.handle == XR_NULL_HANDLE) return false;
     m_actions["menu"] = menu;
 
+    // Add menu press action for cursor control
+    XrInputAction menuPress = CreateBooleanAction("menu_press", "Menu Press");
+    if (menuPress.handle == XR_NULL_HANDLE) return false;
+    m_actions["menu_press"] = menuPress;
+
     return true;
 }
 
@@ -145,6 +150,10 @@ bool COpenXRInputManager::CreateInteractionProfiles()
 
     // Menu (left B button)
     if (!AddBinding(indexProfile, "menu", "/user/hand/left/input/b/click")) return false;
+
+    // Menu press bindings for cursor control (both hands)
+    if (!AddBinding(indexProfile, "menu_press", "/user/hand/left/input/trigger/click")) return false;
+    if (!AddBinding(indexProfile, "menu_press", "/user/hand/right/input/trigger/click")) return false;
 
     // Suggest bindings for the profile
     if (!SuggestBindings(indexProfile)) return false;

@@ -11,6 +11,7 @@
 #include "vr_integration.h"
 #include "client_virtualreality.h"
 #include "sourcevr/isourcevirtualreality.h"
+#include "vr_menu_manager.h"
 
 class COpenXRInputManager;
 
@@ -136,6 +137,9 @@ private:
 
     // Input system
     COpenXRInputManager* m_inputManager;
+    
+    // VR Menu Manager
+    CVRMenuManager* m_menuManager;
 };
 
 static ConVar vr_quat_x_sign("vr_quat_x_sign", "1", FCVAR_ARCHIVE, "Sign for X quaternion component (0=negative, 1=positive)");
