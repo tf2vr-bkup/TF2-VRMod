@@ -14,6 +14,7 @@
 // Global instances
 CVRMenuManager* g_pVRMenuManager = nullptr;
 extern vgui::IInputInternal *g_InputInternal;
+extern COpenXRManager* g_pOpenXRManager;
 
 // ConVars for VR menu control
 ConVar tfvr_primary_hand("tfvr_primary_hand", "1", FCVAR_ARCHIVE, "Primary hand for VR input: 0=left, 1=right");
@@ -155,8 +156,8 @@ bool CVRMenuManager::IsMenuVisible()
 void CVRMenuManager::HandleMenuButtonInput()
 {
     // Check for menu press on both hands
-    bool leftMenuPress = m_pVRManager->IsButtonPressed("menu_press");
-    bool rightMenuPress = m_pVRManager->IsButtonPressed("menu_press");
+    bool leftMenuPress = m_pVRManager->IsButtonPressed("left_ui_interact");
+    bool rightMenuPress = m_pVRManager->IsButtonPressed("right_ui_interact");
     
     // Determine which hand is being used
     if (leftMenuPress && !m_bMenuButtonPressed)
@@ -230,19 +231,72 @@ void CVRMenuManager::UpdateCursorPosition()
 
 void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const QAngle& pointerRotation, int& px, int& py)
 {
-    // Get the current eye angles (actual VR head rotation)
-    QAngle currentViewAngles = m_pLocalPlayer->EyeAngles();
+    // Get the active controller pose for cursor control
+    Vector controllerPos;
+    QAngle controllerAngles;
+    bool controllerValid = false;
     
-    // Create ray from the player's current head position in the direction they're looking
-    // This provides natural, intuitive cursor control based on where the player is looking from
-    Vector rayDir;
-    AngleVectors(currentViewAngles, &rayDir);
-    VectorNormalize(rayDir);
+    // Try to get the pose from the active hand
+    if (m_nMenuHand == 0) // Left hand
+    {
+        if (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            if (g_pOpenXRManager->GetLeftControllerPose(controllerMatrix))
+            {
+                controllerPos = controllerMatrix.GetTranslation();
+                // Extract forward direction directly from matrix
+                Vector forward = controllerMatrix.GetForward();
+                VectorAngles(forward, controllerAngles);
+                controllerValid = true;
+            }
+        }
+    }
+    else // Right hand
+    {
+        if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            if (g_pOpenXRManager->GetRightControllerPose(controllerMatrix))
+            {
+                controllerPos = controllerMatrix.GetTranslation();
+                // Extract forward direction directly from matrix
+                Vector forward = controllerMatrix.GetForward();
+                VectorAngles(forward, controllerAngles);
+                controllerValid = true;
+            }
+        }
+    }
     
-    Vector currentEyePos = m_pLocalPlayer->EyePosition();
-    Vector rayStart = currentEyePos; // Start from current head position
-    Vector rayEnd;
-    VectorMA(currentEyePos, 1000.0f, rayDir, rayEnd);
+    Vector rayStart, rayEnd;
+    
+    if (controllerValid)
+    {
+        // Use controller position and orientation for ray
+        rayStart = controllerPos;
+        
+        // Get forward direction from controller angles
+        Vector rayDir;
+        AngleVectors(controllerAngles, &rayDir);
+        VectorMA(controllerPos, 1000.0f, rayDir, rayEnd);
+        
+        DevMsg("VR Menu: Using controller-based cursor from %s hand at pos(%.2f, %.2f, %.2f)\n", 
+               m_nMenuHand == 0 ? "left" : "right", controllerPos.x, controllerPos.y, controllerPos.z);
+    }
+    else
+    {
+        // Fallback to head-based cursor if controller not available
+        QAngle currentViewAngles = m_pLocalPlayer->EyeAngles();
+        Vector rayDir;
+        AngleVectors(currentViewAngles, &rayDir);
+        VectorNormalize(rayDir);
+        
+        Vector currentEyePos = m_pLocalPlayer->EyePosition();
+        rayStart = currentEyePos;
+        VectorMA(currentEyePos, 1000.0f, rayDir, rayEnd);
+        
+        DevMsg("VR Menu: Using head-based cursor (controller not available)\n");
+    }
     
     // Recreate the fixed menu plane using the same calculations as when we set it
     float menuDistance = tfvr_menu_distance.GetFloat();
@@ -259,16 +313,23 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     float menuHeight = menuDistance * 0.6f;
     float menuWidth = menuHeight * aspectRatio;
     
-    // Calculate menu plane corners
+    // Calculate menu plane corners - EXACTLY the same as in HandleMenuInput
     Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
     Vector ur = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
     Vector ll = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
     Vector lr = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
     
+    DevMsg("VR Menu: Ray from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f)\n", 
+           rayStart.x, rayStart.y, rayStart.z, rayEnd.x, rayEnd.y, rayEnd.z);
+    DevMsg("VR Menu: Menu plane corners - UL(%.2f, %.2f, %.2f) UR(%.2f, %.2f, %.2f) LL(%.2f, %.2f, %.2f) LR(%.2f, %.2f, %.2f)\n",
+           ul.x, ul.y, ul.z, ur.x, ur.y, ur.z, ll.x, ll.y, ll.z, lr.x, lr.y, lr.z);
+    
     // Compute intersection with the fixed menu plane
     float u, v;
     if (ComputeIntersectionBarycentricCoordinates(rayStart, rayEnd, ul, ur, ll, lr, u, v))
     {
+        DevMsg("VR Menu: Ray hit at UV(%.3f, %.3f)\n", u, v);
+        
         // Clamp UV coordinates to valid range
         u = max(0.0f, min(1.0f, u));
         v = max(0.0f, min(1.0f, v));
@@ -280,9 +341,12 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
         // Clamp screen coordinates to valid range
         px = max(0, min(screenWidth - 1, px));
         py = max(0, min(screenHeight - 1, py));
+        
+        DevMsg("VR Menu: Screen coordinates: (%d, %d) from UV(%.3f, %.3f)\n", px, py, u, v);
         return;
     }
     
+    DevMsg("VR Menu: No intersection with menu plane\n");
     // If no intersection, use center of screen
     px = screenWidth / 2;
     py = screenHeight / 2;

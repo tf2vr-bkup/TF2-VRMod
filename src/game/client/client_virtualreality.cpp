@@ -92,7 +92,7 @@ ConVar vr_force_windowed ( "vr_force_windowed", "0", FCVAR_ARCHIVE );
 
 ConVar vr_first_person_uses_world_model ( "vr_first_person_uses_world_model", "1", 0, "Causes the third person model to be drawn instead of the view model" );
 
-extern ConVar tfvr_menu_forward;
+extern ConVar tfvr_menu_distance;
 extern ConVar tfvr_menu_scale;
 
 extern ConVar tfvr_hud_onwrist;
@@ -714,7 +714,7 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 	float fHFOV = m_fHudHorizontalFov;
 	float fVFOV = m_fHudHorizontalFov / fAspectRatio;
 
-	const float fHudForward = (IsMenuUp() ? tfvr_menu_forward : tfvr_hud_forward).GetFloat();
+	const float fHudForward = (IsMenuUp() ? tfvr_menu_distance.GetFloat() : tfvr_hud_forward.GetFloat());
 	m_fHudHalfWidth = tan( DEG2RAD( fHFOV * 0.5f ) ) * fHudForward * m_WorldZoomScale;
 	m_fHudHalfHeight = tan( DEG2RAD( fVFOV * 0.5f ) ) * fHudForward * m_WorldZoomScale;
 

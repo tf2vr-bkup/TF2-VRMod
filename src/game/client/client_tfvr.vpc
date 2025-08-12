@@ -985,6 +985,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\stCommon.h"
 			$File   "tfvr\vr_menu_manager.h"
 			$File   "tfvr\vr_menu_manager.cpp"
+			$File   "tfvr\vr_laser_pointer.h"
+			$File   "tfvr\vr_laser_pointer.cpp"
 		}
 
 		$Folder	"game_controls"

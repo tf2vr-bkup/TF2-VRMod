@@ -8,6 +8,9 @@
 #include "iclientmode.h"
 #include "vr_input.h"
 #include "iinput.h"
+#include "vr_laser_pointer.h"
+#include "vr_menu_manager.h"
+#include "engine/ivdebugoverlay.h"
 
 #include "mathlib/mathlib.h"
 
@@ -17,6 +20,7 @@ extern class CVRMenuManager* g_pVRMenuManager;
 ConVar tfvr_worldscale("tfvr_worldscale", "40", FCVAR_ARCHIVE | FCVAR_REPLICATED, "This scales everything.");
 #define METERS_TO_GAME_UNITS tfvr_worldscale.GetFloat()
 
+ConVar tfvr_controller_debug_draw("tfvr_controller_debug_draw", "1", FCVAR_ARCHIVE, "Draw debug visualization for controller positions and orientations");
 ConVar tfvr_msaa("tfvr_msaa", "4", FCVAR_ARCHIVE, "Controls multi-sampling anti-aliasing levels in TFVR. Set to the number of samples to use.");
 ConVar tfvr_forcemaxlod("tfvr_forcemaxlod", "1", FCVAR_ARCHIVE);
 ConVar tfvr_hud_forward("tfvr_hud_forward", "15", FCVAR_ARCHIVE, "Apparent distance of the HUD in inches");
@@ -24,7 +28,7 @@ ConVar tfvr_hud_scale("tfvr_hud_scale", "0.5", FCVAR_ARCHIVE);
 ConVar tfvr_hud_axis_lock_to_world("tfvr_hud_axis_lock_to_world", "5", FCVAR_ARCHIVE, "Bitfield - locks HUD axes to the world - 1=pitch, 2=yaw, 4=roll");
 ConVar tfvr_hud_height_adjust("tfvr_hud_height_adjust", "-4", FCVAR_ARCHIVE);
 
-ConVar tfvr_menu_forward("tfvr_menu_forward", "150", FCVAR_ARCHIVE);
+
 ConVar tfvr_menu_scale("tfvr_menu_scale", "0.7", FCVAR_ARCHIVE);
 
 ConVar tfvr_r_show_both_eyes("tfvr_r_show_both_eyes", "0", FCVAR_ARCHIVE, "Show both eyes on the game window.");
@@ -102,6 +106,7 @@ COpenXRManager::COpenXRManager()
     m_vrActive = false;
     m_inputManager = nullptr;
     m_menuManager = nullptr;
+    m_laserPointer = nullptr;
 }
 
 COpenXRManager::~COpenXRManager() 
@@ -149,7 +154,12 @@ bool COpenXRManager::Initialize()
     // Initialize VR Menu Manager
     m_menuManager = new CVRMenuManager();
     m_menuManager->Initialize();
-    
+
+    // Initialize VR Laser Pointer
+    m_laserPointer = new CVRLaserPointer();
+    m_laserPointer->Initialize();
+    DevMsg("VR Laser Pointer initialized\n");
+
     // Set the global pointer for external access
     g_pVRMenuManager = m_menuManager;
 
@@ -162,21 +172,28 @@ void COpenXRManager::Shutdown()
 {
     if (!m_vrActive) return;
 
-    // Clean up input system
-    if (m_inputManager)
-    {
-        m_inputManager->Shutdown();
-        delete m_inputManager;
-        m_inputManager = nullptr;
-    }
-
-    // Clean up menu manager
+    // Clean up VR Menu Manager
     if (m_menuManager)
     {
         m_menuManager->Shutdown();
         delete m_menuManager;
         m_menuManager = nullptr;
-        g_pVRMenuManager = nullptr; // Clear global pointer
+    }
+
+    // Clean up VR Laser Pointer
+    if (m_laserPointer)
+    {
+        m_laserPointer->Shutdown();
+        delete m_laserPointer;
+        m_laserPointer = nullptr;
+    }
+
+    // Clean up input manager
+    if (m_inputManager)
+    {
+        m_inputManager->Shutdown();
+        delete m_inputManager;
+        m_inputManager = nullptr;
     }
 
     ReleaseResources();
@@ -491,6 +508,12 @@ void COpenXRManager::UpdateOpenXRViewData()
     if (!m_vrActive || !m_session)
     {
         return;
+    }
+
+    // Poll input state here since the frame state is valid after BeginFrame
+    if (m_inputManager)
+    {
+        m_inputManager->PollInput();
     }
 
     uint32_t viewCount;
@@ -967,12 +990,6 @@ void COpenXRManager::Update(float frametime)
 		r_lod.SetValue(-1);
 	}
 
-	// Poll input state
-	if (m_inputManager)
-	{
-		m_inputManager->PollInput();
-	}
-
     if (WasButtonPressed("left_trigger")) 
     {
 		DevMsg("Left Trigger pressed!\n");
@@ -1022,6 +1039,134 @@ bool COpenXRManager::WasButtonReleased(const char* actionName)
 float COpenXRManager::GetAnalogValue(const char* actionName)
 {
     return m_inputManager ? m_inputManager->GetAnalogValue(actionName) : 0.0f;
+}
+
+bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
+{
+    if (!m_inputManager) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("left_hand_pose", xrPose))
+    {
+        // Get the head pose from OpenXR (center eye)
+        XrPosef headPose = m_views[0].pose;
+        
+        // Create head transform matrix and get its inverse
+        VMatrix headMatrix = ToSourceCoordinateSystem(headPose);
+        VMatrix headInverse = headMatrix.InverseTR();
+        
+        // Convert controller pose to Source coordinate system
+        VMatrix controllerMatrix = ToSourceCoordinateSystem(xrPose);
+        
+        // Transform controller to head-relative space, then through player's world transform
+        VMatrix headRelativeController = headInverse * controllerMatrix;
+        
+        // Get player's world transform
+        C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+        if (pPlayer)
+        {
+            // Create player transform matrix (rotation + position)
+            VMatrix playerMatrix;
+            playerMatrix.Identity();
+            
+            matrix3x4_t playerMatrix3x4;
+            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
+            playerMatrix.CopyFrom3x4(playerMatrix3x4);
+            playerMatrix.SetTranslation(pPlayer->EyePosition());
+            
+            // Transform controller through player's world transform
+            pose = playerMatrix * headRelativeController;
+            
+            // Debug visualization
+            if (debugoverlay && tfvr_controller_debug_draw.GetBool())
+            {
+                Vector worldPos = pose.GetTranslation();
+                
+                // Draw controller position box
+                Vector boxSize(2.0f, 2.0f, 2.0f);
+                debugoverlay->AddBoxOverlay(worldPos, -boxSize, boxSize, QAngle(0, 0, 0), 255, 0, 0, 255, 0.016f);
+                
+                // Draw orientation axes
+                Vector forward, right, up;
+                pose.GetBasisVectors(forward, right, up);
+                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + forward * 20.0f, 255, 0, 0, 255, false, 0.016f);
+                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + right * 20.0f, 0, 255, 0, 255, false, 0.016f);
+                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + up * 20.0f, 0, 0, 255, 255, false, 0.016f);
+            }
+        }
+        
+        return true;
+    }
+    return false;
+}
+
+bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
+{
+    if (!m_inputManager) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("right_hand_pose", xrPose))
+    {
+        // Get the head pose from OpenXR (center eye)
+        XrPosef headPose = m_views[0].pose;
+        
+        // Create head transform matrix and get its inverse
+        VMatrix headMatrix = ToSourceCoordinateSystem(headPose);
+        VMatrix headInverse = headMatrix.InverseTR();
+        
+        // Convert controller pose to Source coordinate system
+        VMatrix controllerMatrix = ToSourceCoordinateSystem(xrPose);
+        
+        // Transform controller to head-relative space, then through player's world transform
+        VMatrix headRelativeController = headInverse * controllerMatrix;
+        
+        // Get player's world transform
+        C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+        if (pPlayer)
+        {
+            // Create player transform matrix (rotation + position)
+            VMatrix playerMatrix;
+            playerMatrix.Identity();
+            
+            matrix3x4_t playerMatrix3x4;
+            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
+            playerMatrix.CopyFrom3x4(playerMatrix3x4);
+            playerMatrix.SetTranslation(pPlayer->EyePosition());
+            
+            // Transform controller through player's world transform
+            pose = playerMatrix * headRelativeController;
+            
+            // Debug visualization
+            if (debugoverlay && tfvr_controller_debug_draw.GetBool())
+            {
+                Vector worldPos = pose.GetTranslation();
+                
+                // Draw controller position box
+                Vector boxSize(2.0f, 2.0f, 2.0f);
+                debugoverlay->AddBoxOverlay(worldPos, -boxSize, boxSize, QAngle(0, 0, 0), 0, 255, 0, 255, 0.016f);
+                
+                // Draw orientation axes
+                Vector forward, right, up;
+                pose.GetBasisVectors(forward, right, up);
+                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + forward * 20.0f, 255, 0, 0, 255, false, 0.016f);
+                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + right * 20.0f, 0, 255, 0, 255, false, 0.016f);
+                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + up * 20.0f, 0, 0, 255, 255, false, 0.016f);
+            }
+        }
+        
+        return true;
+    }
+    return false;
+}
+
+bool COpenXRManager::IsLeftControllerPoseValid()
+{
+    return m_inputManager ? m_inputManager->IsControllerPoseValid("left_hand_pose") : false;
+}
+
+bool COpenXRManager::IsRightControllerPoseValid()
+{
+    return m_inputManager ? m_inputManager->IsControllerPoseValid("right_hand_pose") : false;
 }
 
 COpenXRManager g_TFVR;

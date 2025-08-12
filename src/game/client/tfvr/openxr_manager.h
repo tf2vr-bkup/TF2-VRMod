@@ -12,6 +12,8 @@
 #include "client_virtualreality.h"
 #include "sourcevr/isourcevirtualreality.h"
 #include "vr_menu_manager.h"
+// Forward declaration to avoid circular dependency
+class CVRLaserPointer;
 
 class COpenXRInputManager;
 
@@ -73,6 +75,15 @@ public:
     bool WasButtonPressed(const char* actionName);
     bool WasButtonReleased(const char* actionName);
     float GetAnalogValue(const char* actionName);
+
+    // Controller pose tracking
+    bool GetLeftControllerPose(VMatrix& pose);
+    bool GetRightControllerPose(VMatrix& pose);
+    bool IsLeftControllerPoseValid();
+    bool IsRightControllerPoseValid();
+
+    // Frame state access
+    const XrFrameState& GetFrameState() const { return m_frameState; }
 
 private:
     // OpenXR Resources
@@ -140,6 +151,9 @@ private:
     
     // VR Menu Manager
     CVRMenuManager* m_menuManager;
+    
+    // VR Laser Pointer
+    CVRLaserPointer* m_laserPointer;
 };
 
 static ConVar vr_quat_x_sign("vr_quat_x_sign", "1", FCVAR_ARCHIVE, "Sign for X quaternion component (0=negative, 1=positive)");

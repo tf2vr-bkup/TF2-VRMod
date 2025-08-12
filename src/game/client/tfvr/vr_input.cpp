@@ -14,6 +14,10 @@ ConVar tfvr_move_sensitivity("tfvr_move_sensitivity", "1.0", FCVAR_ARCHIVE, "Sen
 ConVar tfvr_thumbstick_deadzone("tfvr_thumbstick_deadzone", "0.1", FCVAR_ARCHIVE, "Deadzone for thumbstick movement");
 ConVar tfvr_use_hmd_angles("tfvr_use_hmd_angles", "0", FCVAR_ARCHIVE, "Use HMD angles for view");
 
+// Controller tracking ConVars
+ConVar tfvr_enable_controller_tracking("tfvr_enable_controller_tracking", "1", FCVAR_ARCHIVE, "Enable VR controller position and orientation tracking");
+ConVar tfvr_controller_tracking_debug("tfvr_controller_tracking_debug", "0", FCVAR_ARCHIVE, "Show debug output for controller tracking");
+
 // VR Turning ConVars
 ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap" );
 ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "90", FCVAR_ARCHIVE, "Smooth turning rate in degrees per second" );
@@ -61,6 +65,9 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
         // Process VR-specific input
         ProcessVRControllerInput(cmd);
         
+        // Process VR controller tracking
+        ProcessVRControllerTracking(cmd);
+        
         // Only process VR view angles if explicitly enabled
         if (tfvr_use_hmd_angles.GetBool())
         {
@@ -105,6 +112,9 @@ void CVRInput::ExtraMouseSample(float frametime, bool active)
    {
        // Process VR-specific input
        ProcessVRControllerInput(cmd);
+        
+       // Process VR controller tracking
+       ProcessVRControllerTracking(cmd);
         
        // Only process VR view angles if explicitly enabled
        if (tfvr_use_hmd_angles.GetBool())
@@ -296,6 +306,67 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
     // Debug output for movement values
     //DevMsg("VR Movement: Final values - forward=%.2f->%.2f side=%.2f->%.2f\n", 
     //       oldForward, cmd->forwardmove, oldSide, cmd->sidemove);
+}
+
+void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
+{
+    // Check if controller tracking is enabled
+    if (!tfvr_enable_controller_tracking.GetBool())
+        return;
+    
+    // Check if menu is visible - if so, disable tracking
+    bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
+    if (bMenuVisible)
+    {
+        // Don't process controller tracking when menu is open
+        return;
+    }
+    
+    // Get controller poses
+    VMatrix leftControllerPose, rightControllerPose;
+    bool leftValid = g_pOpenXRManager->GetLeftControllerPose(leftControllerPose);
+    bool rightValid = g_pOpenXRManager->GetRightControllerPose(rightControllerPose);
+    
+    // Store controller poses in the command for use by other systems
+    if (leftValid)
+    {
+        // Extract position and orientation from the pose matrix
+        Vector leftPos = leftControllerPose.GetTranslation();
+        QAngle leftAngles;
+        MatrixAngles(leftControllerPose.As3x4(), leftAngles);
+        
+        // Store in command (you may need to add these fields to CUserCmd)
+        // cmd->left_controller_pos = leftPos;
+        // cmd->left_controller_angles = leftAngles;
+        
+        // Debug output
+        if (tfvr_controller_tracking_debug.GetBool())
+        {
+            DevMsg("Left Controller: pos(%.2f, %.2f, %.2f) angles(%.1f, %.1f, %.1f)\n", 
+                   leftPos.x, leftPos.y, leftPos.z, leftAngles.x, leftAngles.y, leftAngles.z);
+        }
+    }
+    
+    if (rightValid)
+    {
+        // Extract position and orientation from the pose matrix
+        Vector rightPos = rightControllerPose.GetTranslation();
+        QAngle rightAngles;
+        MatrixAngles(rightControllerPose.As3x4(), rightAngles);
+        
+        // Store in command (you may need to add these fields to CUserCmd)
+        // cmd->right_controller_pos = rightPos;
+        // cmd->right_controller_angles = rightAngles;
+        
+        // Debug output
+        if (tfvr_controller_tracking_debug.GetBool())
+        {
+            DevMsg("Right Controller: pos(%.2f, %.2f, %.1f) angles(%.1f, %.1f, %.1f)\n", 
+                   rightPos.x, rightPos.y, rightPos.z, rightAngles.x, rightAngles.y, rightAngles.z);
+        }
+    }
+    
+    // Laser pointer functionality is now handled by CVRLaserPointer class
 }
 
  

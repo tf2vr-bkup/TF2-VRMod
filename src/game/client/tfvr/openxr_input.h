@@ -16,17 +16,6 @@ struct XrInputAction {
     std::vector<XrPath> subactionPaths;
 };
 
-struct XrInputBinding {
-    XrAction action;
-    XrPath binding;
-};
-
-struct XrInteractionProfile {
-    std::string name;
-    XrPath path;
-    std::vector<XrInputBinding> bindings;
-};
-
 class COpenXRInputManager {
 public:
     COpenXRInputManager(COpenXRManager* manager);
@@ -41,6 +30,10 @@ public:
     bool WasButtonReleased(const char* actionName);
     float GetAnalogValue(const char* actionName);
 
+    // Controller pose tracking
+    bool GetControllerPose(const char* actionName, XrPosef& pose);
+    bool IsControllerPoseValid(const char* actionName);
+
 private:
     bool CreateActionSet();
     bool CreateActions();
@@ -51,9 +44,6 @@ private:
     XrInputAction CreateFloatAction(const char* name, const char* localizedName);
     XrInputAction CreatePoseAction(const char* name, const char* localizedName);
 
-    bool AddBinding(XrInteractionProfile& profile, const char* actionName, const char* bindingPath);
-    bool SuggestBindings(const XrInteractionProfile& profile);
-
     COpenXRManager* m_manager;
     XrInstance m_instance;
     XrSession m_session;
@@ -61,10 +51,12 @@ private:
 
     // Input state
     std::map<std::string, XrInputAction> m_actions;
-    std::vector<XrInteractionProfile> m_profiles;
     std::map<std::string, bool> m_previousButtonStates;
     std::map<std::string, bool> m_currentButtonStates;
     std::map<std::string, float> m_currentAnalogStates;
+    std::map<std::string, XrPosef> m_currentPoseStates;
+    std::map<std::string, bool> m_currentPoseValidStates;
+    std::map<std::string, XrSpace> m_actionSpaces;
 
     // Common paths
     XrPath m_leftHandPath;

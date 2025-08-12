@@ -31,6 +31,7 @@ protected:
     void ProcessVRControllerInput(CUserCmd* cmd);
     void ProcessVRViewAngles(CUserCmd* cmd);
     void ProcessVRMovement(CUserCmd* cmd, float frametime);
+    void ProcessVRControllerTracking(CUserCmd* cmd);
     
 private:
     // No private members needed for this class

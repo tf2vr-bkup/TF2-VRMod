@@ -1,6 +1,7 @@
 #include "cbase.h"
 #include "openxr_input.h"
 #include "openxr_manager.h"
+#include "hmdWrapper.h"
 
 COpenXRInputManager::COpenXRInputManager(COpenXRManager* manager)
     : m_manager(manager)
@@ -34,6 +35,16 @@ void COpenXRInputManager::Shutdown()
         }
     }
     m_actions.clear();
+
+    // Clean up action spaces
+    for (auto& actionSpace : m_actionSpaces)
+    {
+        if (actionSpace.second != XR_NULL_HANDLE)
+        {
+            xrDestroySpace(actionSpace.second);
+        }
+    }
+    m_actionSpaces.clear();
 
     if (m_actionSet != XR_NULL_HANDLE)
     {
@@ -80,6 +91,15 @@ bool COpenXRInputManager::CreateActions()
     if (turnX.handle == XR_NULL_HANDLE) return false;
     m_actions["turn_x"] = turnX;
 
+    // Create controller pose actions for tracking
+    XrInputAction leftHandPose = CreatePoseAction("left_hand_pose", "Left Hand Pose");
+    if (leftHandPose.handle == XR_NULL_HANDLE) return false;
+    m_actions["left_hand_pose"] = leftHandPose;
+
+    XrInputAction rightHandPose = CreatePoseAction("right_hand_pose", "Right Hand Pose");
+    if (rightHandPose.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_hand_pose"] = rightHandPose;
+
     // Create button actions
     XrInputAction primaryAttack = CreateFloatAction("primary_attack", "Primary Attack");
     if (primaryAttack.handle == XR_NULL_HANDLE) return false;
@@ -105,60 +125,236 @@ bool COpenXRInputManager::CreateActions()
     if (menu.handle == XR_NULL_HANDLE) return false;
     m_actions["menu"] = menu;
 
-    // Add menu press action for cursor control
-    XrInputAction menuPress = CreateBooleanAction("menu_press", "Menu Press");
-    if (menuPress.handle == XR_NULL_HANDLE) return false;
-    m_actions["menu_press"] = menuPress;
+    // Add separate UI interaction actions for left and right hands
+    XrInputAction leftUIInteract = CreateBooleanAction("left_ui_interact", "Left UI Interact");
+    if (leftUIInteract.handle == XR_NULL_HANDLE) return false;
+    m_actions["left_ui_interact"] = leftUIInteract;
+
+    XrInputAction rightUIInteract = CreateBooleanAction("right_ui_interact", "Right UI Interact");
+    if (rightUIInteract.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_ui_interact"] = rightUIInteract;
 
     return true;
 }
 
 bool COpenXRInputManager::CreateInteractionProfiles()
 {
-    // Create Valve Index profile
-    XrInteractionProfile indexProfile;
-    indexProfile.name = "valve_index_controller";
+    // Try to create Valve Index profile first
+    XrPath indexProfilePath;
     
-    XrResult result = xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexProfile.path);
+    XrResult result = xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexProfilePath);
     if (!XR_SUCCEEDED(result)) 
     {
-        DevMsg("Failed to create path for Valve Index profile: %d\n", result);
-        return false;
+        DevMsg("Failed to create path for Valve Index profile: %d, trying generic profile\n", result);
+        
+        // Fall back to generic OpenXR profile
+        result = xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &indexProfilePath);
+        if (!XR_SUCCEEDED(result)) 
+        {
+            DevMsg("Failed to create path for generic profile: %d\n", result);
+            return false;
+        }
     }
 
+    // Create suggested bindings for the profile
+    std::vector<XrActionSuggestedBinding> suggestedBindings;
+    
     // Movement bindings (left controller)
-    if (!AddBinding(indexProfile, "move_x", "/user/hand/left/input/thumbstick/x")) return false;
-    if (!AddBinding(indexProfile, "move_y", "/user/hand/left/input/thumbstick/y")) return false;
+    if (m_actions.find("move_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("move_y") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_y"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
     // Turning bindings (right controller)
-    if (!AddBinding(indexProfile, "turn_x", "/user/hand/right/input/thumbstick/x")) return false;
+    if (m_actions.find("turn_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["turn_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
     // Primary attack (right trigger)
-    if (!AddBinding(indexProfile, "primary_attack", "/user/hand/right/input/trigger/value")) return false;
+    if (m_actions.find("primary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["primary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
     // Secondary attack (left trigger)
-    if (!AddBinding(indexProfile, "secondary_attack", "/user/hand/left/input/trigger/value")) return false;
+    if (m_actions.find("secondary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["secondary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
     // Use (right A button)
-    if (!AddBinding(indexProfile, "use", "/user/hand/right/input/a/click")) return false;
+    if (m_actions.find("use") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["use"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
     // Duck (left A button)
-    if (!AddBinding(indexProfile, "duck", "/user/hand/left/input/a/click")) return false;
+    if (m_actions.find("duck") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/a/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["duck"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
     // Jump (right B button)
-    if (!AddBinding(indexProfile, "jump", "/user/hand/right/input/b/click")) return false;
+    if (m_actions.find("jump") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["jump"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
     // Menu (left B button)
-    if (!AddBinding(indexProfile, "menu", "/user/hand/left/input/b/click")) return false;
+    if (m_actions.find("menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/b/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
 
-    // Menu press bindings for cursor control (both hands)
-    if (!AddBinding(indexProfile, "menu_press", "/user/hand/left/input/trigger/click")) return false;
-    if (!AddBinding(indexProfile, "menu_press", "/user/hand/right/input/trigger/click")) return false;
+    // Left UI interaction binding (left trigger)
+    if (m_actions.find("left_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right UI interaction binding (right trigger)
+    if (m_actions.find("right_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Pose action bindings for controller tracking
+    if (m_actions.find("left_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added left hand pose binding: /user/hand/left/input/aim/pose\n");
+        }
+    }
+    
+    if (m_actions.find("right_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added right hand pose binding: /user/hand/right/input/aim/pose\n");
+        }
+    }
 
     // Suggest bindings for the profile
-    if (!SuggestBindings(indexProfile)) return false;
+    if (!suggestedBindings.empty())
+    {
+        XrInteractionProfileSuggestedBinding suggestedBindingsInfo{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+        suggestedBindingsInfo.interactionProfile = indexProfilePath;
+        suggestedBindingsInfo.suggestedBindings = suggestedBindings.data();
+        suggestedBindingsInfo.countSuggestedBindings = suggestedBindings.size();
 
-    m_profiles.push_back(indexProfile);
+        // Get the profile path string for debugging
+        char profilePathStr[XR_MAX_PATH_LENGTH];
+        uint32_t profilePathStrLen = 0;
+        XrResult profilePathResult = xrPathToString(m_instance, indexProfilePath, XR_MAX_PATH_LENGTH, &profilePathStrLen, profilePathStr);
+        if (XR_SUCCEEDED(profilePathResult))
+        {
+            DevMsg("Suggesting bindings for profile path: %s\n", profilePathStr);
+        }
+
+        XrResult result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindingsInfo);
+        if (!XR_SUCCEEDED(result))
+        {
+            DevMsg("Failed to suggest bindings for profile: %d\n", result);
+            return false;
+        }
+        
+        DevMsg("Successfully suggested %d bindings for profile\n", suggestedBindings.size());
+    }
+
     return true;
 }
 
@@ -225,80 +421,96 @@ XrInputAction COpenXRInputManager::CreateFloatAction(const char* name, const cha
     return action;
 }
 
-bool COpenXRInputManager::AddBinding(XrInteractionProfile& profile, const char* actionName, const char* bindingPath)
+XrInputAction COpenXRInputManager::CreatePoseAction(const char* name, const char* localizedName)
 {
-    auto it = m_actions.find(actionName);
-    if (it == m_actions.end())
+    XrInputAction action;
+    action.name = name;
+    action.localizedName = localizedName;
+    action.type = XR_ACTION_TYPE_POSE_INPUT;
+    action.handle = XR_NULL_HANDLE;
+
+    XrActionCreateInfo createInfo{ XR_TYPE_ACTION_CREATE_INFO };
+    strcpy_s(createInfo.actionName, name);
+    strcpy_s(createInfo.localizedActionName, localizedName);
+    createInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
+    
+    // Pose actions need subaction paths for left/right hands
+    if (strstr(name, "left") != nullptr)
     {
-        DevMsg("Action %s not found\n", actionName);
-        return false;
+        createInfo.countSubactionPaths = 1;
+        createInfo.subactionPaths = &m_leftHandPath;
+    }
+    else if (strstr(name, "right") != nullptr)
+    {
+        createInfo.countSubactionPaths = 1;
+        createInfo.subactionPaths = &m_rightHandPath;
+    }
+    else
+    {
+        createInfo.countSubactionPaths = 0;
+        createInfo.subactionPaths = nullptr;
     }
 
-    XrPath path;
-    XrResult result = xrStringToPath(m_instance, bindingPath, &path);
+    XrResult result = xrCreateAction(m_actionSet, &createInfo, &action.handle);
     if (!XR_SUCCEEDED(result))
     {
-        DevMsg("Failed to create path for binding %s: %d\n", bindingPath, result);
-        return false;
+        DevMsg("Failed to create pose action %s: %d\n", name, result);
+        action.handle = XR_NULL_HANDLE;
+        return action;
     }
 
-    XrInputBinding binding;
-    binding.action = it->second.handle;
-    binding.binding = path;
-    profile.bindings.push_back(binding);
-    return true;
-}
-
-bool COpenXRInputManager::SuggestBindings(const XrInteractionProfile& profile)
-{
-    // Convert our bindings to XrActionSuggestedBinding format
-    std::vector<XrActionSuggestedBinding> suggestedBindings;
-    suggestedBindings.reserve(profile.bindings.size());
+    // Create action space for this pose action
+    XrActionSpaceCreateInfo actionSpaceInfo{ XR_TYPE_ACTION_SPACE_CREATE_INFO };
+    actionSpaceInfo.action = action.handle;
     
-    DevMsg("Suggesting bindings for profile %s with %d bindings\n", profile.name.c_str(), profile.bindings.size());
+    // Set the appropriate subaction path for the action space
+    if (strstr(name, "left") != nullptr)
+    {
+        actionSpaceInfo.subactionPath = m_leftHandPath;
+    }
+    else if (strstr(name, "right") != nullptr)
+    {
+        actionSpaceInfo.subactionPath = m_rightHandPath;
+    }
+    else
+    {
+        actionSpaceInfo.subactionPath = XR_NULL_PATH;
+    }
     
-    for (const auto& binding : profile.bindings)
-    {
-        XrActionSuggestedBinding suggestedBinding;
-        suggestedBinding.action = binding.action;
-        suggestedBinding.binding = binding.binding;
-        suggestedBindings.push_back(suggestedBinding);
-        
-        // Get the path string for debugging
-        char pathStr[XR_MAX_PATH_LENGTH];
-        uint32_t pathStrLen = 0;
-        XrResult pathResult = xrPathToString(m_instance, binding.binding, XR_MAX_PATH_LENGTH, &pathStrLen, pathStr);
-        if (XR_SUCCEEDED(pathResult))
-        {
-            DevMsg("  Binding action to path: %s\n", pathStr);
-        }
-    }
+    actionSpaceInfo.poseInActionSpace.orientation.w = 1.0f;
+    actionSpaceInfo.poseInActionSpace.orientation.x = 0.0f;
+    actionSpaceInfo.poseInActionSpace.orientation.y = 0.0f;
+    actionSpaceInfo.poseInActionSpace.orientation.z = 0.0f;
+    actionSpaceInfo.poseInActionSpace.position.x = 0.0f;
+    actionSpaceInfo.poseInActionSpace.position.y = 0.0f;
+    actionSpaceInfo.poseInActionSpace.position.z = 0.0f;
 
-    XrInteractionProfileSuggestedBinding suggestedBindingsInfo{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
-    suggestedBindingsInfo.interactionProfile = profile.path;
-    suggestedBindingsInfo.suggestedBindings = suggestedBindings.data();
-    suggestedBindingsInfo.countSuggestedBindings = suggestedBindings.size();
-
-    // Get the profile path string for debugging
-    char profilePathStr[XR_MAX_PATH_LENGTH];
-    uint32_t profilePathStrLen = 0;
-    XrResult profilePathResult = xrPathToString(m_instance, profile.path, XR_MAX_PATH_LENGTH, &profilePathStrLen, profilePathStr);
-    if (XR_SUCCEEDED(profilePathResult))
-    {
-        DevMsg("Suggesting bindings for profile path: %s\n", profilePathStr);
-    }
-
-    XrResult result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindingsInfo);
+    XrSpace actionSpace;
+    result = xrCreateActionSpace(m_session, &actionSpaceInfo, &actionSpace);
     if (!XR_SUCCEEDED(result))
     {
-        DevMsg("Failed to suggest bindings for profile %s: %d\n", profile.name.c_str(), result);
-        return false;
+        DevMsg("Failed to create action space for %s: %d\n", name, result);
+        xrDestroyAction(action.handle);
+        action.handle = XR_NULL_HANDLE;
+        return action;
     }
-    return true;
+
+    // Store the action space
+    m_actionSpaces[name] = actionSpace;
+
+    return action;
 }
 
 void COpenXRInputManager::PollInput()
 {
+    static int frameCount = 0;
+    frameCount++;
+    
+    if (frameCount % 300 == 0) // Log every 300 frames (about once per 5 seconds)
+    {
+        DevMsg("OpenXR Input: Polling input (frame %d)\n", frameCount);
+    }
+    
     m_previousButtonStates = m_currentButtonStates;
 
     XrActionsSyncInfo syncInfo{ XR_TYPE_ACTIONS_SYNC_INFO };
@@ -331,8 +543,9 @@ void COpenXRInputManager::PollInput()
                     bool previousState = m_currentButtonStates[key];
                     m_currentButtonStates[key] = state.currentState;
                     
-                    // Log state changes
-                    if (state.currentState != previousState)
+                    // Only log state changes for UI interaction actions to reduce noise
+                    if (state.currentState != previousState && 
+                        (key == "left_ui_interact" || key == "right_ui_interact"))
                     {
                         DevMsg("Button %s changed to %s\n", key.c_str(), state.currentState ? "pressed" : "released");
                     }
@@ -355,13 +568,70 @@ void COpenXRInputManager::PollInput()
                     float previousValue = m_currentAnalogStates[key];
                     m_currentAnalogStates[key] = state.currentState;
                     
-                    // Log significant changes in analog values (more than 0.1 difference)
-                    if (fabs(state.currentState - previousValue) > 0.1f)
+                    // Only log significant changes in analog values (more than 0.2 difference) to reduce noise
+                    if (fabs(state.currentState - previousValue) > 0.2f)
                     {
                         DevMsg("Analog %s changed to %.2f\n", key.c_str(), state.currentState);
                     }
                 }
             //}
+        }
+        else if (action.second.type == XR_ACTION_TYPE_POSE_INPUT)
+        {
+            // Poll pose state for both hands
+            XrActionStateGetInfo getInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
+            getInfo.action = action.second.handle;
+
+            XrActionStatePose state{ XR_TYPE_ACTION_STATE_POSE };
+            result = xrGetActionStatePose(m_session, &getInfo, &state);
+            if (XR_SUCCEEDED(result))
+            {
+                std::string key = action.first;
+                m_currentPoseValidStates[key] = state.isActive;
+                
+                // If pose is active, get the current pose
+                if (state.isActive)
+                {
+                    // Get pose relative to reference space using the action's space
+                    XrSpaceLocation spaceLocation{ XR_TYPE_SPACE_LOCATION };
+                    XrSpaceLocationFlags requiredFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+                    
+                    // Get pose relative to reference space
+                    auto actionSpaceIt = m_actionSpaces.find(key);
+                    if (actionSpaceIt != m_actionSpaces.end())
+                    {
+                        // Get the current frame time from the DXVK layer instead of the manager's frame state
+                        XrTime currentTime = 0;
+                        dxvkGetPredictedDisplayTime(currentTime);
+                        
+                        if (currentTime == 0)
+                        {
+                            DevMsg("Warning: Invalid frame time for pose location, skipping\n");
+                            continue;
+                        }
+                        
+                        result = xrLocateSpace(actionSpaceIt->second, m_manager->GetReferenceSpace(), 
+                                             currentTime, &spaceLocation);
+                        if (XR_SUCCEEDED(result) && (spaceLocation.locationFlags & requiredFlags) == requiredFlags)
+                        {
+                            m_currentPoseStates[key] = spaceLocation.pose;
+                        }
+                        else
+                        {
+                            DevMsg("Failed to locate space for %s: result=%d, flags=0x%X\n", 
+                                   key.c_str(), result, spaceLocation.locationFlags);
+                        }
+                    }
+                    else
+                    {
+                        DevMsg("No action space found for pose action: %s\n", key.c_str());
+                    }
+                }
+            }
+            else
+            {
+                DevMsg("Failed to get pose state for %s: %d\n", action.first.c_str(), result);
+            }
         }
     }
 }
@@ -394,4 +664,21 @@ float COpenXRInputManager::GetAnalogValue(const char* actionName)
 {
     auto it = m_currentAnalogStates.find(actionName);
     return it != m_currentAnalogStates.end() ? it->second : 0.0f;
+}
+
+bool COpenXRInputManager::GetControllerPose(const char* actionName, XrPosef& pose)
+{
+    auto it = m_currentPoseStates.find(actionName);
+    if (it != m_currentPoseStates.end())
+    {
+        pose = it->second;
+        return true;
+    }
+    return false;
+}
+
+bool COpenXRInputManager::IsControllerPoseValid(const char* actionName)
+{
+    auto it = m_currentPoseValidStates.find(actionName);
+    return it != m_currentPoseValidStates.end() && it->second;
 }
