@@ -66,6 +66,10 @@ private:
     
     // ConVars
     ConVar* m_pConVarPrimaryHand;
+    
+    // Map change detection
+    char m_szLastMapName[64];
+    float m_flLastClassMenuTime; // Time when changeclass was last executed
 };
 
 // Global instance

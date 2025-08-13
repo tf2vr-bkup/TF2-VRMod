@@ -134,6 +134,11 @@ bool COpenXRInputManager::CreateActions()
     if (rightUIInteract.handle == XR_NULL_HANDLE) return false;
     m_actions["right_ui_interact"] = rightUIInteract;
 
+    // Add class menu action for left A button
+    XrInputAction leftClassMenu = CreateBooleanAction("left_class_menu", "Left Class Menu");
+    if (leftClassMenu.handle == XR_NULL_HANDLE) return false;
+    m_actions["left_class_menu"] = leftClassMenu;
+
     return true;
 }
 
@@ -240,7 +245,7 @@ bool COpenXRInputManager::CreateInteractionProfiles()
     if (m_actions.find("duck") != m_actions.end())
     {
         XrPath bindingPath;
-        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/a/click", &bindingPath)))
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &bindingPath)))
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["duck"].handle;
@@ -283,6 +288,19 @@ bool COpenXRInputManager::CreateInteractionProfiles()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["left_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left class menu binding (left A button)
+    if (m_actions.find("left_class_menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/a/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_class_menu"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
