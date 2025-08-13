@@ -14665,13 +14665,66 @@ float CTFPlayer::VRHeightOffset()
 {
 	float vecViewZ = VEC_VIEW.z;
 	float vecViewOffsetZ = GetViewOffset().z;
-	return vecViewOffsetZ;
+	return vecViewZ - vecViewOffsetZ;
 }
 
 Vector CTFPlayer::EyePosition()
 {
-	Vector basePos = GetAbsOrigin() + Vector(0, 0, VRHeightOffset());
+	Vector basePos = GetAbsOrigin();
 	Vector localHeadPos = m_headInPlayerO - m_roomscaleOffset;
+	
+		// Use raw VR headset position - let the world scaling system handle class height differences
+		// Calculate crouch delta and apply class height compensation for consistent VR positioning
+		float vecViewZ = VEC_VIEW.z;
+		float vecViewOffsetZ = GetViewOffset().z;
+		float crouchDelta = vecViewZ - vecViewOffsetZ;
+		
+#ifdef CLIENT_DLL
+		extern ICvar* cvar;
+		if (cvar)
+		{
+			ConVar* tfvr_dynamic_worldscale = cvar->FindVar("tfvr_dynamic_worldscale");
+			if (tfvr_dynamic_worldscale && tfvr_dynamic_worldscale->GetBool())
+			{
+				const C_TFPlayerClass* pPlayerClass = GetPlayerClass();
+				if (pPlayerClass)
+				{
+					float classEyeHeight = 72.0f;
+					int classIndex = pPlayerClass->GetClassIndex();
+					
+					switch (classIndex)
+					{
+						case TF_CLASS_SCOUT:
+						case TF_CLASS_CIVILIAN:
+							classEyeHeight = 65.0f;
+							break;
+						case TF_CLASS_SNIPER:
+						case TF_CLASS_MEDIC:
+						case TF_CLASS_HEAVYWEAPONS:
+						case TF_CLASS_SPY:
+							classEyeHeight = 75.0f;
+							break;
+						case TF_CLASS_SOLDIER:
+						case TF_CLASS_DEMOMAN:
+						case TF_CLASS_PYRO:
+						case TF_CLASS_ENGINEER:
+							classEyeHeight = 68.0f;
+							break;
+						default:
+							classEyeHeight = 72.0f;
+							break;
+					}
+					
+					// Scale crouch delta by class height and apply height compensation
+					float scaleFactor = classEyeHeight / 72.0f;
+					crouchDelta = crouchDelta * scaleFactor + (classEyeHeight - 72.0f);
+				}
+			}
+		}
+#endif
+		
+		localHeadPos.z -= crouchDelta;
+	
 	return basePos + localHeadPos;
 }
 

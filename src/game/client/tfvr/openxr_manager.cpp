@@ -11,6 +11,10 @@
 #include "vr_laser_pointer.h"
 #include "vr_menu_manager.h"
 #include "engine/ivdebugoverlay.h"
+#include "c_tf_player.h"
+#include "tf_playerclass_shared.h"
+#include "const.h"
+#include "c_tf_playerclass.h"
 
 #include "mathlib/mathlib.h"
 
@@ -22,6 +26,7 @@ ConVar tfvr_worldscale("tfvr_worldscale", "40", FCVAR_ARCHIVE | FCVAR_REPLICATED
 
 ConVar tfvr_controller_debug_draw("tfvr_controller_debug_draw", "1", FCVAR_ARCHIVE, "Draw debug visualization for controller positions and orientations");
 ConVar tfvr_msaa("tfvr_msaa", "4", FCVAR_ARCHIVE, "Controls multi-sampling anti-aliasing levels in TFVR. Set to the number of samples to use.");
+ConVar tfvr_dynamic_worldscale("tfvr_dynamic_worldscale", "1", FCVAR_ARCHIVE, "Enable dynamic world scaling based on merc height and crouch state");
 ConVar tfvr_forcemaxlod("tfvr_forcemaxlod", "1", FCVAR_ARCHIVE);
 ConVar tfvr_hud_forward("tfvr_hud_forward", "15", FCVAR_ARCHIVE, "Apparent distance of the HUD in inches");
 ConVar tfvr_hud_scale("tfvr_hud_scale", "0.5", FCVAR_ARCHIVE);
@@ -36,6 +41,77 @@ ConVar tfvr_r_show_both_eyes("tfvr_r_show_both_eyes", "0", FCVAR_ARCHIVE, "Show 
 // Common conversions
 namespace
 {
+	// Calculate dynamic world scale based on merc height and crouch state
+	float CalculateDynamicWorldScale()
+	{
+		// Get the base world scale ConVar
+		static ConVar* tfvr_worldscale = cvar->FindVar("tfvr_worldscale");
+		float baseWorldScale = tfvr_worldscale ? tfvr_worldscale->GetFloat() : 40.0f;
+		
+		// Check if dynamic scaling is enabled
+		static ConVar* tfvr_dynamic_worldscale = cvar->FindVar("tfvr_dynamic_worldscale");
+		if (!tfvr_dynamic_worldscale || !tfvr_dynamic_worldscale->GetBool())
+			return baseWorldScale;
+		
+				// Get local player to check class and crouch state
+		C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+		if (!pLocalPlayer)
+			return baseWorldScale;
+		
+		// Get the player's class eye height
+		float classEyeHeight = 72.0f; // Default TF2 eye height
+		
+		// Get player class for height calculation and debug output
+		const C_TFPlayerClass* pPlayerClass = pLocalPlayer->GetPlayerClass();
+		
+		// Only adjust world scale based on class height, not crouch state
+		// Crouching will use the normal TF2 animation/view changes
+		if (pPlayerClass)
+		{
+			// Get class-specific eye height
+			int classIndex = pPlayerClass->GetClassIndex();
+			switch (classIndex)
+			{
+				case TF_CLASS_SCOUT:
+				case TF_CLASS_CIVILIAN:
+					classEyeHeight = 65.0f;
+					break;
+				case TF_CLASS_SNIPER:
+				case TF_CLASS_MEDIC:
+				case TF_CLASS_HEAVYWEAPONS:
+				case TF_CLASS_SPY:
+					classEyeHeight = 75.0f;
+					break;
+				case TF_CLASS_SOLDIER:
+				case TF_CLASS_DEMOMAN:
+				case TF_CLASS_PYRO:
+				case TF_CLASS_ENGINEER:
+					classEyeHeight = 68.0f;
+					break;
+				default:
+					classEyeHeight = 72.0f; // Default
+					break;
+			}
+		}
+		
+		// Calculate dynamic scale: base scale * (class height / default height)
+		// This ensures the merc's height always matches your VR height
+		float dynamicScale = baseWorldScale * (classEyeHeight / 72.0f);
+		
+		// Debug output
+		static float lastDebugTime = 0.0f;
+		if (gpGlobals && gpGlobals->realtime - lastDebugTime > 2.0f) // Only print every 2 seconds
+		{
+			DevMsg("VR World Scale: Class=%s, EyeHeight=%.1f, Scale=%.1f\n", 
+				pPlayerClass ? pPlayerClass->GetName() : "Unknown",
+				classEyeHeight,
+				dynamicScale);
+			lastDebugTime = gpGlobals->realtime;
+		}
+		
+		return dynamicScale;
+	}
+
 	VMatrix ConvertFromOpenXRQuatVector(const Quaternion &rot, const Vector &pos)
 	{
 		VMatrix result;
@@ -49,7 +125,7 @@ namespace
 		//     OpenXR.z -> Source.x  (forward -> forward)
 		Quaternion convertedRot(-rot.z, -rot.x, rot.y, rot.w);
 		Vector convertedPos(-pos.z, -pos.x, pos.y);
-		convertedPos *= METERS_TO_GAME_UNITS;
+		convertedPos *= CalculateDynamicWorldScale();
 
         matrix3x4_t matrix;
 		QuaternionMatrix(convertedRot, convertedPos, matrix);
@@ -63,6 +139,50 @@ namespace
         Quaternion oXrRot(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
 
 		return ConvertFromOpenXRQuatVector(oXrRot, oXrPos);
+	}
+
+	// New function for proper floor-aligned coordinate conversion
+	VMatrix ToSourceCoordinateSystemFloorAligned(const XrPosef& pose)
+	{
+		// OpenXR to Source coordinate conversion with automatic floor alignment:
+		// OpenXR: +X=right, +Y=up, +Z=forward
+		// Source: +X=forward, +Y=left, +Z=up
+		// 
+		// The key insight is that OpenXR's STAGE reference space should already
+		// be aligned with the physical floor. We just need to convert coordinates
+		// properly without manual offsets.
+		
+		Quaternion convertedRot(-pose.orientation.z, -pose.orientation.x, pose.orientation.y, pose.orientation.w);
+		
+		// Convert position with automatic floor alignment
+		Vector convertedPos;
+		convertedPos.x = -pose.position.z * CalculateDynamicWorldScale();  // OpenXR Z -> Source X (forward)
+		convertedPos.y = -pose.position.x * CalculateDynamicWorldScale();  // OpenXR X -> Source Y (left)
+		
+		// Convert position with automatic floor alignment
+		// The world scaling system should handle class height differences naturally
+		float rawZ = pose.position.y * CalculateDynamicWorldScale();
+		
+		// Ensure Z is never negative - the floor should always be at Z=0 or higher
+		convertedPos.z = max(0.0f, rawZ);  // OpenXR Y -> Source Z (up)
+		
+		
+		// Debug output to see what we're getting
+		static float lastDebugTime = 0.0f;
+		if (gpGlobals && gpGlobals->realtime - lastDebugTime > 1.0f) // Only print every second
+		{
+			DevMsg("OpenXR Coord Debug - Raw: (%.3f, %.3f, %.3f) -> Converted: (%.1f, %.1f, %.1f)\n", 
+				pose.position.x, pose.position.y, pose.position.z,
+				convertedPos.x, convertedPos.y, convertedPos.z);
+			lastDebugTime = gpGlobals->realtime;
+		}
+
+        matrix3x4_t matrix;
+		QuaternionMatrix(convertedRot, convertedPos, matrix);
+		
+		VMatrix result;
+        result.CopyFrom3x4(matrix);
+		return result;
 	}
 }
 
@@ -354,17 +474,31 @@ bool COpenXRManager::CreateSession()
 
 bool COpenXRManager::CreateReferenceSpace() 
 {
+    // Try to create a STAGE reference space first (floor-aligned)
     XrReferenceSpaceCreateInfo spaceInfo = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
-    spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+    spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
     spaceInfo.poseInReferenceSpace = { {0, 0, 0, 1}, {0, 0, 0} };
     XrResult result = xrCreateReferenceSpace(m_session, &spaceInfo, &m_referenceSpace);
-
-    if (!XR_SUCCEEDED(result)) 
+    
+    if (!XR_SUCCEEDED(result))
     {
-        DevMsg("Failed to create reference space: %d\n", result);
-        return false;
+        // Fall back to LOCAL if STAGE is not supported
+        DevMsg("STAGE reference space not supported, falling back to LOCAL: %d\n", result);
+        spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+        result = xrCreateReferenceSpace(m_session, &spaceInfo, &m_referenceSpace);
+        
+        if (!XR_SUCCEEDED(result))
+        {
+            DevMsg("Failed to create reference space: %d\n", result);
+            return false;
+        }
+        DevMsg("LOCAL reference space created successfully\n");
     }
-    DevMsg("Reference space created successfully!\n");
+    else
+    {
+        DevMsg("STAGE reference space created successfully (floor-aligned)\n");
+    }
+    
     return true;
 }
 
@@ -527,8 +661,8 @@ bool COpenXRManager::GetEyeViewLocations(VMatrix& leftEyePose, VMatrix& rightEye
         return false;
     }
 
-    leftEyePose = ToSourceCoordinateSystem(m_views[0].pose);
-    rightEyePose = ToSourceCoordinateSystem(m_views[1].pose);
+    leftEyePose = ToSourceCoordinateSystemFloorAligned(m_views[0].pose);
+    rightEyePose = ToSourceCoordinateSystemFloorAligned(m_views[1].pose);
     return true;
 }
 
@@ -755,15 +889,13 @@ void COpenXRManager::RecenterView()
     // appear centered relative to the game camera
     static ConVar* vr_position_scale = cvar->FindVar("vr_position_scale");
     float scale = vr_position_scale ? vr_position_scale->GetFloat() : 1.0f;
-
-    static ConVar* vr_floor_offset = cvar->FindVar("vr_floor_offset");
     
-    // Make sure we're using the same coordinate conversion as in GetEyeViewData
+    // Use the same floor-aligned coordinate conversion as in GetMideyePose
     Vector currentPos
     (
-        -eyePose.position.z,
-        -eyePose.position.x,
-        (eyePose.position.y)
+        -eyePose.position.z * CalculateDynamicWorldScale(),
+        -eyePose.position.x * CalculateDynamicWorldScale(),
+        eyePose.position.y * CalculateDynamicWorldScale()
     );
     
     // The recenter position is designed to cancel out the current HMD position offset
@@ -784,37 +916,36 @@ CON_COMMAND(vr_recenter, "Recenter the VR headset orientation")
     }
 }
 
-// Command to calibrate view height
-CON_COMMAND(vr_calibrate_height, "Calibrate VR view height to match eye level")
+// Command to calibrate view height (simplified - just recenters)
+CON_COMMAND(vr_calibrate_height, "Recenter VR view to match game camera")
 {
     if (g_pOpenXRManager)
     {
-        // First recenter the view
         g_pOpenXRManager->RecenterView();
-        
-        // Set a reasonable floor offset to match player eye height
-        ConVar* vr_floor_offset = cvar->FindVar("vr_floor_offset");
-        if (vr_floor_offset)
-        {
-            float currentValue = vr_floor_offset->GetFloat();
-            // Adjust by a small increment - players can call this multiple times as needed
-            vr_floor_offset->SetValue(currentValue + 0.05f);
-            DevMsg("Adjusted floor offset to %f. If still not at eye level, run command again.\n", vr_floor_offset->GetFloat());
-        }
+        DevMsg("VR view recentered. Use this command to align your view with the game camera.\n");
     }
 }
 
-// Command for quick view adjustment when looking up causes floor issues
-CON_COMMAND(vr_fix_floor_view, "Adjust VR eye height to prevent floor clipping when looking up")
+// Command to test dynamic world scaling
+CON_COMMAND(vr_test_scaling, "Test dynamic world scaling based on merc height")
 {
-    ConVar* vr_eye_height_adjust = cvar->FindVar("vr_eye_height_adjust");
-    if (vr_eye_height_adjust)
+    DevMsg("VR Dynamic Scaling Test:\n");
+    DevMsg("  tfvr_dynamic_worldscale: %s\n", 
+           cvar->FindVar("tfvr_dynamic_worldscale")->GetBool() ? "Enabled" : "Disabled");
+    DevMsg("  tfvr_worldscale: %.1f\n", 
+           cvar->FindVar("tfvr_worldscale")->GetFloat());
+    
+    C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+    if (pLocalPlayer)
     {
-        float currentValue = vr_eye_height_adjust->GetFloat();
-        // Increment by 0.05 each time
-        vr_eye_height_adjust->SetValue(currentValue + 0.05f);
-        DevMsg("Set eye height adjustment to %f. If looking up still causes floor clipping, run command again.\n", 
-            vr_eye_height_adjust->GetFloat());
+        DevMsg("  Player Class: %s\n", 
+               pLocalPlayer->GetPlayerClass() ? pLocalPlayer->GetPlayerClass()->GetName() : "Unknown");
+        DevMsg("  Is Crouching: %s\n", (pLocalPlayer->GetFlags() & FL_DUCKING) ? "Yes" : "No");
+        DevMsg("  Current Eye Height: %.1f\n", pLocalPlayer->EyePosition().z - pLocalPlayer->GetAbsOrigin().z);
+    }
+    else
+    {
+        DevMsg("  No local player found\n");
     }
 }
 
@@ -827,7 +958,7 @@ VMatrix COpenXRManager::GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye ey
     float dy = rightPos.y - leftPos.y;
     float dz = rightPos.z - leftPos.z;
     float ipdMeters = sqrt(dx * dx + dy * dy + dz * dz); // Full distance, e.g., 0.064m
-    float ipdUnits = ipdMeters * METERS_TO_GAME_UNITS;   // e.g., 2.51968 units
+    float ipdUnits = ipdMeters * CalculateDynamicWorldScale();   // e.g., 2.51968 units
     float halfIpd = ipdUnits / 2.0f;                     // e.g., 1.25984 units
 
     // Construct result matrix with offset only in Source Y
@@ -843,7 +974,7 @@ VMatrix COpenXRManager::GetMideyePose() const
 	if (!IsActive())
 	    return VMatrix();
 
-    return ToSourceCoordinateSystem(m_headLocation.pose);
+    return ToSourceCoordinateSystemFloorAligned(m_headLocation.pose);
 }
 
 void COpenXRManager::GetHMDInChaperone(class Vector& origin, QAngle& angles) const
