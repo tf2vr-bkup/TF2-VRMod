@@ -161,6 +161,15 @@ public:
 
 	virtual Vector EyePosition() override;
 	const QAngle &EyeAngles() override;
+	
+	// VR-specific weapon shooting position override
+	virtual Vector		Weapon_ShootPosition( void );
+	
+	// VR-specific weapon shooting angles override
+	virtual QAngle		Weapon_ShootAngles( void );
+	
+	// VR-specific autoaim override to use controller angles instead of headset
+	virtual Vector		GetAutoaimVector( float flScale );
 
 	bool	ShouldDrawSpyAsDisguised();
 	virtual int GetBody( void );
@@ -683,7 +692,7 @@ public:
 	int				m_iOldPlayerClass;	// Used to detect player class changes
 	bool			m_bIsDisplayingNemesisIcon;
 	bool			m_bIsDisplayingDuelingIcon;
-	bool			m_bIsDisplayingIconForIT;
+bool			m_bIsDisplayingIconForIT;
 	bool			m_bIsDisplayingTranqMark;
 	bool			m_bShouldShowBirthdayEffect;
 
@@ -694,12 +703,12 @@ public:
 	bool			m_bArenaSpectator;
 
 	bool			m_bIsMiniBoss;
-	bool			m_bIsABot;
+bool			m_bIsABot;
 	int				m_nBotSkill;
 	int				m_nOldBotSkill;
 	bool			m_bSaveMeParity;
 	bool			m_bOldSaveMeParity;
-	bool			m_bIsCoaching;
+bool			m_bIsCoaching;
 
 private:
 	void			UpdateTauntItem();
@@ -831,7 +840,7 @@ public:
 
 	int				m_iOldTeam;
 	int				m_iOldClass;
-	int				m_iOldDisguiseTeam;
+int				m_iOldDisguiseTeam;
 	int				m_iOldDisguiseClass;
 	int				m_iOldObserverMode;
 	EHANDLE			m_hOldObserverTarget;

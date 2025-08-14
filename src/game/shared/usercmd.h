@@ -46,6 +46,10 @@ public:
 		postFullBodyIKDeltaOrigin.Init();
 		playerToHmdOrigin.Init();
 		playerToHmdAngles.Init();
+		leftControllerOrigin.Init();
+		leftControllerAngles.Init();
+		rightControllerOrigin.Init();
+		rightControllerAngles.Init();
 		forwardmove = 0.0f;
 		sidemove = 0.0f;
 		upmove = 0.0f;
@@ -77,6 +81,10 @@ public:
 		postFullBodyIKDeltaOrigin = src.postFullBodyIKDeltaOrigin;
 		playerToHmdOrigin = src.playerToHmdOrigin;
 		playerToHmdAngles = src.playerToHmdAngles;
+		leftControllerOrigin = src.leftControllerOrigin;
+		leftControllerAngles = src.leftControllerAngles;
+		rightControllerOrigin = src.rightControllerOrigin;
+		rightControllerAngles = src.rightControllerAngles;
 		forwardmove			= src.forwardmove;
 		sidemove			= src.sidemove;
 		upmove				= src.upmove;
@@ -116,6 +124,10 @@ public:
 		CRC32_ProcessBuffer( &crc, &postFullBodyIKDeltaOrigin, sizeof( postFullBodyIKDeltaOrigin ) );
 		CRC32_ProcessBuffer( &crc, &playerToHmdOrigin, sizeof( playerToHmdOrigin ) );
 		CRC32_ProcessBuffer( &crc, &playerToHmdAngles, sizeof( playerToHmdAngles ) );
+		CRC32_ProcessBuffer( &crc, &leftControllerOrigin, sizeof( leftControllerOrigin ) );
+		CRC32_ProcessBuffer( &crc, &leftControllerAngles, sizeof( leftControllerAngles ) );
+		CRC32_ProcessBuffer( &crc, &rightControllerOrigin, sizeof( rightControllerOrigin ) );
+		CRC32_ProcessBuffer( &crc, &rightControllerAngles, sizeof( rightControllerAngles ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
 		CRC32_ProcessBuffer( &crc, &sidemove, sizeof( sidemove ) );      
 		CRC32_ProcessBuffer( &crc, &upmove, sizeof( upmove ) );         
@@ -137,6 +149,10 @@ public:
 		viewangles = vec3_angle;
 		playerToHmdOrigin.Init();
         playerToHmdAngles.Init();
+		leftControllerOrigin.Init();
+		leftControllerAngles.Init();
+		rightControllerOrigin.Init();
+		rightControllerAngles.Init();
 		forwardmove = 0.f;
 		sidemove = 0.f;
 		upmove = 0.f;
@@ -157,6 +173,12 @@ public:
 	Vector	postFullBodyIKDeltaOrigin;
 	Vector	playerToHmdOrigin;
 	QAngle	playerToHmdAngles;
+	
+	// VR Controller Tracking for weapon shooting
+	Vector	leftControllerOrigin;
+	QAngle	leftControllerAngles;
+	Vector	rightControllerOrigin;
+	QAngle	rightControllerAngles;
 	
 	// Intended velocities
 	//	forward velocity.

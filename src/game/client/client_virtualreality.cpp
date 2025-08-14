@@ -23,6 +23,7 @@
 #include <time.h>
 #include "steam/steam_api.h"
 #include <tfvr/openxr_manager.h>
+#include "tf/c_tf_player.h"
 
 const char *COM_GetModDirectory(); // return the mod dir (rather than the complete -game param, which can be a path)
 
@@ -613,17 +614,24 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 	Assert ( pAimOrigin != NULL );
 	Assert ( pAimDirection != NULL );
 
-	// For now, use the player's current view position and angles for crosshair
+	// Use the player's weapon shooting position and angles for crosshair (controller-based in VR)
 	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
 	if ( pPlayer )
 	{
-		*pAimOrigin = pPlayer->EyePosition();
-		
-		Vector forward;
-		AngleVectors( pPlayer->EyeAngles(), &forward );
-		*pAimDirection = forward;
-		
-		return true;
+		// Cast to TF player to access VR-specific functions
+		C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+		if ( pTFPlayer )
+		{
+			// Use weapon shoot position for origin (controller position in VR)
+			*pAimOrigin = pTFPlayer->Weapon_ShootPosition();
+			
+			// Use weapon shoot angles for direction (controller angles in VR)
+			Vector forward;
+			AngleVectors( pTFPlayer->Weapon_ShootAngles(), &forward );
+			*pAimDirection = forward;
+			
+			return true;
+		}
 	}
 
 	return false;

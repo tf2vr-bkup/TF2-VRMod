@@ -853,6 +853,16 @@ public:
 	}
 
 	Vector	ScriptWeapon_ShootPosition();
+	
+	// VR-specific weapon shooting position override
+	virtual Vector		Weapon_ShootPosition( void );
+	
+	// VR-specific weapon shooting angles override
+	virtual QAngle		Weapon_ShootAngles( void );
+	
+	// VR-specific autoaim override to use controller angles instead of headset
+	virtual Vector		GetAutoaimVector( float flScale );
+	
 	bool	ScriptWeapon_CanUse( HSCRIPT hWeapon );
 	void	ScriptWeapon_Equip( HSCRIPT hWeapon );
 	void	ScriptWeapon_Drop( HSCRIPT hWeapon );
@@ -1594,6 +1604,12 @@ public:
 	QAngle                  m_headInPlayerA;
 
 	QAngle                  m_cachedEyeAngles;
+	
+	// VR Controller positions for weapon shooting
+	Vector					m_leftControllerOrigin;
+	QAngle					m_leftControllerAngles;
+	Vector					m_rightControllerOrigin;
+	QAngle					m_rightControllerAngles;
 
 	CNetworkVar(Vector, m_roomscaleOffset);
 

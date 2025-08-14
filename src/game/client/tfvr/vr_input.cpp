@@ -68,11 +68,8 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
         // Process VR controller tracking
         ProcessVRControllerTracking(cmd);
         
-        // Only process VR view angles if explicitly enabled
-        if (tfvr_use_hmd_angles.GetBool())
-        {
-            // ProcessVRViewAngles(cmd);
-        }
+        // Process VR view angles to use controller angles for aiming
+        ProcessVRViewAngles(cmd);
         
         // Process VR movement
         ProcessVRMovement(cmd, input_sample_frametime);
@@ -87,6 +84,8 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
     //{
     //    g_pClientMode->CreateMove(input_sample_frametime, cmd);
     //}
+
+
 
     // Store the command for verification
     pVerified->m_cmd = *cmd;
@@ -225,8 +224,8 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
 
 void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
 {
-    // Only process view angles if explicitly enabled
-    if (!tfvr_use_hmd_angles.GetBool())
+    // Check if controller tracking is enabled
+    if (!tfvr_enable_controller_tracking.GetBool())
         return;
 
     // Check if menu is visible - if so, disable view angle changes
@@ -237,21 +236,26 @@ void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
         return;
     }
 
-    // Get HMD orientation
-    VMatrix hmdMatrix = g_pOpenXRManager->GetMideyePose();
-    
-    // Extract angles from the matrix
-    QAngle angles;
-    MatrixAngles(hmdMatrix.As3x4(), angles);
-    
-    // Set the view angles
-    cmd->viewangles = angles;
-    
-    // Update engine view angles
-    engine->SetViewAngles(angles);
+    // Get right controller pose for aiming (typically the shooting hand)
+    VMatrix rightControllerPose;
+    if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+    {
+        // Extract angles from the controller pose matrix
+        QAngle controllerAngles;
+        MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+        
+        // We DON'T change cmd->viewangles here because:
+        // - cmd->viewangles affects locomotion (should use headset)
+        // - Weapon_ShootAngles() handles shooting direction (uses controller)
+        // This keeps locomotion and shooting completely separate
 
-    // Debug output for view angles
-    DevMsg("VR View: pitch=%.1f yaw=%.1f roll=%.1f\n", angles.x, angles.y, angles.z);
+        // Debug output for controller angles
+        if (tfvr_controller_tracking_debug.GetBool())
+        {
+            DevMsg("VR Aim: Using controller angles - pitch=%.1f yaw=%.1f roll=%.1f\n", 
+                   controllerAngles.x, controllerAngles.y, controllerAngles.z);
+        }
+    }
 }
 
 void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
@@ -327,6 +331,8 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
     bool leftValid = g_pOpenXRManager->GetLeftControllerPose(leftControllerPose);
     bool rightValid = g_pOpenXRManager->GetRightControllerPose(rightControllerPose);
     
+    
+    
     // Store controller poses in the command for use by other systems
     if (leftValid)
     {
@@ -335,9 +341,9 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         QAngle leftAngles;
         MatrixAngles(leftControllerPose.As3x4(), leftAngles);
         
-        // Store in command (you may need to add these fields to CUserCmd)
-        // cmd->left_controller_pos = leftPos;
-        // cmd->left_controller_angles = leftAngles;
+        // Store in command for weapon shooting synchronization
+        cmd->leftControllerOrigin = leftPos;
+        cmd->leftControllerAngles = leftAngles;
         
         // Debug output
         if (tfvr_controller_tracking_debug.GetBool())
@@ -345,6 +351,8 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             DevMsg("Left Controller: pos(%.2f, %.2f, %.2f) angles(%.1f, %.1f, %.1f)\n", 
                    leftPos.x, leftPos.y, leftPos.z, leftAngles.x, leftAngles.y, leftAngles.z);
         }
+        
+
     }
     
     if (rightValid)
@@ -354,9 +362,9 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         QAngle rightAngles;
         MatrixAngles(rightControllerPose.As3x4(), rightAngles);
         
-        // Store in command (you may need to add these fields to CUserCmd)
-        // cmd->right_controller_pos = rightPos;
-        // cmd->right_controller_angles = rightAngles;
+        // Store in command for weapon shooting synchronization
+        cmd->rightControllerOrigin = rightPos;
+        cmd->rightControllerAngles = rightAngles;
         
         // Debug output
         if (tfvr_controller_tracking_debug.GetBool())
@@ -364,6 +372,8 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             DevMsg("Right Controller: pos(%.2f, %.2f, %.1f) angles(%.1f, %.1f, %.1f)\n", 
                    rightPos.x, rightPos.y, rightPos.z, rightAngles.x, rightAngles.y, rightAngles.z);
         }
+        
+
     }
     
     // Laser pointer functionality is now handled by CVRLaserPointer class

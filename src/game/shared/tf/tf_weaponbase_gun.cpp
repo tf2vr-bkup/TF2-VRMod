@@ -497,7 +497,7 @@ void CTFWeaponBaseGun::FireBullet( CTFPlayer *pPlayer )
 		this,
 		pPlayer->entindex(),
 		pPlayer->Weapon_ShootPosition(),
-		pPlayer->EyeAngles() + pPlayer->GetPunchAngle(),
+		pPlayer->Weapon_ShootAngles() + pPlayer->GetPunchAngle(),  // Use controller angles instead of EyeAngles
 		GetWeaponID(),
 		m_iWeaponMode,
 		CBaseEntity::GetPredictionRandomSeed( UseServerRandomSeed() ) & 255,

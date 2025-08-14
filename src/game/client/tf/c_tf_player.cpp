@@ -69,6 +69,10 @@
 #include "cam_thirdperson.h"
 #include "c_tf_projectile_arrow.h"
 #include "econ_entity.h"
+
+// VR controller tracking ConVars
+extern ConVar tfvr_enable_controller_tracking;
+extern ConVar tfvr_controller_tracking_debug;
 #include "ihasowner.h"
 #include "tf_hud_itemeffectmeter.h"
 #include "replay/vgui/replayinputpanel.h"
@@ -4121,6 +4125,100 @@ const QAngle& C_TFPlayer::GetRenderAngles()
 		return m_PlayerAnimState->GetRenderAngles();
 	}
 }
+
+//-----------------------------------------------------------------------------
+// Purpose: VR-specific weapon shooting position that uses controller positions
+//-----------------------------------------------------------------------------
+Vector C_TFPlayer::Weapon_ShootPosition( void )
+{
+	// Check if VR is active and controller tracking is enabled
+	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	{
+		// Get the right controller pose for weapon shooting (typically the shooting hand)
+		VMatrix rightControllerPose;
+		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		{
+			// Extract position from the pose matrix
+			Vector controllerPos = rightControllerPose.GetTranslation();
+			QAngle controllerAngles;
+			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+			
+			// Apply a small forward offset to simulate muzzle position
+			Vector forward, right, up;
+			AngleVectors(controllerAngles, &forward, &right, &up);
+			
+			// Offset forward and slightly up from controller position
+			Vector shootPos = controllerPos + forward * 5.0f + up * 2.0f;
+			
+			// Debug visualization
+			if (tfvr_controller_tracking_debug.GetBool() && debugoverlay)
+			{
+				debugoverlay->AddBoxOverlay(shootPos, Vector(-1, -1, -1), Vector(1, 1, 1), QAngle(0, 0, 0), 255, 255, 0, 255, 0.016f);
+				debugoverlay->AddLineOverlayAlpha(controllerPos, shootPos, 255, 255, 0, 255, false, 0.016f);
+			}
+			
+			return shootPos;
+		}
+	}
+	
+	// Fall back to base implementation (eye position) if VR is not available
+	return BaseClass::Weapon_ShootPosition();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: VR-specific weapon shooting angles that uses controller angles
+//-----------------------------------------------------------------------------
+QAngle C_TFPlayer::Weapon_ShootAngles( void )
+{
+	// Check if VR is active and controller tracking is enabled
+	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	{
+		// Get the right controller pose for weapon shooting (typically the shooting hand)
+		VMatrix rightControllerPose;
+		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		{
+			// Extract angles from the pose matrix
+			QAngle controllerAngles;
+			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+			
+			return controllerAngles;
+		}
+	}
+	
+	// Fall back to base implementation (eye angles) if VR is not available
+	return EyeAngles();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: VR-specific autoaim override to use controller angles instead of headset
+//-----------------------------------------------------------------------------
+Vector C_TFPlayer::GetAutoaimVector( float flScale )
+{
+	// Check if VR is active and controller tracking is enabled
+	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	{
+		// Get the right controller pose for autoaim (typically the shooting hand)
+		VMatrix rightControllerPose;
+		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		{
+			// Extract angles from the pose matrix
+			QAngle controllerAngles;
+			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+			
+			// Apply punch angle if any
+			controllerAngles += m_Local.m_vecPunchAngle;
+			
+			Vector forward;
+			AngleVectors(controllerAngles, &forward);
+			return forward;
+		}
+	}
+	
+	// Fall back to base implementation (headset angles) if VR is not available
+	return BaseClass::GetAutoaimVector(flScale);
+}
+
+
 
 bool C_TFPlayer::CanDisplayAllSeeEffect( EAttackBonusEffects_t effect ) const
 { 
