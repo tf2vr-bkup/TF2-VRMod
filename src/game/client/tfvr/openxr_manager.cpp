@@ -21,7 +21,7 @@
 // Forward declaration for global menu manager pointer
 extern class CVRMenuManager* g_pVRMenuManager;
 
-ConVar tfvr_worldscale("tfvr_worldscale", "40", FCVAR_ARCHIVE | FCVAR_REPLICATED, "This scales everything.");
+ConVar tfvr_worldscale("tfvr_worldscale", "48", FCVAR_ARCHIVE | FCVAR_REPLICATED, "This scales everything.");
 #define METERS_TO_GAME_UNITS tfvr_worldscale.GetFloat()
 
 ConVar tfvr_controller_debug_draw("tfvr_controller_debug_draw", "1", FCVAR_ARCHIVE, "Draw debug visualization for controller positions and orientations");
@@ -46,7 +46,7 @@ namespace
 	{
 		// Get the base world scale ConVar
 		static ConVar* tfvr_worldscale = cvar->FindVar("tfvr_worldscale");
-		float baseWorldScale = tfvr_worldscale ? tfvr_worldscale->GetFloat() : 40.0f;
+		float baseWorldScale = tfvr_worldscale ? tfvr_worldscale->GetFloat() : 48.0f;
 		
 		// Check if dynamic scaling is enabled
 		static ConVar* tfvr_dynamic_worldscale = cvar->FindVar("tfvr_dynamic_worldscale");

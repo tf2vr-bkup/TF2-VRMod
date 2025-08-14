@@ -30,6 +30,9 @@ extern IClientMode* g_pClientMode;
 // ConVars for VR menu control
 ConVar tfvr_primary_hand("tfvr_primary_hand", "1", FCVAR_ARCHIVE, "Primary hand for VR input: 0=left, 1=right");
 ConVar tfvr_menu_distance("tfvr_menu_distance", "100", FCVAR_ARCHIVE, "Distance from player to VR menu plane");
+ConVar tfvr_cursor_threshold("tfvr_cursor_threshold", "0.05", FCVAR_ARCHIVE, "Minimum VR controller movement required to override mouse (in world units)");
+ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "1.0", FCVAR_ARCHIVE, "Minimum VR head movement required to override mouse (in world units)");
+ConVar tfvr_cursor_debug("tfvr_cursor_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR cursor threshold");
 
 CVRMenuManager::CVRMenuManager()
     : m_bMenuButtonPressed(false)
@@ -509,6 +512,88 @@ void CVRMenuManager::UpdateCursorPosition()
 {
     if (!m_pLocalPlayer || !m_bMenuPositionFixed)
         return;
+
+    // Get current VR controller position for threshold checking
+    Vector currentControllerPos;
+    bool controllerValid = false;
+    
+    if (m_nMenuHand == 0) // Left hand
+    {
+        if (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            if (g_pOpenXRManager->GetLeftControllerPose(controllerMatrix))
+            {
+                currentControllerPos = controllerMatrix.GetTranslation();
+                controllerValid = true;
+            }
+        }
+    }
+    else // Right hand
+    {
+        if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            if (g_pOpenXRManager->GetRightControllerPose(controllerMatrix))
+            {
+                currentControllerPos = controllerMatrix.GetTranslation();
+                controllerValid = true;
+            }
+        }
+    }
+    
+    // Simple threshold check: only update cursor if VR movement is significant
+    if (controllerValid)
+    {
+        static Vector lastControllerPos = currentControllerPos;
+        float movementDistance = (currentControllerPos - lastControllerPos).Length();
+        
+        // If movement is too small, don't update cursor (preserve mouse input)
+        if (movementDistance < tfvr_cursor_threshold.GetFloat())
+        {
+            if (tfvr_cursor_debug.GetBool())
+            {
+                static float lastDebugTime = 0;
+                if (gpGlobals->curtime - lastDebugTime > 1.0f)
+                {
+                    DevMsg("VR Cursor: Controller movement too small (%.2f < %.2f), preserving mouse input\n", 
+                           movementDistance, tfvr_cursor_threshold.GetFloat());
+                    lastDebugTime = gpGlobals->curtime;
+                }
+            }
+            return;
+        }
+        
+        lastControllerPos = currentControllerPos;
+    }
+    else
+    {
+        // No controller available, check head movement instead
+        if (m_pLocalPlayer)
+        {
+            static Vector lastHeadPos = m_pLocalPlayer->EyePosition();
+            Vector currentHeadPos = m_pLocalPlayer->EyePosition();
+            float headMovementDistance = (currentHeadPos - lastHeadPos).Length();
+            
+            // If head movement is too small, don't update cursor (preserve mouse input)
+            if (headMovementDistance < tfvr_cursor_head_threshold.GetFloat())
+            {
+                if (tfvr_cursor_debug.GetBool())
+                {
+                    static float lastDebugTime = 0;
+                    if (gpGlobals->curtime - lastDebugTime > 1.0f)
+                    {
+                        DevMsg("VR Cursor: Head movement too small (%.2f < %.2f), preserving mouse input\n", 
+                               headMovementDistance, tfvr_cursor_head_threshold.GetFloat());
+                        lastDebugTime = gpGlobals->curtime;
+                    }
+                }
+                return;
+            }
+            
+            lastHeadPos = currentHeadPos;
+        }
+    }
 
     // Use the fixed menu position and rotation for cursor calculations
     // This keeps the menu in a stable position even when the player looks around
