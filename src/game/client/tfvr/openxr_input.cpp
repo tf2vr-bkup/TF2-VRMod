@@ -139,6 +139,12 @@ bool COpenXRInputManager::CreateActions()
     if (leftClassMenu.handle == XR_NULL_HANDLE) return false;
     m_actions["left_class_menu"] = leftClassMenu;
 
+    // Add weapon switching actions
+    XrInputAction weaponSwitch = CreateFloatAction("right_weapon_switch", "Right Weapon Switch");
+    if (weaponSwitch.handle == XR_NULL_HANDLE) return false;
+    m_actions["weapon_switch"] = weaponSwitch;
+    DevMsg("Created weapon switching action: weapon_switch (handle: %p)\n", weaponSwitch.handle);
+
     return true;
 }
 
@@ -319,6 +325,20 @@ bool COpenXRInputManager::CreateInteractionProfiles()
         }
     }
 
+    // Weapon switching bindings (right stick tilt forward/backward)
+    if (m_actions.find("weapon_switch") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_switch"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added weapon switching binding: weapon_switch -> /user/hand/right/input/thumbstick/y\n");
+        }
+    }
+
     // Pose action bindings for controller tracking
     if (m_actions.find("left_hand_pose") != m_actions.end())
     {
@@ -421,7 +441,21 @@ XrInputAction COpenXRInputManager::CreateFloatAction(const char* name, const cha
     action.name = name;           // Now properly copies the string
     action.localizedName = localizedName;  // Now properly copies the string
     action.type = XR_ACTION_TYPE_FLOAT_INPUT;
-    action.subactionPaths = {};
+    
+    // Set subaction paths based on the action name
+    if (strstr(name, "left") != nullptr)
+    {
+        action.subactionPaths = { m_leftHandPath };
+    }
+    else if (strstr(name, "right") != nullptr)
+    {
+        action.subactionPaths = { m_rightHandPath };
+    }
+    else
+    {
+        // Default to both hands for general actions
+        action.subactionPaths = { m_leftHandPath, m_rightHandPath };
+    }
 
     XrActionCreateInfo actionInfo{ XR_TYPE_ACTION_CREATE_INFO };
     strcpy_s(actionInfo.actionName, name);

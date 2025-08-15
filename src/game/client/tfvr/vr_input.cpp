@@ -8,6 +8,11 @@
 #include "input.h"
 #include "convar.h"
 #include "vr_menu_manager.h"
+#include "engine/ivdebugoverlay.h"
+#include "tf/c_tf_player.h"
+
+// Engine interface for executing client commands
+extern IVEngineClient *engine;
 
 // ConVars for input sensitivity and deadzone
 ConVar tfvr_move_sensitivity("tfvr_move_sensitivity", "1.0", FCVAR_ARCHIVE, "Sensitivity multiplier for VR movement");
@@ -24,6 +29,10 @@ ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "90", FCVAR_ARCHIVE, "Smo
 ConVar tfvr_snap_turn_angle( "tfvr_snap_turn_angle", "30", FCVAR_ARCHIVE, "Snap turning angle in degrees" );
 ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.3", FCVAR_ARCHIVE, "Deadzone for turning input (0.0-1.0)" );
 ConVar tfvr_snap_turn_delay( "tfvr_snap_turn_delay", "0.25", FCVAR_ARCHIVE, "Delay between snap turns in seconds" );
+
+// Weapon switching ConVars
+ConVar tfvr_weapon_switch_tilt_threshold( "tfvr_weapon_switch_tilt_threshold", "0.7", FCVAR_ARCHIVE, "Tilt threshold for weapon switching (0.0-1.0)" );
+ConVar tfvr_weapon_switch_debug( "tfvr_weapon_switch_debug", "0", FCVAR_ARCHIVE, "Show debug output for weapon switching actions" );
 
 // Movement speed ConVars
 extern ConVar cl_forwardspeed;
@@ -217,6 +226,102 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     bool bJump = g_pOpenXRManager->IsButtonPressed("jump");
     if (bJump)
         cmd->buttons |= IN_JUMP;
+
+    // Weapon switching
+    float weaponSwitchValue = g_pOpenXRManager->GetAnalogValue("weapon_switch");
+    
+    // Validate that we got valid values
+    if (weaponSwitchValue == 0.0f)
+    {
+        // This could indicate the actions aren't properly bound or working
+        static float lastWarningTime = 0.0f;
+        float currentTime = gpGlobals->curtime;
+        
+        if (currentTime - lastWarningTime > 5.0f) // Only warn every 5 seconds
+        {
+            if (tfvr_weapon_switch_debug.GetBool())
+            {
+                DevMsg("VR: Warning - Weapon switching action returning 0.0 values. Check OpenXR bindings.\n");
+            }
+            lastWarningTime = currentTime;
+        }
+    }
+    
+    // Track weapon switching button press events to avoid continuous execution
+    static bool bLastNextWeaponState = false;
+    static bool bLastPrevWeaponState = false;
+    
+    // Threshold for detecting tilt (0.7 = 70% tilt)
+    const float TILT_THRESHOLD = tfvr_weapon_switch_tilt_threshold.GetFloat();
+    
+    // Detect forward tilt (positive Y) for next weapon
+    bool bNextWeaponActive = weaponSwitchValue > TILT_THRESHOLD;
+    // Detect backward tilt (negative Y) for previous weapon
+    bool bPrevWeaponActive = weaponSwitchValue < -TILT_THRESHOLD;
+    
+    bool bNextWeaponPressed = bNextWeaponActive && !bLastNextWeaponState;
+    bool bPrevWeaponPressed = bPrevWeaponActive && !bLastPrevWeaponState;
+    
+    // Check if weapon switching is allowed before executing commands
+    C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+    bool bCanSwitchWeapons = pLocalPlayer && pLocalPlayer->IsAllowedToSwitchWeapons();
+    
+    if (bNextWeaponPressed && bCanSwitchWeapons)
+    {
+        engine->ExecuteClientCmd("invnext");
+        if (tfvr_weapon_switch_debug.GetBool())
+        {
+            DevMsg("VR: Next weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
+        }
+    }
+    else if (bNextWeaponPressed && !bCanSwitchWeapons)
+    {
+        if (tfvr_weapon_switch_debug.GetBool())
+        {
+            DevMsg("VR: Next weapon blocked - weapon switching not allowed\n");
+        }
+    }
+    
+    if (bPrevWeaponPressed && bCanSwitchWeapons)
+    {
+        engine->ExecuteClientCmd("invprev");
+        if (tfvr_weapon_switch_debug.GetBool())
+        {
+            DevMsg("VR: Previous weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
+        }
+    }
+    else if (bPrevWeaponPressed && !bCanSwitchWeapons)
+    {
+        if (tfvr_weapon_switch_debug.GetBool())
+        {
+            DevMsg("VR: Previous weapon blocked - weapon switching not allowed\n");
+        }
+    }
+    
+    // Update weapon switching button state tracking
+    bLastNextWeaponState = bNextWeaponActive;
+    bLastPrevWeaponState = bPrevWeaponActive;
+    
+    // Debug output for weapon switching values
+    if (tfvr_weapon_switch_debug.GetBool())
+    {
+        static float lastDebugTime = 0.0f;
+        float currentTime = gpGlobals->curtime;
+        
+        // Only output debug info every 0.5 seconds to avoid spam
+        if (currentTime - lastDebugTime > 0.5f)
+        {
+            const char* direction = "neutral";
+            if (weaponSwitchValue > TILT_THRESHOLD)
+                direction = "forward (next)";
+            else if (weaponSwitchValue < -TILT_THRESHOLD)
+                direction = "backward (prev)";
+            
+            DevMsg("VR: Weapon switch - Y-axis: %.2f, Direction: %s, Threshold: %.2f\n", 
+                   weaponSwitchValue, direction, TILT_THRESHOLD);
+            lastDebugTime = currentTime;
+        }
+    }
 
     // Update button state tracking
     bLastMenuButtonState = bMenu;

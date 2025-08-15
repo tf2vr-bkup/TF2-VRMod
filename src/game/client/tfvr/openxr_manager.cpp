@@ -31,7 +31,7 @@ ConVar tfvr_forcemaxlod("tfvr_forcemaxlod", "1", FCVAR_ARCHIVE);
 ConVar tfvr_hud_forward("tfvr_hud_forward", "15", FCVAR_ARCHIVE, "Apparent distance of the HUD in inches");
 ConVar tfvr_hud_scale("tfvr_hud_scale", "0.5", FCVAR_ARCHIVE);
 ConVar tfvr_hud_axis_lock_to_world("tfvr_hud_axis_lock_to_world", "5", FCVAR_ARCHIVE, "Bitfield - locks HUD axes to the world - 1=pitch, 2=yaw, 4=roll");
-ConVar tfvr_hud_height_adjust("tfvr_hud_height_adjust", "-4", FCVAR_ARCHIVE);
+ConVar tfvr_hud_height_adjust("tfvr_hud_height_adjust", "0", FCVAR_ARCHIVE);
 
 
 ConVar tfvr_menu_scale("tfvr_menu_scale", "0.7", FCVAR_ARCHIVE);
