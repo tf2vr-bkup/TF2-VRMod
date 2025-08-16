@@ -9192,9 +9192,9 @@ void C_TFPlayer::Simulate( void )
 		Flashlight();
 	}
 
-	// TF doesn't do step sounds based on velocity, instead using anim events
-	// So we deliberately skip over the base player simulate, which calls them.
-	BaseClass::BaseClass::Simulate();
+	// Use the standard base player simulate - TF's UpdateStepSound override
+	// will handle preventing inappropriate footstep sounds
+	BaseClass::Simulate();
 }
 
 //-----------------------------------------------------------------------------
@@ -9355,6 +9355,16 @@ void C_TFPlayer::UpdateStepSound( surfacedata_t *psurface, const Vector &vecOrig
 	// don't play footstep sound while taunting
 	if ( IsTaunting() )
 	{
+		return;
+	}
+
+	// TF uses animation events for footstep sounds, not velocity-based
+	// Block velocity-based footsteps that would be called from C_BasePlayer::Simulate()
+	// Animation events (event 7001) reset m_flStepSoundTime to 0 before calling this,
+	// so we can use that to distinguish between animation events and velocity-based calls
+	if ( m_flStepSoundTime > 0 )
+	{
+		// This is a velocity-based call from C_BasePlayer::Simulate, block it
 		return;
 	}
 
