@@ -144,24 +144,19 @@ CBaseEntity* CTFWeaponFlameBall::FireProjectile( CTFPlayer *pPlayer )
 	RemoveProjectileAmmo( pPlayer );
 
 #ifdef GAME_DLL
-	Vector vecForward, vecRight, vecUp;
-	AngleVectors( pPlayer->EyeAngles(), &vecForward, &vecRight, &vecUp );
-
-	float fRight = 8.f;
+	Vector vecSrc;
+	QAngle angForward;
+	Vector vecOffset( 3.0f, 7.0f, -9.0f );
 	if ( IsViewModelFlipped() )
 	{
-		fRight *= -1;
+		vecOffset.y *= -1;
 	}
-	Vector vecSrc = pPlayer->Weapon_ShootPosition();
-	// Shoot from the right location
-	vecSrc = vecSrc + (vecUp * -9.0f) + (vecRight * 7.0f) + (vecForward * 3.0f);
+	GetProjectileFireSetup( pPlayer, vecOffset, &vecSrc, &angForward, false );
 
-	QAngle angForward = pPlayer->EyeAngles();
-
+	// For VR, trace from the actual projectile spawn position
 	trace_t trace;	
-	Vector vecEye = pPlayer->EyePosition();
 	CTraceFilterSimple traceFilter( this, COLLISION_GROUP_NONE );
-	UTIL_TraceHull( vecEye, vecSrc, -Vector(8,8,8), Vector(8,8,8), MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
+	UTIL_TraceHull( vecSrc, vecSrc, -Vector(8,8,8), Vector(8,8,8), MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
 
 	CTFProjectile_Rocket *pRocket = static_cast<CTFProjectile_Rocket*>( CBaseEntity::CreateNoSpawn( "tf_projectile_balloffire", vecSrc, angForward, pPlayer ) );
 	if ( pRocket )

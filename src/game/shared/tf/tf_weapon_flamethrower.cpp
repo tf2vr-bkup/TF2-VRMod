@@ -994,7 +994,8 @@ void CTFFlameThrower::FireAirBlast( int iAmmoPerShot )
 		Vector vDashDir = pOwner->GetAbsVelocity();
 		if ( !pOwner->GetGroundEntity() || vDashDir.Length() == 0.0f )
 		{
-			AngleVectors( pOwner->EyeAngles(), &vDashDir );
+			// Use weapon shoot angles for VR support (controller angles if in VR)
+			AngleVectors( pOwner->Weapon_ShootAngles(), &vDashDir );
 		}
 		vDashDir.z = 0.0f;
 		VectorNormalize( vDashDir );
@@ -2115,13 +2116,16 @@ Vector CTFFlameThrower::GetMuzzlePosHelper( bool bVisualPos )
 	if ( pOwner ) 
 	{
 		Vector vecForward, vecRight, vecUp;
-		AngleVectors( pOwner->GetNetworkEyeAngles(), &vecForward, &vecRight, &vecUp );
+		// Use weapon shoot angles for VR support (controller angles if in VR)
+		QAngle angAiming = pOwner->Weapon_ShootAngles();
+		AngleVectors( angAiming, &vecForward, &vecRight, &vecUp );
 		{
 			Vector vecOffset;
 			UTIL_StringToVector( vecOffset.Base(), tf_flamethrower_new_flame_offset.GetString() );
 
 			vecOffset *= pOwner->GetModelScale();
-			vecMuzzlePos = pOwner->EyePosition() + vecOffset.x * vecForward + vecOffset.y * vecRight + vecOffset.z * vecUp;
+			// Use weapon shoot position for VR support (controller position if in VR)
+			vecMuzzlePos = pOwner->Weapon_ShootPosition() + vecOffset.x * vecForward + vecOffset.y * vecRight + vecOffset.z * vecUp;
 		}
 	}
 	return vecMuzzlePos;

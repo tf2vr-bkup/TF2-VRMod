@@ -55,6 +55,7 @@
 #include "tempent.h"
 #include "cam_thirdperson.h"
 #include "vgui/IInput.h"
+#include "sourcevr/isourcevirtualreality.h"
 
 #define CTFPlayerClass C_TFPlayerClass
 #define CCaptureZone C_CaptureZone
@@ -14670,6 +14671,25 @@ float CTFPlayer::VRHeightOffset()
 
 Vector CTFPlayer::EyePosition()
 {
+	// Check if this player is actually using VR
+	bool bInVR = false;
+#ifdef CLIENT_DLL
+	if (IsLocalPlayer())
+	{
+		bInVR = UseVR();
+	}
+#else
+	// On server, check if player is in VR mode (not bots!)
+	bInVR = IsInVRMode() && !IsFakeClient();
+#endif
+	
+	// If not in VR, use standard eye position
+	if (!bInVR)
+	{
+		return BaseClass::EyePosition();
+	}
+	
+	// VR-specific eye position calculation
 	Vector basePos = GetAbsOrigin();
 	Vector localHeadPos = m_headInPlayerO - m_roomscaleOffset;
 	

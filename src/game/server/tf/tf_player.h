@@ -632,6 +632,10 @@ public:
 
 	void SetUsingVRHeadset( bool bState ){ m_bUsingVRHeadset = bState; }
 	bool IsUsingVRHeadset( void ){ return m_bUsingVRHeadset; }
+	
+	// VR mode tracking (separate from cosmetic headset)
+	void SetInVRMode( bool bState ){ m_bInVRMode = bState; }
+	bool IsInVRMode( void ) const { return m_bInVRMode; }
 
 	static bool m_bTFPlayerNeedsPrecache;
 
@@ -1463,6 +1467,7 @@ private:
 	CNetworkVar( bool, m_bUseBossHealthBar );
 
 	CNetworkVar( bool, m_bUsingVRHeadset );
+	CNetworkVar( bool, m_bInVRMode );		// Tracks actual VR mode usage
 
 	CNetworkVar( bool, m_bForcedSkin );
 	CNetworkVar( int, m_nForcedSkin );
@@ -1610,11 +1615,13 @@ public:
 	QAngle					m_leftControllerAngles;
 	Vector					m_rightControllerOrigin;
 	QAngle					m_rightControllerAngles;
+	float					m_flLastControllerUpdateTime;
 
 	CNetworkVar(Vector, m_roomscaleOffset);
 
 	virtual Vector			EyePosition();			// position of eyes
     const QAngle			&EyeAngles();
+	virtual Vector			BodyTarget( const Vector &posSrc, bool bNoisy ) OVERRIDE;	// VR-aware body target
 
 	void					RecalibrateView();
 

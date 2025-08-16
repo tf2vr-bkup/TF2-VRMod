@@ -1647,6 +1647,7 @@ IMPLEMENT_SERVERCLASS_ST( CTFPlayer, DT_TFPlayer )
 
 
 	SendPropBool( SENDINFO( m_bUsingVRHeadset ) ),
+	SendPropBool( SENDINFO( m_bInVRMode ) ),
 
 
 
@@ -2167,6 +2168,7 @@ CTFPlayer::CTFPlayer()
 
 
 	m_bUsingVRHeadset = false;
+	m_bInVRMode = false;
 
 
 
@@ -2175,6 +2177,7 @@ CTFPlayer::CTFPlayer()
 	m_leftControllerAngles.Init();
 	m_rightControllerOrigin.Init();
 	m_rightControllerAngles.Init();
+	m_flLastControllerUpdateTime = 0.0f;
 
 
 
@@ -6413,6 +6416,9 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
         m_leftControllerAngles = ucmd->leftControllerAngles;
         m_rightControllerOrigin = ucmd->rightControllerOrigin;
         m_rightControllerAngles = ucmd->rightControllerAngles;
+        
+        // Store the command time for lag compensation
+        m_flLastControllerUpdateTime = gpGlobals->curtime;
     }
     else
     {
@@ -6421,6 +6427,7 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
         m_leftControllerAngles = QAngle(0, 0, 0);
         m_rightControllerOrigin = vec3_origin;
         m_rightControllerAngles = QAngle(0, 0, 0);
+        m_flLastControllerUpdateTime = 0.0f;
     }
     
 
@@ -46087,7 +46094,7 @@ Vector CTFPlayer::ScriptWeapon_ShootPosition()
 Vector CTFPlayer::Weapon_ShootPosition( void )
 {
 	// Check if client is using VR and we have valid controller data
-	if (m_rightControllerOrigin != vec3_origin)
+	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
 	{
 		// Use right controller position for weapon shooting (typically the shooting hand)
 		Vector controllerPos = m_rightControllerOrigin;
@@ -46117,7 +46124,7 @@ Vector CTFPlayer::Weapon_ShootPosition( void )
 QAngle CTFPlayer::Weapon_ShootAngles( void )
 {
 	// Check if client is using VR and we have valid controller data
-	if (m_rightControllerOrigin != vec3_origin)
+	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
 	{
 		// Use right controller angles for weapon shooting (typically the shooting hand)
 		return m_rightControllerAngles;
@@ -46133,7 +46140,7 @@ QAngle CTFPlayer::Weapon_ShootAngles( void )
 Vector CTFPlayer::GetAutoaimVector( float flScale )
 {
 	// Check if client is using VR and we have valid controller data
-	if (m_rightControllerOrigin != vec3_origin)
+	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
 	{
 		// Use right controller angles for autoaim (typically the shooting hand)
 		QAngle controllerAngles = m_rightControllerAngles;
@@ -46149,6 +46156,8 @@ Vector CTFPlayer::GetAutoaimVector( float flScale )
 	// Fall back to base implementation (headset angles) if no VR data available
 	return BaseClass::GetAutoaimVector(flScale);
 }
+
+
 
 
 
@@ -46336,4 +46345,29 @@ void CTFPlayer::RecalibrateView()
 
 	// Teleport(nullptr, &angles, nullptr);
 
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: VR-aware body target that uses a more stable position for VR players
+//-----------------------------------------------------------------------------
+Vector CTFPlayer::BodyTarget( const Vector &posSrc, bool bNoisy )
+{
+	// For VR players, use origin + view offset instead of eye position
+	// This provides a more stable target that isn't affected by head tracking
+	if ( IsInVRMode() )
+	{
+		if ( bNoisy )
+		{
+			// Add some randomness like the base implementation
+			return GetAbsOrigin() + (GetViewOffset() * random->RandomFloat( 0.7, 1.0 ));
+		}
+		else
+		{
+			// Use origin + view offset for consistent body position
+			return GetAbsOrigin() + GetViewOffset();
+		}
+	}
+	
+	// Non-VR players use the default implementation
+	return BaseClass::BodyTarget( posSrc, bNoisy );
 }

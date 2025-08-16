@@ -525,12 +525,37 @@ CBaseEntity *CTFWeaponBaseGun::FireRocket( CTFPlayer *pPlayer, int iRocketType )
 	}
 	GetProjectileFireSetup( pPlayer, vecOffset, &vecSrc, &angForward, false );
 
-	trace_t trace;	
-	Vector vecEye = pPlayer->EyePosition();
-	CTraceFilterSimple traceFilter( this, COLLISION_GROUP_NONE );
-	UTIL_TraceLine( vecEye, vecSrc, MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
+	// Validate spawn position isn't inside solid geometry
+	trace_t tr;
+	UTIL_TraceHull( vecSrc, vecSrc, -Vector(2,2,2), Vector(2,2,2), MASK_SOLID, pPlayer, COLLISION_GROUP_NONE, &tr );
+	if ( tr.startsolid )
+	{
+		// Spawn position is inside solid geometry, try to find a clear spot
+		Vector vecDir;
+		AngleVectors( angForward, &vecDir );
+		
+		// Try backing up along the firing direction
+		for ( float dist = 5.0f; dist <= 30.0f; dist += 5.0f )
+		{
+			Vector vecTest = vecSrc - vecDir * dist;
+			UTIL_TraceHull( vecTest, vecTest, -Vector(2,2,2), Vector(2,2,2), MASK_SOLID, pPlayer, COLLISION_GROUP_NONE, &tr );
+			if ( !tr.startsolid )
+			{
+				vecSrc = vecTest;
+				DevMsg("VR Warning: Rocket spawn adjusted back %.1f units to clear geometry\n", dist);
+				break;
+			}
+		}
+	}
+	
+	// Create the rocket at the calculated spawn position
+	CTFProjectile_Rocket *pProjectile = CTFProjectile_Rocket::Create( this, vecSrc, angForward, pPlayer, pPlayer );
 
-	CTFProjectile_Rocket *pProjectile = CTFProjectile_Rocket::Create( this, trace.endpos, angForward, pPlayer, pPlayer );
+	if ( developer.GetInt() > 0 )
+	{
+		DevMsg("FireRocket: vecSrc = (%.2f, %.2f, %.2f), angForward = (%.2f, %.2f, %.2f)\n", 
+			vecSrc.x, vecSrc.y, vecSrc.z, angForward.x, angForward.y, angForward.z);
+	}
 
 	if ( pProjectile )
 	{
@@ -561,14 +586,9 @@ CBaseEntity *CTFWeaponBaseGun::FireEnergyBall( CTFPlayer *pPlayer, bool bRing )
 	}
 	GetProjectileFireSetup( pPlayer, vecOffset, &vecSrc, &angForward, false );
 
-	trace_t trace;
-	Vector vecEye = pPlayer->EyePosition();
-	CTraceFilterSimple traceFilter( this, COLLISION_GROUP_NONE );
-	UTIL_TraceLine( vecEye, vecSrc, MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
-
 	if ( bRing )
 	{
-		CTFProjectile_EnergyRing* pProjectile = CTFProjectile_EnergyRing::Create( this, trace.endpos, angForward, 
+		CTFProjectile_EnergyRing* pProjectile = CTFProjectile_EnergyRing::Create( this, vecSrc, angForward, 
 			GetProjectileSpeed(), GetProjectileGravity(), pPlayer, pPlayer, GetParticleColor(1), GetParticleColor(2), IsCurrentAttackACrit() );
 		if ( pProjectile )
 		{
@@ -583,7 +603,7 @@ CBaseEntity *CTFWeaponBaseGun::FireEnergyBall( CTFPlayer *pPlayer, bool bRing )
 	else
 	{
 #ifdef GAME_DLL
-		CTFProjectile_EnergyBall* pProjectile = CTFProjectile_EnergyBall::Create( trace.endpos, angForward, GetProjectileSpeed(), GetProjectileGravity(), pPlayer, pPlayer );
+		CTFProjectile_EnergyBall* pProjectile = CTFProjectile_EnergyBall::Create( vecSrc, angForward, GetProjectileSpeed(), GetProjectileGravity(), pPlayer, pPlayer );
 		if ( pProjectile )
 		{
 			pProjectile->SetLauncher( this );
@@ -649,7 +669,8 @@ CBaseEntity *CTFWeaponBaseGun::FirePipeBomb( CTFPlayer *pPlayer, int iPipeBombTy
 	PlayWeaponShootSound();
 
 #ifdef GAME_DLL
-	QAngle angEyes = pPlayer->EyeAngles();
+	// Use weapon shoot angles for VR support (controller angles if in VR)
+	QAngle angEyes = pPlayer->Weapon_ShootAngles();
 
 	float flSpreadAngle = 0.0f; 
 	CALL_ATTRIB_HOOK_FLOAT( flSpreadAngle, projectile_spread_angle );
@@ -661,22 +682,24 @@ CBaseEntity *CTFWeaponBaseGun::FirePipeBomb( CTFPlayer *pPlayer, int iPipeBombTy
 		DevMsg( "Fire bomb at %f %f %f\n", XYZ(angEyes) );
 	}
 
-	Vector vecForward, vecRight, vecUp;
-	AngleVectors( angEyes, &vecForward, &vecRight, &vecUp );
-
-	// Create grenades here!!
-	float fRight = 8.f;
+	// Get projectile spawn position
+	Vector vecSrc;
+	QAngle angProjectile;
+	Vector vecOffset( 16.0f, 8.0f, -6.0f );
 	if ( IsViewModelFlipped() )
 	{
-		fRight *= -1;
+		vecOffset.y *= -1;
 	}
-	Vector vecSrc = pPlayer->Weapon_ShootPosition();
-	vecSrc +=  vecForward * 16.0f + vecRight * fRight + vecUp * -6.0f;
+	GetProjectileFireSetup( pPlayer, vecOffset, &vecSrc, &angProjectile, false );
 
+	// Use the projectile angles for velocity calculation in VR
+	Vector vecForward, vecRight, vecUp;
+	AngleVectors( angProjectile, &vecForward, &vecRight, &vecUp );
+
+	// Check if we can spawn the projectile at this position
 	trace_t trace;	
-	Vector vecEye = pPlayer->EyePosition();
 	CTraceFilterSimple traceFilter( this, COLLISION_GROUP_NONE );
-	UTIL_TraceHull( vecEye, vecSrc, -Vector(8,8,8), Vector(8,8,8), MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
+	UTIL_TraceHull( vecSrc, vecSrc, -Vector(8,8,8), Vector(8,8,8), MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
 
 	// If we started in solid, don't let them fire at all
 	if ( trace.startsolid )
@@ -699,7 +722,38 @@ CBaseEntity *CTFWeaponBaseGun::FirePipeBomb( CTFPlayer *pPlayer, int iPipeBombTy
 		angImpulse.Zero();
 	}
 
-	CTFGrenadePipebombProjectile *pProjectile = CTFGrenadePipebombProjectile::Create( trace.endpos, angEyes, vecVelocity, angImpulse, pPlayer, GetTFWpnData(), iPipeBombType, flMultDmg );
+	// Validate spawn position isn't inside solid geometry
+	trace_t tr;
+	UTIL_TraceHull( vecSrc, vecSrc, -Vector(2,2,2), Vector(2,2,2), MASK_SOLID, pPlayer, COLLISION_GROUP_NONE, &tr );
+	if ( tr.startsolid )
+	{
+		// Spawn position is inside solid geometry, try to find a clear spot
+		Vector vecDir;
+		AngleVectors( angProjectile, &vecDir );
+		
+		// Try backing up along the firing direction
+		for ( float dist = 5.0f; dist <= 30.0f; dist += 5.0f )
+		{
+			Vector vecTest = vecSrc - vecDir * dist;
+			UTIL_TraceHull( vecTest, vecTest, -Vector(2,2,2), Vector(2,2,2), MASK_SOLID, pPlayer, COLLISION_GROUP_NONE, &tr );
+			if ( !tr.startsolid )
+			{
+				vecSrc = vecTest;
+				DevMsg("VR Warning: Grenade spawn adjusted back %.1f units to clear geometry\n", dist);
+				break;
+			}
+		}
+	}
+	
+	if ( developer.GetInt() > 0 )
+	{
+		DevMsg("FirePipeBomb: angEyes=(%.2f, %.2f, %.2f) angProjectile=(%.2f, %.2f, %.2f) vecSrc=(%.2f, %.2f, %.2f)\n",
+			angEyes.x, angEyes.y, angEyes.z,
+			angProjectile.x, angProjectile.y, angProjectile.z,
+			vecSrc.x, vecSrc.y, vecSrc.z);
+	}
+
+	CTFGrenadePipebombProjectile *pProjectile = CTFGrenadePipebombProjectile::Create( vecSrc, angProjectile, vecVelocity, angImpulse, pPlayer, GetTFWpnData(), iPipeBombType, flMultDmg );
 
 	if ( pProjectile )
 	{

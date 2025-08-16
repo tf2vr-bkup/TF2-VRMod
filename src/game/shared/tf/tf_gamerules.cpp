@@ -15152,6 +15152,18 @@ void CTFGameRules::ClientCommandKeyValues( edict_t *pEntity, KeyValues *pKeyValu
 				}
 			}
 		}
+		else if ( FStrEq( pszCommand, "VRModeActive" ) )
+		{
+			// Set VR mode flag when client reports VR is active
+			pTFPlayer->SetInVRMode( true );
+			DevMsg( "Player %s activated VR mode\n", pTFPlayer->GetPlayerName() );
+		}
+		else if ( FStrEq( pszCommand, "VRModeInactive" ) )
+		{
+			// Clear VR mode flag when client reports VR is inactive
+			pTFPlayer->SetInVRMode( false );
+			DevMsg( "Player %s deactivated VR mode\n", pTFPlayer->GetPlayerName() );
+		}
 		else if ( FStrEq( pszCommand, "TestItems" ) )
 		{
 			pTFPlayer->ItemTesting_Start( pKeyValues );

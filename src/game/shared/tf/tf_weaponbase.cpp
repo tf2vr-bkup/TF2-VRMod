@@ -60,6 +60,7 @@
 #include "hud_chat.h"
 #include "econ_notifications.h"
 #include "prediction.h"
+#include "tfvr/openxr_manager.h"
 
 // for spy material proxy
 #include "tf_proxyentity.h"
@@ -5657,7 +5658,77 @@ void CTFWeaponBase::GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset
 	{
 		vecOffset.y = 0;
 	}
+	
+	// VR-specific implementation
+#ifdef CLIENT_DLL
+	extern ConVar tfvr_enable_controller_tracking;
+	extern ConVar tfvr_controller_tracking_debug;
+	C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+	if (pTFPlayer && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	{
+		// Get the right controller pose for projectile firing
+		VMatrix rightControllerPose;
+		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		{
+			// Extract position and angles from the pose matrix
+			Vector controllerPos = rightControllerPose.GetTranslation();
+			QAngle controllerAngles;
+			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+			
+			// Apply spread angles if any
+			CTFWeaponBase *pWeapon = pTFPlayer->GetActiveTFWeapon();
+			QAngle angSpread = pWeapon ? pWeapon->GetSpreadAngles() : controllerAngles;
+			
+			// Get firing vectors from controller angles
+			Vector vecForward, vecRight, vecUp;
+			AngleVectors(angSpread, &vecForward, &vecRight, &vecUp);
+			
+			// In VR, projectiles start exactly at the controller position without offsets
+			*vecSrc = controllerPos;
+			
+			// Use controller angles directly for projectile direction
+			*angForward = angSpread;
+			
+			return;
+		}
+	}
+#else
+	CTFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+	if (pTFPlayer && pTFPlayer->IsInVRMode() && pTFPlayer->m_rightControllerOrigin != vec3_origin)
+	{
+		// Use right controller position and angles for projectile firing
+		Vector controllerPos = pTFPlayer->m_rightControllerOrigin;
+		QAngle controllerAngles = pTFPlayer->m_rightControllerAngles;
+		
+		// Validate controller data is reasonable (not too far from player)
+		float flDistSqr = (controllerPos - pPlayer->GetAbsOrigin()).LengthSqr();
+		if (flDistSqr > (200.0f * 200.0f)) // More than 200 units away
+		{
+			// Controller data seems invalid, fall back to default
+			DevMsg("VR Warning: Controller position too far from player (%.1f units), using fallback\n", 
+				sqrt(flDistSqr));
+			goto fallback;
+		}
+		
+		// Apply spread angles if any
+		CTFWeaponBase *pWeapon = pTFPlayer->GetActiveTFWeapon();
+		QAngle angSpread = pWeapon ? pWeapon->GetSpreadAngles() : controllerAngles;
+		
+		// Get firing vectors from controller angles
+		Vector vecForward, vecRight, vecUp;
+		AngleVectors(angSpread, &vecForward, &vecRight, &vecUp);
+		
+		// In VR, projectiles start exactly at the controller position without offsets
+		*vecSrc = controllerPos;
+		
+		// Use controller angles directly for projectile direction
+		*angForward = angSpread;
+		
+		return;
+	}
+#endif
 
+fallback:
 	QAngle angSpread = GetSpreadAngles();
 	Vector vecForward, vecRight, vecUp;
 	AngleVectors( angSpread, &vecForward, &vecRight, &vecUp );
@@ -5715,7 +5786,7 @@ QAngle CTFWeaponBase::GetSpreadAngles( void )
 	CTFPlayer *pOwner = ToTFPlayer( GetPlayerOwner() );
 	Assert( pOwner );
 
-	QAngle angEyes = pOwner->EyeAngles();
+	QAngle angEyes = pOwner->Weapon_ShootAngles();
 
 	float flSpreadAngle = 0.0f; 
 	CALL_ATTRIB_HOOK_FLOAT( flSpreadAngle, projectile_spread_angle );
@@ -5807,9 +5878,10 @@ bool CTFWeaponBase::DeflectProjectiles()
 
 	lagcompensation->StartLagCompensation( pOwner, pOwner->GetCurrentCommand() );
 
-	Vector vecEye = pOwner->EyePosition();
+	// Use weapon shoot position and angles for VR support
+	Vector vecEye = pOwner->Weapon_ShootPosition();
 	Vector vecForward, vecRight, vecUp;
-	AngleVectors( pOwner->EyeAngles(), &vecForward, &vecRight, &vecUp );
+	AngleVectors( pOwner->Weapon_ShootAngles(), &vecForward, &vecRight, &vecUp );
 	Vector vecCenter = vecEye + vecForward * GetDeflectionRadius();
 
 	// Get a list of entities in the box defined by vecSize at VecCenter.

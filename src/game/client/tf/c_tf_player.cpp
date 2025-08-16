@@ -3779,6 +3779,7 @@ IMPLEMENT_CLIENTCLASS_DT( C_TFPlayer, DT_TFPlayer, CTFPlayer )
 
 	// VR Related
 	RecvPropBool( RECVINFO( m_bUsingVRHeadset ) ),
+	RecvPropBool( RECVINFO( m_bInVRMode ) ),
 	RecvPropVector(RECVINFO(m_roomscaleOffset)),
 
 
@@ -3940,6 +3941,7 @@ C_TFPlayer::C_TFPlayer() :
 	m_bIsMiniBoss = false;
 	m_bUseBossHealthBar = false;
 	m_bUsingVRHeadset = false;
+	m_bInVRMode = false;
 
 	m_bForcedSkin = false;
 	m_nForcedSkin = 0;
@@ -4217,8 +4219,6 @@ Vector C_TFPlayer::GetAutoaimVector( float flScale )
 	// Fall back to base implementation (headset angles) if VR is not available
 	return BaseClass::GetAutoaimVector(flScale);
 }
-
-
 
 bool C_TFPlayer::CanDisplayAllSeeEffect( EAttackBonusEffects_t effect ) const
 { 
@@ -4735,6 +4735,10 @@ void C_TFPlayer::OnDataChanged( DataUpdateType_t updateType )
 			{
 				KeyValues *kv = new KeyValues( "UsingVRHeadset" );
 				engine->ServerCmdKeyValues( kv );
+				
+				// Also notify server of actual VR mode
+				KeyValues *kvMode = new KeyValues( "VRModeActive" );
+				engine->ServerCmdKeyValues( kvMode );
 			}
 		}
 
@@ -8087,22 +8091,32 @@ void C_TFPlayer::ClientPlayerRespawn( void )
 		g_pClientMode->GetViewportAnimationController()->StartAnimationSequence( "CompetitiveGame_RestoreChatWindow", false );
 		
 		// For VR, capture spawn angles and apply immediately
-		if (UseVR() && tfvr_hmd_drive_rotation.GetBool())
+		if (UseVR())
 		{
-			// Store the current eye angles as spawn angles (these come from server)
-			m_spawnViewAngles = m_angEyeAngles;
+			// Notify server that we're using VR
+			KeyValues *kv = new KeyValues( "UsingVRHeadset" );
+			engine->ServerCmdKeyValues( kv );
 			
-			// Get current HMD angles and immediately recalibrate
-			QAngle hmdAngles;
-			MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), hmdAngles);
+			// Also notify server of actual VR mode
+			KeyValues *kvMode = new KeyValues( "VRModeActive" );
+			engine->ServerCmdKeyValues( kvMode );
 			
-			// Immediately align HMD with spawn rotation
-			float oldCalibratedYaw = m_calibratedHmdYaw;
-			m_calibratedHmdYaw = hmdAngles.y - m_spawnViewAngles.y;
-			
-			// Set spawn time for VR rotation code
-			m_flSpawnTime = gpGlobals->curtime;
-		
+			if (tfvr_hmd_drive_rotation.GetBool())
+			{
+				// Store the current eye angles as spawn angles (these come from server)
+				m_spawnViewAngles = m_angEyeAngles;
+				
+				// Get current HMD angles and immediately recalibrate
+				QAngle hmdAngles;
+				MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), hmdAngles);
+				
+				// Immediately align HMD with spawn rotation
+				float oldCalibratedYaw = m_calibratedHmdYaw;
+				m_calibratedHmdYaw = hmdAngles.y - m_spawnViewAngles.y;
+				
+				// Set spawn time for VR rotation code
+				m_flSpawnTime = gpGlobals->curtime;
+			}
 		}
 	}
 

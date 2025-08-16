@@ -523,6 +523,7 @@ public:
 
 
 	bool	IsUsingVRHeadset( void ){ return m_bUsingVRHeadset; }
+	bool	IsInVRMode( void ) const { return m_bInVRMode; }
 
 	bool	ShouldPlayerDrawParticles( void );
 
@@ -932,6 +933,7 @@ private:
 	CNetworkVar( bool, m_bUseBossHealthBar );
 
 	CNetworkVar( bool, m_bUsingVRHeadset );
+	CNetworkVar( bool, m_bInVRMode );		// Tracks actual VR mode usage
 
 	CNetworkVar( bool, m_bForcedSkin );
 	CNetworkVar( int, m_nForcedSkin );
