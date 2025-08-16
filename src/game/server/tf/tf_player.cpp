@@ -2261,6 +2261,10 @@ CTFPlayer::CTFPlayer()
 	m_bRegenerating = false;
 
 	m_bRespawning = false;
+	
+	// Origin freezing on death
+	m_bOriginFrozenOnDeath = false;
+	m_vecDeathOrigin.Init();
 
 
 
@@ -6581,7 +6585,8 @@ bool CTFPlayer::IsReadyToSpawn( void )
 
 
 
-	return ( StateGet() != TF_STATE_DYING );
+	// Allow respawn if not in dying state, or if in dying state with frozen origin (waiting for respawn)
+	return ( StateGet() != TF_STATE_DYING || m_bOriginFrozenOnDeath );
 
 }
 
@@ -13462,6 +13467,9 @@ void CTFPlayer::ChangeTeam( int iTeamNum, bool bAutoTeam, bool bSilent, bool bAu
 	else // active player
 
 	{
+		
+		// Clear origin freezing when joining an active team
+		m_bOriginFrozenOnDeath = false;
 
 		bool bKill = true;
 
@@ -27477,7 +27485,8 @@ void CTFPlayer::StateEnterACTIVE()
 
 	PhysObjectWake();
 
-
+	// Clear origin freezing on respawn
+	m_bOriginFrozenOnDeath = false;
 
 	m_flLastAction = gpGlobals->curtime;
 
@@ -27729,7 +27738,94 @@ bool CTFPlayer::SetObserverMode(int mode)
 
 }
 
+//-----------------------------------------------------------------------------
+// Purpose: Override StartObserverMode to prevent origin changes during frozen death state
+//-----------------------------------------------------------------------------
+bool CTFPlayer::StartObserverMode(int mode)
+{
+	if ( !IsObserver() )
+	{
+		// If origin is frozen on death, don't change the position
+		if ( !m_bOriginFrozenOnDeath )
+		{
+			// set position to last view offset (normal behavior)
+			SetAbsOrigin( GetAbsOrigin() + GetViewOffset() );
+		}
+		// Always reset view offset
+		SetViewOffset( vec3_origin );
+	}
 
+	Assert( mode > OBS_MODE_NONE );
+	
+	m_afPhysicsFlags |= PFLAG_OBSERVER;
+
+	// Holster weapon immediately, to allow it to cleanup
+    if ( GetActiveWeapon() )
+		GetActiveWeapon()->Holster();
+
+	// clear out the suit message cache so we don't keep chattering
+    SetSuitUpdate(NULL, FALSE, 0);
+
+	SetGroundEntity( (CBaseEntity *)NULL );
+	
+	RemoveFlag( FL_DUCKING );
+	
+    AddSolidFlags( FSOLID_NOT_SOLID );
+
+	SetObserverMode( mode );
+
+	if ( gpGlobals->eLoadType != MapLoad_Background )
+	{
+		ShowViewPortPanel( "specgui" , ModeWantsSpectatorGUI(mode) );
+	}
+	
+	// Setup flags
+    m_Local.m_iHideHUD = HIDEHUD_HEALTH;
+	m_takedamage = DAMAGE_NO;		
+
+	// Become invisible
+	AddEffects( EF_NODRAW );		
+
+	m_iHealth = 1;
+	m_lifeState = LIFE_DEAD; // Can't be dead, otherwise movement doesn't work right.
+	m_flDeathAnimTime = gpGlobals->curtime;
+	pl.deadflag = true;
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Override SetAbsOrigin to prevent position changes during frozen death state
+//-----------------------------------------------------------------------------
+void CTFPlayer::SetAbsOrigin( const Vector& absOrigin )
+{
+	// If origin is frozen on death, ignore position changes except for respawn
+	if ( m_bOriginFrozenOnDeath && m_Shared.InState( TF_STATE_OBSERVER ) )
+	{
+		// Don't change position, keep at death location
+		BaseClass::SetAbsOrigin( m_vecDeathOrigin );
+		return;
+	}
+	
+	// Normal behavior
+	BaseClass::SetAbsOrigin( absOrigin );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Override SetViewOffset to prevent dead view height change for VR frozen deaths
+//-----------------------------------------------------------------------------
+void CTFPlayer::SetViewOffset( const Vector& vecViewOffset )
+{
+	// If origin is frozen on death and this is VR, don't apply dead view height
+	if ( m_bOriginFrozenOnDeath && IsInVRMode() && !IsFakeClient() )
+	{
+		// Keep current view offset, don't change to dead view height
+		return;
+	}
+	
+	// Normal behavior
+	BaseClass::SetViewOffset( vecViewOffset );
+}
 
 //-----------------------------------------------------------------------------
 
@@ -27875,7 +27971,9 @@ void CTFPlayer::StateEnterDYING( void )
 
 	AddSolidFlags( FSOLID_NOT_SOLID );
 
-
+	// Store death position to freeze origin during spectator mode
+	m_bOriginFrozenOnDeath = true;
+	m_vecDeathOrigin = GetAbsOrigin();
 
 	m_bPlayedFreezeCamSound = false;
 
@@ -28085,9 +28183,17 @@ void CTFPlayer::StateThinkDYING( void )
 
 			SetMoveType( MOVETYPE_NONE );
 
-
-
-		StateTransition( TF_STATE_OBSERVER );
+		// Only transition to observer if origin is not frozen on death
+		if ( !m_bOriginFrozenOnDeath )
+		{
+			StateTransition( TF_STATE_OBSERVER );
+		}
+		else
+		{
+			// For VR frozen origin, set respawnable state but stay in dying to maintain position
+			// The HUD should now recognize LIFE_RESPAWNABLE and show respawn timer
+			pl.deadflag = true;
+		}
 
 	}
 

@@ -337,6 +337,9 @@ public:
 	virtual CBaseEntity *FindNextObserverTarget(bool bReverse);
 	virtual bool		IsValidObserverTarget(CBaseEntity * target); // true, if player is allowed to see this target
 	virtual bool		SetObserverTarget(CBaseEntity * target);
+	virtual bool		StartObserverMode(int mode);
+	virtual void		SetAbsOrigin( const Vector& absOrigin );
+	virtual void		SetViewOffset( const Vector& vecViewOffset );
 	virtual bool		ModeWantsSpectatorGUI( int iMode ) { return (iMode != OBS_MODE_FREEZECAM && iMode != OBS_MODE_DEATHCAM); }
 	void				FindInitialObserverTarget( void );
 	CBaseEntity		    *FindNearestObservableTarget( Vector vecOrigin, float flMaxDist );
@@ -1196,6 +1199,10 @@ private:
 	bool				m_bSeenRoundInfo;
 	CNetworkVar( bool, m_bRegenerating );
 	bool				m_bRespawning;
+	
+	// Origin freezing on death
+	bool				m_bOriginFrozenOnDeath;
+	Vector				m_vecDeathOrigin;
 
 	// Items.
 	CNetworkHandle( CTFItem, m_hItem );
