@@ -40,6 +40,12 @@ private:
     bool CreateInteractionProfiles();
     bool AttachActionSet();
 
+    // Individual interaction profile creation methods
+    bool CreateIndexControllerProfile();
+    bool CreateQuestControllerProfile();
+    bool CreateGenericControllerProfile();
+    bool SuggestBindings(XrPath profilePath, const std::vector<XrActionSuggestedBinding>& bindings, const char* profileName);
+
     XrInputAction CreateBooleanAction(const char* name, const char* localizedName);
     XrInputAction CreateFloatAction(const char* name, const char* localizedName);
     XrInputAction CreatePoseAction(const char* name, const char* localizedName);

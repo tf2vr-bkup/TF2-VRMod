@@ -150,24 +150,35 @@ bool COpenXRInputManager::CreateActions()
 
 bool COpenXRInputManager::CreateInteractionProfiles()
 {
-    // Try to create Valve Index profile first
+    bool success = false;
+    
+    // Try to create Valve Index profile
+    success |= CreateIndexControllerProfile();
+    
+    // Try to create Quest controller profile
+    success |= CreateQuestControllerProfile();
+    
+    // Fall back to generic profile if both specific profiles fail
+    if (!success)
+    {
+        success |= CreateGenericControllerProfile();
+    }
+    
+    return success;
+}
+
+bool COpenXRInputManager::CreateIndexControllerProfile()
+{
     XrPath indexProfilePath;
     
     XrResult result = xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexProfilePath);
     if (!XR_SUCCEEDED(result)) 
     {
-        DevMsg("Failed to create path for Valve Index profile: %d, trying generic profile\n", result);
-        
-        // Fall back to generic OpenXR profile
-        result = xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &indexProfilePath);
-        if (!XR_SUCCEEDED(result)) 
-        {
-            DevMsg("Failed to create path for generic profile: %d\n", result);
-            return false;
-        }
+        DevMsg("Failed to create path for Valve Index profile: %d\n", result);
+        return false;
     }
 
-    // Create suggested bindings for the profile
+    // Create suggested bindings for Index controller
     std::vector<XrActionSuggestedBinding> suggestedBindings;
     
     // Movement bindings (left controller)
@@ -366,33 +377,322 @@ bool COpenXRInputManager::CreateInteractionProfiles()
         }
     }
 
-    // Suggest bindings for the profile
-    if (!suggestedBindings.empty())
+    // Suggest bindings for Index controller
+    return SuggestBindings(indexProfilePath, suggestedBindings, "Valve Index");
+}
+
+bool COpenXRInputManager::CreateQuestControllerProfile()
+{
+    XrPath questProfilePath;
+    
+    XrResult result = xrStringToPath(m_instance, "/interaction_profiles/oculus/touch_controller", &questProfilePath);
+    if (!XR_SUCCEEDED(result)) 
     {
-        XrInteractionProfileSuggestedBinding suggestedBindingsInfo{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
-        suggestedBindingsInfo.interactionProfile = indexProfilePath;
-        suggestedBindingsInfo.suggestedBindings = suggestedBindings.data();
-        suggestedBindingsInfo.countSuggestedBindings = suggestedBindings.size();
-
-        // Get the profile path string for debugging
-        char profilePathStr[XR_MAX_PATH_LENGTH];
-        uint32_t profilePathStrLen = 0;
-        XrResult profilePathResult = xrPathToString(m_instance, indexProfilePath, XR_MAX_PATH_LENGTH, &profilePathStrLen, profilePathStr);
-        if (XR_SUCCEEDED(profilePathResult))
-        {
-            DevMsg("Suggesting bindings for profile path: %s\n", profilePathStr);
-        }
-
-        XrResult result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindingsInfo);
-        if (!XR_SUCCEEDED(result))
-        {
-            DevMsg("Failed to suggest bindings for profile: %d\n", result);
-            return false;
-        }
-        
-        DevMsg("Successfully suggested %d bindings for profile\n", suggestedBindings.size());
+        DevMsg("Failed to create path for Quest controller profile: %d\n", result);
+        return false;
     }
 
+    // Create suggested bindings for Quest controller
+    std::vector<XrActionSuggestedBinding> suggestedBindings;
+    
+    // Movement bindings (left controller thumbstick)
+    if (m_actions.find("move_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("move_y") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_y"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Turning bindings (right controller thumbstick)
+    if (m_actions.find("turn_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["turn_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Primary attack (right trigger)
+    if (m_actions.find("primary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["primary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Secondary attack (left trigger)
+    if (m_actions.find("secondary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["secondary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Use (right A button)
+    if (m_actions.find("use") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["use"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Duck (right A button - same as use, Quest controllers have fewer buttons)
+    if (m_actions.find("duck") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["duck"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Jump (right B button)
+    if (m_actions.find("jump") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["jump"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Menu (left menu button - Quest controllers have a dedicated menu button)
+    if (m_actions.find("menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left UI interaction binding (left trigger)
+    if (m_actions.find("left_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left class menu binding (left X button)
+    if (m_actions.find("left_class_menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/x/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_class_menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right UI interaction binding (right trigger)
+    if (m_actions.find("right_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Weapon switching bindings (right stick tilt forward/backward)
+    if (m_actions.find("weapon_switch") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_switch"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added Quest weapon switching binding: weapon_switch -> /user/hand/right/input/thumbstick/y\n");
+        }
+    }
+
+    // Pose action bindings for controller tracking
+    if (m_actions.find("left_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added Quest left hand pose binding: /user/hand/left/input/aim/pose\n");
+        }
+    }
+    
+    if (m_actions.find("right_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added Quest right hand pose binding: /user/hand/right/input/aim/pose\n");
+        }
+    }
+
+    // Suggest bindings for Quest controller
+    return SuggestBindings(questProfilePath, suggestedBindings, "Quest Touch");
+}
+
+bool COpenXRInputManager::CreateGenericControllerProfile()
+{
+    XrPath genericProfilePath;
+    
+    XrResult result = xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &genericProfilePath);
+    if (!XR_SUCCEEDED(result)) 
+    {
+        DevMsg("Failed to create path for generic profile: %d\n", result);
+        return false;
+    }
+
+    // Create basic bindings for generic controller (simplified set)
+    std::vector<XrActionSuggestedBinding> suggestedBindings;
+    
+    // Basic movement and actions for simple controller
+    if (m_actions.find("primary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["primary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Pose bindings
+    if (m_actions.find("left_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("right_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Suggest bindings for generic controller
+    return SuggestBindings(genericProfilePath, suggestedBindings, "Generic");
+}
+
+bool COpenXRInputManager::SuggestBindings(XrPath profilePath, const std::vector<XrActionSuggestedBinding>& bindings, const char* profileName)
+{
+    if (bindings.empty())
+    {
+        DevMsg("No bindings to suggest for %s profile\n", profileName);
+        return false;
+    }
+
+    XrInteractionProfileSuggestedBinding suggestedBindingsInfo{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+    suggestedBindingsInfo.interactionProfile = profilePath;
+    suggestedBindingsInfo.suggestedBindings = bindings.data();
+    suggestedBindingsInfo.countSuggestedBindings = bindings.size();
+
+    // Get the profile path string for debugging
+    char profilePathStr[XR_MAX_PATH_LENGTH];
+    uint32_t profilePathStrLen = 0;
+    XrResult profilePathResult = xrPathToString(m_instance, profilePath, XR_MAX_PATH_LENGTH, &profilePathStrLen, profilePathStr);
+    if (XR_SUCCEEDED(profilePathResult))
+    {
+        DevMsg("Suggesting bindings for %s profile path: %s\n", profileName, profilePathStr);
+    }
+
+    XrResult result = xrSuggestInteractionProfileBindings(m_instance, &suggestedBindingsInfo);
+    if (!XR_SUCCEEDED(result))
+    {
+        DevMsg("Failed to suggest bindings for %s profile: %d\n", profileName, result);
+        return false;
+    }
+    
+    DevMsg("Successfully suggested %d bindings for %s profile\n", bindings.size(), profileName);
     return true;
 }
 
