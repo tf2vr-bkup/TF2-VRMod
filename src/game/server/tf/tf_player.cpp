@@ -224,6 +224,9 @@
 
 #include "tf_player_resource.h"
 
+// VR-specific convars
+ConVar tfvr_pvs_radius( "tfvr_pvs_radius", "1", FCVAR_REPLICATED | FCVAR_CHEAT, "Radius around VR player's head to add PVS origins (prevents entity culling near walls)" );
+
 #include "gcsdk/gcclient_sharedobjectcache.h"
 
 #include "tf_party.h"
@@ -7158,6 +7161,36 @@ void CTFPlayer::SetupVisibility( CBaseEntity *pViewEntity, unsigned char *pvs, i
 
 		BaseClass::SetupVisibility( pViewEntity, pvs, pvssize );
 
+		// VR-specific visibility fix: Add additional PVS origins around the player
+		// to prevent entity culling when the VR head position moves near walls
+		if ( IsInVRMode() && !IsFakeClient() )
+		{
+			Vector eyePos = EyePosition();
+			
+			// Add PVS points in a radius around the player's eye position
+			// This ensures entities remain visible even when the VR head moves close to walls
+			const float radiusOffset = tfvr_pvs_radius.GetFloat();
+			
+			// Add additional PVS origins around the head position
+			// Forward/backward
+			Vector forward, right, up;
+			AngleVectors( EyeAngles(), &forward, &right, &up );
+			
+			engine->AddOriginToPVS( eyePos + forward * radiusOffset );
+			engine->AddOriginToPVS( eyePos - forward * radiusOffset );
+			
+			// Left/right
+			engine->AddOriginToPVS( eyePos + right * radiusOffset );
+			engine->AddOriginToPVS( eyePos - right * radiusOffset );
+			
+			// Up/down (important for crouching/standing transitions)
+			engine->AddOriginToPVS( eyePos + up * radiusOffset );
+			engine->AddOriginToPVS( eyePos - up * radiusOffset );
+			
+			// Also add the player's body center position to ensure entities near the body are visible
+			Vector bodyCenter = GetAbsOrigin() + GetViewOffset() * 0.5f;
+			engine->AddOriginToPVS( bodyCenter );
+		}
 	}
 
 
