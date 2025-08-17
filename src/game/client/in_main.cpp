@@ -1014,6 +1014,11 @@ ProcessVRTurning
 Handles VR thumbstick turning - smooth and snap turning
 ================
 */
+
+// Static variables for smooth turning interpolation
+static float s_flAccumulatedTurnInput = 0.0f;
+static float s_flLastTurnUpdateTime = 0.0f;
+
 void ProcessVRTurning(CUserCmd* cmd, float frametime)
 {
     if (!UseVR() || !g_pOpenXRManager)
@@ -1037,7 +1042,11 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
     // Apply deadzone
     float deadzone = tfvr_turn_deadzone.GetFloat();
     if (fabs(turnInput) < deadzone)
+    {
+        // Reset accumulation when input stops
+        s_flAccumulatedTurnInput = 0.0f;
         return;
+    }
 
     // Normalize input beyond deadzone (0 to 1 range)
     float normalizedInput = (fabs(turnInput) - deadzone) / (1.0f - deadzone);
@@ -1051,8 +1060,34 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
     if (turningMode == 1) // Smooth turning
     {
         float turnRate = tfvr_smooth_turn_rate.GetFloat();
-        float deltaYaw = -normalizedInput * turnRate * frametime; // Negative for correct direction
-        currentAngles.y += deltaYaw;
+        
+        // Use fixed tick interval for consistent turning speed regardless of framerate
+        // This prevents stuttering from 66Hz server vs 75Hz VR mismatch
+        float fixedDeltaTime = TICK_INTERVAL;
+        float targetDeltaYaw = -normalizedInput * turnRate * fixedDeltaTime;
+        
+        // Accumulate turn input to handle framerate differences smoothly
+        s_flAccumulatedTurnInput += targetDeltaYaw;
+        
+        // Apply accumulated turning in chunks based on time passage
+        float currentTime = gpGlobals->realtime;
+        if (s_flLastTurnUpdateTime == 0.0f)
+            s_flLastTurnUpdateTime = currentTime;
+            
+        float timeDelta = currentTime - s_flLastTurnUpdateTime;
+        
+        // Apply smoothed turning using linear interpolation
+        float appliedDeltaYaw = 0.0f;
+        if (timeDelta > 0.0f)
+        {
+            // Calculate how much turning to apply this frame for smooth motion
+            float lerpFactor = clamp(timeDelta / fixedDeltaTime, 0.0f, 1.0f);
+            appliedDeltaYaw = s_flAccumulatedTurnInput * lerpFactor;
+            s_flAccumulatedTurnInput -= appliedDeltaYaw;
+            s_flLastTurnUpdateTime = currentTime;
+        }
+        
+        currentAngles.y += appliedDeltaYaw;
         
         // Normalize angle
         currentAngles.y = anglemod(currentAngles.y);
@@ -1067,10 +1102,10 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
             if (pPlayer && pPlayer->m_isCalibrated)
             {
                 // Update calibrated yaw so rotation calculations use current position as pivot
-                pPlayer->m_calibratedHmdYaw -= deltaYaw;
+                pPlayer->m_calibratedHmdYaw -= appliedDeltaYaw;
                 
                 // CRITICAL: Update m_headInPlayerA.y to match new yaw for hitscan weapons
-                pPlayer->m_headInPlayerA.y += deltaYaw;
+                pPlayer->m_headInPlayerA.y += appliedDeltaYaw;
                 
                 // Also update the calibrated position to current HMD position to fix pivot point
                 Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
