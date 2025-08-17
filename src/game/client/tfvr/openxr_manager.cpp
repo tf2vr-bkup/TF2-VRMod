@@ -1039,9 +1039,14 @@ CON_COMMAND(vr_calibrate_player_height_auto, "Auto-calibrate your height from cu
         
         // Enable height calibration
         ConVar* tfvr_height_calibration = cvar->FindVar("tfvr_height_calibration");
+        ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
         if (tfvr_height_calibration)
         {
             tfvr_height_calibration->SetValue(1);
+
+            // Disable seated mode if it's enabled
+            tfvr_seated_mode->SetValue(0);
+
             DevMsg("Height calibration enabled\n");
         }
     }
@@ -1116,14 +1121,6 @@ CON_COMMAND(vr_calibrate_seated_height_auto, "Auto-calibrate seated height offse
     // (this is rough average standing eye height for most people)
     float targetStandingEyeHeight = 64.0f; // inches
     float neededOffset = targetStandingEyeHeight - hmdHeightInches;
-    
-    if (neededOffset < 1.0f || neededOffset > 80.0f)
-    {
-        DevMsg("Calculated offset %.1f inches is out of range (1-80). Current HMD height: %.1f inches\n", 
-               neededOffset, hmdHeightInches);
-        DevMsg("You may need to adjust your seating position or use manual calibration.\n");
-        return;
-    }
     
     ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
     if (tfvr_seated_height_offset)
