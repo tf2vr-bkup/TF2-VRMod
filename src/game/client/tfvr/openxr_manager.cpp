@@ -33,6 +33,13 @@ ConVar tfvr_hud_scale("tfvr_hud_scale", "0.5", FCVAR_ARCHIVE);
 ConVar tfvr_hud_axis_lock_to_world("tfvr_hud_axis_lock_to_world", "5", FCVAR_ARCHIVE, "Bitfield - locks HUD axes to the world - 1=pitch, 2=yaw, 4=roll");
 ConVar tfvr_hud_height_adjust("tfvr_hud_height_adjust", "0", FCVAR_ARCHIVE);
 
+// Height calibration and seated mode ConVars
+ConVar tfvr_player_height("tfvr_player_height", "67", FCVAR_ARCHIVE, "Player's real height in inches for VR calibration");
+ConVar tfvr_height_calibration("tfvr_height_calibration", "1", FCVAR_ARCHIVE, "Enable height calibration for world scaling");
+ConVar tfvr_seated_mode("tfvr_seated_mode", "0", FCVAR_ARCHIVE, "Enable seated VR mode");
+ConVar tfvr_seated_height_offset("tfvr_seated_height_offset", "24", FCVAR_ARCHIVE, "Height offset for seated mode in inches");
+ConVar tfvr_calibration_debug("tfvr_calibration_debug", "0", FCVAR_ARCHIVE, "Show debug output for height calibration and seated mode");
+
 
 ConVar tfvr_menu_scale("tfvr_menu_scale", "0.7", FCVAR_ARCHIVE);
 
@@ -41,7 +48,7 @@ ConVar tfvr_r_show_both_eyes("tfvr_r_show_both_eyes", "0", FCVAR_ARCHIVE, "Show 
 // Common conversions
 namespace
 {
-	// Calculate dynamic world scale based on merc height and crouch state
+	// Calculate dynamic world scale based on merc height, crouch state, and height calibration
 	float CalculateDynamicWorldScale()
 	{
 		// Get the base world scale ConVar
@@ -53,7 +60,7 @@ namespace
 		if (!tfvr_dynamic_worldscale || !tfvr_dynamic_worldscale->GetBool())
 			return baseWorldScale;
 		
-				// Get local player to check class and crouch state
+		// Get local player to check class and crouch state
 		C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
 		if (!pLocalPlayer)
 			return baseWorldScale;
@@ -94,18 +101,50 @@ namespace
 			}
 		}
 		
-		// Calculate dynamic scale: base scale * (class height / default height)
-		// This ensures the merc's height always matches your VR height
-		float dynamicScale = baseWorldScale * (classEyeHeight / 72.0f);
+		// Calculate base class scale: base scale * (class height / default height)
+		float classScale = baseWorldScale * (classEyeHeight / 72.0f);
 		
-		// Debug output
-		static float lastDebugTime = 0.0f;
-		if (gpGlobals && gpGlobals->realtime - lastDebugTime > 2.0f) // Only print every 2 seconds
+		// Apply height calibration if enabled
+		static ConVar* tfvr_height_calibration = cvar->FindVar("tfvr_height_calibration");
+		static ConVar* tfvr_player_height = cvar->FindVar("tfvr_player_height");
+		static ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
+		
+		if (tfvr_height_calibration && tfvr_height_calibration->GetBool() && 
+		    tfvr_player_height && tfvr_seated_mode)
 		{
-			DevMsg("VR World Scale: Class=%s, EyeHeight=%.1f, Scale=%.1f\n", 
+			// Don't apply height calibration in seated mode - it uses base class scale only
+			if (!tfvr_seated_mode->GetBool())
+			{
+				// Standard height calibration for standing VR
+				// Shorter players need BIGGER world scale, taller players need SMALLER world scale
+				// This makes the world feel the right size relative to their height
+				float playerHeight = tfvr_player_height->GetFloat();
+				float averageHeight = 67.0f; // Average adult height in inches
+				float heightScale = averageHeight / playerHeight; // INVERTED: shorter = bigger scale
+				
+				classScale *= heightScale;
+			}
+		}
+		
+		float dynamicScale = classScale;
+		
+		// Debug output with calibration info
+		static float lastDebugTime = 0.0f;
+		static ConVar* tfvr_calibration_debug = cvar->FindVar("tfvr_calibration_debug");
+		if (gpGlobals && gpGlobals->realtime - lastDebugTime > 2.0f && 
+		    tfvr_calibration_debug && tfvr_calibration_debug->GetBool()) // Only print every 2 seconds
+		{
+			bool heightCalibActive = tfvr_height_calibration && tfvr_height_calibration->GetBool();
+			bool seatedMode = tfvr_seated_mode && tfvr_seated_mode->GetBool();
+			float playerHeight = tfvr_player_height ? tfvr_player_height->GetFloat() : 67.0f;
+			
+			DevMsg("VR World Scale: Class=%s, EyeHeight=%.1f, Scale=%.1f, HeightCalib=%s, Seated=%s, PlayerHeight=%.1f\n", 
 				pPlayerClass ? pPlayerClass->GetName() : "Unknown",
 				classEyeHeight,
-				dynamicScale);
+				dynamicScale,
+				heightCalibActive ? "ON" : "OFF",
+				seatedMode ? "ON" : "OFF",
+				playerHeight);
 			lastDebugTime = gpGlobals->realtime;
 		}
 		
@@ -926,6 +965,204 @@ CON_COMMAND(vr_calibrate_height, "Recenter VR view to match game camera")
     }
 }
 
+// Command to calibrate player height
+CON_COMMAND(vr_calibrate_player_height, "Calibrate your real height for VR scaling")
+{
+    if (args.ArgC() < 2)
+    {
+        ConVar* tfvr_player_height = cvar->FindVar("tfvr_player_height");
+        float currentHeight = tfvr_player_height ? tfvr_player_height->GetFloat() : 67.0f;
+        DevMsg("Current player height: %.1f inches\n", currentHeight);
+        DevMsg("Usage: vr_calibrate_player_height <height_in_inches>\n");
+        DevMsg("Example: vr_calibrate_player_height 72 (for 6 feet tall)\n");
+        DevMsg("Or use: vr_calibrate_player_height_auto\n");
+        return;
+    }
+    
+    float height = atof(args.Arg(1));
+    if (height < 20.0f || height > 100.0f) // Reasonable range: 4' to 7'
+    {
+        DevMsg("Height must be between 20 and 100 inches\n");
+        return;
+    }
+    
+    ConVar* tfvr_player_height = cvar->FindVar("tfvr_player_height");
+    if (tfvr_player_height)
+    {
+        tfvr_player_height->SetValue(height);
+        DevMsg("Player height set to %.1f inches\n", height);
+        
+        // Enable height calibration if not already enabled
+        ConVar* tfvr_height_calibration = cvar->FindVar("tfvr_height_calibration");
+        if (tfvr_height_calibration && !tfvr_height_calibration->GetBool())
+        {
+            tfvr_height_calibration->SetValue(1);
+            DevMsg("Height calibration enabled\n");
+        }
+    }
+}
+
+// Command to auto-calibrate player height from current HMD position
+CON_COMMAND(vr_calibrate_player_height_auto, "Auto-calibrate your height from current HMD position (stand tall!)")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active - cannot calibrate height\n");
+        return;
+    }
+    
+    // Get raw unscaled HMD position in play space (meters)
+    Vector rawHmdPos = g_pOpenXRManager->GetRawHMDPosition();
+    
+    // Convert HMD height from meters to inches
+    // rawHmdPos.y is height above play space floor in meters
+    float hmdHeightMeters = rawHmdPos.y;
+    float hmdHeightInches = hmdHeightMeters * 39.3701f; // meters to inches
+    
+    // Add estimate for head-to-top-of-head (about 4 inches)
+    float estimatedPlayerHeight = hmdHeightInches + 4.0f;
+    
+    if (estimatedPlayerHeight < 24.0f || estimatedPlayerHeight > 100.0f)
+    {
+        DevMsg("Detected height %.1f inches seems out of range (48-84). Check your play space setup.\n", estimatedPlayerHeight);
+        return;
+    }
+    
+    ConVar* tfvr_player_height = cvar->FindVar("tfvr_player_height");
+    if (tfvr_player_height)
+    {
+        tfvr_player_height->SetValue(estimatedPlayerHeight);
+        DevMsg("Auto-calibrated player height to %.1f inches (%.1f' %.0f\")\n", 
+               estimatedPlayerHeight, 
+               floor(estimatedPlayerHeight / 12.0f), 
+               fmod(estimatedPlayerHeight, 12.0f));
+        
+        // Enable height calibration
+        ConVar* tfvr_height_calibration = cvar->FindVar("tfvr_height_calibration");
+        if (tfvr_height_calibration)
+        {
+            tfvr_height_calibration->SetValue(1);
+            DevMsg("Height calibration enabled\n");
+        }
+    }
+}
+
+// Command to toggle seated mode
+CON_COMMAND(vr_seated_mode, "Toggle VR seated mode")
+{
+    ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
+    if (!tfvr_seated_mode)
+        return;
+        
+    bool currentValue = tfvr_seated_mode->GetBool();
+    tfvr_seated_mode->SetValue(!currentValue);
+    
+    DevMsg("VR Seated Mode: %s\n", !currentValue ? "ENABLED" : "DISABLED");
+    if (!currentValue)
+    {
+        ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
+        float offset = tfvr_seated_height_offset ? tfvr_seated_height_offset->GetFloat() : 24.0f;
+        DevMsg("  Using height offset: %.1f inches\n", offset);
+    }
+}
+
+// Command to set seated mode height offset
+CON_COMMAND(vr_seated_height_offset, "Set the height offset for seated mode")
+{
+    if (args.ArgC() < 2)
+    {
+        ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
+        float currentOffset = tfvr_seated_height_offset ? tfvr_seated_height_offset->GetFloat() : 24.0f;
+        DevMsg("Current seated height offset: %.1f inches\n", currentOffset);
+        DevMsg("Usage: vr_seated_height_offset <offset_in_inches>\n");
+        DevMsg("Example: vr_seated_height_offset 24 (for 2 feet offset)\n");
+        DevMsg("Or use: vr_calibrate_seated_height_auto\n");
+        return;
+    }
+    
+    float offset = atof(args.Arg(1));
+    if (offset < 1.0f || offset > 60.0f) // Reasonable range: 1' to 4'
+    {
+        DevMsg("Height offset must be between 1 and 60 inches\n");
+        return;
+    }
+    
+    ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
+    if (tfvr_seated_height_offset)
+    {
+        tfvr_seated_height_offset->SetValue(offset);
+        DevMsg("Seated height offset set to %.1f inches\n", offset);
+    }
+}
+
+// Command to auto-calibrate seated height offset from current HMD position
+CON_COMMAND(vr_calibrate_seated_height_auto, "Auto-calibrate seated height offset from current HMD position (sit normally!)")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active - cannot calibrate seated height\n");
+        return;
+    }
+    
+    // Get raw unscaled HMD position in play space (meters)
+    Vector rawHmdPos = g_pOpenXRManager->GetRawHMDPosition();
+    
+    // Convert HMD height from meters to inches
+    float hmdHeightMeters = rawHmdPos.y;
+    float hmdHeightInches = hmdHeightMeters * 39.3701f; // meters to inches
+    
+    // Calculate offset needed to reach a comfortable standing eye height
+    // Assume comfortable standing eye height is about 60-65 inches
+    // (this is rough average standing eye height for most people)
+    float targetStandingEyeHeight = 64.0f; // inches
+    float neededOffset = targetStandingEyeHeight - hmdHeightInches;
+    
+    if (neededOffset < 1.0f || neededOffset > 80.0f)
+    {
+        DevMsg("Calculated offset %.1f inches is out of range (1-80). Current HMD height: %.1f inches\n", 
+               neededOffset, hmdHeightInches);
+        DevMsg("You may need to adjust your seating position or use manual calibration.\n");
+        return;
+    }
+    
+    ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
+    if (tfvr_seated_height_offset)
+    {
+        tfvr_seated_height_offset->SetValue(neededOffset);
+        DevMsg("Auto-calibrated seated height offset to %.1f inches\n", neededOffset);
+        DevMsg("Current seated HMD height: %.1f inches\n", hmdHeightInches);
+        DevMsg("Will offset to standing height: %.1f inches\n", hmdHeightInches + neededOffset);
+        
+        // Enable seated mode if not already enabled
+        ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
+        if (tfvr_seated_mode && !tfvr_seated_mode->GetBool())
+        {
+            tfvr_seated_mode->SetValue(1);
+            DevMsg("Seated mode enabled\n");
+        }
+    }
+}
+
+// Command to debug HMD position (raw vs scaled)
+CON_COMMAND(vr_debug_hmd_position, "Show raw vs scaled HMD position for debugging")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    Vector rawPos = g_pOpenXRManager->GetRawHMDPosition();
+    VMatrix scaledPose = g_pOpenXRManager->GetMideyePose();
+    Vector scaledPos = scaledPose.GetTranslation();
+    
+    DevMsg("HMD Position Debug:\n");
+    DevMsg("  Raw OpenXR position (meters): x=%.3f, y=%.3f, z=%.3f\n", rawPos.x, rawPos.y, rawPos.z);
+    DevMsg("  Raw height in inches: %.1f\n", rawPos.y * 39.3701f);
+    DevMsg("  Scaled position (game units): x=%.1f, y=%.1f, z=%.1f\n", scaledPos.x, scaledPos.y, scaledPos.z);
+    DevMsg("  Current world scale: %.1f\n", CalculateDynamicWorldScale());
+}
+
 // Command to test dynamic world scaling
 CON_COMMAND(vr_test_scaling, "Test dynamic world scaling based on merc height")
 {
@@ -934,6 +1171,17 @@ CON_COMMAND(vr_test_scaling, "Test dynamic world scaling based on merc height")
            cvar->FindVar("tfvr_dynamic_worldscale")->GetBool() ? "Enabled" : "Disabled");
     DevMsg("  tfvr_worldscale: %.1f\n", 
            cvar->FindVar("tfvr_worldscale")->GetFloat());
+    
+    ConVar* tfvr_height_calibration = cvar->FindVar("tfvr_height_calibration");
+    ConVar* tfvr_player_height = cvar->FindVar("tfvr_player_height");
+    ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
+    
+    DevMsg("  Height Calibration: %s\n", 
+           tfvr_height_calibration && tfvr_height_calibration->GetBool() ? "Enabled" : "Disabled");
+    DevMsg("  Player Height: %.1f inches\n", 
+           tfvr_player_height ? tfvr_player_height->GetFloat() : 67.0f);
+    DevMsg("  Seated Mode: %s\n", 
+           tfvr_seated_mode && tfvr_seated_mode->GetBool() ? "Enabled" : "Disabled");
     
     C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
     if (pLocalPlayer)
@@ -975,6 +1223,16 @@ VMatrix COpenXRManager::GetMideyePose() const
 	    return VMatrix();
 
     return ToSourceCoordinateSystemFloorAligned(m_headLocation.pose);
+}
+
+Vector COpenXRManager::GetRawHMDPosition() const
+{
+	if (!IsActive())
+	    return Vector(0, 0, 0);
+
+    // Return the raw OpenXR head position without any world scaling applied
+    // This is needed for calibration purposes
+    return Vector(m_headLocation.pose.position.x, m_headLocation.pose.position.y, m_headLocation.pose.position.z);
 }
 
 void COpenXRManager::GetHMDInChaperone(class Vector& origin, QAngle& angles) const

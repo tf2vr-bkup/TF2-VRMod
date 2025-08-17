@@ -62,6 +62,7 @@ public:
     VMatrix GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye eye);
 
     VMatrix GetMideyePose() const;
+    Vector GetRawHMDPosition() const; // Raw unscaled position for calibration
 
     void GetViewportBounds(ISourceVirtualReality::VREye eye, int* pnX, int* pnY, int* pnWidth, int* pnHeight);
 

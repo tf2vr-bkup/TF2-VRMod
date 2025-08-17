@@ -14693,16 +14693,35 @@ Vector CTFPlayer::EyePosition()
 	Vector basePos = GetAbsOrigin();
 	Vector localHeadPos = m_headInPlayerO - m_roomscaleOffset;
 	
-		// Use raw VR headset position - let the world scaling system handle class height differences
-		// Calculate crouch delta and apply class height compensation for consistent VR positioning
-		float vecViewZ = VEC_VIEW.z;
-		float vecViewOffsetZ = GetViewOffset().z;
-		float crouchDelta = vecViewZ - vecViewOffsetZ;
-		
+	// Use raw VR headset position - let the world scaling system handle class height differences
+	// Calculate crouch delta and apply class height compensation for consistent VR positioning
+	float vecViewZ = VEC_VIEW.z;
+	float vecViewOffsetZ = GetViewOffset().z;
+	float crouchDelta = vecViewZ - vecViewOffsetZ;
+	
+	// Handle seated mode - add height offset to simulate standing position
+	bool seatedMode = false;
+	float seatedHeightOffset = 0.0f;
+	
 #ifdef CLIENT_DLL
 		extern ICvar* cvar;
 		if (cvar)
 		{
+			// Check for seated mode first
+			ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
+			ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
+			
+			if (tfvr_seated_mode && tfvr_seated_mode->GetBool())
+			{
+				seatedMode = true;
+				if (tfvr_seated_height_offset)
+				{
+					// Convert inches to game units and apply
+					seatedHeightOffset = tfvr_seated_height_offset->GetFloat();
+					localHeadPos.z += seatedHeightOffset;
+				}
+			}
+			
 			ConVar* tfvr_dynamic_worldscale = cvar->FindVar("tfvr_dynamic_worldscale");
 			if (tfvr_dynamic_worldscale && tfvr_dynamic_worldscale->GetBool())
 			{
