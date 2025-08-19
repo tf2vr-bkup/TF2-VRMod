@@ -4145,19 +4145,10 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 			QAngle controllerAngles;
 			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
 			
-			// Apply a small forward offset to simulate muzzle position
-			Vector forward, right, up;
-			AngleVectors(controllerAngles, &forward, &right, &up);
+			// Use raw controller position without offset for VR consistency
+			Vector shootPos = controllerPos;
 			
-			// Offset forward and slightly up from controller position
-			Vector shootPos = controllerPos + forward * 5.0f + up * 2.0f;
-			
-			// Debug visualization
-			if (tfvr_controller_tracking_debug.GetBool() && debugoverlay)
-			{
-				debugoverlay->AddBoxOverlay(shootPos, Vector(-1, -1, -1), Vector(1, 1, 1), QAngle(0, 0, 0), 255, 255, 0, 255, 0.016f);
-				debugoverlay->AddLineOverlayAlpha(controllerPos, shootPos, 255, 255, 0, 255, false, 0.016f);
-			}
+			// Debug visualization removed for cleaner experience
 			
 			return shootPos;
 		}

@@ -25,6 +25,20 @@ ConVar tfvr_worldscale("tfvr_worldscale", "48", FCVAR_ARCHIVE | FCVAR_REPLICATED
 #define METERS_TO_GAME_UNITS tfvr_worldscale.GetFloat()
 
 ConVar tfvr_controller_debug_draw("tfvr_controller_debug_draw", "1", FCVAR_ARCHIVE, "Draw debug visualization for controller positions and orientations");
+ConVar tfvr_debug_aim_poses("tfvr_debug_aim_poses", "1", FCVAR_ARCHIVE, "Show debug visualization for aim poses (red/green cubes)");
+ConVar tfvr_debug_grip_poses("tfvr_debug_grip_poses", "1", FCVAR_ARCHIVE, "Show debug visualization for grip poses (blue/yellow cubes)");
+ConVar tfvr_debug_pose_size("tfvr_debug_pose_size", "2.0", FCVAR_ARCHIVE, "Size of debug pose visualization cubes");
+ConVar tfvr_use_floor_aligned_poses("tfvr_use_floor_aligned_poses", "1", FCVAR_ARCHIVE, "Use floor-aligned coordinate conversion for controller poses (1=new method, 0=old method)");
+ConVar tfvr_debug_raw_poses("tfvr_debug_raw_poses", "0", FCVAR_ARCHIVE, "Show raw OpenXR poses before any transformation");
+ConVar tfvr_pose_offset_x("tfvr_pose_offset_x", "0.0", FCVAR_ARCHIVE, "Manual X offset for controller poses (testing)");
+ConVar tfvr_pose_offset_y("tfvr_pose_offset_y", "0.0", FCVAR_ARCHIVE, "Manual Y offset for controller poses (testing)");
+ConVar tfvr_pose_offset_z("tfvr_pose_offset_z", "0.0", FCVAR_ARCHIVE, "Manual Z offset for controller poses (testing)");
+ConVar tfvr_fix_head_relative_transform("tfvr_fix_head_relative_transform", "1", FCVAR_ARCHIVE, "Use improved head-relative transformation method");
+ConVar tfvr_aim_pose_y_correction("tfvr_aim_pose_y_correction", "1.5", FCVAR_ARCHIVE, "Permanent Y-axis correction for aim poses");
+ConVar tfvr_crosshair_offset_x("tfvr_crosshair_offset_x", "0.0", FCVAR_ARCHIVE, "Crosshair X-axis offset for fine-tuning aim");
+ConVar tfvr_crosshair_offset_y("tfvr_crosshair_offset_y", "0.0", FCVAR_ARCHIVE, "Crosshair Y-axis offset for fine-tuning aim");
+ConVar tfvr_crosshair_offset_z("tfvr_crosshair_offset_z", "0.0", FCVAR_ARCHIVE, "Crosshair Z-axis offset for fine-tuning aim");
+ConVar tfvr_crosshair_follow_controller_roll("tfvr_crosshair_follow_controller_roll", "1", FCVAR_ARCHIVE, "Make crosshair rotate with controller roll (1=enabled, 0=disabled)");
 ConVar tfvr_msaa("tfvr_msaa", "4", FCVAR_ARCHIVE, "Controls multi-sampling anti-aliasing levels in TFVR. Set to the number of samples to use.");
 ConVar tfvr_dynamic_worldscale("tfvr_dynamic_worldscale", "1", FCVAR_ARCHIVE, "Enable dynamic world scaling based on merc height and crouch state");
 ConVar tfvr_forcemaxlod("tfvr_forcemaxlod", "1", FCVAR_ARCHIVE);
@@ -317,13 +331,13 @@ bool COpenXRManager::Initialize()
     // Initialize VR Laser Pointer
     m_laserPointer = new CVRLaserPointer();
     m_laserPointer->Initialize();
-    DevMsg("VR Laser Pointer initialized\n");
+    // VR Laser Pointer initialized
 
     // Set the global pointer for external access
     g_pVRMenuManager = m_menuManager;
 
     m_vrActive = true;
-    DevMsg("OpenXR VR mode initialized successfully!\n");
+    // OpenXR VR mode initialized successfully
     return true;
 }
 
@@ -943,7 +957,7 @@ void COpenXRManager::RecenterView()
     
     m_hasRecenterData = true;
     
-    DevMsg("VR view recentered. Forward direction aligned with game camera.\n");
+    // VR view recentered
 }
 
 // Command to trigger recentering
@@ -961,7 +975,7 @@ CON_COMMAND(vr_calibrate_height, "Recenter VR view to match game camera")
     if (g_pOpenXRManager)
     {
         g_pOpenXRManager->RecenterView();
-        DevMsg("VR view recentered. Use this command to align your view with the game camera.\n");
+        // VR view recentered
     }
 }
 
@@ -1161,6 +1175,67 @@ CON_COMMAND(vr_debug_hmd_position, "Show raw vs scaled HMD position for debuggin
 }
 
 // Command to test dynamic world scaling
+// Command to monitor world scale changes affecting aim poses
+CON_COMMAND(vr_debug_worldscale_aim, "Debug how world scale changes affect aim poses")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+    C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+    if (!pTFPlayer)
+    {
+        DevMsg("No TF player found\n");
+        return;
+    }
+    
+    DevMsg("=== World Scale vs Aim Pose Debug ===\n");
+    
+    // Get current world scaling info
+    float baseScale = tfvr_worldscale.GetFloat();
+    float dynamicScale = CalculateDynamicWorldScale();
+    
+    DevMsg("Base World Scale: %.2f\n", baseScale);
+    DevMsg("Dynamic World Scale: %.2f\n", dynamicScale);
+    DevMsg("Scale Ratio: %.3f (%.1f%%)\n", dynamicScale / baseScale, (dynamicScale / baseScale) * 100.0f);
+    
+    // Get player class info
+    const C_TFPlayerClass* pPlayerClass = pTFPlayer->GetPlayerClass();
+    if (pPlayerClass)
+    {
+        DevMsg("Player Class: %s\n", pPlayerClass->GetName());
+        DevMsg("Class Index: %d\n", pPlayerClass->GetClassIndex());
+    }
+    
+    // Get controller poses with current scaling
+    VMatrix rightControllerPose;
+    if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+    {
+        Vector controllerPos = rightControllerPose.GetTranslation();
+        DevMsg("Right Controller Position (scaled): (%.2f, %.2f, %.2f)\n", 
+               controllerPos.x, controllerPos.y, controllerPos.z);
+    }
+    
+    // Get weapon shoot position (should match)
+    Vector shootPos = pTFPlayer->Weapon_ShootPosition();
+    DevMsg("Weapon Shoot Position: (%.2f, %.2f, %.2f)\n", shootPos.x, shootPos.y, shootPos.z);
+    
+    // Check if dynamic scaling is enabled
+    ConVar* tfvr_dynamic_worldscale = cvar->FindVar("tfvr_dynamic_worldscale");
+    DevMsg("Dynamic Scaling: %s\n", 
+           tfvr_dynamic_worldscale && tfvr_dynamic_worldscale->GetBool() ? "ENABLED" : "DISABLED");
+    
+    if (!tfvr_dynamic_worldscale || !tfvr_dynamic_worldscale->GetBool())
+    {
+        DevMsg("NOTE: Dynamic world scaling is disabled. Enable with 'tfvr_dynamic_worldscale 1'\n");
+    }
+    
+    DevMsg("\nTo test: Switch classes and run this command again to see scale changes.\n");
+}
+
 CON_COMMAND(vr_test_scaling, "Test dynamic world scaling based on merc height")
 {
     DevMsg("VR Dynamic Scaling Test:\n");
@@ -1191,6 +1266,532 @@ CON_COMMAND(vr_test_scaling, "Test dynamic world scaling based on merc height")
     else
     {
         DevMsg("  No local player found\n");
+    }
+}
+
+// Command to debug controller poses
+CON_COMMAND(vr_debug_poses, "Show debug information about controller poses")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    DevMsg("=== VR Controller Pose Debug ===\n");
+    DevMsg("Debug Settings:\n");
+    DevMsg("  tfvr_controller_debug_draw: %s\n", tfvr_controller_debug_draw.GetBool() ? "ON" : "OFF");
+    DevMsg("  tfvr_debug_aim_poses: %s\n", tfvr_debug_aim_poses.GetBool() ? "ON" : "OFF");
+    DevMsg("  tfvr_debug_grip_poses: %s\n", tfvr_debug_grip_poses.GetBool() ? "ON" : "OFF");
+    DevMsg("  tfvr_debug_pose_size: %.1f\n", tfvr_debug_pose_size.GetFloat());
+    
+    DevMsg("\nPose Validity:\n");
+    DevMsg("  Left Aim Pose Valid: %s\n", g_pOpenXRManager->IsLeftControllerPoseValid() ? "YES" : "NO");
+    DevMsg("  Right Aim Pose Valid: %s\n", g_pOpenXRManager->IsRightControllerPoseValid() ? "YES" : "NO");
+    DevMsg("  Left Grip Pose Valid: %s\n", g_pOpenXRManager->IsLeftControllerGripPoseValid() ? "YES" : "NO");
+    DevMsg("  Right Grip Pose Valid: %s\n", g_pOpenXRManager->IsRightControllerGripPoseValid() ? "YES" : "NO");
+    
+    DevMsg("\nController Pose Positions:\n");
+    VMatrix leftAim, rightAim, leftGrip, rightGrip;
+    if (g_pOpenXRManager->GetLeftControllerPose(leftAim))
+    {
+        Vector pos = leftAim.GetTranslation();
+        DevMsg("  Left Aim: (%.2f, %.2f, %.2f)\n", pos.x, pos.y, pos.z);
+    }
+    if (g_pOpenXRManager->GetRightControllerPose(rightAim))
+    {
+        Vector pos = rightAim.GetTranslation();
+        DevMsg("  Right Aim: (%.2f, %.2f, %.2f)\n", pos.x, pos.y, pos.z);
+    }
+    if (g_pOpenXRManager->GetLeftControllerGripPose(leftGrip))
+    {
+        Vector pos = leftGrip.GetTranslation();
+        DevMsg("  Left Grip: (%.2f, %.2f, %.2f)\n", pos.x, pos.y, pos.z);
+    }
+    if (g_pOpenXRManager->GetRightControllerGripPose(rightGrip))
+    {
+        Vector pos = rightGrip.GetTranslation();
+        DevMsg("  Right Grip: (%.2f, %.2f, %.2f)\n", pos.x, pos.y, pos.z);
+    }
+    
+    DevMsg("\nColors in debug overlay:\n");
+    DevMsg("  Left Aim Pose: RED cube\n");
+    DevMsg("  Right Aim Pose: GREEN cube\n");
+    DevMsg("  Left Grip Pose: BLUE cube\n");
+    DevMsg("  Right Grip Pose: YELLOW cube\n");
+}
+
+// Command to toggle all pose debugging on/off quickly
+CON_COMMAND(vr_toggle_pose_debug, "Toggle all controller pose debugging on/off")
+{
+    bool currentState = tfvr_controller_debug_draw.GetBool();
+    tfvr_controller_debug_draw.SetValue(!currentState);
+    DevMsg("Controller pose debugging: %s\n", !currentState ? "ENABLED" : "DISABLED");
+}
+
+// Command to debug coordinate transformations in detail
+CON_COMMAND(vr_debug_coord_transform, "Debug coordinate transformation issues")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    DevMsg("=== VR Coordinate Transformation Debug ===\n");
+    
+    // Get raw OpenXR poses
+    if (g_pOpenXRManager->GetInputManager())
+    {
+        XrPosef rawLeftAim, rawRightAim, rawLeftGrip, rawRightGrip, rawHead;
+        
+        bool leftAimValid = g_pOpenXRManager->GetInputManager()->GetControllerPose("left_hand_pose", rawLeftAim);
+        bool rightAimValid = g_pOpenXRManager->GetInputManager()->GetControllerPose("right_hand_pose", rawRightAim);
+        bool leftGripValid = g_pOpenXRManager->GetInputManager()->GetControllerPose("left_hand_grip_pose", rawLeftGrip);
+        bool rightGripValid = g_pOpenXRManager->GetInputManager()->GetControllerPose("right_hand_grip_pose", rawRightGrip);
+        
+        DevMsg("\nRaw OpenXR Poses:\n");
+        if (rightAimValid)
+        {
+            DevMsg("Right Aim - Pos: (%.3f, %.3f, %.3f) Rot: (%.3f, %.3f, %.3f, %.3f)\n",
+                   rawRightAim.position.x, rawRightAim.position.y, rawRightAim.position.z,
+                   rawRightAim.orientation.x, rawRightAim.orientation.y, rawRightAim.orientation.z, rawRightAim.orientation.w);
+        }
+        if (rightGripValid)
+        {
+            DevMsg("Right Grip - Pos: (%.3f, %.3f, %.3f) Rot: (%.3f, %.3f, %.3f, %.3f)\n",
+                   rawRightGrip.position.x, rawRightGrip.position.y, rawRightGrip.position.z,
+                   rawRightGrip.orientation.x, rawRightGrip.orientation.y, rawRightGrip.orientation.z, rawRightGrip.orientation.w);
+        }
+        
+        // Test both coordinate conversion functions
+        DevMsg("\nCoordinate Conversion Comparison:\n");
+        if (rightAimValid)
+        {
+            VMatrix oldConv = ToSourceCoordinateSystem(rawRightAim);
+            VMatrix newConv = ToSourceCoordinateSystemFloorAligned(rawRightAim);
+            
+            Vector oldPos = oldConv.GetTranslation();
+            Vector newPos = newConv.GetTranslation();
+            
+            DevMsg("Right Aim - Old method: (%.1f, %.1f, %.1f)\n", oldPos.x, oldPos.y, oldPos.z);
+            DevMsg("Right Aim - New method: (%.1f, %.1f, %.1f)\n", newPos.x, newPos.y, newPos.z);
+            DevMsg("Right Aim - Difference: (%.1f, %.1f, %.1f)\n", newPos.x - oldPos.x, newPos.y - oldPos.y, newPos.z - oldPos.z);
+        }
+    }
+}
+
+// Command to test different coordinate transformation methods
+CON_COMMAND(vr_test_pose_transforms, "Test different coordinate transformation methods")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    DevMsg("=== Testing Coordinate Transformation Methods ===\n");
+    
+    bool oldMethod = !tfvr_use_floor_aligned_poses.GetBool();
+    DevMsg("Currently using: %s\n", oldMethod ? "OLD method (ToSourceCoordinateSystem)" : "NEW method (ToSourceCoordinateSystemFloorAligned)");
+    
+    DevMsg("\nSwitching to %s method for testing...\n", oldMethod ? "NEW" : "OLD");
+    tfvr_use_floor_aligned_poses.SetValue(!oldMethod);
+    
+    DevMsg("Test complete. Current method is now: %s\n", 
+           tfvr_use_floor_aligned_poses.GetBool() ? "NEW (floor-aligned)" : "OLD (original)");
+    DevMsg("Try moving your controller and check if the aim pose offset changes.\n");
+    DevMsg("Use 'vr_debug_poses' to see current pose positions.\n");
+}
+
+// Command to help isolate the pose offset issue
+CON_COMMAND(vr_isolate_pose_offset, "Show step-by-step pose transformation to isolate offset source")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    DevMsg("=== Isolating Right Controller Pose Offset ===\n");
+    
+    // Get the raw right controller pose
+    XrPosef rawRightPose;
+    if (g_pOpenXRManager->GetInputManager() && 
+        g_pOpenXRManager->GetInputManager()->GetControllerPose("right_hand_pose", rawRightPose))
+    {
+        DevMsg("Step 1 - Raw OpenXR right controller pose:\n");
+        DevMsg("  Position: (%.3f, %.3f, %.3f)\n", rawRightPose.position.x, rawRightPose.position.y, rawRightPose.position.z);
+        DevMsg("  Rotation: (%.3f, %.3f, %.3f, %.3f)\n", rawRightPose.orientation.x, rawRightPose.orientation.y, rawRightPose.orientation.z, rawRightPose.orientation.w);
+        
+        // Test coordinate conversion
+        VMatrix oldConv = ToSourceCoordinateSystem(rawRightPose);
+        VMatrix newConv = ToSourceCoordinateSystemFloorAligned(rawRightPose);
+        
+        Vector oldPos = oldConv.GetTranslation();
+        Vector newPos = newConv.GetTranslation();
+        
+        DevMsg("\nStep 2 - After coordinate conversion:\n");
+        DevMsg("  Old method: (%.1f, %.1f, %.1f)\n", oldPos.x, oldPos.y, oldPos.z);
+        DevMsg("  New method: (%.1f, %.1f, %.1f)\n", newPos.x, newPos.y, newPos.z);
+        DevMsg("  Difference: (%.1f, %.1f, %.1f)\n", newPos.x - oldPos.x, newPos.y - oldPos.y, newPos.z - oldPos.z);
+        
+        // Get head pose for detailed analysis
+        const XrView* views = g_pOpenXRManager->GetViews();
+        XrPosef headPose = views[0].pose;
+        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+        VMatrix headInverse = headMatrix.InverseTR();
+        
+        Vector usedConvPos = tfvr_use_floor_aligned_poses.GetBool() ? newPos : oldPos;
+        VMatrix controllerMatrix;
+        controllerMatrix.Identity();
+        controllerMatrix.SetTranslation(usedConvPos);
+        
+        VMatrix headRelativeController = headInverse * controllerMatrix;
+        Vector headRelativePos = headRelativeController.GetTranslation();
+        Vector headPos = headMatrix.GetTranslation();
+        
+        DevMsg("\nStep 3 - Head-relative transformation:\n");
+        DevMsg("  Head position: (%.1f, %.1f, %.1f)\n", headPos.x, headPos.y, headPos.z);
+        DevMsg("  Controller->Head-relative: (%.1f, %.1f, %.1f)\n", headRelativePos.x, headRelativePos.y, headRelativePos.z);
+        
+        // Get current final pose
+        VMatrix finalPose;
+        if (g_pOpenXRManager->GetRightControllerPose(finalPose))
+        {
+            Vector finalPos = finalPose.GetTranslation();
+            DevMsg("\nStep 4 - Final world pose:\n");
+            DevMsg("  Position: (%.1f, %.1f, %.1f)\n", finalPos.x, finalPos.y, finalPos.z);
+            
+            Vector diff = finalPos - usedConvPos;
+            DevMsg("  Total transform: (%.1f, %.1f, %.1f)\n", diff.x, diff.y, diff.z);
+        }
+        
+        DevMsg("\nStep 5 - Testing manual corrections:\n");
+        DevMsg("  Try: tfvr_pose_offset_y -10 (move left)\n");
+        DevMsg("  Try: tfvr_pose_offset_y 10 (move right)\n");
+        DevMsg("  Try: tfvr_pose_offset_x -10 (move backward)\n");
+        DevMsg("  Try: tfvr_pose_offset_x 10 (move forward)\n");
+        DevMsg("  Reset: tfvr_pose_offset_x 0; tfvr_pose_offset_y 0; tfvr_pose_offset_z 0\n");
+    }
+}
+
+// Command to quickly test offset corrections
+CON_COMMAND(vr_test_offset, "Quick test different pose offsets")
+{
+    if (args.ArgC() < 3)
+    {
+        DevMsg("Usage: vr_test_offset <axis> <value>\n");
+        DevMsg("  axis: x, y, or z\n");
+        DevMsg("  value: offset amount (e.g., -10, 5, 0)\n");
+        DevMsg("Example: vr_test_offset y -10\n");
+        return;
+    }
+    
+    const char* axis = args.Arg(1);
+    float value = atof(args.Arg(2));
+    
+    // Reset all offsets first
+    tfvr_pose_offset_x.SetValue(0.0f);
+    tfvr_pose_offset_y.SetValue(0.0f);
+    tfvr_pose_offset_z.SetValue(0.0f);
+    
+    // Apply the new offset
+    if (strcmp(axis, "x") == 0)
+    {
+        tfvr_pose_offset_x.SetValue(value);
+        DevMsg("Applied X offset: %.1f\n", value);
+    }
+    else if (strcmp(axis, "y") == 0)
+    {
+        tfvr_pose_offset_y.SetValue(value);
+        DevMsg("Applied Y offset: %.1f\n", value);
+    }
+    else if (strcmp(axis, "z") == 0)
+    {
+        tfvr_pose_offset_z.SetValue(value);
+        DevMsg("Applied Z offset: %.1f\n", value);
+    }
+    else
+    {
+        DevMsg("Invalid axis. Use x, y, or z\n");
+    }
+}
+
+// Command to set the permanent aim pose correction
+CON_COMMAND(vr_set_aim_correction, "Set permanent Y-axis correction for aim poses")
+{
+    if (args.ArgC() < 2)
+    {
+        float current = tfvr_aim_pose_y_correction.GetFloat();
+        DevMsg("Current aim pose Y correction: %.2f\n", current);
+        DevMsg("Usage: vr_set_aim_correction <value>\n");
+        DevMsg("Example: vr_set_aim_correction 2.0\n");
+        DevMsg("Note: This correction is applied in head-relative space before world transform\n");
+        return;
+    }
+    
+    float value = atof(args.Arg(1));
+    tfvr_aim_pose_y_correction.SetValue(value);
+    
+    // Show scaling information
+    float baseScale = tfvr_worldscale.GetFloat();
+    float currentScale = CalculateDynamicWorldScale();
+    float scaleFactor = currentScale / baseScale;
+    float scaledCorrection = value * scaleFactor;
+    
+    DevMsg("Aim pose Y correction set to: %.2f\n", value);
+    DevMsg("Base world scale: %.2f, Current scale: %.2f (%.1f%%)\n", 
+           baseScale, currentScale, (scaleFactor * 100.0f));
+    DevMsg("Actual applied correction: %.2f (scaled by %.3f)\n", scaledCorrection, scaleFactor);
+    DevMsg("This correction will now scale automatically with world scale changes.\n");
+}
+
+// Command to set crosshair offset for fine-tuning
+CON_COMMAND(vr_set_crosshair_offset, "Set crosshair offset for fine-tuning aim")
+{
+    if (args.ArgC() < 4)
+    {
+        float currentX = tfvr_crosshair_offset_x.GetFloat();
+        float currentY = tfvr_crosshair_offset_y.GetFloat();
+        float currentZ = tfvr_crosshair_offset_z.GetFloat();
+        DevMsg("Current crosshair offset: (%.2f, %.2f, %.2f)\n", currentX, currentY, currentZ);
+        DevMsg("Usage: vr_set_crosshair_offset <x> <y> <z>\n");
+        DevMsg("Example: vr_set_crosshair_offset 0 -2 0  (move crosshair left)\n");
+        DevMsg("Note: This adjusts where the crosshair appears relative to controller aim\n");
+        return;
+    }
+    
+    float x = atof(args.Arg(1));
+    float y = atof(args.Arg(2));
+    float z = atof(args.Arg(3));
+    
+    tfvr_crosshair_offset_x.SetValue(x);
+    tfvr_crosshair_offset_y.SetValue(y);
+    tfvr_crosshair_offset_z.SetValue(z);
+    
+    DevMsg("Crosshair offset set to: (%.2f, %.2f, %.2f)\n", x, y, z);
+    DevMsg("Try small adjustments until crosshair aligns with where you're aiming.\n");
+}
+
+// Command to verify weapon shooting consistency
+CON_COMMAND(vr_debug_weapon_consistency, "Debug weapon shooting vs crosshair consistency")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+    if (!pPlayer)
+    {
+        DevMsg("No local player\n");
+        return;
+    }
+    
+    C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+    if (!pTFPlayer)
+    {
+        DevMsg("Not a TF player\n");
+        return;
+    }
+    
+    DevMsg("=== VR Weapon Shooting vs Crosshair Consistency Debug ===\n");
+    DevMsg("Crosshair controller roll following: %s\n", tfvr_crosshair_follow_controller_roll.GetBool() ? "ENABLED" : "DISABLED");
+    
+    // Get controller pose directly
+    VMatrix rightControllerPose;
+    if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+    {
+        Vector controllerPos = rightControllerPose.GetTranslation();
+        QAngle controllerAngles;
+        MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+        
+        DevMsg("Right Controller Pose:\n");
+        DevMsg("  Position: (%.2f, %.2f, %.2f)\n", controllerPos.x, controllerPos.y, controllerPos.z);
+        DevMsg("  Angles: (%.2f, %.2f, %.2f) [Pitch, Yaw, Roll]\n", controllerAngles.x, controllerAngles.y, controllerAngles.z);
+        if (tfvr_crosshair_follow_controller_roll.GetBool())
+        {
+            DevMsg("  Crosshair Roll: %.2f degrees\n", controllerAngles.z);
+        }
+    }
+    
+    // Get weapon shooting data
+    Vector shootPos = pTFPlayer->Weapon_ShootPosition();
+    QAngle shootAngles = pTFPlayer->Weapon_ShootAngles();
+    
+    DevMsg("\nWeapon Shooting Data:\n");
+    DevMsg("  Shoot Position: (%.2f, %.2f, %.2f)\n", shootPos.x, shootPos.y, shootPos.z);
+    DevMsg("  Shoot Angles: (%.2f, %.2f, %.2f)\n", shootAngles.x, shootAngles.y, shootAngles.z);
+    
+    // Get crosshair data
+    Vector aimOrigin, aimDirection;
+    bool hasAimOverride = g_ClientVirtualReality.OverrideWeaponHudAimVectors(&aimOrigin, &aimDirection);
+    
+    DevMsg("\nCrosshair Data:\n");
+    if (hasAimOverride)
+    {
+        DevMsg("  Aim Origin: (%.2f, %.2f, %.2f)\n", aimOrigin.x, aimOrigin.y, aimOrigin.z);
+        DevMsg("  Aim Direction: (%.3f, %.3f, %.3f)\n", aimDirection.x, aimDirection.y, aimDirection.z);
+        
+        // Calculate differences
+        Vector posDiff = aimOrigin - shootPos;
+        DevMsg("\nPosition Difference (Crosshair - Weapon):\n");
+        DevMsg("  Delta: (%.2f, %.2f, %.2f)\n", posDiff.x, posDiff.y, posDiff.z);
+        
+        // Check if differences match crosshair offset settings
+        extern ConVar tfvr_crosshair_offset_x, tfvr_crosshair_offset_y, tfvr_crosshair_offset_z;
+        Vector expectedOffset(tfvr_crosshair_offset_x.GetFloat(), tfvr_crosshair_offset_y.GetFloat(), tfvr_crosshair_offset_z.GetFloat());
+        DevMsg("  Expected Offset: (%.2f, %.2f, %.2f)\n", expectedOffset.x, expectedOffset.y, expectedOffset.z);
+        
+        Vector unexpectedDiff = posDiff - expectedOffset;
+        DevMsg("  Unexpected Difference: (%.2f, %.2f, %.2f)\n", unexpectedDiff.x, unexpectedDiff.y, unexpectedDiff.z);
+        
+        if (unexpectedDiff.Length() > 0.1f)
+        {
+            DevMsg("WARNING: Crosshair and weapon shooting positions don't match!\n");
+        }
+        else
+        {
+            DevMsg("SUCCESS: Crosshair and weapon shooting are consistent.\n");
+        }
+    }
+    else
+    {
+        DevMsg("  No crosshair aim override available\n");
+    }
+    
+    // Check laser pointer consistency
+    extern CVRLaserPointer* g_pVRLaserPointer;
+    if (g_pVRLaserPointer)
+    {
+        Vector laserStart, laserEnd, laserHitPoint, laserHitNormal;
+        C_BaseEntity* hitEntity;
+        
+        // Get laser start position (should match controller position)
+        laserStart = g_pVRLaserPointer->GetLaserStart();
+        laserEnd = g_pVRLaserPointer->GetLaserEnd();
+        
+        DevMsg("\nLaser Pointer Data:\n");
+        DevMsg("  Laser Start: (%.2f, %.2f, %.2f)\n", laserStart.x, laserStart.y, laserStart.z);
+        DevMsg("  Laser End: (%.2f, %.2f, %.2f)\n", laserEnd.x, laserEnd.y, laserEnd.z);
+        
+        if (hasAimOverride)
+        {
+            Vector laserPosDiff = laserStart - shootPos;
+            DevMsg("  Laser vs Weapon Position Diff: (%.2f, %.2f, %.2f)\n", laserPosDiff.x, laserPosDiff.y, laserPosDiff.z);
+            
+            Vector laserCrosshairDiff = laserStart - aimOrigin;
+            DevMsg("  Laser vs Crosshair Position Diff: (%.2f, %.2f, %.2f)\n", laserCrosshairDiff.x, laserCrosshairDiff.y, laserCrosshairDiff.z);
+            
+            if (laserPosDiff.Length() > 0.1f)
+            {
+                DevMsg("WARNING: Laser pointer and weapon shooting positions don't match!\n");
+            }
+        }
+    }
+    else
+    {
+        DevMsg("\nLaser Pointer: Not available\n");
+    }
+}
+
+// Command to debug crosshair rotation pivot issue
+CON_COMMAND(vr_debug_crosshair_pivot, "Debug crosshair rotation pivot issue")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active\n");
+        return;
+    }
+    
+    C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+    if (!pPlayer)
+    {
+        DevMsg("No local player\n");
+        return;
+    }
+    
+    C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+    if (!pTFPlayer)
+    {
+        DevMsg("Not a TF player\n");
+        return;
+    }
+    
+    DevMsg("=== Crosshair Rotation Pivot Debug ===\n");
+    
+    // Get multiple samples of controller pose
+    VMatrix controllerPose1, controllerPose2;
+    bool pose1Valid = g_pOpenXRManager->GetRightControllerPose(controllerPose1);
+    
+    bool pose2Valid = g_pOpenXRManager->GetRightControllerPose(controllerPose2);
+    
+    if (pose1Valid && pose2Valid)
+    {
+        Vector pos1 = controllerPose1.GetTranslation();
+        Vector pos2 = controllerPose2.GetTranslation();
+        
+        QAngle angles1, angles2;
+        MatrixAngles(controllerPose1.As3x4(), angles1);
+        MatrixAngles(controllerPose2.As3x4(), angles2);
+        
+        DevMsg("Sample 1: Pos(%.2f, %.2f, %.2f) Roll(%.2f)\n", pos1.x, pos1.y, pos1.z, angles1.z);
+        DevMsg("Sample 2: Pos(%.2f, %.2f, %.2f) Roll(%.2f)\n", pos2.x, pos2.y, pos2.z, angles2.z);
+        
+        Vector posDiff = pos2 - pos1;
+        float rollDiff = angles2.z - angles1.z;
+        
+        DevMsg("Position drift: (%.3f, %.3f, %.3f) Roll drift: %.3f\n", 
+               posDiff.x, posDiff.y, posDiff.z, rollDiff);
+    }
+    
+    // Get weapon shoot data
+    Vector shootPos = pTFPlayer->Weapon_ShootPosition();
+    QAngle shootAngles = pTFPlayer->Weapon_ShootAngles();
+    
+    DevMsg("Weapon shoot pos: (%.2f, %.2f, %.2f)\n", shootPos.x, shootPos.y, shootPos.z);
+    DevMsg("Weapon shoot angles: (%.2f, %.2f, %.2f)\n", shootAngles.x, shootAngles.y, shootAngles.z);
+    
+    // Check laser pointer
+    extern CVRLaserPointer* g_pVRLaserPointer;
+    if (g_pVRLaserPointer)
+    {
+        Vector laserStart = g_pVRLaserPointer->GetLaserStart();
+        DevMsg("Laser start pos: (%.2f, %.2f, %.2f)\n", laserStart.x, laserStart.y, laserStart.z);
+        
+        Vector shootLaserDiff = shootPos - laserStart;
+        DevMsg("Weapon vs Laser diff: (%.2f, %.2f, %.2f)\n", shootLaserDiff.x, shootLaserDiff.y, shootLaserDiff.z);
+    }
+    
+    // Get crosshair data
+    Vector aimOrigin, aimDirection;
+    bool hasAimOverride = g_ClientVirtualReality.OverrideWeaponHudAimVectors(&aimOrigin, &aimDirection);
+    if (hasAimOverride)
+    {
+        DevMsg("Crosshair aim pos: (%.2f, %.2f, %.2f)\n", aimOrigin.x, aimOrigin.y, aimOrigin.z);
+        
+        Vector crosshairLaserDiff = aimOrigin - g_pVRLaserPointer->GetLaserStart();
+        DevMsg("Crosshair vs Laser diff: (%.2f, %.2f, %.2f)\n", crosshairLaserDiff.x, crosshairLaserDiff.y, crosshairLaserDiff.z);
+    }
+}
+
+// Command to toggle crosshair controller roll
+CON_COMMAND(vr_toggle_crosshair_roll, "Toggle crosshair controller roll following")
+{
+    bool currentValue = tfvr_crosshair_follow_controller_roll.GetBool();
+    tfvr_crosshair_follow_controller_roll.SetValue(!currentValue);
+    
+    DevMsg("Crosshair controller roll following: %s\n", !currentValue ? "ENABLED" : "DISABLED");
+    if (!currentValue)
+    {
+        DevMsg("Crosshair will now rotate with controller roll.\n");
+    }
+    else
+    {
+        DevMsg("Crosshair will stay level (no roll rotation).\n");
     }
 }
 
@@ -1438,14 +2039,30 @@ bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
         XrPosef headPose = m_views[0].pose;
         
         // Create head transform matrix and get its inverse
-        VMatrix headMatrix = ToSourceCoordinateSystem(headPose);
+        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
         VMatrix headInverse = headMatrix.InverseTR();
         
-        // Convert controller pose to Source coordinate system
-        VMatrix controllerMatrix = ToSourceCoordinateSystem(xrPose);
+        // Convert controller pose to Source coordinate system using SAME method as HMD
+        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
         
         // Transform controller to head-relative space, then through player's world transform
+        // Use original head-relative transformation method
         VMatrix headRelativeController = headInverse * controllerMatrix;
+        
+        // Apply position correction in head-relative space if enabled
+        if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
+        {
+            Vector headRelativePos = headRelativeController.GetTranslation();
+            // Scale the correction with the dynamic world scale to maintain consistency
+            float baseScale = tfvr_worldscale.GetFloat();
+            float currentScale = CalculateDynamicWorldScale();
+            float scaleFactor = currentScale / baseScale;
+            float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
+            headRelativePos.y += scaledCorrection;
+            headRelativeController.SetTranslation(headRelativePos);
+        }
         
         // Get player's world transform
         C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
@@ -1463,24 +2080,49 @@ bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
             // Transform controller through player's world transform
             pose = playerMatrix * headRelativeController;
             
-            // Debug visualization
+            // Enhanced debug visualization for both aim and grip poses
             if (debugoverlay && tfvr_controller_debug_draw.GetBool())
             {
-                Vector worldPos = pose.GetTranslation();
+                float cubeSize = tfvr_debug_pose_size.GetFloat();
+                Vector boxSize(cubeSize, cubeSize, cubeSize);
                 
-                // Draw controller position box
-                Vector boxSize(2.0f, 2.0f, 2.0f);
-                debugoverlay->AddBoxOverlay(worldPos, -boxSize, boxSize, QAngle(0, 0, 0), 255, 0, 0, 255, 0.016f);
+                // Show aim pose (current pose) - RED
+                if (tfvr_debug_aim_poses.GetBool())
+                {
+                    Vector aimWorldPos = pose.GetTranslation();
+                    
+                    // Draw aim pose cube (RED)
+                    debugoverlay->AddBoxOverlay(aimWorldPos, -boxSize, boxSize, QAngle(0, 0, 0), 255, 0, 0, 255, 0.016f);
+                    
+                    // Draw aim pose orientation axes
+                    Vector forward, right, up;
+                    pose.GetBasisVectors(forward, right, up);
+                    debugoverlay->AddLineOverlayAlpha(aimWorldPos, aimWorldPos + forward * 20.0f, 255, 0, 0, 255, false, 0.016f);
+                    debugoverlay->AddLineOverlayAlpha(aimWorldPos, aimWorldPos + right * 20.0f, 0, 255, 0, 255, false, 0.016f);
+                    debugoverlay->AddLineOverlayAlpha(aimWorldPos, aimWorldPos + up * 20.0f, 0, 0, 255, 255, false, 0.016f);
+                }
                 
-                // Draw orientation axes
-                Vector forward, right, up;
-                pose.GetBasisVectors(forward, right, up);
-                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + forward * 20.0f, 255, 0, 0, 255, false, 0.016f);
-                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + right * 20.0f, 0, 255, 0, 255, false, 0.016f);
-                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + up * 20.0f, 0, 0, 255, 255, false, 0.016f);
+                // Show grip pose - BLUE
+                if (tfvr_debug_grip_poses.GetBool())
+                {
+                    VMatrix gripPose;
+                    if (GetLeftControllerGripPose(gripPose))
+                    {
+                        Vector gripWorldPos = gripPose.GetTranslation();
+                        
+                        // Draw grip pose cube (BLUE)
+                        debugoverlay->AddBoxOverlay(gripWorldPos, -boxSize, boxSize, QAngle(0, 0, 0), 0, 0, 255, 255, 0.016f);
+                        
+                        // Draw grip pose orientation axes (dimmer colors)
+                        Vector gripForward, gripRight, gripUp;
+                        gripPose.GetBasisVectors(gripForward, gripRight, gripUp);
+                        debugoverlay->AddLineOverlayAlpha(gripWorldPos, gripWorldPos + gripForward * 15.0f, 150, 0, 0, 255, false, 0.016f);
+                        debugoverlay->AddLineOverlayAlpha(gripWorldPos, gripWorldPos + gripRight * 15.0f, 0, 150, 0, 255, false, 0.016f);
+                        debugoverlay->AddLineOverlayAlpha(gripWorldPos, gripWorldPos + gripUp * 15.0f, 0, 0, 150, 255, false, 0.016f);
+                    }
+                }
             }
         }
-        
         return true;
     }
     return false;
@@ -1497,14 +2139,30 @@ bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
         XrPosef headPose = m_views[0].pose;
         
         // Create head transform matrix and get its inverse
-        VMatrix headMatrix = ToSourceCoordinateSystem(headPose);
+        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
         VMatrix headInverse = headMatrix.InverseTR();
         
-        // Convert controller pose to Source coordinate system
-        VMatrix controllerMatrix = ToSourceCoordinateSystem(xrPose);
+        // Convert controller pose to Source coordinate system using SAME method as HMD
+        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
         
         // Transform controller to head-relative space, then through player's world transform
+        // Use original head-relative transformation method
         VMatrix headRelativeController = headInverse * controllerMatrix;
+        
+        // Apply position correction in head-relative space if enabled
+        if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
+        {
+            Vector headRelativePos = headRelativeController.GetTranslation();
+            // Scale the correction with the dynamic world scale to maintain consistency
+            float baseScale = tfvr_worldscale.GetFloat();
+            float currentScale = CalculateDynamicWorldScale();
+            float scaleFactor = currentScale / baseScale;
+            float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
+            headRelativePos.y += scaledCorrection;
+            headRelativeController.SetTranslation(headRelativePos);
+        }
         
         // Get player's world transform
         C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
@@ -1522,25 +2180,198 @@ bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
             // Transform controller through player's world transform
             pose = playerMatrix * headRelativeController;
             
-            // Debug visualization
+            // Apply manual testing offsets if set
+            if (tfvr_pose_offset_x.GetFloat() != 0.0f || tfvr_pose_offset_y.GetFloat() != 0.0f || tfvr_pose_offset_z.GetFloat() != 0.0f)
+            {
+                Vector currentPos = pose.GetTranslation();
+                currentPos.x += tfvr_pose_offset_x.GetFloat();
+                currentPos.y += tfvr_pose_offset_y.GetFloat();
+                currentPos.z += tfvr_pose_offset_z.GetFloat();
+                pose.SetTranslation(currentPos);
+            }
+            
+            // Debug raw pose data if enabled
+            if (tfvr_debug_raw_poses.GetBool())
+            {
+                static float lastDebugTime = 0.0f;
+                if (gpGlobals && gpGlobals->realtime - lastDebugTime > 0.5f) // Every half second
+                {
+                    Vector controllerPos = controllerMatrix.GetTranslation();
+                    Vector headPos = headMatrix.GetTranslation();
+                    Vector headRelativePos = headRelativeController.GetTranslation();
+                    Vector finalPos = pose.GetTranslation();
+                    
+                    DevMsg("Right Controller Step-by-Step Debug:\n");
+                    DevMsg("  1. Raw OpenXR: pos(%.3f, %.3f, %.3f)\n", xrPose.position.x, xrPose.position.y, xrPose.position.z);
+                    DevMsg("  2. After coord conv: pos(%.1f, %.1f, %.1f)\n", controllerPos.x, controllerPos.y, controllerPos.z);
+                    DevMsg("  3. Head matrix pos: pos(%.1f, %.1f, %.1f)\n", headPos.x, headPos.y, headPos.z);
+                    DevMsg("  4. Head-relative: pos(%.1f, %.1f, %.1f)\n", headRelativePos.x, headRelativePos.y, headRelativePos.z);
+                    DevMsg("  5. Final world: pos(%.1f, %.1f, %.1f)\n", finalPos.x, finalPos.y, finalPos.z);
+                    lastDebugTime = gpGlobals->realtime;
+                }
+            }
+            
+            // Enhanced debug visualization for both aim and grip poses
             if (debugoverlay && tfvr_controller_debug_draw.GetBool())
             {
-                Vector worldPos = pose.GetTranslation();
+                float cubeSize = tfvr_debug_pose_size.GetFloat();
+                Vector boxSize(cubeSize, cubeSize, cubeSize);
                 
-                // Draw controller position box
-                Vector boxSize(2.0f, 2.0f, 2.0f);
-                debugoverlay->AddBoxOverlay(worldPos, -boxSize, boxSize, QAngle(0, 0, 0), 0, 255, 0, 255, 0.016f);
+                // Show aim pose (current pose) - GREEN
+                if (tfvr_debug_aim_poses.GetBool())
+                {
+                    Vector aimWorldPos = pose.GetTranslation();
+                    
+                    // Draw aim pose cube (GREEN)
+                    debugoverlay->AddBoxOverlay(aimWorldPos, -boxSize, boxSize, QAngle(0, 0, 0), 0, 255, 0, 255, 0.016f);
+                    
+                    // Draw aim pose orientation axes
+                    Vector forward, right, up;
+                    pose.GetBasisVectors(forward, right, up);
+                    debugoverlay->AddLineOverlayAlpha(aimWorldPos, aimWorldPos + forward * 20.0f, 255, 0, 0, 255, false, 0.016f);
+                    debugoverlay->AddLineOverlayAlpha(aimWorldPos, aimWorldPos + right * 20.0f, 0, 255, 0, 255, false, 0.016f);
+                    debugoverlay->AddLineOverlayAlpha(aimWorldPos, aimWorldPos + up * 20.0f, 0, 0, 255, 255, false, 0.016f);
+                }
                 
-                // Draw orientation axes
-                Vector forward, right, up;
-                pose.GetBasisVectors(forward, right, up);
-                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + forward * 20.0f, 255, 0, 0, 255, false, 0.016f);
-                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + right * 20.0f, 0, 255, 0, 255, false, 0.016f);
-                debugoverlay->AddLineOverlayAlpha(worldPos, worldPos + up * 20.0f, 0, 0, 255, 255, false, 0.016f);
+                // Show grip pose - YELLOW
+                if (tfvr_debug_grip_poses.GetBool())
+                {
+                    VMatrix gripPose;
+                    if (GetRightControllerGripPose(gripPose))
+                    {
+                        Vector gripWorldPos = gripPose.GetTranslation();
+                        
+                        // Draw grip pose cube (YELLOW)
+                        debugoverlay->AddBoxOverlay(gripWorldPos, -boxSize, boxSize, QAngle(0, 0, 0), 255, 255, 0, 255, 0.016f);
+                        
+                        // Draw grip pose orientation axes (dimmer colors)
+                        Vector gripForward, gripRight, gripUp;
+                        gripPose.GetBasisVectors(gripForward, gripRight, gripUp);
+                        debugoverlay->AddLineOverlayAlpha(gripWorldPos, gripWorldPos + gripForward * 15.0f, 150, 0, 0, 255, false, 0.016f);
+                        debugoverlay->AddLineOverlayAlpha(gripWorldPos, gripWorldPos + gripRight * 15.0f, 0, 150, 0, 255, false, 0.016f);
+                        debugoverlay->AddLineOverlayAlpha(gripWorldPos, gripWorldPos + gripUp * 15.0f, 0, 0, 150, 255, false, 0.016f);
+                    }
+                }
             }
         }
         
         return true;
+    }
+    return false;
+}
+
+bool COpenXRManager::GetLeftControllerGripPose(VMatrix& pose)
+{
+    if (!m_inputManager) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("left_hand_grip_pose", xrPose))
+    {
+        // Get the head pose from OpenXR (center eye)
+        XrPosef headPose = m_views[0].pose;
+        
+        // Create head transform matrix and get its inverse
+        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+        VMatrix headInverse = headMatrix.InverseTR();
+        
+        // Convert controller pose to Source coordinate system using SAME method as HMD
+        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+        
+        // Transform controller to head-relative space, then through player's world transform
+        // Use original head-relative transformation method
+        VMatrix headRelativeController = headInverse * controllerMatrix;
+        
+        // Apply position correction in head-relative space if enabled
+        if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
+        {
+            Vector headRelativePos = headRelativeController.GetTranslation();
+            // Scale the correction with the dynamic world scale to maintain consistency
+            float baseScale = tfvr_worldscale.GetFloat();
+            float currentScale = CalculateDynamicWorldScale();
+            float scaleFactor = currentScale / baseScale;
+            float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
+            headRelativePos.y += scaledCorrection;
+            headRelativeController.SetTranslation(headRelativePos);
+        }
+        
+        // Get player's world transform
+        C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+        if (pPlayer)
+        {
+            // Create player transform matrix (rotation + position)
+            VMatrix playerMatrix;
+            playerMatrix.Identity();
+            
+            matrix3x4_t playerMatrix3x4;
+            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
+            playerMatrix.CopyFrom3x4(playerMatrix3x4);
+            playerMatrix.SetTranslation(pPlayer->EyePosition());
+            
+            // Transform controller through player's world transform
+            pose = playerMatrix * headRelativeController;
+            
+            return true;
+        }
+    }
+    return false;
+}
+
+bool COpenXRManager::GetRightControllerGripPose(VMatrix& pose)
+{
+    if (!m_inputManager) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("right_hand_grip_pose", xrPose))
+    {
+        // Get the head pose from OpenXR (center eye)
+        XrPosef headPose = m_views[0].pose;
+        
+        // Create head transform matrix and get its inverse
+        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+        VMatrix headInverse = headMatrix.InverseTR();
+        
+        // Convert controller pose to Source coordinate system using SAME method as HMD
+        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+        
+        // Transform controller to head-relative space, then through player's world transform
+        // Use original head-relative transformation method
+        VMatrix headRelativeController = headInverse * controllerMatrix;
+        
+        // Apply position correction in head-relative space if enabled
+        if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
+        {
+            Vector headRelativePos = headRelativeController.GetTranslation();
+            // Scale the correction with the dynamic world scale to maintain consistency
+            float baseScale = tfvr_worldscale.GetFloat();
+            float currentScale = CalculateDynamicWorldScale();
+            float scaleFactor = currentScale / baseScale;
+            float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
+            headRelativePos.y += scaledCorrection;
+            headRelativeController.SetTranslation(headRelativePos);
+        }
+        
+        // Get player's world transform
+        C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+        if (pPlayer)
+        {
+            // Create player transform matrix (rotation + position)
+            VMatrix playerMatrix;
+            playerMatrix.Identity();
+            
+            matrix3x4_t playerMatrix3x4;
+            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
+            playerMatrix.CopyFrom3x4(playerMatrix3x4);
+            playerMatrix.SetTranslation(pPlayer->EyePosition());
+            
+            // Transform controller through player's world transform
+            pose = playerMatrix * headRelativeController;
+            
+            return true;
+        }
     }
     return false;
 }
@@ -1553,6 +2384,16 @@ bool COpenXRManager::IsLeftControllerPoseValid()
 bool COpenXRManager::IsRightControllerPoseValid()
 {
     return m_inputManager ? m_inputManager->IsControllerPoseValid("right_hand_pose") : false;
+}
+
+bool COpenXRManager::IsLeftControllerGripPoseValid()
+{
+    return m_inputManager ? m_inputManager->IsControllerPoseValid("left_hand_grip_pose") : false;
+}
+
+bool COpenXRManager::IsRightControllerGripPoseValid()
+{
+    return m_inputManager ? m_inputManager->IsControllerPoseValid("right_hand_grip_pose") : false;
 }
 
 COpenXRManager g_TFVR;

@@ -67,7 +67,7 @@ void CVRLaserPointer::Initialize()
     pVMTKeyValues->deleteThis();
     */
     
-    DevMsg("VR Laser Pointer: Initialized (material creation disabled)\n");
+    // VR Laser Pointer initialized
 }
 
 void CVRLaserPointer::Shutdown()
@@ -170,13 +170,7 @@ void CVRLaserPointer::RenderLaserPointer()
         debugoverlay->AddLineOverlayAlpha(m_laserStart, m_laserEnd,
                                          m_laserColor.r(), m_laserColor.g(), m_laserColor.b(), m_laserColor.a(),
                                          false, 0.016f); // 16ms frame time
-        
-        // Draw hit point if we hit something
-        if (m_bLaserHit)
-        {
-            debugoverlay->AddBoxOverlay(m_laserHitPoint, Vector(-2, -2, -2), Vector(2, 2, 2), 
-                                       QAngle(0, 0, 0), 255, 255, 0, 255, 0.016f);
-        }
+
     }
 }
 

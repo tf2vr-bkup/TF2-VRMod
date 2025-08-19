@@ -19,6 +19,8 @@
 #include "tf_logic_halloween_2014.h"
 #include "tf_gamerules.h"
 #include "mathlib/mathlib.h"
+#include "tfvr/openxr_manager.h"
+#include "client_virtualreality.h"
 
 ConVar cl_crosshair_red( "cl_crosshair_red", "200", FCVAR_ARCHIVE );
 ConVar cl_crosshair_green( "cl_crosshair_green", "200", FCVAR_ARCHIVE );
@@ -212,7 +214,69 @@ void CHudTFCrosshair::Paint()
 	vgui::ISurface *pSurf = vgui::surface();
 	pSurf->DrawSetColor( clr );
 	pSurf->DrawSetTexture( m_iCrosshairTextureID );
-	pSurf->DrawTexturedRect( iX-iWidth, iY-iHeight, iX+iWidth, iY+iHeight );
+	
+	// Check if we should rotate crosshair with controller roll in VR
+	extern ConVar tfvr_crosshair_follow_controller_roll;
+	bool bRotateCrosshair = false;
+	float flRotationAngle = 0.0f;
+	
+	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_crosshair_follow_controller_roll.GetBool())
+	{
+		// Use the stored roll angle from OverrideWeaponHudAimVectors for consistency
+		if (g_ClientVirtualReality.m_bCrosshairRollValid)
+		{
+			flRotationAngle = g_ClientVirtualReality.m_flCrosshairRollAngle;
+			bRotateCrosshair = true;
+		}
+	}
+	
+	if (bRotateCrosshair && fabs(flRotationAngle) > 0.1f) // Only rotate if significant angle
+	{
+		// Draw rotated crosshair using polygon method
+		Vertex_t vertices[4];
+		
+		// Convert rotation angle to radians
+		float flRadians = DEG2RAD(flRotationAngle);
+		float cosAngle = cos(flRadians);
+		float sinAngle = sin(flRadians);
+		
+		// Calculate rotated corner positions relative to center
+		float halfWidth = (float)iWidth;
+		float halfHeight = (float)iHeight;
+		
+		// Top-left vertex (rotated)
+		vertices[0].m_Position.x = iX + (-halfWidth * cosAngle - -halfHeight * sinAngle);
+		vertices[0].m_Position.y = iY + (-halfWidth * sinAngle + -halfHeight * cosAngle);
+		vertices[0].m_TexCoord.x = 0.0f;
+		vertices[0].m_TexCoord.y = 0.0f;
+		
+		// Top-right vertex (rotated)
+		vertices[1].m_Position.x = iX + (halfWidth * cosAngle - -halfHeight * sinAngle);
+		vertices[1].m_Position.y = iY + (halfWidth * sinAngle + -halfHeight * cosAngle);
+		vertices[1].m_TexCoord.x = 1.0f;
+		vertices[1].m_TexCoord.y = 0.0f;
+		
+		// Bottom-right vertex (rotated)
+		vertices[2].m_Position.x = iX + (halfWidth * cosAngle - halfHeight * sinAngle);
+		vertices[2].m_Position.y = iY + (halfWidth * sinAngle + halfHeight * cosAngle);
+		vertices[2].m_TexCoord.x = 1.0f;
+		vertices[2].m_TexCoord.y = 1.0f;
+		
+		// Bottom-left vertex (rotated)
+		vertices[3].m_Position.x = iX + (-halfWidth * cosAngle - halfHeight * sinAngle);
+		vertices[3].m_Position.y = iY + (-halfWidth * sinAngle + halfHeight * cosAngle);
+		vertices[3].m_TexCoord.x = 0.0f;
+		vertices[3].m_TexCoord.y = 1.0f;
+		
+		// Draw as textured polygon
+		pSurf->DrawTexturedPolygon( 4, vertices );
+	}
+	else
+	{
+		// Draw normal non-rotated crosshair
+		pSurf->DrawTexturedRect( iX-iWidth, iY-iHeight, iX+iWidth, iY+iHeight );
+	}
+	
 	pSurf->DrawSetTexture(0);
 }
 

@@ -23177,14 +23177,8 @@ Vector CTFPlayer::Weapon_ShootPosition( void )
 	// Check if client is using VR and we have valid controller data
 	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
 	{
-		// Use right controller position for weapon shooting (typically the shooting hand)
-		Vector controllerPos = m_rightControllerOrigin;
-		QAngle controllerAngles = m_rightControllerAngles;
-		// Apply a small forward offset to simulate muzzle position
-		Vector forward, right, up;
-		AngleVectors(controllerAngles, &forward, &right, &up);
-		// Offset forward and slightly up from controller position
-		Vector shootPos = controllerPos + forward * 8.0f + up * 2.0f;
+		// Use raw controller position without offset for VR consistency
+		Vector shootPos = m_rightControllerOrigin;
 
 		return shootPos;
 	}

@@ -100,6 +100,15 @@ bool COpenXRInputManager::CreateActions()
     if (rightHandPose.handle == XR_NULL_HANDLE) return false;
     m_actions["right_hand_pose"] = rightHandPose;
 
+    // Create grip pose actions for tracking
+    XrInputAction leftHandGripPose = CreatePoseAction("left_hand_grip_pose", "Left Hand Grip Pose");
+    if (leftHandGripPose.handle == XR_NULL_HANDLE) return false;
+    m_actions["left_hand_grip_pose"] = leftHandGripPose;
+
+    XrInputAction rightHandGripPose = CreatePoseAction("right_hand_grip_pose", "Right Hand Grip Pose");
+    if (rightHandGripPose.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_hand_grip_pose"] = rightHandGripPose;
+
     // Create button actions
     XrInputAction primaryAttack = CreateFloatAction("primary_attack", "Primary Attack");
     if (primaryAttack.handle == XR_NULL_HANDLE) return false;
@@ -377,6 +386,33 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         }
     }
 
+    // Grip pose action bindings for controller tracking
+    if (m_actions.find("left_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added left hand grip pose binding: /user/hand/left/input/grip/pose\n");
+        }
+    }
+    
+    if (m_actions.find("right_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added right hand grip pose binding: /user/hand/right/input/grip/pose\n");
+        }
+    }
+
     // Suggest bindings for Index controller
     return SuggestBindings(indexProfilePath, suggestedBindings, "Valve Index");
 }
@@ -591,6 +627,33 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         }
     }
 
+    // Grip pose action bindings for controller tracking
+    if (m_actions.find("left_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added Quest left hand grip pose binding: /user/hand/left/input/grip/pose\n");
+        }
+    }
+    
+    if (m_actions.find("right_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+            DevMsg("Added Quest right hand grip pose binding: /user/hand/right/input/grip/pose\n");
+        }
+    }
+
     // Suggest bindings for Quest controller
     return SuggestBindings(questProfilePath, suggestedBindings, "Quest Touch");
 }
@@ -654,6 +717,31 @@ bool COpenXRInputManager::CreateGenericControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["right_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Grip pose bindings for generic controller
+    if (m_actions.find("left_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("right_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_grip_pose"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }

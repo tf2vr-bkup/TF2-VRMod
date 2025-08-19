@@ -630,6 +630,37 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 			AngleVectors( pTFPlayer->Weapon_ShootAngles(), &forward );
 			*pAimDirection = forward;
 			
+			// Store the controller angles for crosshair rotation consistency
+			extern ConVar tfvr_crosshair_follow_controller_roll;
+			if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_crosshair_follow_controller_roll.GetBool())
+			{
+				// Get the same controller pose used for position/direction and store the roll
+				VMatrix rightControllerPose;
+				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+				{
+					QAngle controllerAngles;
+					MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+					m_flCrosshairRollAngle = controllerAngles.z; // Store roll for crosshair rendering
+					m_bCrosshairRollValid = true;
+				}
+				else
+				{
+					m_bCrosshairRollValid = false;
+				}
+			}
+			else
+			{
+				m_bCrosshairRollValid = false;
+			}
+			
+			// Apply crosshair offset if any ConVars are set
+			extern ConVar tfvr_crosshair_offset_x, tfvr_crosshair_offset_y, tfvr_crosshair_offset_z;
+			if (tfvr_crosshair_offset_x.GetFloat() != 0.0f || tfvr_crosshair_offset_y.GetFloat() != 0.0f || tfvr_crosshair_offset_z.GetFloat() != 0.0f)
+			{
+				Vector offset(tfvr_crosshair_offset_x.GetFloat(), tfvr_crosshair_offset_y.GetFloat(), tfvr_crosshair_offset_z.GetFloat());
+				*pAimOrigin += offset;
+			}
+			
 			return true;
 		}
 	}
@@ -873,7 +904,32 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
     // Set up m_WorldFromWeapon with correct VR position and orientation
     if ( pPlayer )
     {
-        m_WorldFromWeapon.SetupMatrixOrgAngles( m_PlayerTorsoOrigin, pPlayer->EyeAngles() );
+        // Check if we should use controller roll for crosshair rotation
+        extern ConVar tfvr_crosshair_follow_controller_roll;
+        if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_crosshair_follow_controller_roll.GetBool())
+        {
+            // Get the controller pose for weapon orientation
+            VMatrix rightControllerPose;
+            if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+            {
+                // Extract controller angles including roll
+                QAngle controllerAngles;
+                MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+                
+                // Use controller angles for weapon matrix (this affects crosshair rotation)
+                m_WorldFromWeapon.SetupMatrixOrgAngles( m_PlayerTorsoOrigin, controllerAngles );
+            }
+            else
+            {
+                // Fallback to eye angles if controller not available
+                m_WorldFromWeapon.SetupMatrixOrgAngles( m_PlayerTorsoOrigin, pPlayer->EyeAngles() );
+            }
+        }
+        else
+        {
+            // Original behavior: use eye angles (no controller roll)
+            m_WorldFromWeapon.SetupMatrixOrgAngles( m_PlayerTorsoOrigin, pPlayer->EyeAngles() );
+        }
     }
     else
     {

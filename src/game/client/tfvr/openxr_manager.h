@@ -80,11 +80,21 @@ public:
     // Controller pose tracking
     bool GetLeftControllerPose(VMatrix& pose);
     bool GetRightControllerPose(VMatrix& pose);
+    bool GetLeftControllerGripPose(VMatrix& pose);
+    bool GetRightControllerGripPose(VMatrix& pose);
     bool IsLeftControllerPoseValid();
     bool IsRightControllerPoseValid();
+    bool IsLeftControllerGripPoseValid();
+    bool IsRightControllerGripPoseValid();
 
     // Frame state access
     const XrFrameState& GetFrameState() const { return m_frameState; }
+    
+    // Input manager access (for debugging)
+    COpenXRInputManager* GetInputManager() const { return m_inputManager; }
+    
+    // View access (for debugging)
+    const XrView* GetViews() const { return m_views; }
 
 private:
     // OpenXR Resources

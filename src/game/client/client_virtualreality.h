@@ -106,6 +106,10 @@ public:
 	void Activate();
 	void Deactivate();
 
+	// Crosshair roll angle storage for consistent rotation
+	float m_flCrosshairRollAngle;
+	bool m_bCrosshairRollValid;
+
 private:
 	HeadtrackMovementMode_t m_hmmMovementActual;
 
