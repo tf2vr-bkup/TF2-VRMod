@@ -29,6 +29,12 @@ public:
 
     // Public method to check if menu is visible (for external access)
     bool IsMenuVisible();
+    
+    // Public method to get the world position where the controller ray intersects the menu plane
+    Vector GetMenuPlaneIntersection(const Vector& controllerPos, const Vector& controllerForward);
+    
+    // Public method to get which hand is currently active for menu interaction
+    int GetActiveMenuHand() const { return m_nMenuHand; }
 
 private:
     // Helper functions

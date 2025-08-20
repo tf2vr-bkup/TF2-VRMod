@@ -796,3 +796,61 @@ bool CVRMenuManager::ComputeIntersectionBarycentricCoordinates(const Vector& ray
     
     return true; // Return true and let the caller check bounds
 }
+
+Vector CVRMenuManager::GetMenuPlaneIntersection(const Vector& controllerPos, const Vector& controllerForward)
+{
+    // Only return valid intersection if menu position is fixed
+    if (!m_bMenuPositionFixed)
+        return vec3_origin;
+    
+    // Use the EXACT same fixed menu plane logic as ComputeCursorPosition
+    float menuDistance = tfvr_menu_distance.GetFloat();
+    Vector forward, right, up;
+    AngleVectors(m_fixedMenuRotation, &forward, &right, &up);
+    
+    // Use the exact same placement logic as in HandleMenuInput
+    Vector menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
+    
+    // Use the exact same size calculations as in HandleMenuInput
+    float menuHeight = 80.0f; // Fixed height in world units
+    float menuWidth = menuHeight * 1.6f; // 16:10 aspect ratio
+    
+    // Calculate menu plane corners - EXACTLY the same as in ComputeCursorPosition
+    Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+    Vector ur = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+    Vector ll = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+    Vector lr = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+    
+    // Set up ray from controller
+    Vector rayStart = controllerPos;
+    Vector rayEnd = controllerPos + controllerForward * 1000.0f;
+    
+    // Use the same intersection calculation
+    float u, v;
+    if (ComputeIntersectionBarycentricCoordinates(rayStart, rayEnd, ul, ur, ll, lr, u, v))
+    {
+        // Compute the actual world intersection point
+        Vector rayDir = rayEnd - rayStart;
+        VectorNormalize(rayDir);
+        
+        // Compute the plane normal from the quad
+        Vector edge1 = ur - ul;
+        Vector edge2 = ll - ul;
+        Vector planeNormal = CrossProduct(edge1, edge2);
+        VectorNormalize(planeNormal);
+        
+        // Find intersection point with plane
+        Vector planePoint = ul;
+        float denominator = DotProduct(rayDir, planeNormal);
+        if (fabs(denominator) >= 0.0001f)
+        {
+            float t = DotProduct(planePoint - rayStart, planeNormal) / denominator;
+            if (t >= 0)
+            {
+                return rayStart + rayDir * t;
+            }
+        }
+    }
+    
+    return vec3_origin; // No valid intersection
+}

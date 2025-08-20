@@ -1,8 +1,10 @@
 #include "cbase.h"
 #include "vr_laser_pointer.h"
 #include "openxr_manager.h"
+#include "vr_menu_manager.h"
 #include "materialsystem/imaterial.h"
 #include "materialsystem/imaterialsystem.h"
+#include "materialsystem/imesh.h"
 #include "engine/ivdebugoverlay.h"
 #include "vgui_controls/Controls.h"
 #include "convar.h"
@@ -10,10 +12,11 @@
 // ConVars for laser pointer control
 ConVar tfvr_laser_enabled("tfvr_laser_enabled", "1", FCVAR_ARCHIVE, "Enable VR laser pointer");
 ConVar tfvr_laser_length("tfvr_laser_length", "100.0", FCVAR_ARCHIVE, "Length of the laser pointer in game units");
-ConVar tfvr_laser_width("tfvr_laser_width", "2.0", FCVAR_ARCHIVE, "Width of the laser pointer line");
-ConVar tfvr_laser_color_r("tfvr_laser_color_r", "255", FCVAR_ARCHIVE, "Red component of laser color (0-255)");
-ConVar tfvr_laser_color_g("tfvr_laser_color_g", "0", FCVAR_ARCHIVE, "Green component of laser color (0-255)");
-ConVar tfvr_laser_color_b("tfvr_laser_color_b", "0", FCVAR_ARCHIVE, "Blue component of laser color (0-255)");
+ConVar tfvr_laser_width("tfvr_laser_width", "2.0", FCVAR_ARCHIVE, "Width of the laser pointer cylinder");
+
+ConVar tfvr_laser_color_r("tfvr_laser_color_r", "128", FCVAR_ARCHIVE, "Red component of laser color (0-255)");
+ConVar tfvr_laser_color_g("tfvr_laser_color_g", "183", FCVAR_ARCHIVE, "Green component of laser color (0-255)");
+ConVar tfvr_laser_color_b("tfvr_laser_color_b", "24", FCVAR_ARCHIVE, "Blue component of laser color (0-255)");
 ConVar tfvr_laser_debug("tfvr_laser_debug", "0", FCVAR_ARCHIVE, "Show debug info for laser pointer");
 
 // Global instance
@@ -23,13 +26,9 @@ CVRLaserPointer::CVRLaserPointer()
     : m_bLaserActive(false)
     , m_laserStart(vec3_origin)
     , m_laserEnd(vec3_origin)
-    , m_laserHitPoint(vec3_origin)
-    , m_laserHitNormal(vec3_origin)
-    , m_pLaserHitEntity(nullptr)
     , m_laserLength(100.0f)
     , m_laserWidth(2.0f)
     , m_laserColor(255, 0, 0, 255) // Red laser
-    , m_bLaserHit(false)
     , m_pLaserMaterial(nullptr)
     , m_bLaserMaterialCreated(false)
 {
@@ -42,32 +41,7 @@ CVRLaserPointer::~CVRLaserPointer()
 
 void CVRLaserPointer::Initialize()
 {
-    // Temporarily disable material creation to avoid crashes
-    // TODO: Fix material creation once basic system is working
-    /*
-    // Create laser material with a valid shader
-    KeyValues* pVMTKeyValues = new KeyValues("VertexLitGeneric");
-    pVMTKeyValues->SetString("$basetexture", "white");
-    pVMTKeyValues->SetString("$color", "255 0 0");
-    pVMTKeyValues->SetString("$additive", "1");
-    pVMTKeyValues->SetString("$translucent", "1");
-    pVMTKeyValues->SetString("$selfillum", "1");
-    
-    m_pLaserMaterial = materials->CreateMaterial("vr_laser_material", pVMTKeyValues);
-    if (m_pLaserMaterial)
-    {
-        m_bLaserMaterialCreated = true;
-        DevMsg("VR Laser Pointer: Material created successfully\n");
-    }
-    else
-    {
-        DevMsg("VR Laser Pointer: Failed to create material\n");
-    }
-    
-    pVMTKeyValues->deleteThis();
-    */
-    
-    // VR Laser Pointer initialized
+    CreateLaserMaterial();
 }
 
 void CVRLaserPointer::Shutdown()
@@ -75,6 +49,34 @@ void CVRLaserPointer::Shutdown()
     // Materials are reference-counted and automatically destroyed
     m_pLaserMaterial = nullptr;
     m_bLaserMaterialCreated = false;
+}
+
+void CVRLaserPointer::CreateLaserMaterial()
+{
+    // Create a simple colored material using UnlitGeneric
+    KeyValues *pVMTKeyValues = new KeyValues("UnlitGeneric");
+    pVMTKeyValues->SetString("$basetexture", "vgui/white_additive");
+    pVMTKeyValues->SetString("$vertexcolor", "1");
+    pVMTKeyValues->SetString("$vertexalpha", "1");
+    pVMTKeyValues->SetString("$translucent", "1");
+    pVMTKeyValues->SetString("$ignorez", "1");
+    
+    // Create the material
+    m_pLaserMaterial = materials->CreateMaterial("__vr_laser_material", pVMTKeyValues);
+    
+    if (m_pLaserMaterial && !m_pLaserMaterial->IsErrorMaterial())
+    {
+        m_bLaserMaterialCreated = true;
+    }
+    else
+    {
+        // Fallback to existing materials
+        m_pLaserMaterial = materials->FindMaterial("sprites/white", TEXTURE_GROUP_OTHER);
+        if (!m_pLaserMaterial || m_pLaserMaterial->IsErrorMaterial())
+        {
+            m_pLaserMaterial = materials->FindMaterial("engine/writez", TEXTURE_GROUP_OTHER);
+        }
+    }
 }
 
 void CVRLaserPointer::Update(float frametime)
@@ -87,44 +89,85 @@ void CVRLaserPointer::Update(float frametime)
         return;
     
     UpdateLaserPointer();
-    PerformLaserRaycast();
-    RenderLaserPointer();
+    // Note: Rendering is now done on-demand via RenderLaserOnTop()
+    // No world collision detection - laser only interacts with menu plane
 }
 
 void CVRLaserPointer::UpdateLaserPointer()
 {
-    // Get right controller pose for laser pointer
-    VMatrix rightControllerPose;
-    if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+    // Only show laser when menu is visible
+    if (!g_pVRMenuManager || !g_pVRMenuManager->IsMenuVisible())
+    {
+        m_bLaserActive = false;
+        return;
+    }
+    
+    // Get controller pose based on which hand the menu manager is actually using
+    VMatrix controllerPose;
+    bool controllerValid = false;
+    int menuHand = g_pVRMenuManager->GetActiveMenuHand();
+    
+    // Get controller pose for the same hand the menu is using
+    if (menuHand == 0) // Left hand
+    {
+        if (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
+        {
+            controllerValid = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
+        }
+    }
+    else // Right hand
+    {
+        if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+        {
+            controllerValid = g_pOpenXRManager->GetRightControllerPose(controllerPose);
+        }
+    }
+    
+    if (controllerValid)
     {
         // Extract position and orientation
-        Vector controllerPos = rightControllerPose.GetTranslation();
+        Vector controllerPos = controllerPose.GetTranslation();
         QAngle controllerAngles;
-        MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+        MatrixAngles(controllerPose.As3x4(), controllerAngles);
         
         // Calculate laser direction
         Vector forward;
         AngleVectors(controllerAngles, &forward);
         
-        // Set laser start and end points using ConVar
+        // Set laser start and end points
         m_laserStart = controllerPos;
         m_laserLength = tfvr_laser_length.GetFloat();
-        m_laserEnd = controllerPos + forward * m_laserLength;
+        
+        // Laser only interacts with menu plane - no world collision detection
+        Vector menuIntersection = GetCursorWorldPosition(controllerPos, forward);
+        if (menuIntersection != vec3_origin)
+        {
+            // Laser ends at menu plane intersection
+            m_laserEnd = menuIntersection;
+        }
+        else
+        {
+            // Menu not visible or no intersection - laser goes full length in controller direction
+            m_laserEnd = controllerPos + forward * m_laserLength;
+        }
+        
         m_bLaserActive = true;
         
-        // Update laser color from ConVars
+        // Update laser color from ConVars (fix color issue)
         m_laserColor.SetColor(
-            tfvr_laser_color_r.GetInt(),
-            tfvr_laser_color_g.GetInt(),
-            tfvr_laser_color_b.GetInt(),
+            clamp(tfvr_laser_color_r.GetInt(), 0, 255),
+            clamp(tfvr_laser_color_g.GetInt(), 0, 255),
+            clamp(tfvr_laser_color_b.GetInt(), 0, 255),
             255
         );
         
+        // Optional debug output
         if (tfvr_laser_debug.GetBool())
         {
-            DevMsg("Laser: pos(%.2f, %.2f, %.2f) dir(%.2f, %.2f, %.2f) length=%.1f\n",
-                   controllerPos.x, controllerPos.y, controllerPos.z,
-                   forward.x, forward.y, forward.z, m_laserLength);
+            DevMsg("Laser: hand=%d pos(%.2f, %.2f, %.2f) dir(%.2f, %.2f, %.2f) length=%.1f color=(%d,%d,%d)\n",
+                   menuHand, controllerPos.x, controllerPos.y, controllerPos.z,
+                   forward.x, forward.y, forward.z, m_laserLength,
+                   m_laserColor.r(), m_laserColor.g(), m_laserColor.b());
         }
     }
     else
@@ -133,54 +176,137 @@ void CVRLaserPointer::UpdateLaserPointer()
     }
 }
 
-void CVRLaserPointer::PerformLaserRaycast()
-{
-    if (!m_bLaserActive)
-        return;
-    
-    // Perform raycast from laser start to end
-    m_bLaserHit = false;
-    m_pLaserHitEntity = nullptr;
-    
-    // Use engine's trace line function
-    trace_t tr;
-    UTIL_TraceLine(m_laserStart, m_laserEnd, MASK_SOLID, nullptr, COLLISION_GROUP_NONE, &tr);
-    
-    if (tr.fraction < 1.0f)
-    {
-        m_bLaserHit = true;
-        m_laserHitPoint = tr.endpos;
-        m_laserHitNormal = tr.plane.normal;
-        m_pLaserHitEntity = tr.m_pEnt;
-        
-        // Update laser end to hit point
-        m_laserEnd = m_laserHitPoint;
-    }
-}
+
 
 void CVRLaserPointer::RenderLaserPointer()
 {
-    if (!m_bLaserActive)
+    if (!m_bLaserActive || !m_pLaserMaterial)
         return;
     
-    // Draw laser line using debug overlay (no material required)
-    if (debugoverlay)
+    CMatRenderContextPtr pRenderContext(materials);
+    
+    // Disable depth testing so laser renders on top of HUD
+    pRenderContext->OverrideDepthEnable(true, false); // Enable depth read, disable depth write
+    
+    // Bind material and set up rendering
+    pRenderContext->Bind(m_pLaserMaterial);
+    
+    // Prepare color for vertex colors (since our custom material supports them)
+    float r = m_laserColor.r() / 255.0f;
+    float g = m_laserColor.g() / 255.0f;
+    float b = m_laserColor.b() / 255.0f;
+    float a = m_laserColor.a() / 255.0f;
+    
+    // Get laser parameters
+    float width = tfvr_laser_width.GetFloat();
+    
+    // Calculate direction and length
+    Vector direction = m_laserEnd - m_laserStart;
+    float length = direction.Length();
+    if (length < 0.1f) 
     {
-        // Draw the laser line
-        debugoverlay->AddLineOverlayAlpha(m_laserStart, m_laserEnd,
-                                         m_laserColor.r(), m_laserColor.g(), m_laserColor.b(), m_laserColor.a(),
-                                         false, 0.016f); // 16ms frame time
-
+        pRenderContext->OverrideDepthEnable(false, true); // Restore normal depth
+        return;
     }
+    direction /= length;
+    
+    // Calculate perpendicular vectors for quad orientation
+    Vector up;
+    if (fabs(direction.z) < 0.9f)
+        up = Vector(0, 0, 1);
+    else
+        up = Vector(1, 0, 0);
+    
+    Vector right = direction.Cross(up).Normalized();
+    up = right.Cross(direction).Normalized();
+    
+    // Create box mesh (rectangular prism)
+    IMesh* pMesh = pRenderContext->GetDynamicMesh();
+    CMeshBuilder meshBuilder;
+    
+    // Box has 6 faces, each face is 2 triangles = 12 triangles total
+    meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, 8, 36);
+    
+    // Calculate box dimensions (thin box)
+    float halfWidth = width * 0.5f;
+    Vector upOffset = up * halfWidth;
+    Vector rightOffset = right * halfWidth;
+    
+    // Define 8 vertices of the box
+    Vector verts[8];
+    verts[0] = m_laserStart - upOffset - rightOffset; // Bottom-back-left
+    verts[1] = m_laserStart - upOffset + rightOffset; // Bottom-back-right
+    verts[2] = m_laserStart + upOffset + rightOffset; // Top-back-right
+    verts[3] = m_laserStart + upOffset - rightOffset; // Top-back-left
+    verts[4] = m_laserEnd - upOffset - rightOffset;   // Bottom-front-left
+    verts[5] = m_laserEnd - upOffset + rightOffset;   // Bottom-front-right
+    verts[6] = m_laserEnd + upOffset + rightOffset;   // Top-front-right
+    verts[7] = m_laserEnd + upOffset - rightOffset;   // Top-front-left
+    
+    // Add vertices to mesh with vertex colors
+    for (int i = 0; i < 8; i++)
+    {
+        meshBuilder.Position3fv(verts[i].Base());
+        meshBuilder.Normal3fv(Vector(0, 0, 1).Base()); // Will set proper normals per face
+        meshBuilder.TexCoord2f(0, 0.0f, 0.0f);
+        meshBuilder.Color4f(r, g, b, a);  // Apply color to each vertex
+        meshBuilder.AdvanceVertex();
+    }
+    
+    // Define faces (each face = 2 triangles = 6 indices)
+    // Face indices for box faces
+    int faces[6][6] = {
+        {0, 1, 2, 0, 2, 3}, // Back face
+        {4, 6, 5, 4, 7, 6}, // Front face  
+        {0, 4, 5, 0, 5, 1}, // Bottom face
+        {3, 2, 6, 3, 6, 7}, // Top face
+        {0, 3, 7, 0, 7, 4}, // Left face
+        {1, 5, 6, 1, 6, 2}  // Right face
+    };
+    
+    // Add indices for all faces
+    for (int face = 0; face < 6; face++)
+    {
+        for (int i = 0; i < 6; i++)
+        {
+            meshBuilder.Index(faces[face][i]);
+            meshBuilder.AdvanceIndex();
+        }
+    }
+    
+    meshBuilder.End();
+    pMesh->Draw();
+    
+    // Restore normal depth testing
+    pRenderContext->OverrideDepthEnable(false, true);
 }
 
 bool CVRLaserPointer::GetLaserHitPoint(Vector& hitPoint, Vector& hitNormal, C_BaseEntity*& hitEntity)
 {
-    if (!m_bLaserHit)
-        return false;
+    // Laser no longer does world collision detection - only interacts with menu plane
+    return false;
+}
+
+void CVRLaserPointer::RenderLaserOnTop()
+{
+    // Only render if laser is active and enabled
+    if (!m_bLaserActive || !tfvr_laser_enabled.GetBool())
+        return;
     
-    hitPoint = m_laserHitPoint;
-    hitNormal = m_laserHitNormal;
-    hitEntity = m_pLaserHitEntity;
-    return true;
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+        return;
+    
+    // Call the existing render method
+    RenderLaserPointer();
+}
+
+Vector CVRLaserPointer::GetCursorWorldPosition(const Vector& controllerPos, const Vector& controllerForward)
+{
+    // Check if VR menu manager exists and is available
+    if (!g_pVRMenuManager)
+        return vec3_origin;
+    
+    // Use the VR menu manager's method to get the EXACT same intersection point
+    // that ComputeCursorPosition uses - this guarantees we're using the same menu plane
+    return g_pVRMenuManager->GetMenuPlaneIntersection(controllerPos, controllerForward);
 }

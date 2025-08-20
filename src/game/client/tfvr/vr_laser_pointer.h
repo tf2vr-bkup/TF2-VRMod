@@ -6,7 +6,7 @@
 
 class CVRInput;
 
-class CVRLaserPointer : public CAutoGameSystemPerFrame
+class CVRLaserPointer
 {
 public:
     CVRLaserPointer();
@@ -14,35 +14,34 @@ public:
 
     void Initialize();
     void Shutdown();
-    void Update(float frametime) override;
+    void Update(float frametime);
 
     // Laser pointer state
     bool IsLaserActive() const { return m_bLaserActive; }
     Vector GetLaserStart() const { return m_laserStart; }
     Vector GetLaserEnd() const { return m_laserEnd; }
     bool GetLaserHitPoint(Vector& hitPoint, Vector& hitNormal, C_BaseEntity*& hitEntity);
+    
+    // Rendering methods
+    void RenderLaserOnTop(); // Render laser on top of HUD/menus
 
 private:
     void UpdateLaserPointer();
     void RenderLaserPointer();
-    void PerformLaserRaycast();
+    
+    // Helper methods
+    Vector GetCursorWorldPosition(const Vector& controllerPos, const Vector& controllerForward);
+    void CreateLaserMaterial();
 
     // Laser state
     bool m_bLaserActive;
     Vector m_laserStart;
     Vector m_laserEnd;
-    Vector m_laserHitPoint;
-    Vector m_laserHitNormal;
-    C_BaseEntity* m_pLaserHitEntity;
     
     // Laser properties
     float m_laserLength;
     float m_laserWidth;
     Color m_laserColor;
-    
-    // Raycast results
-    trace_t m_laserTrace;
-    bool m_bLaserHit;
     
     // Rendering
     IMaterial* m_pLaserMaterial;

@@ -333,8 +333,9 @@ bool COpenXRManager::Initialize()
     m_laserPointer->Initialize();
     // VR Laser Pointer initialized
 
-    // Set the global pointer for external access
+    // Set the global pointers for external access
     g_pVRMenuManager = m_menuManager;
+    g_pVRLaserPointer = m_laserPointer;
 
     m_vrActive = true;
     // OpenXR VR mode initialized successfully
@@ -359,6 +360,7 @@ void COpenXRManager::Shutdown()
         m_laserPointer->Shutdown();
         delete m_laserPointer;
         m_laserPointer = nullptr;
+        g_pVRLaserPointer = nullptr;
     }
 
     // Clean up input manager
@@ -1899,6 +1901,12 @@ void COpenXRManager::Update(float frametime)
 	if (m_menuManager)
 	{
 		m_menuManager->Update();
+	}
+	
+	// Update VR Laser Pointer
+	if (m_laserPointer)
+	{
+		m_laserPointer->Update(frametime);
 	}
 
 	// Poll OpenXR events

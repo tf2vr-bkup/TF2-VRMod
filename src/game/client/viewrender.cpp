@@ -54,6 +54,7 @@
 #include "client_virtualreality.h"
 #include "tfvr/vr_integration.h"
 #include "tfvr/openxr_manager.h"
+#include "tfvr/vr_laser_pointer.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2456,6 +2457,13 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				// TODO - a bit of a shonky test - basically trying to catch the main menu, the briefing screen, the loadout screen, etc.
 				bool bTranslucent = !g_pMatSystemSurface->IsCursorVisible();
 				g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD(), true );
+				
+				// Render VR laser pointer on top of HUD/menus
+				if (g_pVRLaserPointer)
+				{
+					g_pVRLaserPointer->RenderLaserOnTop();
+				}
+				
 				CleanupMain3DView( viewRender );
 			}
 		//}
