@@ -1,5 +1,5 @@
 [submodule "src/dxvk"]
 	path = src/dxvk
 	url = https://github.com/DeliciousSalad/dxvk
-	branch = tfvr
+	branch = compositor
 	

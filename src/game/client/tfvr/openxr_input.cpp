@@ -945,12 +945,6 @@ void COpenXRInputManager::PollInput()
 {
     static int frameCount = 0;
     frameCount++;
-    
-    if (frameCount % 300 == 0) // Log every 300 frames (about once per 5 seconds)
-    {
-        DevMsg("OpenXR Input: Polling input (frame %d)\n", frameCount);
-    }
-    
     m_previousButtonStates = m_currentButtonStates;
 
     XrActionsSyncInfo syncInfo{ XR_TYPE_ACTIONS_SYNC_INFO };

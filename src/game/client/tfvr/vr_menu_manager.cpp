@@ -16,6 +16,9 @@
 #include "tf_viewport.h"
 #include "tf_shareddefs.h"
 #include "tf_playerclass_shared.h"
+#include "materialsystem/imaterial.h"
+#include "materialsystem/imaterialvar.h" 
+#include "tfvr/hmdWrapper.h"
 #include <algorithm>
 
 // Global instances
@@ -33,6 +36,7 @@ ConVar tfvr_menu_distance("tfvr_menu_distance", "100", FCVAR_ARCHIVE, "Distance 
 ConVar tfvr_cursor_threshold("tfvr_cursor_threshold", "0.05", FCVAR_ARCHIVE, "Minimum VR controller movement required to override mouse (in world units)");
 ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "1.0", FCVAR_ARCHIVE, "Minimum VR head movement required to override mouse (in world units)");
 ConVar tfvr_cursor_debug("tfvr_cursor_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR cursor threshold");
+ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
 
 CVRMenuManager::CVRMenuManager()
     : m_bMenuButtonPressed(false)
@@ -49,6 +53,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pConVarPrimaryHand(nullptr)
     , m_szLastMapName("")
     , m_flLastClassMenuTime(0.0f)
+    , m_bVRFrameStarted(false)
 {
 }
 
@@ -83,6 +88,40 @@ void CVRMenuManager::Update()
     m_pVRManager = g_pOpenXRManager;
     m_pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
     
+    // Determine current Source engine state for VR compositor
+    SourceEngineState currentState = DetermineSourceState();
+    
+    // Notify DXVK compositor about state change
+    dxvkSetSourceState(currentState);
+    
+    // Debug output during state changes
+    static float s_flLastDebugTime = 0.0f;
+    static SourceEngineState s_lastState = SOURCE_STATE_GAMEPLAY;
+    if (gpGlobals->curtime > s_flLastDebugTime + 1.0f || currentState != s_lastState)  // Every second or state change
+    {
+        s_flLastDebugTime = gpGlobals->curtime;
+        s_lastState = currentState;
+        if (tfvr_menu_debug.GetBool())
+        {
+            const char* stateNames[] = {"GAMEPLAY", "MENU", "LOADING", "TRANSITION"};
+            DevMsg("VR State: %s, CompositorActive=%d, InGame=%d, Connected=%d, Player=%p, LoadingScreen=%d\n", 
+                   stateNames[currentState], dxvkIsCompositorActive(), 
+                   engine->IsInGame(), engine->IsConnected(), m_pLocalPlayer, engine->IsDrawingLoadingImage());
+        }
+    }
+    
+    // Handle VR rendering based on compositor state
+    if (dxvkIsCompositorActive())
+    {
+        // Compositor is handling VR frames - we just submit content
+        HandleCompositorMode(currentState);
+    }
+    else
+    {
+        // Traditional Source VR pipeline (gameplay)
+        HandleTraditionalVRMode(currentState);
+    }
+    
     if (m_pLocalPlayer)
     {
         // Save the current view origin for menu input
@@ -90,6 +129,95 @@ void CVRMenuManager::Update()
     }
     
     HandleMenuInput();
+}
+
+SourceEngineState CVRMenuManager::DetermineSourceState()
+{
+    // Determine current Source engine state
+    bool bIsLoadingScreen = engine->IsDrawingLoadingImage();
+    bool bInMenu = (!engine->IsInGame() && !engine->IsConnected() && !m_pLocalPlayer);
+    bool bConnectedButNoPlayer = (engine->IsConnected() && !m_pLocalPlayer);
+    
+    if (bIsLoadingScreen || bConnectedButNoPlayer)
+    {
+        return SOURCE_STATE_LOADING;
+    }
+    else if (bInMenu)
+    {
+        return SOURCE_STATE_MENU;
+    }
+    else
+    {
+        return SOURCE_STATE_GAMEPLAY;
+    }
+}
+
+void CVRMenuManager::HandleCompositorMode(SourceEngineState state)
+{
+    // Compositor is handling VR frames - we just submit content when needed
+    switch (state)
+    {
+        case SOURCE_STATE_MENU:
+            SubmitMenuFrameToCompositor();
+            break;
+            
+        case SOURCE_STATE_LOADING:
+            SubmitLoadingFrameToCompositor();
+            break;
+            
+        default:
+            // Compositor shouldn't be active in other states
+            break;
+    }
+}
+
+void CVRMenuManager::HandleTraditionalVRMode(SourceEngineState state)
+{
+    // Traditional Source VR pipeline - handle BeginFrame/EndFrame ourselves
+    switch (state)
+    {
+        case SOURCE_STATE_MENU:
+            RenderMenuOnlyMode();
+            break;
+            
+        case SOURCE_STATE_LOADING:
+            RenderLoadingScreenMode();
+            break;
+            
+        case SOURCE_STATE_GAMEPLAY:
+            // Normal gameplay - VR handled by main pipeline
+            break;
+            
+        default:
+            break;
+    }
+}
+
+void CVRMenuManager::SubmitMenuFrameToCompositor()
+{
+    // Render VGUI to our local texture
+    RenderVGUIToTexture();
+    
+    // Submit to DXVK compositor (non-blocking)
+    ITexture *pVGUITexture = materials->FindTexture("_rt_vgui", NULL, false);
+    if (pVGUITexture)
+    {
+        // Get texture handle and submit to compositor
+        // Note: This would need proper texture handle extraction
+        dxvkSubmitMenuFrame(pVGUITexture, pVGUITexture->GetActualWidth(), pVGUITexture->GetActualHeight());
+    }
+}
+
+void CVRMenuManager::SubmitLoadingFrameToCompositor()
+{
+    // Similar to menu but for loading screens
+    RenderVGUIToTexture();  // This includes loading disc
+    
+    ITexture *pVGUITexture = materials->FindTexture("_rt_vgui", NULL, false);
+    if (pVGUITexture)
+    {
+        dxvkSubmitMenuFrame(pVGUITexture, pVGUITexture->GetActualWidth(), pVGUITexture->GetActualHeight());
+    }
 }
 
 void CVRMenuManager::HandleMenuInput()
@@ -853,4 +981,445 @@ Vector CVRMenuManager::GetMenuPlaneIntersection(const Vector& controllerPos, con
     }
     
     return vec3_origin; // No valid intersection
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Render 3D menu in world space when in menu-only mode
+//-----------------------------------------------------------------------------
+void CVRMenuManager::RenderMenuOnlyMode()
+{
+    if (!m_pVRManager)
+    {
+        DevMsg("VR Menu: m_pVRManager is null!\n");
+        return;
+    }
+
+    // SIMPLIFIED: Just render the menu - let normal VR frame cycle handle BeginFrame/EndFrame
+    CopyVGUIDirectlyToVR();
+    
+    // Debug output (only once per second to avoid spam)
+    static float lastDebugTime = 0;
+    float currentTime = gpGlobals->realtime;
+    if (currentTime - lastDebugTime > 1.0f)
+    {
+        DevMsg("VR Menu Manager: Rendering menu in VR (simplified approach)\n");
+        lastDebugTime = currentTime;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Render VR during loading screens
+//-----------------------------------------------------------------------------
+void CVRMenuManager::RenderLoadingScreenMode()
+{
+    if (!m_pVRManager)
+    {
+        DevMsg("VR Menu: m_pVRManager is null during loading!\n");
+        return;
+    }
+
+    // Check if normal render cycle is happening by checking frame number
+    static int s_lastFrameCount = -1;
+    static bool s_normalCycleRunning = false;
+    
+    if (gpGlobals->framecount != s_lastFrameCount)
+    {
+        s_lastFrameCount = gpGlobals->framecount;
+        // Reset normal cycle detection each frame
+        s_normalCycleRunning = false;
+    }
+    
+    // During loading screens, check if we need to manage VR frames
+    // Only start our own frame if normal cycle hasn't started one
+    bool bShouldManageFrame = !s_normalCycleRunning;
+    
+    if (bShouldManageFrame && !m_bVRFrameStarted)
+    {
+        if (m_pVRManager->BeginFrame())
+        {
+            m_bVRFrameStarted = true;
+        }
+        else
+        {
+            // BeginFrame failed, might mean normal cycle already started frame
+            s_normalCycleRunning = true;
+            bShouldManageFrame = false;
+        }
+    }
+
+    // For loading screens, render the VGUI (which includes the loading disc)
+    CopyVGUIDirectlyToVR();
+    
+    // Only end frame if we started it
+    if (bShouldManageFrame && m_bVRFrameStarted)
+    {
+        m_pVRManager->EndFrame();
+        m_bVRFrameStarted = false;
+    }
+    
+    // Debug output (only once per second to avoid spam)
+    static float lastDebugTime = 0;
+    float currentTime = gpGlobals->realtime;
+    if (currentTime - lastDebugTime > 1.0f)
+    {
+        DevMsg("VR Menu Manager: Rendering loading screen in VR (managing frames: %d)\n", bShouldManageFrame);
+        lastDebugTime = currentTime;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Render VGUI menu panels to texture (based on DrawMainMenu)
+//-----------------------------------------------------------------------------
+void CVRMenuManager::RenderVGUIToTexture()
+{
+    // Find the VGUI render texture
+    ITexture *pTexture = materials->FindTexture("_rt_vgui", NULL, false);
+    if (!pTexture)
+        return;
+
+    CMatRenderContextPtr pRenderContext(materials);
+    int viewActualWidth = pTexture->GetActualWidth();
+    int viewActualHeight = pTexture->GetActualHeight();
+
+    int viewWidth, viewHeight;
+    vgui::surface()->GetScreenSize(viewWidth, viewHeight);
+
+    // Clear depth before we push the render target
+    pRenderContext->ClearBuffers(false, true, true);
+
+    // Set up render target for VGUI
+    pRenderContext->PushRenderTargetAndViewport(pTexture, NULL, 0, 0, viewActualWidth, viewActualHeight);
+    pRenderContext->OverrideAlphaWriteEnable(true, true);
+
+    // Clear the render target with transparent background
+    pRenderContext->ClearColor4ub(0, 0, 0, 0);
+    pRenderContext->ClearBuffers(true, false);
+
+    // Set up VGUI panels for rendering
+    vgui::VPANEL root = enginevgui->GetPanel(PANEL_CLIENTDLL);
+    if (root != 0)
+    {
+        vgui::ipanel()->SetSize(root, viewWidth, viewHeight);
+    }
+    root = enginevgui->GetPanel(PANEL_CLIENTDLL_TOOLS);
+    if (root != 0)
+    {
+        vgui::ipanel()->SetSize(root, viewWidth, viewHeight);
+    }
+
+    // Paint the main menu and cursor (this is the key part!)
+    render->VGui_Paint((PaintMode_t)(PAINT_UIPANELS | PAINT_CURSOR));
+
+    // Restore render context
+    pRenderContext->OverrideAlphaWriteEnable(false, true);
+    pRenderContext->PopRenderTargetAndViewport();
+    pRenderContext->Flush();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Copy VGUI texture directly to VR eye buffer (bypass 3D)
+//-----------------------------------------------------------------------------
+void CVRMenuManager::CopyVGUIDirectlyToVR()
+{
+    // Only render every few frames to reduce flickering
+    static int frameCount = 0;
+    frameCount++;
+    if (frameCount % 3 != 0)  // Only render every 3rd frame
+        return;
+        
+    // Step 1: Render the actual TF2 menu to the VGUI texture
+    RenderVGUIToTexture();
+    
+    // Step 2: Get both textures
+    ITexture *pVGUITexture = materials->FindTexture("_rt_vgui", NULL, false);
+    ITexture *pVRTexture = m_pVRManager->GetRenderTarget();
+    
+    if (!pVGUITexture || !pVRTexture)
+        return;
+    
+    CMatRenderContextPtr pRenderContext(materials);
+    
+    // Clear VR buffer first to prevent artifacts
+    pRenderContext->PushRenderTargetAndViewport(pVRTexture, NULL, 
+        0, 0, pVRTexture->GetActualWidth(), pVRTexture->GetActualHeight());
+    
+    // Clear with solid color first
+    pRenderContext->ClearColor4ub(64, 0, 128, 255);  // Dark purple
+    pRenderContext->ClearBuffers(true, true);
+    
+    // Use a simple copy material to copy VGUI texture to VR buffer
+    IMaterial *pCopyMaterial = materials->FindMaterial("vgui/white", TEXTURE_GROUP_VGUI);
+    if (pCopyMaterial && !pCopyMaterial->IsErrorMaterial())
+    {
+        // Bind the VGUI texture to the copy material
+        IMaterialVar* pBaseTextureVar = pCopyMaterial->FindVar("$basetexture", NULL);
+        if (pBaseTextureVar)
+        {
+            pBaseTextureVar->SetTextureValue(pVGUITexture);
+        }
+        
+        // Draw a smaller rectangle in the center to test
+        int vrWidth = pVRTexture->GetActualWidth();
+        int vrHeight = pVRTexture->GetActualHeight();
+        int quadWidth = vrWidth / 2;   // Half size
+        int quadHeight = vrHeight / 2; // Half size
+        int offsetX = vrWidth / 4;     // Center it
+        int offsetY = vrHeight / 4;    // Center it
+        
+        pRenderContext->DrawScreenSpaceRectangle(
+            pCopyMaterial,
+            offsetX, offsetY,           // x, y (centered)
+            quadWidth, quadHeight,      // width, height (half size)
+            0, 0,                       // src x, y  
+            pVGUITexture->GetActualWidth(), pVGUITexture->GetActualHeight(), // src width, height
+            pVGUITexture->GetActualWidth(), pVGUITexture->GetActualHeight()  // texture size
+        );
+    }
+    
+    // Restore render target
+    pRenderContext->PopRenderTargetAndViewport();
+    pRenderContext->Flush();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Render a test pattern to the VGUI texture for debugging
+//-----------------------------------------------------------------------------
+void CVRMenuManager::RenderTestPattern()
+{
+    // Find the VGUI render texture
+    ITexture *pTexture = materials->FindTexture("_rt_vgui", NULL, false);
+    if (!pTexture)
+        return;
+
+    CMatRenderContextPtr pRenderContext(materials);
+    int viewActualWidth = pTexture->GetActualWidth();
+    int viewActualHeight = pTexture->GetActualHeight();
+
+    // Set up render target for test pattern
+    pRenderContext->PushRenderTargetAndViewport(pTexture, NULL, 0, 0, viewActualWidth, viewActualHeight);
+    pRenderContext->OverrideAlphaWriteEnable(true, true);
+
+    // Clear with a bright color first
+    pRenderContext->ClearColor4ub(255, 0, 255, 255);  // Magenta background
+    pRenderContext->ClearBuffers(true, false);
+    
+    // Draw some simple test rectangles using screen space rectangles
+    IMaterial *pWhiteMaterial = materials->FindMaterial("vgui/white", TEXTURE_GROUP_VGUI);
+    if (pWhiteMaterial && !pWhiteMaterial->IsErrorMaterial())
+    {
+        // Draw a green rectangle in the center
+        pRenderContext->Bind(pWhiteMaterial);
+        pRenderContext->DrawScreenSpaceRectangle(
+            pWhiteMaterial,
+            viewActualWidth/4, viewActualHeight/4,     // x, y
+            viewActualWidth/2, viewActualHeight/2,     // width, height
+            0, 0, 1, 1,                                // texture coords
+            viewActualWidth, viewActualHeight          // texture size
+        );
+    }
+
+    // Restore render context
+    pRenderContext->OverrideAlphaWriteEnable(false, true);
+    pRenderContext->PopRenderTargetAndViewport();
+    pRenderContext->Flush();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Render test pattern directly to VR render target (debug)
+//-----------------------------------------------------------------------------
+void CVRMenuManager::RenderTestPatternDirectly()
+{
+    // Get the VR render target
+    ITexture* pVRTexture = m_pVRManager->GetRenderTarget();
+    if (!pVRTexture)
+    {
+        DevMsg("VR Menu: GetRenderTarget() returned null!\n");
+        return;
+    }
+
+    DevMsg("VR Menu: Rendering test pattern to VR target %dx%d\n", 
+           pVRTexture->GetActualWidth(), pVRTexture->GetActualHeight());
+
+    CMatRenderContextPtr pRenderContext(materials);
+    
+    // Render directly to the VR target
+    pRenderContext->PushRenderTargetAndViewport(pVRTexture, NULL, 
+        0, 0, pVRTexture->GetActualWidth(), pVRTexture->GetActualHeight());
+    
+    // Clear with bright red to test
+    pRenderContext->ClearColor4ub(255, 0, 0, 255);  // Bright red
+    pRenderContext->ClearBuffers(true, true);
+    
+    // Draw some test rectangles directly in screen space
+    IMaterial *pWhiteMaterial = materials->FindMaterial("vgui/white", TEXTURE_GROUP_VGUI);
+    if (pWhiteMaterial && !pWhiteMaterial->IsErrorMaterial())
+    {
+        int width = pVRTexture->GetActualWidth();
+        int height = pVRTexture->GetActualHeight();
+        
+        // Draw a blue rectangle in the center
+        pRenderContext->DrawScreenSpaceRectangle(
+            pWhiteMaterial,
+            width/4, height/4,      // x, y
+            width/2, height/2,      // width, height  
+            0, 0, 1, 1,             // texture coords
+            width, height           // texture size
+        );
+    }
+    
+    // Pop render target
+    pRenderContext->PopRenderTargetAndViewport();
+    pRenderContext->Flush();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Set up minimal 3D world context for rendering
+//-----------------------------------------------------------------------------
+void CVRMenuManager::SetupMinimal3DWorld()
+{
+    // Get the VR render target
+    ITexture* pVRTexture = m_pVRManager->GetRenderTarget();
+    if (!pVRTexture)
+        return;
+
+    // Create a basic view setup for 3D rendering
+    CViewSetup viewSetup;
+    memset(&viewSetup, 0, sizeof(viewSetup));
+    
+    // Set up basic 3D view parameters
+    viewSetup.x = 0;
+    viewSetup.y = 0;
+    viewSetup.width = pVRTexture->GetActualWidth();
+    viewSetup.height = pVRTexture->GetActualHeight();
+    viewSetup.fov = 90.0f;
+    viewSetup.origin = Vector(0, 0, 64);  // Player head position
+    viewSetup.angles = QAngle(0, 0, 0);   // Looking forward
+    viewSetup.zNear = 1.0f;
+    viewSetup.zFar = 30000.0f;
+    viewSetup.m_bOrtho = false;
+
+    // Set up render target
+    CMatRenderContextPtr pRenderContext(materials);
+    pRenderContext->PushRenderTargetAndViewport(pVRTexture, NULL, 
+        0, 0, viewSetup.width, viewSetup.height);
+
+    // Clear with a dark background (not pure black to see the menu better)
+    pRenderContext->ClearColor4ub(32, 32, 32, 255);
+    pRenderContext->ClearBuffers(true, true);
+
+    // Set up 3D view for rendering
+    render->Push3DView(viewSetup, 0, pVRTexture, NULL);
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Render the menu texture as a 3D quad in world space
+//-----------------------------------------------------------------------------
+void CVRMenuManager::RenderMenuQuadIn3D()
+{
+    // Find the VGUI texture that we rendered to
+    ITexture *pVGUITexture = materials->FindTexture("_rt_vgui", NULL, false);
+    if (!pVGUITexture)
+    {
+        DevMsg("VR Menu: _rt_vgui texture not found!\n");
+        return;
+    }
+    
+    // DevMsg("VR Menu: Rendering 3D quad with VGUI texture %dx%d\n", 
+    //        pVGUITexture->GetActualWidth(), pVGUITexture->GetActualHeight());
+
+    // Use static material caching to avoid repeated lookups and precaching
+    static IMaterial *pCachedMaterial = nullptr;
+    static bool bMaterialInitialized = false;
+    
+    if (!bMaterialInitialized)
+    {
+        // Try to find the material for in-world UI rendering
+        pCachedMaterial = materials->FindMaterial("vgui/inworldui", TEXTURE_GROUP_VGUI);
+        
+        // If vgui/inworldui doesn't work, try the opaque version
+        if (!pCachedMaterial || pCachedMaterial->IsErrorMaterial())
+        {
+            pCachedMaterial = materials->FindMaterial("vgui/inworldui_opaque", TEXTURE_GROUP_VGUI);
+        }
+        
+        // If still no material, fall back to a basic material
+        if (!pCachedMaterial || pCachedMaterial->IsErrorMaterial())
+        {
+            pCachedMaterial = materials->FindMaterial("vgui/white", TEXTURE_GROUP_VGUI);
+        }
+        
+        // Ensure the material is properly precached and referenced
+        if (pCachedMaterial && !pCachedMaterial->IsErrorMaterial())
+        {
+            if (!pCachedMaterial->IsPrecached()) 
+            {
+                PrecacheMaterial(pCachedMaterial->GetName());
+                pCachedMaterial->IncrementReferenceCount();
+            }
+        }
+        
+        bMaterialInitialized = true;
+    }
+    
+    if (!pCachedMaterial || pCachedMaterial->IsErrorMaterial())
+        return;
+
+    // Position the menu quad MUCH closer to the player
+    Vector vCenter = Vector(0, 50, 64);  // 50 units in front, at head height  
+    float menuWidth = 80.0f;   // Smaller size
+    float menuHeight = 60.0f;  // Smaller size
+    
+    // Create quad corners
+    Vector vUL = vCenter + Vector(-menuWidth/2, 0, menuHeight/2);   // Upper Left
+    Vector vUR = vCenter + Vector(menuWidth/2, 0, menuHeight/2);    // Upper Right
+    Vector vLL = vCenter + Vector(-menuWidth/2, 0, -menuHeight/2);  // Lower Left
+    Vector vLR = vCenter + Vector(menuWidth/2, 0, -menuHeight/2);   // Lower Right
+
+    // Bind the VGUI texture to the material 
+    CMatRenderContextPtr pRenderContext(materials);
+    pRenderContext->Bind(pCachedMaterial, NULL);
+    
+    // Set the VGUI texture as the base texture for the material
+    IMaterialVar* pBaseTextureVar = pCachedMaterial->FindVar("$basetexture", NULL);
+    if (pBaseTextureVar)
+    {
+        pBaseTextureVar->SetTextureValue(pVGUITexture);
+    }
+    
+    // Render the quad using dynamic mesh (same pattern as RenderHUDQuad)
+    IMesh *pMesh = pRenderContext->GetDynamicMesh(true, NULL, NULL, pCachedMaterial);
+
+    CMeshBuilder meshBuilder;
+    meshBuilder.Begin(pMesh, MATERIAL_TRIANGLE_STRIP, 2);
+
+    // Lower Right
+    meshBuilder.Position3fv(vLR.Base());
+    meshBuilder.TexCoord2f(0, 1, 1);
+    meshBuilder.AdvanceVertexF<VTX_HAVEPOS, 1>();
+
+    // Lower Left
+    meshBuilder.Position3fv(vLL.Base());
+    meshBuilder.TexCoord2f(0, 0, 1);
+    meshBuilder.AdvanceVertexF<VTX_HAVEPOS, 1>();
+
+    // Upper Right
+    meshBuilder.Position3fv(vUR.Base());
+    meshBuilder.TexCoord2f(0, 1, 0);
+    meshBuilder.AdvanceVertexF<VTX_HAVEPOS, 1>();
+
+    // Upper Left
+    meshBuilder.Position3fv(vUL.Base());
+    meshBuilder.TexCoord2f(0, 0, 0);
+    meshBuilder.AdvanceVertexF<VTX_HAVEPOS, 1>();
+
+    meshBuilder.End();
+    pMesh->Draw();
+
+    // Clean up 3D view
+    render->PopView(NULL);
+    
+    // Pop render target
+    CMatRenderContextPtr pRenderContext2(materials);
+    pRenderContext2->PopRenderTargetAndViewport();
+    pRenderContext2->Flush();
 }

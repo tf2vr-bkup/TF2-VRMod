@@ -6,6 +6,7 @@
 #include "vgui/IInput.h"
 #include "vgui/IInputInternal.h"
 #include "client_virtualreality.h"
+#include "hmdWrapper.h"
 
 // Forward declarations
 class C_TFPlayer;
@@ -36,10 +37,29 @@ public:
     // Public method to get which hand is currently active for menu interaction
     int GetActiveMenuHand() const { return m_nMenuHand; }
 
+    // Compositor integration methods
+    void SubmitMenuFrameToCompositor();
+    void SubmitLoadingFrameToCompositor();
+
 private:
     // Helper functions
     void UpdateCursorPosition();
     void HandleMenuButtonInput();
+    
+    // State determination and mode handling
+    SourceEngineState DetermineSourceState();
+    void HandleCompositorMode(SourceEngineState state);
+    void HandleTraditionalVRMode(SourceEngineState state);
+    
+    // VR rendering methods
+    void RenderMenuOnlyMode();
+    void RenderLoadingScreenMode();
+    void CopyVGUIDirectlyToVR();
+    void RenderVGUIToTexture();
+    void SetupMinimal3DWorld();
+    void RenderMenuQuadIn3D();
+    void RenderTestPattern();
+    void RenderTestPatternDirectly();
     
     // Cursor positioning
     void ComputeCursorPosition(const Vector& pointerPosition, const QAngle& pointerRotation, int& px, int& py);
@@ -76,6 +96,9 @@ private:
     // Map change detection
     char m_szLastMapName[64];
     float m_flLastClassMenuTime; // Time when changeclass was last executed
+    
+    // VR frame management
+    bool m_bVRFrameStarted;
 };
 
 // Global instance
