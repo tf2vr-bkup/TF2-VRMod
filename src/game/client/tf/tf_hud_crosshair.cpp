@@ -26,7 +26,7 @@ ConVar cl_crosshair_red( "cl_crosshair_red", "200", FCVAR_ARCHIVE );
 ConVar cl_crosshair_green( "cl_crosshair_green", "200", FCVAR_ARCHIVE );
 ConVar cl_crosshair_blue( "cl_crosshair_blue", "200", FCVAR_ARCHIVE );
 
-ConVar cl_crosshair_file( "cl_crosshair_file", "", FCVAR_ARCHIVE );
+ConVar cl_crosshair_file( "cl_crosshair_file", "default", FCVAR_ARCHIVE );
 
 ConVar cl_crosshair_scale( "cl_crosshair_scale", "32.0", FCVAR_ARCHIVE );
 
@@ -176,6 +176,28 @@ void CHudTFCrosshair::Paint()
 
 	if ( m_szPreviousCrosshair[0] == '\0' )
 	{
+		// Handle VR controller roll for default crosshair (when cl_crosshair_file is empty)
+		if ( UseVR() && g_pOpenXRManager && g_pOpenXRManager->IsActive() )
+		{
+			extern ConVar tfvr_crosshair_follow_controller_roll;
+			if ( tfvr_crosshair_follow_controller_roll.GetBool() )
+			{
+				// Set up VR crosshair roll angle before calling base class
+				VMatrix rightControllerPose;
+				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+				{
+					QAngle controllerAngles;
+					MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+					g_ClientVirtualReality.m_flCrosshairRollAngle = controllerAngles.z;
+					g_ClientVirtualReality.m_bCrosshairRollValid = true;
+				}
+				else
+				{
+					g_ClientVirtualReality.m_bCrosshairRollValid = false;
+				}
+			}
+		}
+		
 		return BaseClass::Paint();
 	}
 
@@ -232,7 +254,7 @@ void CHudTFCrosshair::Paint()
 	
 	if (bRotateCrosshair && fabs(flRotationAngle) > 0.1f) // Only rotate if significant angle
 	{
-		// Draw rotated crosshair using polygon method
+		// Draw rotated crosshair using polygon method with proper texture coordinates
 		Vertex_t vertices[4];
 		
 		// Convert rotation angle to radians
@@ -244,6 +266,8 @@ void CHudTFCrosshair::Paint()
 		float halfWidth = (float)iWidth;
 		float halfHeight = (float)iHeight;
 		
+		// For custom crosshairs, we typically want to use the full texture (0,0 to 1,1)
+		// since custom crosshairs are usually individual files, not texture atlases
 		// Top-left vertex (rotated)
 		vertices[0].m_Position.x = iX + (-halfWidth * cosAngle - -halfHeight * sinAngle);
 		vertices[0].m_Position.y = iY + (-halfWidth * sinAngle + -halfHeight * cosAngle);
@@ -279,5 +303,3 @@ void CHudTFCrosshair::Paint()
 	
 	pSurf->DrawSetTexture(0);
 }
-
-
