@@ -12,7 +12,7 @@
 // ConVars for laser pointer control
 ConVar tfvr_laser_enabled("tfvr_laser_enabled", "1", FCVAR_ARCHIVE, "Enable VR laser pointer");
 ConVar tfvr_laser_length("tfvr_laser_length", "100.0", FCVAR_ARCHIVE, "Length of the laser pointer in game units");
-ConVar tfvr_laser_width("tfvr_laser_width", "2.0", FCVAR_ARCHIVE, "Width of the laser pointer cylinder");
+ConVar tfvr_laser_width("tfvr_laser_width", "0.1", FCVAR_ARCHIVE, "Width of the laser pointer cylinder");
 
 ConVar tfvr_laser_color_r("tfvr_laser_color_r", "128", FCVAR_ARCHIVE, "Red component of laser color (0-255)");
 ConVar tfvr_laser_color_g("tfvr_laser_color_g", "183", FCVAR_ARCHIVE, "Green component of laser color (0-255)");
