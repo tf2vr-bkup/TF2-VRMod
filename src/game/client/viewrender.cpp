@@ -2454,9 +2454,9 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				int ClearFlags = 0;
 				SetupMain3DView( viewRender, ClearFlags );
 
-				// TODO - a bit of a shonky test - basically trying to catch the main menu, the briefing screen, the loadout screen, etc.
-				bool bTranslucent = !g_pMatSystemSurface->IsCursorVisible();
-				g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD(), true );
+				// Material selection (translucent vs opaque) is now handled automatically
+				// based on whether HUD is attached to face or positioned in world space
+				g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD() );
 				
 				// Render VR laser pointer on top of HUD/menus
 				if (g_pVRLaserPointer)

@@ -87,7 +87,7 @@ public:
 	void GetHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR );
 	void SetCustomHUDBounds( const Vector& viewer, const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr );
 	void ClearCustomHUDBounds();
-	void RenderHUDQuad( bool bBlackout, bool bTranslucent );
+	void RenderHUDQuad( bool bBlackout );
 	float GetZoomedModeMagnification();
 	bool ProcessCurrentTrackingState( float fGameFOV );
 	const VMatrix &GetHudProjectionFromWorld();

@@ -19,6 +19,10 @@
 #include "materialsystem/imaterial.h"
 #include "materialsystem/imaterialvar.h" 
 #include "tfvr/hmdWrapper.h"
+#include "econ/econ_ui.h"
+#include "tf/vgui/class_loadout_panel.h"
+#include "tf/vgui/character_info_panel.h"
+
 #include <algorithm>
 
 // Global instances
@@ -70,14 +74,14 @@ void CVRMenuManager::Initialize()
         m_nMenuHand = m_pConVarPrimaryHand->GetInt();
     }
     
-    DevMsg("VR Menu Manager initialized\n");
+    // VR Menu Manager initialized
 }
 
 void CVRMenuManager::Shutdown()
 {
     m_pVRManager = nullptr;
     m_pLocalPlayer = nullptr;
-    DevMsg("VR Menu Manager shutdown\n");
+    // VR Menu Manager shutdown
 }
 
 void CVRMenuManager::Update()
@@ -111,6 +115,7 @@ void CVRMenuManager::Update()
     }
     
     // Handle VR rendering based on compositor state
+    
     if (dxvkIsCompositorActive())
     {
         // Compositor is handling VR frames - we just submit content
@@ -195,6 +200,13 @@ void CVRMenuManager::HandleTraditionalVRMode(SourceEngineState state)
 
 void CVRMenuManager::SubmitMenuFrameToCompositor()
 {
+    static int s_submitCount = 0;
+    s_submitCount++;
+    if ( s_submitCount % 60 == 0 )
+    {
+        Msg("SubmitMenuFrameToCompositor called (count: %d)\n", s_submitCount);
+    }
+    
     // Render VGUI to our local texture
     RenderVGUIToTexture();
     
@@ -1072,6 +1084,8 @@ void CVRMenuManager::RenderLoadingScreenMode()
 //-----------------------------------------------------------------------------
 void CVRMenuManager::RenderVGUIToTexture()
 {
+    // Render VGUI to texture
+    
     // Find the VGUI render texture
     ITexture *pTexture = materials->FindTexture("_rt_vgui", NULL, false);
     if (!pTexture)
@@ -1089,12 +1103,77 @@ void CVRMenuManager::RenderVGUIToTexture()
 
     // Set up render target for VGUI
     pRenderContext->PushRenderTargetAndViewport(pTexture, NULL, 0, 0, viewActualWidth, viewActualHeight);
-    // Disable alpha writing to force VGUI to render fully opaque (proper compositing)
-    pRenderContext->OverrideAlphaWriteEnable(true, false);
 
-    // Clear the render target with game-like dark background
-    // This simulates what would be behind the UI in-game
-    pRenderContext->ClearColor4ub(0, 0, 0, 255);  // Dark grey background like game
+    // When in compositor mode, always use opaque rendering
+    bool bUseTranslucent = false;
+    
+    // Check if we're in main pause menu vs overlay menus
+    bool bIsMainMenu = enginevgui && enginevgui->IsGameUIVisible();
+    bool bIsEconUIVisible = false;
+    
+    // Check if any EconUI panels are visible (loadout, backpack, crafting, etc.)
+    if ( EconUI() )
+    {
+        bIsEconUIVisible = EconUI()->IsUIPanelVisible( ECONUI_BACKPACK ) ||
+                           EconUI()->IsUIPanelVisible( ECONUI_LOADOUT ) ||
+                           EconUI()->IsUIPanelVisible( ECONUI_CRAFTING ) ||
+                           EconUI()->IsUIPanelVisible( ECONUI_ARMORY ) ||
+                           EconUI()->IsUIPanelVisible( ECONUI_TRADING );
+    }
+    
+    // In compositor mode, always use opaque for better visibility
+    // (Translucent rendering can be handled by the compositor itself if needed)
+    bUseTranslucent = false;
+    
+    // Additional detection for other menu types
+    bool bIsLoadoutScreen = false;
+    bool bIsCursorVisible = vgui::surface() && vgui::surface()->IsCursorVisible();
+    bool bIsConnectedToServer = engine && engine->IsConnected();
+    
+    // Check for class menu state via console variables (loadout selection)
+    if (engine && engine->IsInGame())
+    {
+        ConVar* pClassMenuOpen = g_pCVar->FindVar("_cl_classmenuopen");
+        if (pClassMenuOpen && pClassMenuOpen->GetBool())
+        {
+            bIsLoadoutScreen = true;
+        }
+    }
+    
+    // Check for class loadout panel specifically
+    if (g_pClassLoadoutPanel && g_pClassLoadoutPanel->IsVisible())
+    {
+        bIsLoadoutScreen = true;
+    }
+    
+    // Check for character info panel (class selection screen) 
+    CCharacterInfoPanel* pCharInfoPanel = GetCharInfoPanel(false);
+    if (pCharInfoPanel && pCharInfoPanel->IsVisible())
+    {
+        bIsLoadoutScreen = true;
+    }
+    
+    // Only log material changes, not every frame
+    static bool s_bLastUseTranslucent = true;
+    if ( s_bLastUseTranslucent != bUseTranslucent )
+    {
+        s_bLastUseTranslucent = bUseTranslucent;
+        Msg("VR VGUI: Switching to %s rendering\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
+    }
+
+    // Configure alpha writing and clear based on menu type
+    if ( bUseTranslucent )
+    {
+        // Translucent: Allow alpha writing and clear with transparent background
+        pRenderContext->OverrideAlphaWriteEnable(true, true);
+        pRenderContext->ClearColor4ub(0, 0, 0, 0);  // Transparent background
+    }
+    else
+    {
+        // Opaque: Disable alpha writing and clear with solid background
+        pRenderContext->OverrideAlphaWriteEnable(true, false);
+        pRenderContext->ClearColor4ub(0, 0, 0, 255);  // Solid black background
+    }
     pRenderContext->ClearBuffers(true, false);
 
     // Set up VGUI panels for rendering
@@ -1318,11 +1397,13 @@ void CVRMenuManager::SetupMinimal3DWorld()
 //-----------------------------------------------------------------------------
 void CVRMenuManager::RenderMenuQuadIn3D()
 {
+    // Render menu quad in 3D space
+    
     // Find the VGUI texture that we rendered to
     ITexture *pVGUITexture = materials->FindTexture("_rt_vgui", NULL, false);
     if (!pVGUITexture)
     {
-        DevMsg("VR Menu: _rt_vgui texture not found!\n");
+        Msg("VR Menu: _rt_vgui texture not found!\n");
         return;
     }
     
@@ -1333,38 +1414,107 @@ void CVRMenuManager::RenderMenuQuadIn3D()
     static IMaterial *pCachedMaterial = nullptr;
     static bool bMaterialInitialized = false;
     
-    if (!bMaterialInitialized)
+    // Determine material selection based on menu type (similar to RenderHUDQuad logic)
+    bool bUseTranslucent = false;
+    
+    // Check if we're in main pause menu vs overlay menus
+    bool bIsMainMenu = enginevgui && enginevgui->IsGameUIVisible();
+    bool bIsEconUIVisible = false;
+    
+    	// Check if any EconUI panels are visible (loadout, backpack, crafting, etc.)
+	if ( EconUI() )
+	{
+		bIsEconUIVisible = EconUI()->IsUIPanelVisible( ECONUI_BACKPACK ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_LOADOUT ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_CRAFTING ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_ARMORY ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_TRADING );
+	}
+	
+	// Additional checks for loadout/armory screens that EconUI might miss
+	bool bIsLoadoutOrArmoryScreen = false;
+	if (engine && engine->IsConnected())
+	{
+		// Check for class loadout panel specifically
+		if (g_pClassLoadoutPanel && g_pClassLoadoutPanel->IsVisible())
+		{
+			bIsLoadoutOrArmoryScreen = true;
+		}
+		
+		// Check for character info panel (class selection screen) 
+		CCharacterInfoPanel* pCharInfoPanel = GetCharInfoPanel(false);
+		if (pCharInfoPanel && pCharInfoPanel->IsVisible())
+		{
+			bIsLoadoutOrArmoryScreen = true;
+		}
+	}
+	
+	// Use translucent for main pause menu, opaque for overlay menus
+	if ( bIsMainMenu && !bIsEconUIVisible && !bIsLoadoutOrArmoryScreen )
     {
-        // Try to find the material for in-world UI rendering
+        // Main pause menu - use translucent
+        bUseTranslucent = true;
+    }
+    else
+    {
+        // Overlay menus (loadout, items, etc.) - use opaque
+        bUseTranslucent = false;
+    }
+    
+    // Debug output
+    static bool s_bLastUseTranslucent = true;
+    static int s_debugFrameCount = 0;
+    s_debugFrameCount++;
+    
+    if ( s_debugFrameCount % 60 == 0 ) // Every second
+    {
+        Msg("VR Menu Manager: MainMenu=%d, EconUI=%d, UseTranslucent=%d\n", 
+            bIsMainMenu ? 1 : 0, bIsEconUIVisible ? 1 : 0, bUseTranslucent ? 1 : 0);
+    }
+    
+    if ( s_bLastUseTranslucent != bUseTranslucent )
+    {
+        s_bLastUseTranslucent = bUseTranslucent;
+        Msg("VR Menu Manager: Switching to %s material\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
+    }
+
+    // Select the appropriate material based on menu type
+    if ( bUseTranslucent )
+    {
         pCachedMaterial = materials->FindMaterial("vgui/inworldui", TEXTURE_GROUP_VGUI);
-        
-        // If vgui/inworldui doesn't work, try the opaque version
-        if (!pCachedMaterial || pCachedMaterial->IsErrorMaterial())
+    }
+    else
+    {
+        pCachedMaterial = materials->FindMaterial("vgui/inworldui_opaque", TEXTURE_GROUP_VGUI);
+    }
+    
+    // If material loading fails, fall back to basic material
+    if (!pCachedMaterial || pCachedMaterial->IsErrorMaterial())
+    {
+        pCachedMaterial = materials->FindMaterial("vgui/white", TEXTURE_GROUP_VGUI);
+    }
+    
+    // Ensure the material is properly precached and referenced
+    if (pCachedMaterial && !pCachedMaterial->IsErrorMaterial())
+    {
+        if (!pCachedMaterial->IsPrecached()) 
         {
-            pCachedMaterial = materials->FindMaterial("vgui/inworldui_opaque", TEXTURE_GROUP_VGUI);
+            PrecacheMaterial(pCachedMaterial->GetName());
+            pCachedMaterial->IncrementReferenceCount();
         }
-        
-        // If still no material, fall back to a basic material
-        if (!pCachedMaterial || pCachedMaterial->IsErrorMaterial())
-        {
-            pCachedMaterial = materials->FindMaterial("vgui/white", TEXTURE_GROUP_VGUI);
-        }
-        
-        // Ensure the material is properly precached and referenced
-        if (pCachedMaterial && !pCachedMaterial->IsErrorMaterial())
-        {
-            if (!pCachedMaterial->IsPrecached()) 
-            {
-                PrecacheMaterial(pCachedMaterial->GetName());
-                pCachedMaterial->IncrementReferenceCount();
-            }
-        }
-        
-        bMaterialInitialized = true;
     }
     
     if (!pCachedMaterial || pCachedMaterial->IsErrorMaterial())
         return;
+
+    // Force render state for opaque materials to ensure no transparency
+    if ( !bUseTranslucent )
+    {
+        // For opaque materials, force full opacity and disable blending
+        float color[3] = { 1.0f, 1.0f, 1.0f };
+        render->SetColorModulation( color );
+        render->SetBlend( 1.0f );
+    }
 
     // Position the menu quad MUCH closer to the player
     Vector vCenter = Vector(0, 50, 64);  // 50 units in front, at head height  

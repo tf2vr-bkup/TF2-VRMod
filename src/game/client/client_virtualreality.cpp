@@ -24,6 +24,9 @@
 #include "steam/steam_api.h"
 #include <tfvr/openxr_manager.h>
 #include "tf/c_tf_player.h"
+#include "econ/econ_ui.h"
+#include "tf/vgui/class_loadout_panel.h"
+#include "tf/vgui/character_info_panel.h"
 
 const char *COM_GetModDirectory(); // return the mod dir (rather than the complete -game param, which can be a path)
 
@@ -443,7 +446,7 @@ void CClientVirtualReality::DrawMainMenu()
 		ITexture *pColor = g_pOpenXRManager->GetRenderTarget();
 		ITexture *pDepth = g_pOpenXRManager->GetRenderTarget();
 		render->Push3DView( viewEye[nView], VIEW_CLEAR_DEPTH|VIEW_CLEAR_COLOR, pColor, NULL, pDepth );
-		RenderHUDQuad( false,  false );
+		RenderHUDQuad( false );
 		render->PopView( NULL );
 
 		PostProcessFrame( (StereoEye_t)nView );
@@ -1263,11 +1266,27 @@ void CClientVirtualReality::ClearCustomHUDBounds()
 // --------------------------------------------------------------------
 // Purpose: Renders the HUD in the world.
 // --------------------------------------------------------------------
-void CClientVirtualReality::RenderHUDQuad( bool bBlackout, bool bTranslucent )
+void CClientVirtualReality::RenderHUDQuad( bool bBlackout )
 {
+	// Debug: Check if this function is being called
+	static int s_callCount = 0;
+	s_callCount++;
+	if ( s_callCount % 120 == 0 ) // Every 2 seconds at 60fps
+	{
+		DevMsg("RenderHUDQuad called (count: %d)\n", s_callCount);
+	}
+	
 	// If we can overlay the HUD directly onto the target later, we'll do that instead (higher image quality).
 	if ( CanOverlayHudQuad() )
+	{
+		static int s_overlayCount = 0;
+		s_overlayCount++;
+		if ( s_overlayCount % 120 == 0 )
+		{
+			DevMsg("RenderHUDQuad: Using overlay path instead of quad rendering\n");
+		}
 		return;
+	}
 
 	Vector vHead, vUL, vUR, vLL, vLR;
 	GetHUDBounds ( &vHead, &vUL, &vUR, &vLL, &vLR );
@@ -1276,7 +1295,88 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout, bool bTranslucent )
 
 	{
 		IMaterial *mymat = NULL;
-		if ( bTranslucent )
+		
+		// Determine material selection based on HUD type and menu state
+		bool bUseTranslucent = false;
+		
+		// Declare variables outside scope so they can be used in debug output
+		bool bIsMainMenu = enginevgui && enginevgui->IsGameUIVisible();
+		bool bIsEconUIVisible = false;
+		bool bIsConnectedToServer = engine && engine->IsConnected();
+		bool bIsCursorVisible = vgui::surface() && vgui::surface()->IsCursorVisible();
+		bool bIsLoadoutOrArmoryScreen = false;
+		
+		if ( !m_bCustomHUDBoundsSet )
+		{
+			// HUD is attached to face - always use translucent for true HUD
+			bUseTranslucent = true;
+		}
+		else
+		{
+			// HUD is positioned in world space (menus)
+			// Check if any EconUI panels are visible (loadout, backpack, crafting, etc.)
+			if ( EconUI() )
+			{
+				bIsEconUIVisible = EconUI()->IsUIPanelVisible( ECONUI_BACKPACK ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_LOADOUT ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_CRAFTING ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_ARMORY ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_TRADING );
+			}
+		
+		// Additional checks for loadout/armory screens that EconUI might miss
+		if (bIsConnectedToServer)
+		{
+			// Check for class menu state via console variables
+			ConVar* pClassMenuOpen = g_pCVar->FindVar("_cl_classmenuopen");
+			if (pClassMenuOpen && pClassMenuOpen->GetBool())
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			// Check for class loadout panel specifically
+			if (g_pClassLoadoutPanel && g_pClassLoadoutPanel->IsVisible())
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			// Check for character info panel (class selection screen) 
+			CCharacterInfoPanel* pCharInfoPanel = GetCharInfoPanel(false);
+			if (pCharInfoPanel && pCharInfoPanel->IsVisible())
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+		}
+		
+		// Decision logic:
+		// 1. Not connected to server = main menu (opaque)
+		// 2. Connected + detected loadout/armory = opaque
+		// 3. Connected + EconUI visible = opaque  
+		// 4. Connected + main menu but no special screens = pause menu (translucent)
+		if (!bIsConnectedToServer)
+		{
+			// True main menu (not connected) - use opaque
+			bUseTranslucent = false;
+		}
+		else if (bIsEconUIVisible || bIsLoadoutOrArmoryScreen)
+		{
+			// Overlay menus (loadout, inventory, etc.) - use opaque
+			bUseTranslucent = false;
+		}
+		else if (bIsMainMenu)
+		{
+			// In-game pause menu - use translucent
+			bUseTranslucent = true;
+		}
+		else
+		{
+			// Default: opaque for unknown states
+			bUseTranslucent = false;
+		}
+		}
+		
+		// Select the appropriate material
+		if ( bUseTranslucent )
 		{
 			mymat = materials->FindMaterial( "vgui/inworldui", TEXTURE_GROUP_VGUI );
 		}
@@ -1284,11 +1384,49 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout, bool bTranslucent )
 		{
 			mymat = materials->FindMaterial( "vgui/inworldui_opaque", TEXTURE_GROUP_VGUI );
 		}
-		Assert( !mymat->IsErrorMaterial() );
+		
+		// Debug output to verify material selection - always print for now
+		static int s_debugFrameCount = 0;
+		s_debugFrameCount++;
+		
+		// Print debug info every 60 frames (about once per second at 60fps)
+		if ( s_debugFrameCount % 60 == 0 )
+		{
+			bool bIsMainMenu = enginevgui && enginevgui->IsGameUIVisible();
+			bool bIsEconUIVisible = false;
+			
+			// Check if any EconUI panels are visible (same logic as above)
+			if ( EconUI() )
+			{
+				bIsEconUIVisible = EconUI()->IsUIPanelVisible( ECONUI_BACKPACK ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_LOADOUT ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_CRAFTING ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_ARMORY ) ||
+								   EconUI()->IsUIPanelVisible( ECONUI_TRADING );
+					}
+		
+		// Log material changes for debugging
+		static bool s_bLastUseTranslucent = true;
+		if ( s_bLastUseTranslucent != bUseTranslucent )
+		{
+			s_bLastUseTranslucent = bUseTranslucent;
+			Msg("VR HUD: Switching to %s rendering\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
+		}
+	}
+		Assert( mymat && !mymat->IsErrorMaterial() );
 
 		if (!mymat->IsPrecached()) {
 			PrecacheMaterial(mymat->GetName());
 			mymat->IncrementReferenceCount();
+		}
+		
+		// Force render state for opaque materials to ensure no transparency
+		if ( !bUseTranslucent )
+		{
+			// For opaque materials, force full opacity and disable blending
+			float color[3] = { 1.0f, 1.0f, 1.0f };
+			render->SetColorModulation( color );
+			render->SetBlend( 1.0f );
 		}
 
 		IMesh *pMesh = pRenderContext->GetDynamicMesh( true, NULL, NULL, mymat );
