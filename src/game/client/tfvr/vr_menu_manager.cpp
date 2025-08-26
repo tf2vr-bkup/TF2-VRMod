@@ -1089,10 +1089,12 @@ void CVRMenuManager::RenderVGUIToTexture()
 
     // Set up render target for VGUI
     pRenderContext->PushRenderTargetAndViewport(pTexture, NULL, 0, 0, viewActualWidth, viewActualHeight);
-    pRenderContext->OverrideAlphaWriteEnable(true, true);
+    // Disable alpha writing to force VGUI to render fully opaque (proper compositing)
+    pRenderContext->OverrideAlphaWriteEnable(true, false);
 
-    // Clear the render target with transparent background
-    pRenderContext->ClearColor4ub(0, 0, 0, 0);
+    // Clear the render target with game-like dark background
+    // This simulates what would be behind the UI in-game
+    pRenderContext->ClearColor4ub(0, 0, 0, 255);  // Dark grey background like game
     pRenderContext->ClearBuffers(true, false);
 
     // Set up VGUI panels for rendering
@@ -1110,6 +1112,9 @@ void CVRMenuManager::RenderVGUIToTexture()
     // Paint the main menu and cursor (this is the key part!)
     render->VGui_Paint((PaintMode_t)(PAINT_UIPANELS | PAINT_CURSOR));
 
+    // TF2VR: Notify compositor that VGUI painting is complete - perfect time to copy Slot A!
+    TF2VR_NotifyVGUIPaintComplete();
+
     // Restore render context
     pRenderContext->OverrideAlphaWriteEnable(false, true);
     pRenderContext->PopRenderTargetAndViewport();
@@ -1121,11 +1126,8 @@ void CVRMenuManager::RenderVGUIToTexture()
 //-----------------------------------------------------------------------------
 void CVRMenuManager::CopyVGUIDirectlyToVR()
 {
-    // Only render every few frames to reduce flickering
-    static int frameCount = 0;
-    frameCount++;
-    if (frameCount % 3 != 0)  // Only render every 3rd frame
-        return;
+    // Render every frame for responsive loading screen
+    // Removed frame skipping to ensure loading screen appears immediately
         
     // Step 1: Render the actual TF2 menu to the VGUI texture
     RenderVGUIToTexture();

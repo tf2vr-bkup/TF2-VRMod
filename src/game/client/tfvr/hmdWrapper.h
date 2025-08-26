@@ -26,3 +26,7 @@ extern "C" void __declspec(dllexport) dxvkSubmitMenuFrame(void* textureHandle, i
 // VR Compositor Internal Functions (not exported, but declared for linking)
 void InitVRCompositor(class OpenXRDirectMode* manager);
 bool IsVRCompositorActive();  // Internal version (calls the implementation directly)
+
+// VGUI Rendering Completion Hooks (for perfect texture capture timing)
+extern "C" void __declspec(dllexport) TF2VR_NotifyVGUIPaintComplete(); // Called right after VGui_Paint() completes
+extern "C" void __declspec(dllexport) TF2VR_NotifyVGUIPresentComplete();

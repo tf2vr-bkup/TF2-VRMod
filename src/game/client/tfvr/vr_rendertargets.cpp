@@ -13,14 +13,18 @@ extern ConVar tfvr_msaa;
 
 ITexture* CVrRenderTargets::CreateVGuiTexture(IMaterialSystem* pMaterialSystem)
 {
+	// Use RGBA8888 format for proper VGUI alpha blending
+	// Note: sRGB correction will be handled in the VR compositor shader
+	ImageFormat vguiFormat = IMAGE_FORMAT_RGBA8888;
+	
 	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
 		"_rt_vgui",
 		1280, 720,
 		RT_SIZE_LITERAL,
-		pMaterialSystem->GetBackBufferFormat(),
-		MATERIAL_RT_DEPTH_SEPARATE,
-		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
-		CREATERENDERTARGETFLAGS_HDR);
+		vguiFormat,
+		MATERIAL_RT_DEPTH_SHARED,			// Use shared depth like other alpha textures
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,	// Minimal flags like water refraction
+		CREATERENDERTARGETFLAGS_HDR);		// HDR flag for proper alpha handling
 }
 
 ITexture* CVrRenderTargets::CreateVRTwoEyesHMDRenderTarget(IMaterialSystem* pMaterialSystem, int i)
