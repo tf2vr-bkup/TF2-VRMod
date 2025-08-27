@@ -17,7 +17,8 @@
 #include "tf_shareddefs.h"
 #include "tf_playerclass_shared.h"
 #include "materialsystem/imaterial.h"
-#include "materialsystem/imaterialvar.h" 
+#include "materialsystem/imaterialvar.h"
+#include "iloadingdisc.h" 
 #include "tfvr/hmdWrapper.h"
 #include "econ/econ_ui.h"
 #include "tf/vgui/class_loadout_panel.h"
@@ -92,18 +93,20 @@ void CVRMenuManager::Update()
     m_pVRManager = g_pOpenXRManager;
     m_pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
     
-    // Determine current Source engine state for VR compositor
-    SourceEngineState currentState = DetermineSourceState();
-    
-    // Notify DXVK compositor about state change
-    dxvkSetSourceState(currentState);
-    
-    // Debug output during state changes
+    // Debug output during state checks
     static float s_flLastDebugTime = 0.0f;
     static SourceEngineState s_lastState = SOURCE_STATE_GAMEPLAY;
+    SourceEngineState currentState = DetermineSourceState();
+    
     if (gpGlobals->curtime > s_flLastDebugTime + 1.0f || currentState != s_lastState)  // Every second or state change
     {
         s_flLastDebugTime = gpGlobals->curtime;
+        
+        // Only call dxvkSetSourceState when state actually changes (not every frame!)
+        if (currentState != s_lastState) {
+            dxvkSetSourceState(currentState);
+        }
+        
         s_lastState = currentState;
         if (tfvr_menu_debug.GetBool())
         {
@@ -136,14 +139,53 @@ void CVRMenuManager::Update()
     HandleMenuInput();
 }
 
+// Global loading state - set by VGui_PreRender() every frame with authoritative loading state
+static bool g_bIsGloballyLoading = false;
+
+void TF2VR_SetLoadingState(bool isLoading)
+{
+    static bool s_lastLoadingState = false;
+    
+    g_bIsGloballyLoading = isLoading;
+    
+    // Only update when state actually changes
+    if (isLoading != s_lastLoadingState) {
+        s_lastLoadingState = isLoading;
+        
+        // Notify DXVK when loading state changes
+        if (g_pVRMenuManager) {
+            SourceEngineState newState = g_pVRMenuManager->DetermineSourceState();
+            dxvkSetSourceState(newState);
+        }
+    }
+}
+
+// TF2VR: Simple loading detection
+void TF2VR_CheckEarlyLoadingState()
+{
+    static bool s_lastLoadingState = false;
+    static int s_checkCount = 0;
+    s_checkCount++;
+    
+    // Combine multiple detection methods for the most reliable loading state
+    bool bEngineDrawingLoading = engine && engine->IsDrawingLoadingImage();
+
+    // Primary detection: engine->IsDrawingLoadingImage() is the most authoritative
+    bool bIsLoading = bEngineDrawingLoading;
+    
+    // Update global loading state if it changed
+    if (bIsLoading != s_lastLoadingState) {
+        TF2VR_SetLoadingState(bIsLoading);
+        s_lastLoadingState = bIsLoading;
+    }
+}
+
 SourceEngineState CVRMenuManager::DetermineSourceState()
 {
-    // Determine current Source engine state
-    bool bIsLoadingScreen = engine->IsDrawingLoadingImage();
+    // Use the authoritative global loading state
     bool bInMenu = (!engine->IsInGame() && !engine->IsConnected() && !m_pLocalPlayer);
-    bool bConnectedButNoPlayer = (engine->IsConnected() && !m_pLocalPlayer);
     
-    if (bIsLoadingScreen || bConnectedButNoPlayer)
+    if (g_bIsGloballyLoading)
     {
         return SOURCE_STATE_LOADING;
     }
@@ -1084,6 +1126,13 @@ void CVRMenuManager::RenderLoadingScreenMode()
 //-----------------------------------------------------------------------------
 void CVRMenuManager::RenderVGUIToTexture()
 {
+    // Debug logging to verify function is called
+    static int s_callCount = 0;
+    s_callCount++;
+    if (s_callCount % 60 == 1) {
+        Warning("TF2VR: RenderVGUIToTexture called #%d\n", s_callCount);
+    }
+    
     // Render VGUI to texture
     
     // Find the VGUI render texture
@@ -1190,9 +1239,32 @@ void CVRMenuManager::RenderVGUIToTexture()
 
     // Paint the main menu and cursor (this is the key part!)
     render->VGui_Paint((PaintMode_t)(PAINT_UIPANELS | PAINT_CURSOR));
+    
+    // TF2VR: Also paint in-game panels during loading to capture loading screen
+    bool bIsLoading = engine && engine->IsDrawingLoadingImage();
+    bool bIsConnected = engine && engine->IsConnected();
+    bool bIsInGame = engine && engine->IsInGame();
+    bool bIsLoadingAlternative = bIsConnected && !bIsInGame;
+    
+    // Paint loading content if either loading condition is true
+    if( bIsLoading || bIsLoadingAlternative ) {
+        render->VGui_Paint( PAINT_INGAMEPANELS );
+        if (s_callCount % 60 == 1) {
+            Warning("TF2VR: Painting INGAMEPANELS during loading (IsLoading=%d, AltLoading=%d)\n", bIsLoading ? 1 : 0, bIsLoadingAlternative ? 1 : 0);
+        }
+    }
 
-    // TF2VR: Notify compositor that VGUI painting is complete - perfect time to copy Slot A!
+    // TF2VR: State is now set in main render loop for better timing
+    // No need to duplicate state setting here
+    
+    // TF2VR: Notify compositor that VGUI painting is complete - perfect time to copy texture!
+    if (s_callCount % 60 == 1) {
+        Warning("TF2VR: About to call TF2VR_NotifyVGUIPaintComplete...\n");
+    }
     TF2VR_NotifyVGUIPaintComplete();
+    if (s_callCount % 60 == 1) {
+        Warning("TF2VR: TF2VR_NotifyVGUIPaintComplete call completed\n");
+    }
 
     // Restore render context
     pRenderContext->OverrideAlphaWriteEnable(false, true);

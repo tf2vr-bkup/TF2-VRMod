@@ -40,14 +40,17 @@ public:
     // Compositor integration methods
     void SubmitMenuFrameToCompositor();
     void SubmitLoadingFrameToCompositor();
+    
+    // VGUI rendering method (public so it can be called from render loop)
+    void RenderVGUIToTexture();
+    
+    // State determination and mode handling
+    SourceEngineState DetermineSourceState();
 
 private:
     // Helper functions
     void UpdateCursorPosition();
     void HandleMenuButtonInput();
-    
-    // State determination and mode handling
-    SourceEngineState DetermineSourceState();
     void HandleCompositorMode(SourceEngineState state);
     void HandleTraditionalVRMode(SourceEngineState state);
     
@@ -55,7 +58,6 @@ private:
     void RenderMenuOnlyMode();
     void RenderLoadingScreenMode();
     void CopyVGUIDirectlyToVR();
-    void RenderVGUIToTexture();
     void SetupMinimal3DWorld();
     void RenderMenuQuadIn3D();
     void RenderTestPattern();
