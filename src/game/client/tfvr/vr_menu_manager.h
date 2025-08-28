@@ -68,6 +68,11 @@ private:
     bool ComputeIntersectionBarycentricCoordinates(const Vector& rayStart, const Vector& rayEnd, 
                                                    const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr,
                                                    float& u, float& v);
+    
+    // Playspace anchoring methods
+    void CalculatePlayspaceAnchor();
+    void UpdatePlayspaceAnchoredPosition();
+    Vector CalculateCurrentPlayspaceOriginWorldPos();
 
     // VR input state
     bool m_bMenuButtonPressed;
@@ -91,6 +96,11 @@ private:
     Vector m_fixedMenuPosition;
     QAngle m_fixedMenuRotation;
     bool m_bMenuPositionFixed;
+    
+    // Playspace-anchored menu positioning
+    VMatrix m_menuPlayspaceAnchor;  // Menu's absolute position/rotation in playspace coordinates
+    bool m_bUsePlayspaceAnchoring;
+    Vector m_menuPositionInPlayspace;  // Menu's fixed position relative to playspace origin
     
     // ConVars
     ConVar* m_pConVarPrimaryHand;

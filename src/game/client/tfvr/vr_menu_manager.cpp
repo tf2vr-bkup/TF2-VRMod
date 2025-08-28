@@ -42,6 +42,7 @@ ConVar tfvr_cursor_threshold("tfvr_cursor_threshold", "0.05", FCVAR_ARCHIVE, "Mi
 ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "1.0", FCVAR_ARCHIVE, "Minimum VR head movement required to override mouse (in world units)");
 ConVar tfvr_cursor_debug("tfvr_cursor_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR cursor threshold");
 ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
+ConVar tfvr_playspace_anchoring("tfvr_playspace_anchoring", "1", FCVAR_ARCHIVE, "Anchor menu to playspace origin instead of player");
 
 CVRMenuManager::CVRMenuManager()
     : m_bMenuButtonPressed(false)
@@ -55,11 +56,13 @@ CVRMenuManager::CVRMenuManager()
     , m_fixedMenuPosition(0, 0, 0)
     , m_fixedMenuRotation(0, 0, 0)
     , m_bMenuPositionFixed(false)
+    , m_bUsePlayspaceAnchoring(true)
     , m_pConVarPrimaryHand(nullptr)
     , m_szLastMapName("")
     , m_flLastClassMenuTime(0.0f)
     , m_bVRFrameStarted(false)
 {
+    m_menuPlayspaceAnchor.Identity();
 }
 
 CVRMenuManager::~CVRMenuManager()
@@ -108,13 +111,6 @@ void CVRMenuManager::Update()
         }
         
         s_lastState = currentState;
-        if (tfvr_menu_debug.GetBool())
-        {
-            const char* stateNames[] = {"GAMEPLAY", "MENU", "LOADING", "TRANSITION"};
-            DevMsg("VR State: %s, CompositorActive=%d, InGame=%d, Connected=%d, Player=%p, LoadingScreen=%d\n", 
-                   stateNames[currentState], dxvkIsCompositorActive(), 
-                   engine->IsInGame(), engine->IsConnected(), m_pLocalPlayer, engine->IsDrawingLoadingImage());
-        }
     }
     
     // Handle VR rendering based on compositor state
@@ -242,13 +238,6 @@ void CVRMenuManager::HandleTraditionalVRMode(SourceEngineState state)
 
 void CVRMenuManager::SubmitMenuFrameToCompositor()
 {
-    static int s_submitCount = 0;
-    s_submitCount++;
-    if ( s_submitCount % 60 == 0 )
-    {
-        Msg("SubmitMenuFrameToCompositor called (count: %d)\n", s_submitCount);
-    }
-    
     // Render VGUI to our local texture
     RenderVGUIToTexture();
     
@@ -390,64 +379,53 @@ void CVRMenuManager::HandleMenuInput()
                  return;
              }
              
-             // Wait for HMD rotation to stabilize (no significant changes for 0.2 seconds)
-             if (lastValidRotation != QAngle(0, 0, 0))
-             {
-                 float rotationDelta = (currentAngles - lastValidRotation).Length();
-                 float timeSinceLastChange = gpGlobals->curtime - flRotationStableTime;
-                 
-                 // If rotation changed significantly, reset the timer
-                 if (rotationDelta > 2.0f)
-                 {
-                     lastValidRotation = currentAngles;
-                     flRotationStableTime = gpGlobals->curtime;
-                     return;
-                 }
-                 
-                 // If rotation has been stable for 0.05 seconds, capture the menu position
-                 if (timeSinceLastChange >= 0.05f)
-                 {
-                     // Use the player's current position and view angles for consistent placement
-                     m_fixedMenuPosition = currentPlayerPos;
-                     m_fixedMenuRotation = currentAngles;
-                     m_fixedMenuRotation.x = 0; // Keep level
-                     m_fixedMenuRotation.z = 0; // No roll
-                     
-                     m_bMenuPositionFixed = true;
-                     
-                     // For ViewPort menus, we need to make the cursor visible
-                     if (vgui::surface())
-                     {
-                         vgui::surface()->SetCursorAlwaysVisible(true);
-                     }
-                     
-                     // Set custom HUD bounds ONCE when menu opens
-                     float menuDistance = tfvr_menu_distance.GetFloat();
-                     Vector forward, right, up;
-                     AngleVectors(m_fixedMenuRotation, &forward, &right, &up);
-                     
-                     // Place the menu directly in front of the player at the specified distance
-                     Vector menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
-                     
-                     // Create a quad representing the menu plane
-                     // Use a fixed size that's reasonable for VR
-                     float menuHeight = 80.0f; // Fixed height in world units
-                     float menuWidth = menuHeight * 1.6f; // 16:10 aspect ratio
-                     
-                     Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
-                     Vector ur = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
-                     Vector ll = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
-                     Vector lr = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
-                     
-                     // Set the custom HUD bounds in the VR system
-                     g_ClientVirtualReality.SetCustomHUDBounds(m_fixedMenuPosition, ul, ur, ll, lr);
-                 }
-                 else
-                 {
-                     // Still waiting for rotation to stabilize
-                     return;
-                 }
-             }
+                         // Playspace anchoring provides stability, so immediately set menu position
+            // Use the player's current position and view angles for consistent placement
+            m_fixedMenuPosition = currentPlayerPos;
+            m_fixedMenuRotation = currentAngles;
+            m_fixedMenuRotation.x = 0; // Keep level
+            m_fixedMenuRotation.z = 0; // No roll
+            
+            m_bMenuPositionFixed = true;
+            
+            // Check if we should use playspace anchoring
+            m_bUsePlayspaceAnchoring = tfvr_playspace_anchoring.GetBool();
+            
+            if (m_bUsePlayspaceAnchoring && m_pVRManager)
+            {
+                // Calculate and store the menu's absolute position in playspace coordinates
+                CalculatePlayspaceAnchor();
+            }
+            
+            // For ViewPort menus, we need to make the cursor visible
+            if (vgui::surface())
+            {
+                vgui::surface()->SetCursorAlwaysVisible(true);
+            }
+            
+            // Set custom HUD bounds ONCE when menu opens (only if not using playspace anchoring)
+            if (!m_bUsePlayspaceAnchoring)
+            {
+                float menuDistance = tfvr_menu_distance.GetFloat();
+                Vector forward, right, up;
+                AngleVectors(m_fixedMenuRotation, &forward, &right, &up);
+                
+                // Place the menu directly in front of the player at the specified distance
+                Vector menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
+                
+                // Create a quad representing the menu plane
+                // Use a fixed size that's reasonable for VR
+                float menuHeight = 80.0f; // Fixed height in world units
+                float menuWidth = menuHeight * 1.6f; // 16:10 aspect ratio
+                
+                Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+                Vector ur = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+                Vector ll = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+                Vector lr = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+                
+                // Set the custom HUD bounds in the VR system
+                // g_ClientVirtualReality.SetCustomHUDBounds(m_fixedMenuPosition, ul, ur, ll, lr);
+            }
          }
      }
      
@@ -694,6 +672,12 @@ void CVRMenuManager::UpdateCursorPosition()
 {
     if (!m_pLocalPlayer || !m_bMenuPositionFixed)
         return;
+    
+    // Update playspace anchored position each frame if enabled
+    if (m_bUsePlayspaceAnchoring)
+    {
+        UpdatePlayspaceAnchoredPosition();
+    }
 
     // Get current VR controller position for threshold checking
     Vector currentControllerPos;
@@ -880,13 +864,23 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
         
     }
     
-    // Use the SAME fixed menu plane that was set when the menu opened
-    float menuDistance = tfvr_menu_distance.GetFloat();
+    // For playspace anchoring, m_fixedMenuPosition is the actual menu world position
+    // For cursor calculation, we need to use that directly (no distance offset)
+    Vector menuPlaneCenter;
     Vector forward, right, up;
     AngleVectors(m_fixedMenuRotation, &forward, &right, &up);
     
-    // Use the exact same placement logic as in HandleMenuInput
-    Vector menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
+    if (m_bUsePlayspaceAnchoring)
+    {
+        // m_fixedMenuPosition is already the menu world position
+        menuPlaneCenter = m_fixedMenuPosition;
+    }
+    else
+    {
+        // Legacy mode: m_fixedMenuPosition is viewer position, add distance
+        float menuDistance = tfvr_menu_distance.GetFloat();
+        menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
+    }
     
     // Use the exact same size calculations as in HandleMenuInput
     float menuHeight = 80.0f; // Fixed height in world units
@@ -986,12 +980,21 @@ Vector CVRMenuManager::GetMenuPlaneIntersection(const Vector& controllerPos, con
         return vec3_origin;
     
     // Use the EXACT same fixed menu plane logic as ComputeCursorPosition
-    float menuDistance = tfvr_menu_distance.GetFloat();
+    Vector menuPlaneCenter;
     Vector forward, right, up;
     AngleVectors(m_fixedMenuRotation, &forward, &right, &up);
     
-    // Use the exact same placement logic as in HandleMenuInput
-    Vector menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
+    if (m_bUsePlayspaceAnchoring)
+    {
+        // m_fixedMenuPosition is already the menu world position
+        menuPlaneCenter = m_fixedMenuPosition;
+    }
+    else
+    {
+        // Legacy mode: m_fixedMenuPosition is viewer position, add distance
+        float menuDistance = tfvr_menu_distance.GetFloat();
+        menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
+    }
     
     // Use the exact same size calculations as in HandleMenuInput
     float menuHeight = 80.0f; // Fixed height in world units
@@ -1035,6 +1038,123 @@ Vector CVRMenuManager::GetMenuPlaneIntersection(const Vector& controllerPos, con
     }
     
     return vec3_origin; // No valid intersection
+}
+
+void CVRMenuManager::CalculatePlayspaceAnchor()
+{
+    if (!m_pVRManager || !m_pLocalPlayer)
+        return;
+    
+    // Simple approach: Calculate current playspace origin and store menu position relative to it
+    
+    // STEP 1: Calculate current playspace origin in world coordinates
+    Vector playspaceOriginWorldPos = CalculateCurrentPlayspaceOriginWorldPos();
+    
+    // STEP 2: Calculate menu position in playspace coordinates
+    float menuDistance = tfvr_menu_distance.GetFloat();
+    QAngle leveledAngles = m_fixedMenuRotation; // Already leveled
+    
+    Vector forward, right, up;
+    AngleVectors(leveledAngles, &forward, &right, &up);
+    Vector menuWorldPos = m_fixedMenuPosition + forward * menuDistance;
+    
+    // Store menu position relative to playspace origin
+    m_menuPositionInPlayspace = menuWorldPos - playspaceOriginWorldPos;
+    
+    // Store full matrix with rotation
+    m_menuPlayspaceAnchor.Identity();
+    matrix3x4_t menuMatrix3x4;
+    AngleMatrix(leveledAngles, m_menuPositionInPlayspace, menuMatrix3x4);
+    m_menuPlayspaceAnchor.CopyFrom3x4(menuMatrix3x4);
+    
+    DevMsg("VR Menu ANCHOR CALCULATION:\n");
+    DevMsg("  Current playspace origin: (%.1f, %.1f, %.1f)\n", 
+           playspaceOriginWorldPos.x, playspaceOriginWorldPos.y, playspaceOriginWorldPos.z);
+    DevMsg("  Menu world pos: (%.1f, %.1f, %.1f)\n", 
+           menuWorldPos.x, menuWorldPos.y, menuWorldPos.z);
+    DevMsg("  Menu playspace offset: (%.3f, %.3f, %.3f)\n", 
+           m_menuPositionInPlayspace.x, m_menuPositionInPlayspace.y, m_menuPositionInPlayspace.z);
+}
+
+Vector CVRMenuManager::CalculateCurrentPlayspaceOriginWorldPos()
+{
+    if (!m_pVRManager || !m_pLocalPlayer)
+        return Vector(0, 0, 0);
+    
+    // GetMideyePose() returns head position relative to playspace origin (in Source coordinates)
+    VMatrix headRelativeToPlayspace = m_pVRManager->GetMideyePose();
+    
+    // Calculate playspace origin relative to head
+    VMatrix headToPlayspaceTransform = headRelativeToPlayspace.InverseTR();
+    
+    // Get current head world position
+    Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+    QAngle currentHeadWorldAngles = m_pLocalPlayer->EyeAngles();
+    
+    VMatrix currentHeadWorldMatrix;
+    currentHeadWorldMatrix.Identity();
+    matrix3x4_t headMatrix3x4;
+    AngleMatrix(currentHeadWorldAngles, currentHeadWorldPos, headMatrix3x4);
+    currentHeadWorldMatrix.CopyFrom3x4(headMatrix3x4);
+    
+    // Transform playspace origin to world coordinates
+    VMatrix playspaceWorldMatrix = currentHeadWorldMatrix * headToPlayspaceTransform;
+    return playspaceWorldMatrix.GetTranslation();
+}
+
+void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
+{
+    if (!m_bUsePlayspaceAnchoring || !m_pVRManager || !m_pLocalPlayer)
+        return;
+    
+    // STEP 1: Calculate current playspace origin in world coordinates
+    Vector currentPlayspaceOriginWorldPos = CalculateCurrentPlayspaceOriginWorldPos();
+    
+    if (gpGlobals && gpGlobals->realtime - lastDebugTime > 0.5f) // Debug every 0.5 seconds
+    {
+        Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+        VMatrix headRelativeToPlayspace = m_pVRManager->GetMideyePose();
+        Vector headPlayspacePos = headRelativeToPlayspace.GetTranslation();
+    }
+    
+    // STEP 3: Transform the stored playspace menu position to current world coordinates  
+    Vector newMenuWorldPos = currentPlayspaceOriginWorldPos + m_menuPositionInPlayspace;
+    
+    // DEBUG: Check for frame lag
+    static Vector lastMenuWorldPos = newMenuWorldPos;
+    float menuMovement = (newMenuWorldPos - lastMenuWorldPos).Length();
+    if (menuMovement > 0.1f)
+    {
+        DevMsg("VR Menu: Menu moved %.2f units (potential frame lag)\n", menuMovement);
+    }
+    lastMenuWorldPos = newMenuWorldPos;
+    
+    // Get menu rotation from stored anchor
+    QAngle newMenuWorldAngles;
+    MatrixToAngles(m_menuPlayspaceAnchor, newMenuWorldAngles);
+    
+    // Update the HUD bounds using the new position
+    float menuHeight = 80.0f;
+    float menuWidth = menuHeight * 1.6f;
+    
+    Vector forward, right, up;
+    AngleVectors(newMenuWorldAngles, &forward, &right, &up);
+    
+    Vector ul = newMenuWorldPos + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+    Vector ur = newMenuWorldPos + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+    Vector ll = newMenuWorldPos + right * (-menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+    Vector lr = newMenuWorldPos + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+    
+    // Get current head position for viewer reference
+    Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+    
+    // Update HUD bounds and cached position for cursor calculations
+    g_ClientVirtualReality.SetCustomHUDBounds(currentHeadWorldPos, ul, ur, ll, lr);
+    
+    // Update cached values for cursor calculations
+    // For playspace anchoring, we need to store the actual menu world position for cursor calculations
+    m_fixedMenuPosition = newMenuWorldPos; // Use actual menu position, not head position
+    m_fixedMenuRotation = newMenuWorldAngles;
 }
 
 //-----------------------------------------------------------------------------
@@ -1126,15 +1246,6 @@ void CVRMenuManager::RenderLoadingScreenMode()
 //-----------------------------------------------------------------------------
 void CVRMenuManager::RenderVGUIToTexture()
 {
-    // Debug logging to verify function is called
-    static int s_callCount = 0;
-    s_callCount++;
-    if (s_callCount % 60 == 1) {
-        Warning("TF2VR: RenderVGUIToTexture called #%d\n", s_callCount);
-    }
-    
-    // Render VGUI to texture
-    
     // Find the VGUI render texture
     ITexture *pTexture = materials->FindTexture("_rt_vgui", NULL, false);
     if (!pTexture)
@@ -1245,26 +1356,6 @@ void CVRMenuManager::RenderVGUIToTexture()
     bool bIsConnected = engine && engine->IsConnected();
     bool bIsInGame = engine && engine->IsInGame();
     bool bIsLoadingAlternative = bIsConnected && !bIsInGame;
-    
-    // Paint loading content if either loading condition is true
-    if( bIsLoading || bIsLoadingAlternative ) {
-        render->VGui_Paint( PAINT_INGAMEPANELS );
-        if (s_callCount % 60 == 1) {
-            Warning("TF2VR: Painting INGAMEPANELS during loading (IsLoading=%d, AltLoading=%d)\n", bIsLoading ? 1 : 0, bIsLoadingAlternative ? 1 : 0);
-        }
-    }
-
-    // TF2VR: State is now set in main render loop for better timing
-    // No need to duplicate state setting here
-    
-    // TF2VR: Notify compositor that VGUI painting is complete - perfect time to copy texture!
-    if (s_callCount % 60 == 1) {
-        Warning("TF2VR: About to call TF2VR_NotifyVGUIPaintComplete...\n");
-    }
-    TF2VR_NotifyVGUIPaintComplete();
-    if (s_callCount % 60 == 1) {
-        Warning("TF2VR: TF2VR_NotifyVGUIPaintComplete call completed\n");
-    }
 
     // Restore render context
     pRenderContext->OverrideAlphaWriteEnable(false, true);

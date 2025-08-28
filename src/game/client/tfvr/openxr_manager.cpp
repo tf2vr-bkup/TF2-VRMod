@@ -1835,6 +1835,11 @@ Vector COpenXRManager::GetRawHMDPosition() const
     return Vector(m_headLocation.pose.position.x, m_headLocation.pose.position.y, m_headLocation.pose.position.z);
 }
 
+float COpenXRManager::GetWorldScale() const
+{
+    return CalculateDynamicWorldScale();
+}
+
 void COpenXRManager::GetHMDInChaperone(class Vector& origin, QAngle& angles) const
 {
     origin = GetMideyePose().GetTranslation();

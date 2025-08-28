@@ -63,6 +63,7 @@ public:
 
     VMatrix GetMideyePose() const;
     Vector GetRawHMDPosition() const; // Raw unscaled position for calibration
+    float GetWorldScale() const; // Get current dynamic world scale
 
     void GetViewportBounds(ISourceVirtualReality::VREye eye, int* pnX, int* pnY, int* pnWidth, int* pnHeight);
 
