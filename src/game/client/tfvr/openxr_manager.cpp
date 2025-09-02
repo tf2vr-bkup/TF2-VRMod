@@ -2041,6 +2041,21 @@ float COpenXRManager::GetAnalogValue(const char* actionName)
     return m_inputManager ? m_inputManager->GetAnalogValue(actionName) : 0.0f;
 }
 
+bool COpenXRManager::IsUIInteractionPressed(const char* actionName, float threshold)
+{
+    return m_inputManager ? m_inputManager->IsUIInteractionPressed(actionName, threshold) : false;
+}
+
+bool COpenXRManager::WasUIInteractionPressed(const char* actionName, float threshold)
+{
+    return m_inputManager ? m_inputManager->WasUIInteractionPressed(actionName, threshold) : false;
+}
+
+bool COpenXRManager::WasUIInteractionReleased(const char* actionName, float threshold)
+{
+    return m_inputManager ? m_inputManager->WasUIInteractionReleased(actionName, threshold) : false;
+}
+
 bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
 {
     if (!m_inputManager) return false;

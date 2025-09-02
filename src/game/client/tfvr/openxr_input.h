@@ -29,6 +29,11 @@ public:
     bool WasButtonPressed(const char* actionName);
     bool WasButtonReleased(const char* actionName);
     float GetAnalogValue(const char* actionName);
+    
+    // UI interaction with trigger threshold
+    bool IsUIInteractionPressed(const char* actionName, float threshold = 0.7f);
+    bool WasUIInteractionPressed(const char* actionName, float threshold = 0.7f);
+    bool WasUIInteractionReleased(const char* actionName, float threshold = 0.7f);
 
     // Controller pose tracking
     bool GetControllerPose(const char* actionName, XrPosef& pose);
@@ -43,6 +48,7 @@ private:
     // Individual interaction profile creation methods
     bool CreateIndexControllerProfile();
     bool CreateQuestControllerProfile();
+    bool CreateMinimalQuestControllerProfile();
     bool CreateGenericControllerProfile();
     bool SuggestBindings(XrPath profilePath, const std::vector<XrActionSuggestedBinding>& bindings, const char* profileName);
 
@@ -59,6 +65,7 @@ private:
     std::map<std::string, XrInputAction> m_actions;
     std::map<std::string, bool> m_previousButtonStates;
     std::map<std::string, bool> m_currentButtonStates;
+    std::map<std::string, float> m_previousAnalogStates;
     std::map<std::string, float> m_currentAnalogStates;
     std::map<std::string, XrPosef> m_currentPoseStates;
     std::map<std::string, bool> m_currentPoseValidStates;

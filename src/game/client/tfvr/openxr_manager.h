@@ -77,6 +77,11 @@ public:
     bool WasButtonPressed(const char* actionName);
     bool WasButtonReleased(const char* actionName);
     float GetAnalogValue(const char* actionName);
+    
+    // UI interaction with trigger threshold
+    bool IsUIInteractionPressed(const char* actionName, float threshold = 0.7f);
+    bool WasUIInteractionPressed(const char* actionName, float threshold = 0.7f);
+    bool WasUIInteractionReleased(const char* actionName, float threshold = 0.7f);
 
     // Controller pose tracking
     bool GetLeftControllerPose(VMatrix& pose);
