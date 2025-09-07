@@ -12,6 +12,7 @@
 
 #include "mathlib/mathlib.h"
 #include "mathlib/vmatrix.h"
+#include "openxr_hand_tracking.h"
 
 class IMaterial;
 class ITexture;
@@ -59,6 +60,9 @@ private:
     
     // Calculate the quad transform matrix based on hand position
     bool CalculateQuadTransform(VMatrix& quadTransform);
+    
+    // Calculate transform using hand tracking instead of controller
+    bool CalculateHandTrackingTransform(VMatrix& quadTransform);
     
     // Get current player health information
     bool GetPlayerHealthInfo(float& healthPercent, int& currentHealth, int& maxHealth);

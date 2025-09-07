@@ -28,6 +28,7 @@
 // ConVars for configuration
 ConVar tfvr_health_overlay_enabled("tfvr_health_overlay_enabled", "1", FCVAR_ARCHIVE, "Enable VR health overlay on hand");
 ConVar tfvr_health_overlay_hand("tfvr_health_overlay_hand", "0", FCVAR_ARCHIVE, "Hand to attach health overlay to: 0=left, 1=right");
+ConVar tfvr_health_overlay_use_hand_tracking("tfvr_health_overlay_use_hand_tracking", "1", FCVAR_ARCHIVE, "Use hand tracking instead of controller pose: 0=controller, 1=hand tracking");
 ConVar tfvr_health_overlay_offset_x("tfvr_health_overlay_offset_x", "0", FCVAR_ARCHIVE, "X offset from hand position");
 ConVar tfvr_health_overlay_offset_y("tfvr_health_overlay_offset_y", "10", FCVAR_ARCHIVE, "Y offset from hand position (up)");
 ConVar tfvr_health_overlay_offset_z("tfvr_health_overlay_offset_z", "5", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
@@ -305,7 +306,13 @@ void CVRHealthOverlay::SetHandAttachment(int hand)
 //-----------------------------------------------------------------------------
 bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
 {
-    // Get OpenXR manager for hand tracking
+    // Check if we should use hand tracking instead of controller
+    if (tfvr_health_overlay_use_hand_tracking.GetBool())
+    {
+        return CalculateHandTrackingTransform(quadTransform);
+    }
+    
+    // Use controller grip pose (legacy mode)
     if (!g_pOpenXRManager)
     {
         static float lastDebugTime = 0.0f;
@@ -411,6 +418,177 @@ bool CVRHealthOverlay::GetPlayerHealthInfo(float& healthPercent, int& currentHea
         
     healthPercent = (float)currentHealth / (float)maxHealth;
     healthPercent = clamp(healthPercent, 0.0f, 2.0f); // Allow overheal up to 200%
+    
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Calculate transform using hand tracking instead of controller
+//-----------------------------------------------------------------------------
+bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
+{
+    if (!g_pOpenXRManager)
+    {
+        static float lastDebugTime = 0.0f;
+        if (gpGlobals->realtime - lastDebugTime > 5.0f)
+        {
+            DevMsg("VR Health Overlay: OpenXR manager not available for hand tracking\n");
+            lastDebugTime = gpGlobals->realtime;
+        }
+        return false;
+    }
+    
+    COpenXRHandTracker* handTracker = g_pOpenXRManager->GetHandTracker();
+    if (!handTracker)
+    {
+        static float lastTrackerDebugTime = 0.0f;
+        if (gpGlobals->realtime - lastTrackerDebugTime > 5.0f)
+        {
+            DevMsg("VR Health Overlay: Hand tracker not available\n");
+            lastTrackerDebugTime = gpGlobals->realtime;
+        }
+        return false;
+    }
+    
+    // Get hand joint data - use palm as the base position
+    Vector palmPosition, wristPosition;
+    QAngle palmAngles, wristAngles;
+    bool leftHand = (m_nAttachedHand == 0);
+    
+    // Check if the hand is being tracked
+    bool handTracked = leftHand ? handTracker->IsLeftHandTracked() : handTracker->IsRightHandTracked();
+    if (!handTracked)
+    {
+        static float lastHandTrackedDebugTime = 0.0f;
+        if (gpGlobals->realtime - lastHandTrackedDebugTime > 5.0f)
+        {
+            DevMsg("VR Health Overlay: %s hand not tracked\n", leftHand ? "Left" : "Right");
+            lastHandTrackedDebugTime = gpGlobals->realtime;
+        }
+        return false;
+    }
+    
+    // Get palm joint (primary position reference)
+    bool palmValid = handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_PALM_EXT, palmPosition, palmAngles);
+    if (!palmValid)
+    {
+        static float lastPalmDebugTime = 0.0f;
+        if (gpGlobals->realtime - lastPalmDebugTime > 5.0f)
+        {
+            DevMsg("VR Health Overlay: Palm joint not valid for %s hand\n", leftHand ? "left" : "right");
+            lastPalmDebugTime = gpGlobals->realtime;
+        }
+        return false;
+    }
+    
+    // Get wrist joint for orientation reference
+    bool wristValid = handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPosition, wristAngles);
+    
+    // Calculate position above the back of the hand
+    Vector quadPosition = palmPosition;
+    
+    // Use wrist-to-palm vector to determine hand orientation if available
+    Vector handForward, handRight, handUp;
+    if (wristValid)
+    {
+        // Vector from wrist to palm gives us the hand forward direction (towards fingers)
+        handForward = (palmPosition - wristPosition).Normalized();
+        
+        // Use palm angles to get the proper hand coordinate frame
+        AngleVectors(palmAngles, nullptr, &handRight, &handUp);
+        
+        // Ensure right-handed coordinate system
+        if (!leftHand)
+        {
+            handRight = -handRight; // Right hand uses inverted right vector
+        }
+    }
+    else
+    {
+        // Fallback to just palm orientation if wrist not available
+        AngleVectors(palmAngles, &handForward, &handRight, &handUp);
+        if (!leftHand)
+        {
+            handRight = -handRight; // Right hand uses inverted right vector
+        }
+    }
+    
+    // Position the overlay above the back of the hand
+    // The "back" of the hand is opposite to the palm direction
+    Vector backOfHandOffset = -handForward * 2.0f + handUp * 1.0f;  // 2 units back, 1 unit up
+    quadPosition += backOfHandOffset;
+    
+    // Apply ConVar offsets in hand coordinate space
+    Vector userOffset(
+        tfvr_health_overlay_offset_x.GetFloat(),
+        tfvr_health_overlay_offset_y.GetFloat(), 
+        tfvr_health_overlay_offset_z.GetFloat()
+    );
+    
+    // Transform user offset to hand coordinate space
+    Vector worldOffset = handRight * userOffset.x + handUp * userOffset.y + handForward * userOffset.z;
+    quadPosition += worldOffset;
+    
+    // Create the quad transform matrix
+    quadTransform.Identity();
+    quadTransform.SetTranslation(quadPosition);
+    
+    // Set orientation to face upward from the back of the hand
+    // The widget should lie flat on the back of the hand, facing upward
+    
+    // For a flat widget on the back of the hand:
+    // - The widget's "up" should align with the hand's "up" (away from palm)
+    // - The widget's "forward" should point toward the fingers
+    // - The widget's "right" should align with the hand's right
+    
+    // Create a matrix where the widget lies flat on the back of the hand
+    matrix3x4_t handMatrix;
+    AngleMatrix(QAngle(0,0,0), Vector(0,0,0), handMatrix);  // Initialize
+    
+    // Set the basis vectors for a flat widget:
+    // X-axis (forward): toward fingers
+    // Y-axis (left): opposite of hand right  
+    // Z-axis (up): away from palm (same as hand up)
+    handMatrix[0][0] = handForward.x; handMatrix[0][1] = handRight.x; handMatrix[0][2] = handUp.x;
+    handMatrix[1][0] = handForward.y; handMatrix[1][1] = handRight.y; handMatrix[1][2] = handUp.y;
+    handMatrix[2][0] = handForward.z; handMatrix[2][1] = handRight.z; handMatrix[2][2] = handUp.z;
+    handMatrix[0][3] = 0; handMatrix[1][3] = 0; handMatrix[2][3] = 0;
+    
+    VMatrix handVMatrix;
+    handVMatrix.CopyFrom3x4(handMatrix);
+    
+    // Apply the hand orientation
+    quadTransform = quadTransform * handVMatrix;
+    
+    // Apply additional rotation to make the widget face upward from the back of the hand
+    if (m_angQuadRotation.x != 0 || m_angQuadRotation.y != 0 || m_angQuadRotation.z != 0)
+    {
+        VMatrix rotationMatrix;
+        QAngle totalRotation = m_angQuadRotation;
+        
+        matrix3x4_t rotMatrix;
+        AngleMatrix(totalRotation, Vector(0,0,0), rotMatrix);
+        rotationMatrix.CopyFrom3x4(rotMatrix);
+        quadTransform = quadTransform * rotationMatrix;
+    }
+    else
+    {
+        // Default: flip the widget 180° so it faces the correct direction
+        VMatrix flipMatrix;
+        matrix3x4_t flipMatrix3x4;
+        AngleMatrix(QAngle(0, 0, 180), Vector(0,0,0), flipMatrix3x4);  // 180° roll to flip
+        flipMatrix.CopyFrom3x4(flipMatrix3x4);
+        quadTransform = quadTransform * flipMatrix;
+    }
+    
+    static float lastHandDebugTime = 0.0f;
+    if (gpGlobals->realtime - lastHandDebugTime > 3.0f)
+    {
+        DevMsg("VR Health Overlay: Hand tracking - Palm: (%.1f,%.1f,%.1f), Quad: (%.1f,%.1f,%.1f)\n",
+            palmPosition.x, palmPosition.y, palmPosition.z,
+            quadPosition.x, quadPosition.y, quadPosition.z);
+        lastHandDebugTime = gpGlobals->realtime;
+    }
     
     return true;
 }

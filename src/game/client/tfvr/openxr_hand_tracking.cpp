@@ -308,13 +308,6 @@ void COpenXRHandTracker::RenderDebugCubes() const
                 
                 // Use blue for left hand - SAME FORMAT AS CONTROLLERS
                 debugoverlay->AddBoxOverlay(joint.position, -boxSize, boxSize, joint.angles, 0, 0, 255, 128, 0.016f);
-                
-                // Add text label for important joints
-                if (i == XR_HAND_JOINT_PALM_EXT || i == XR_HAND_JOINT_WRIST_EXT || 
-                    i == XR_HAND_JOINT_INDEX_TIP_EXT || i == XR_HAND_JOINT_THUMB_TIP_EXT)
-                {
-                    debugoverlay->AddTextOverlay(joint.position, 0.0f, "L_%s", g_handJointNames[i]);
-                }
             }
         }
     }
@@ -331,13 +324,6 @@ void COpenXRHandTracker::RenderDebugCubes() const
                 
                 // Use red for right hand - SAME FORMAT AS CONTROLLERS
                 debugoverlay->AddBoxOverlay(joint.position, -boxSize, boxSize, joint.angles, 255, 0, 0, 128, 0.016f);
-                
-                // Add text label for important joints
-                if (i == XR_HAND_JOINT_PALM_EXT || i == XR_HAND_JOINT_WRIST_EXT || 
-                    i == XR_HAND_JOINT_INDEX_TIP_EXT || i == XR_HAND_JOINT_THUMB_TIP_EXT)
-                {
-                    debugoverlay->AddTextOverlay(joint.position, 0.0f, "R_%s", g_handJointNames[i]);
-                }
             }
         }
     }
