@@ -23,6 +23,7 @@
 #include "econ/econ_ui.h"
 #include "tf/vgui/class_loadout_panel.h"
 #include "tf/vgui/character_info_panel.h"
+#include "vr_health_overlay.h"
 
 #include <algorithm>
 
@@ -61,6 +62,7 @@ CVRMenuManager::CVRMenuManager()
     , m_szLastMapName("")
     , m_flLastClassMenuTime(0.0f)
     , m_bVRFrameStarted(false)
+    , m_pVRHealthOverlay(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -78,11 +80,37 @@ void CVRMenuManager::Initialize()
         m_nMenuHand = m_pConVarPrimaryHand->GetInt();
     }
     
+    // Initialize VR Health Overlay
+    if (!m_pVRHealthOverlay)
+    {
+        m_pVRHealthOverlay = new CVRHealthOverlay();
+        if (m_pVRHealthOverlay->Initialize())
+        {
+            g_pVRHealthOverlay = m_pVRHealthOverlay;
+            DevMsg("VR Menu Manager: Health overlay initialized\n");
+        }
+        else
+        {
+            delete m_pVRHealthOverlay;
+            m_pVRHealthOverlay = nullptr;
+            Warning("VR Menu Manager: Failed to initialize health overlay\n");
+        }
+    }
+    
     // VR Menu Manager initialized
 }
 
 void CVRMenuManager::Shutdown()
 {
+    // Shutdown VR Health Overlay
+    if (m_pVRHealthOverlay)
+    {
+        m_pVRHealthOverlay->Shutdown();
+        delete m_pVRHealthOverlay;
+        m_pVRHealthOverlay = nullptr;
+        g_pVRHealthOverlay = nullptr;
+    }
+    
     m_pVRManager = nullptr;
     m_pLocalPlayer = nullptr;
     // VR Menu Manager shutdown
@@ -130,6 +158,12 @@ void CVRMenuManager::Update()
     {
         // Save the current view origin for menu input
         m_savedPlayerViewOrigin = m_pLocalPlayer->EyePosition();
+    }
+    
+    // Update VR Health Overlay
+    if (m_pVRHealthOverlay)
+    {
+        m_pVRHealthOverlay->Update();
     }
     
     HandleMenuInput();
@@ -589,9 +623,9 @@ bool CVRMenuManager::IsMenuVisible()
 
 void CVRMenuManager::HandleMenuButtonInput()
 {
-    // Check for menu press on both hands
-    bool leftMenuPress = m_pVRManager->IsButtonPressed("left_ui_interact");
-    bool rightMenuPress = m_pVRManager->IsButtonPressed("right_ui_interact");
+    // Check for menu press on both hands using trigger threshold
+    bool leftMenuPress = m_pVRManager->IsUIInteractionPressed("left_ui_interact");
+    bool rightMenuPress = m_pVRManager->IsUIInteractionPressed("right_ui_interact");
     
     // Determine which hand is being used
     if (leftMenuPress && !m_bMenuButtonPressed)
@@ -1110,6 +1144,7 @@ void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
     // STEP 1: Calculate current playspace origin in world coordinates
     Vector currentPlayspaceOriginWorldPos = CalculateCurrentPlayspaceOriginWorldPos();
     
+    static float lastDebugTime = 0.0f;
     if (gpGlobals && gpGlobals->realtime - lastDebugTime > 0.5f) // Debug every 0.5 seconds
     {
         Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
@@ -1318,7 +1353,7 @@ void CVRMenuManager::RenderVGUIToTexture()
     if ( s_bLastUseTranslucent != bUseTranslucent )
     {
         s_bLastUseTranslucent = bUseTranslucent;
-        Msg("VR VGUI: Switching to %s rendering\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
+        DevMsg("VR VGUI: Switching to %s rendering\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
     }
 
     // Configure alpha writing and clear based on menu type
@@ -1566,7 +1601,7 @@ void CVRMenuManager::RenderMenuQuadIn3D()
     ITexture *pVGUITexture = materials->FindTexture("_rt_vgui", NULL, false);
     if (!pVGUITexture)
     {
-        Msg("VR Menu: _rt_vgui texture not found!\n");
+        DevMsg("VR Menu: _rt_vgui texture not found!\n");
         return;
     }
     
@@ -1631,14 +1666,14 @@ void CVRMenuManager::RenderMenuQuadIn3D()
     
     if ( s_debugFrameCount % 60 == 0 ) // Every second
     {
-        Msg("VR Menu Manager: MainMenu=%d, EconUI=%d, UseTranslucent=%d\n", 
+        DevMsg("VR Menu Manager: MainMenu=%d, EconUI=%d, UseTranslucent=%d\n", 
             bIsMainMenu ? 1 : 0, bIsEconUIVisible ? 1 : 0, bUseTranslucent ? 1 : 0);
     }
     
     if ( s_bLastUseTranslucent != bUseTranslucent )
     {
         s_bLastUseTranslucent = bUseTranslucent;
-        Msg("VR Menu Manager: Switching to %s material\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
+        DevMsg("VR Menu Manager: Switching to %s material\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
     }
 
     // Select the appropriate material based on menu type
@@ -1729,6 +1764,12 @@ void CVRMenuManager::RenderMenuQuadIn3D()
 
     meshBuilder.End();
     pMesh->Draw();
+    
+    // Render VR Health Overlay if enabled
+    if (m_pVRHealthOverlay)
+    {
+        m_pVRHealthOverlay->RenderHealthQuad();
+    }
 
     // Clean up 3D view
     render->PopView(NULL);

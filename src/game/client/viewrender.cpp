@@ -55,6 +55,7 @@
 #include "tfvr/vr_integration.h"
 #include "tfvr/openxr_manager.h"
 #include "tfvr/vr_laser_pointer.h"
+#include "tfvr/vr_health_overlay.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2457,6 +2458,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				// Material selection (translucent vs opaque) is now handled automatically
 				// based on whether HUD is attached to face or positioned in world space
 				g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD() );
+				
+				// Render VR health overlay
+				if (g_pVRHealthOverlay)
+				{
+					g_pVRHealthOverlay->RenderHealthQuad();
+				}
 				
 				// Render VR laser pointer on top of HUD/menus
 				if (g_pVRLaserPointer)

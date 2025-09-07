@@ -11,6 +11,7 @@
 // Forward declarations
 class C_TFPlayer;
 class COpenXRManager;
+class CVRHealthOverlay;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -111,6 +112,9 @@ private:
     
     // VR frame management
     bool m_bVRFrameStarted;
+    
+    // VR Health Overlay
+    CVRHealthOverlay* m_pVRHealthOverlay;
 };
 
 // Global instance

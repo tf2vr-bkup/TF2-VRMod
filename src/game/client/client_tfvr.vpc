@@ -987,6 +987,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_menu_manager.cpp"
 			$File   "tfvr\vr_laser_pointer.h"
 			$File   "tfvr\vr_laser_pointer.cpp"
+			$File   "tfvr\vr_health_overlay.h"
+			$File   "tfvr\vr_health_overlay.cpp"
 		}
 
 		$Folder	"game_controls"
