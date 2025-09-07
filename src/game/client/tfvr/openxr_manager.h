@@ -16,6 +16,7 @@
 class CVRLaserPointer;
 
 class COpenXRInputManager;
+class COpenXRHandTracker;
 
 class COpenXRManager : public CAutoGameSystemPerFrame
 {
@@ -99,6 +100,14 @@ public:
     // Input manager access (for debugging)
     COpenXRInputManager* GetInputManager() const { return m_inputManager; }
     
+    // Hand tracking access
+    COpenXRHandTracker* GetHandTracker() const { return m_handTracker; }
+    bool IsHandTrackingSupported() const { return m_handTrackingSupported; }
+    
+    // Coordinate conversion functions
+    VMatrix ToSourceCoordinateSystem(const XrPosef& pose) const;
+    VMatrix ToSourceCoordinateSystemFloorAligned(const XrPosef& pose) const;
+    
     // View access (for debugging)
     const XrView* GetViews() const { return m_views; }
 
@@ -165,6 +174,10 @@ private:
 
     // Input system
     COpenXRInputManager* m_inputManager;
+    
+    // Hand tracking system
+    COpenXRHandTracker* m_handTracker;
+    bool m_handTrackingSupported;
     
     // VR Menu Manager
     CVRMenuManager* m_menuManager;

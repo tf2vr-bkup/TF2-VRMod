@@ -1,6 +1,7 @@
 ﻿#include "cbase.h"
 #include "openxr_manager.h"
 #include "openxr_input.h"
+#include "openxr_hand_tracking.h"
 #include "hmdWrapper.h"
 #include "vr_rendertargets.h"
 #include "cdll_client_int.h"
@@ -186,57 +187,6 @@ namespace
 		return result;
 	}
 
-	VMatrix ToSourceCoordinateSystem(const XrPosef& pose)
-	{
-		Vector oXrPos(pose.position.x, pose.position.y, pose.position.z);
-        Quaternion oXrRot(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
-
-		return ConvertFromOpenXRQuatVector(oXrRot, oXrPos);
-	}
-
-	// New function for proper floor-aligned coordinate conversion
-	VMatrix ToSourceCoordinateSystemFloorAligned(const XrPosef& pose)
-	{
-		// OpenXR to Source coordinate conversion with automatic floor alignment:
-		// OpenXR: +X=right, +Y=up, +Z=forward
-		// Source: +X=forward, +Y=left, +Z=up
-		// 
-		// The key insight is that OpenXR's STAGE reference space should already
-		// be aligned with the physical floor. We just need to convert coordinates
-		// properly without manual offsets.
-		
-		Quaternion convertedRot(-pose.orientation.z, -pose.orientation.x, pose.orientation.y, pose.orientation.w);
-		
-		// Convert position with automatic floor alignment
-		Vector convertedPos;
-		convertedPos.x = -pose.position.z * CalculateDynamicWorldScale();  // OpenXR Z -> Source X (forward)
-		convertedPos.y = -pose.position.x * CalculateDynamicWorldScale();  // OpenXR X -> Source Y (left)
-		
-		// Convert position with automatic floor alignment
-		// The world scaling system should handle class height differences naturally
-		float rawZ = pose.position.y * CalculateDynamicWorldScale();
-		
-		// Ensure Z is never negative - the floor should always be at Z=0 or higher
-		convertedPos.z = max(0.0f, rawZ);  // OpenXR Y -> Source Z (up)
-		
-		
-		// Debug output to see what we're getting
-		static float lastDebugTime = 0.0f;
-		if (gpGlobals && gpGlobals->realtime - lastDebugTime > 1.0f) // Only print every second
-		{
-			DevMsg("OpenXR Coord Debug - Raw: (%.3f, %.3f, %.3f) -> Converted: (%.1f, %.1f, %.1f)\n", 
-				pose.position.x, pose.position.y, pose.position.z,
-				convertedPos.x, convertedPos.y, convertedPos.z);
-			lastDebugTime = gpGlobals->realtime;
-		}
-
-        matrix3x4_t matrix;
-		QuaternionMatrix(convertedRot, convertedPos, matrix);
-		
-		VMatrix result;
-        result.CopyFrom3x4(matrix);
-		return result;
-	}
 }
 
 void ShutdownOpenXRManager() 
@@ -278,6 +228,8 @@ COpenXRManager::COpenXRManager()
 {
     m_vrActive = false;
     m_inputManager = nullptr;
+    m_handTracker = nullptr;
+    m_handTrackingSupported = false;
     m_menuManager = nullptr;
     m_laserPointer = nullptr;
 }
@@ -316,6 +268,22 @@ bool COpenXRManager::Initialize()
         delete m_inputManager;
         m_inputManager = nullptr;
         return false;
+    }
+
+    // Initialize hand tracking system
+    m_handTracker = new COpenXRHandTracker(this);
+    if (m_handTracker->Initialize())
+    {
+        m_handTrackingSupported = true;
+        DevMsg("Hand tracking initialized successfully\n");
+    }
+    else
+    {
+        DevMsg("Hand tracking initialization failed - continuing without hand tracking\n");
+        delete m_handTracker;
+        m_handTracker = nullptr;
+        m_handTrackingSupported = false;
+        // Don't return false - hand tracking is optional
     }
 
     if (!dxvkInitOpenXR(m_instance, m_systemId, m_session, m_referenceSpace, m_headSpace))
@@ -371,6 +339,13 @@ void COpenXRManager::Shutdown()
         m_inputManager = nullptr;
     }
 
+    if (m_handTracker)
+    {
+        m_handTracker->Shutdown();
+        delete m_handTracker;
+        m_handTracker = nullptr;
+    }
+
     ReleaseResources();
 
     m_vrActive = false;
@@ -379,9 +354,12 @@ void COpenXRManager::Shutdown()
 
 bool COpenXRManager::CreateOpenXRInstance() 
 {
-    const char* extensions[] = { XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME };
+    const char* extensions[] = { 
+        XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME,
+        XR_EXT_HAND_TRACKING_EXTENSION_NAME
+    };
     XrInstanceCreateInfo createInfo = { XR_TYPE_INSTANCE_CREATE_INFO };
-    createInfo.enabledExtensionCount = 1;
+    createInfo.enabledExtensionCount = 2;
     createInfo.enabledExtensionNames = extensions;
     createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
     strcpy_s(createInfo.applicationInfo.applicationName, "TF2VR");
@@ -705,6 +683,14 @@ void COpenXRManager::UpdateOpenXRViewData()
         m_inputManager->PollInput();
     }
 
+    // Update hand tracking
+    if (m_handTracker)
+    {
+        m_handTracker->UpdateHandTracking();
+        // Render debug visualization
+        m_handTracker->RenderDebugCubes();
+    }
+
     uint32_t viewCount;
     dxvkGetViews(m_views, m_headLocation, viewCount);
 }
@@ -716,8 +702,8 @@ bool COpenXRManager::GetEyeViewLocations(VMatrix& leftEyePose, VMatrix& rightEye
         return false;
     }
 
-    leftEyePose = ToSourceCoordinateSystemFloorAligned(m_views[0].pose);
-    rightEyePose = ToSourceCoordinateSystemFloorAligned(m_views[1].pose);
+    leftEyePose = this->ToSourceCoordinateSystemFloorAligned(m_views[0].pose);
+    rightEyePose = this->ToSourceCoordinateSystemFloorAligned(m_views[1].pose);
     return true;
 }
 
@@ -1370,8 +1356,8 @@ CON_COMMAND(vr_debug_coord_transform, "Debug coordinate transformation issues")
         DevMsg("\nCoordinate Conversion Comparison:\n");
         if (rightAimValid)
         {
-            VMatrix oldConv = ToSourceCoordinateSystem(rawRightAim);
-            VMatrix newConv = ToSourceCoordinateSystemFloorAligned(rawRightAim);
+            VMatrix oldConv = g_pOpenXRManager->ToSourceCoordinateSystem(rawRightAim);
+            VMatrix newConv = g_pOpenXRManager->ToSourceCoordinateSystemFloorAligned(rawRightAim);
             
             Vector oldPos = oldConv.GetTranslation();
             Vector newPos = newConv.GetTranslation();
@@ -1427,8 +1413,8 @@ CON_COMMAND(vr_isolate_pose_offset, "Show step-by-step pose transformation to is
         DevMsg("  Rotation: (%.3f, %.3f, %.3f, %.3f)\n", rawRightPose.orientation.x, rawRightPose.orientation.y, rawRightPose.orientation.z, rawRightPose.orientation.w);
         
         // Test coordinate conversion
-        VMatrix oldConv = ToSourceCoordinateSystem(rawRightPose);
-        VMatrix newConv = ToSourceCoordinateSystemFloorAligned(rawRightPose);
+        VMatrix oldConv = g_pOpenXRManager->ToSourceCoordinateSystem(rawRightPose);
+        VMatrix newConv = g_pOpenXRManager->ToSourceCoordinateSystemFloorAligned(rawRightPose);
         
         Vector oldPos = oldConv.GetTranslation();
         Vector newPos = newConv.GetTranslation();
@@ -1442,7 +1428,7 @@ CON_COMMAND(vr_isolate_pose_offset, "Show step-by-step pose transformation to is
         const XrView* views = g_pOpenXRManager->GetViews();
         XrPosef headPose = views[0].pose;
         VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+            g_pOpenXRManager->ToSourceCoordinateSystemFloorAligned(headPose) : g_pOpenXRManager->ToSourceCoordinateSystem(headPose);
         VMatrix headInverse = headMatrix.InverseTR();
         
         Vector usedConvPos = tfvr_use_floor_aligned_poses.GetBool() ? newPos : oldPos;
@@ -1822,7 +1808,7 @@ VMatrix COpenXRManager::GetMideyePose() const
 	if (!IsActive())
 	    return VMatrix();
 
-    return ToSourceCoordinateSystemFloorAligned(m_headLocation.pose);
+    return this->ToSourceCoordinateSystemFloorAligned(m_headLocation.pose);
 }
 
 Vector COpenXRManager::GetRawHMDPosition() const
@@ -2019,6 +2005,12 @@ void COpenXRManager::PollInput()
     {
         m_inputManager->PollInput();
     }
+
+    // Update hand tracking
+    if (m_handTracker)
+    {
+        m_handTracker->UpdateHandTracking();
+    }
 }
 
 bool COpenXRManager::IsButtonPressed(const char* actionName)
@@ -2068,12 +2060,12 @@ bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
         
         // Create head transform matrix and get its inverse
         VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
         VMatrix headInverse = headMatrix.InverseTR();
         
         // Convert controller pose to Source coordinate system using SAME method as HMD
         VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
         // Transform controller to head-relative space, then through player's world transform
         // Use original head-relative transformation method
@@ -2168,12 +2160,12 @@ bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
         
         // Create head transform matrix and get its inverse
         VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
         VMatrix headInverse = headMatrix.InverseTR();
         
         // Convert controller pose to Source coordinate system using SAME method as HMD
         VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
         // Transform controller to head-relative space, then through player's world transform
         // Use original head-relative transformation method
@@ -2300,12 +2292,12 @@ bool COpenXRManager::GetLeftControllerGripPose(VMatrix& pose)
         
         // Create head transform matrix and get its inverse
         VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
         VMatrix headInverse = headMatrix.InverseTR();
         
         // Convert controller pose to Source coordinate system using SAME method as HMD
         VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
         // Transform controller to head-relative space, then through player's world transform
         // Use original head-relative transformation method
@@ -2358,12 +2350,12 @@ bool COpenXRManager::GetRightControllerGripPose(VMatrix& pose)
         
         // Create head transform matrix and get its inverse
         VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(headPose) : ToSourceCoordinateSystem(headPose);
+            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
         VMatrix headInverse = headMatrix.InverseTR();
         
         // Convert controller pose to Source coordinate system using SAME method as HMD
         VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
         // Transform controller to head-relative space, then through player's world transform
         // Use original head-relative transformation method
@@ -2422,6 +2414,46 @@ bool COpenXRManager::IsLeftControllerGripPoseValid()
 bool COpenXRManager::IsRightControllerGripPoseValid()
 {
     return m_inputManager ? m_inputManager->IsControllerPoseValid("right_hand_grip_pose") : false;
+}
+
+VMatrix COpenXRManager::ToSourceCoordinateSystem(const XrPosef& pose) const
+{
+    Vector oXrPos(pose.position.x, pose.position.y, pose.position.z);
+    Quaternion oXrRot(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+
+    return ConvertFromOpenXRQuatVector(oXrRot, oXrPos);
+}
+
+VMatrix COpenXRManager::ToSourceCoordinateSystemFloorAligned(const XrPosef& pose) const
+{
+    // OpenXR to Source coordinate conversion with automatic floor alignment:
+    // OpenXR: +X=right, +Y=up, +Z=forward
+    // Source: +X=forward, +Y=left, +Z=up
+    // 
+    // The key insight is that OpenXR's STAGE reference space should already
+    // be aligned with the physical floor. We just need to convert coordinates
+    // properly without manual offsets.
+    
+    Quaternion convertedRot(-pose.orientation.z, -pose.orientation.x, pose.orientation.y, pose.orientation.w);
+    
+    // Convert position with automatic floor alignment
+    Vector convertedPos;
+    convertedPos.x = -pose.position.z * CalculateDynamicWorldScale();  // OpenXR Z -> Source X (forward)
+    convertedPos.y = -pose.position.x * CalculateDynamicWorldScale();  // OpenXR X -> Source Y (left)
+    
+    // Convert position with automatic floor alignment
+    // The world scaling system should handle class height differences naturally
+    float rawZ = pose.position.y * CalculateDynamicWorldScale();
+    
+    // Ensure Z is never negative - the floor should always be at Z=0 or higher
+    convertedPos.z = max(0.0f, rawZ);  // OpenXR Y -> Source Z (up)
+    
+    matrix3x4_t matrix;
+    QuaternionMatrix(convertedRot, convertedPos, matrix);
+    
+    VMatrix result;
+    result.CopyFrom3x4(matrix);
+    return result;
 }
 
 COpenXRManager g_TFVR;
