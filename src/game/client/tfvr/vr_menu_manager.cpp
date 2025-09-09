@@ -24,6 +24,7 @@
 #include "tf/vgui/class_loadout_panel.h"
 #include "tf/vgui/character_info_panel.h"
 #include "vr_health_overlay.h"
+#include "vr_ammo_overlay.h"
 
 #include <algorithm>
 
@@ -63,6 +64,7 @@ CVRMenuManager::CVRMenuManager()
     , m_flLastClassMenuTime(0.0f)
     , m_bVRFrameStarted(false)
     , m_pVRHealthOverlay(nullptr)
+    , m_pVRAmmoOverlay(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -97,6 +99,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Ammo Overlay
+    if (!m_pVRAmmoOverlay)
+    {
+        m_pVRAmmoOverlay = new CVRAmmoOverlay();
+        if (m_pVRAmmoOverlay->Initialize())
+        {
+            g_pVRAmmoOverlay = m_pVRAmmoOverlay;
+            DevMsg("VR Menu Manager: Ammo overlay initialized\n");
+        }
+        else
+        {
+            delete m_pVRAmmoOverlay;
+            m_pVRAmmoOverlay = nullptr;
+            Warning("VR Menu Manager: Failed to initialize ammo overlay\n");
+        }
+    }
+    
     // VR Menu Manager initialized
 }
 
@@ -109,6 +128,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRHealthOverlay;
         m_pVRHealthOverlay = nullptr;
         g_pVRHealthOverlay = nullptr;
+    }
+    
+    // Shutdown VR Ammo Overlay
+    if (m_pVRAmmoOverlay)
+    {
+        m_pVRAmmoOverlay->Shutdown();
+        delete m_pVRAmmoOverlay;
+        m_pVRAmmoOverlay = nullptr;
+        g_pVRAmmoOverlay = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -166,6 +194,12 @@ void CVRMenuManager::Update()
     if (m_pVRHealthOverlay)
     {
         m_pVRHealthOverlay->Update();
+    }
+    
+    // Update VR Ammo Overlay
+    if (m_pVRAmmoOverlay)
+    {
+        m_pVRAmmoOverlay->Update();
     }
     
     HandleMenuInput();

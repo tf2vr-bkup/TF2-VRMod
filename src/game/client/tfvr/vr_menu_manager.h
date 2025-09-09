@@ -12,6 +12,7 @@
 class C_TFPlayer;
 class COpenXRManager;
 class CVRHealthOverlay;
+class CVRAmmoOverlay;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -115,6 +116,9 @@ private:
     
     // VR Health Overlay
     CVRHealthOverlay* m_pVRHealthOverlay;
+    
+    // VR Ammo Overlay
+    CVRAmmoOverlay* m_pVRAmmoOverlay;
 };
 
 // Global instance
