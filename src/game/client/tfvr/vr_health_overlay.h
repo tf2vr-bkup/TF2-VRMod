@@ -17,7 +17,7 @@
 class IMaterial;
 class ITexture;
 class C_TFPlayer;
-class CTFHudPlayerHealth;
+class CTFHudPlayerStatus;
 
 //-----------------------------------------------------------------------------
 // Purpose: Manages rendering of health bar as a 3D quad attached to player's hand
@@ -71,7 +71,7 @@ private:
     // Rendering resources
     ITexture*   m_pHealthTexture;       // Render target for health display
     IMaterial*  m_pHealthMaterial;      // Material for rendering the quad
-    CTFHudPlayerHealth* m_pPlayerStatusPanel; // TF2's health widget (cross + numbers)
+    CTFHudPlayerStatus* m_pPlayerStatusPanel; // TF2's full player status widget (health + class icon)
     
     // State tracking
     bool        m_bInitialized;

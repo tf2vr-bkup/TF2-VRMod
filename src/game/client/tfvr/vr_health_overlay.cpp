@@ -33,6 +33,12 @@ ConVar tfvr_health_overlay_offset_x("tfvr_health_overlay_offset_x", "0", FCVAR_A
 ConVar tfvr_health_overlay_offset_y("tfvr_health_overlay_offset_y", "10", FCVAR_ARCHIVE, "Y offset from hand position (up)");
 ConVar tfvr_health_overlay_offset_z("tfvr_health_overlay_offset_z", "5", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
 ConVar tfvr_health_overlay_scale("tfvr_health_overlay_scale", "1.0", FCVAR_ARCHIVE, "Scale of health overlay");
+ConVar tfvr_health_overlay_panel_x("tfvr_health_overlay_panel_x", "100", FCVAR_ARCHIVE, "Panel X position within capture area");
+ConVar tfvr_health_overlay_panel_y("tfvr_health_overlay_panel_y", "100", FCVAR_ARCHIVE, "Panel Y position within capture area");
+ConVar tfvr_health_overlay_debug_bg("tfvr_health_overlay_debug_bg", "0", FCVAR_ARCHIVE, "Show debug background to see quad boundaries");
+ConVar tfvr_health_overlay_simple_transform("tfvr_health_overlay_simple_transform", "0", FCVAR_ARCHIVE, "Use simple identity transform for debugging");
+ConVar tfvr_health_overlay_no_rotation("tfvr_health_overlay_no_rotation", "0", FCVAR_ARCHIVE, "Skip final 180-degree rotation for debugging");
+ConVar tfvr_health_overlay_world_width("tfvr_health_overlay_world_width", "0", FCVAR_ARCHIVE, "Override world width (0=auto)");
 
 // Global instance
 CVRHealthOverlay* g_pVRHealthOverlay = nullptr;
@@ -58,8 +64,6 @@ CVRHealthOverlay::CVRHealthOverlay()
         tfvr_health_overlay_offset_z.GetFloat()
     );
     m_angQuadRotation.Init(0, 0, 0);
-    
-    DevMsg("VR Health Overlay: Constructor completed\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -68,7 +72,6 @@ CVRHealthOverlay::CVRHealthOverlay()
 CVRHealthOverlay::~CVRHealthOverlay()
 {
     Shutdown();
-    DevMsg("VR Health Overlay: Destructor completed\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -79,16 +82,14 @@ bool CVRHealthOverlay::Initialize()
     if (m_bInitialized)
         return true;
         
-    DevMsg("VR Health Overlay: Initializing...\n");
     
-    // Create the simpler CTFHudPlayerHealth widget that we know works
-    m_pPlayerStatusPanel = new CTFHudPlayerHealth(nullptr, "VRPlayerHealth");
+    // Create the full CTFHudPlayerStatus widget (includes health + class icon)
+    m_pPlayerStatusPanel = new CTFHudPlayerStatus("VRPlayerStatus");
     if (!m_pPlayerStatusPanel)
     {
-        DevMsg("VR Health Overlay: Failed to create player health panel\n");
         return false;
     }
-    
+
     // Set up the panel with safe initialization
     try 
     {
@@ -106,12 +107,9 @@ bool CVRHealthOverlay::Initialize()
         // Force a layout update to position child elements properly
         m_pPlayerStatusPanel->PerformLayout();
         m_pPlayerStatusPanel->InvalidateLayout(true);
-        
-        DevMsg("VR Health Overlay: Player health panel created and configured safely\n");
     }
     catch (...)
     {
-        DevMsg("VR Health Overlay: Exception during panel setup, cleaning up\n");
         delete m_pPlayerStatusPanel;
         m_pPlayerStatusPanel = nullptr;
         return false;
@@ -121,7 +119,6 @@ bool CVRHealthOverlay::Initialize()
     m_nAttachedHand = tfvr_health_overlay_hand.GetInt();
     
     m_bInitialized = true;
-    DevMsg("VR Health Overlay: Initialization completed successfully\n");
     return true;
 }
 
@@ -132,8 +129,6 @@ void CVRHealthOverlay::Shutdown()
 {
     if (!m_bInitialized)
         return;
-        
-    DevMsg("VR Health Overlay: Shutting down...\n");
     
     if (m_pPlayerStatusPanel)
     {
@@ -142,7 +137,6 @@ void CVRHealthOverlay::Shutdown()
     }
     
     m_bInitialized = false;
-    DevMsg("VR Health Overlay: Shutdown completed\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -150,17 +144,6 @@ void CVRHealthOverlay::Shutdown()
 //-----------------------------------------------------------------------------
 void CVRHealthOverlay::Update()
 {
-    static float lastUpdateDebugTime = 0.0f;
-    float currentTime = gpGlobals->realtime;
-    
-    if (currentTime - lastUpdateDebugTime > 10.0f)
-    {
-        DevMsg("VR Health Overlay: Update called - Initialized: %s, ConVar enabled: %s\n", 
-            m_bInitialized ? "true" : "false",
-            tfvr_health_overlay_enabled.GetBool() ? "true" : "false");
-        lastUpdateDebugTime = currentTime;
-    }
-    
     if (!m_bInitialized)
         return;
         
@@ -183,17 +166,7 @@ void CVRHealthOverlay::Update()
 //-----------------------------------------------------------------------------
 void CVRHealthOverlay::RenderHealthQuad()
 {
-    // Debug output every 5 seconds
-    static float lastRenderDebugTime = 0.0f;
-    float currentTime = gpGlobals->realtime;
-    if (currentTime - lastRenderDebugTime > 5.0f)
-    {
-        DevMsg("VR Health Overlay: RenderHealthQuad called - Init: %s, Enabled: %s, Panel: %s\n", 
-            m_bInitialized ? "true" : "false",
-            m_bEnabled ? "true" : "false",
-            m_pPlayerStatusPanel ? "valid" : "null");
-        lastRenderDebugTime = currentTime;
-    }
+    VPROF("VR_HealthOverlay_Render");
     
     if (!m_bInitialized || !m_bEnabled || !m_pPlayerStatusPanel)
         return;
@@ -202,17 +175,6 @@ void CVRHealthOverlay::RenderHealthQuad()
     C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
     if (!pPlayer || pPlayer->IsObserver() || !pPlayer->IsAlive())
     {
-        static float lastPlayerDebugTime = 0.0f;
-        if (currentTime - lastPlayerDebugTime > 5.0f)
-        {
-            if (!pPlayer)
-                DevMsg("VR Health Overlay: No local player, skipping render\n");
-            else if (pPlayer->IsObserver())
-                DevMsg("VR Health Overlay: Player is observer, skipping render\n");
-            else if (!pPlayer->IsAlive())
-                DevMsg("VR Health Overlay: Player is dead, skipping render\n");
-            lastPlayerDebugTime = currentTime;
-        }
         return;
     }
     
@@ -221,58 +183,96 @@ void CVRHealthOverlay::RenderHealthQuad()
     int maxHealth = pPlayer->GetMaxHealth();
     if (health <= 0 || maxHealth <= 0)
     {
-        static float lastHealthDebugTime = 0.0f;
-        if (currentTime - lastHealthDebugTime > 5.0f)
-        {
-            DevMsg("VR Health Overlay: Invalid health values (%d/%d), skipping render\n", health, maxHealth);
-            lastHealthDebugTime = currentTime;
-        }
         return;
     }
         
     // Calculate panel-to-world transform based on hand position
     VMatrix panelToWorld;
-    if (!CalculateQuadTransform(panelToWorld))
+    
+    if (tfvr_health_overlay_simple_transform.GetBool())
     {
-        if (currentTime - lastRenderDebugTime > 4.0f)
+        // Simple identity transform for debugging - just put it in front of player
+        panelToWorld.Identity();
+        C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+        if (pPlayer)
         {
-            DevMsg("VR Health Overlay: CalculateQuadTransform failed\n");
+            Vector playerPos = pPlayer->EyePosition();
+            playerPos += Vector(100, 0, 0); // 100 units in front
+            panelToWorld.SetTranslation(playerPos);
         }
+    }
+    else if (!CalculateQuadTransform(panelToWorld))
+    {
         return;
     }
     
-    // Use the exact size that was working before
-    int panelWidth = 400;   // Size that was showing the health widget
-    int panelHeight = 400;  // Square aspect ratio
+    // Square aspect ratio capture area for testing
+    int panelWidth = 1024;   // Square format
+    int panelHeight = 1024;  // Square format
     
-    // World size that was working
+    // Square world size to match square capture area
     float scale = tfvr_health_overlay_scale.GetFloat();
-    float worldWidth = 0.6f * scale;   // 60cm wide like before
-    float worldHeight = 0.6f * scale;  // 60cm tall like before
+    float worldWidth = 0.6f * scale;   // 60cm square
+    float worldHeight = 0.6f * scale;  // 60cm square
+    
+    
+    // Allow manual override of world width for debugging
+    if (tfvr_health_overlay_world_width.GetFloat() > 0)
+    {
+        worldWidth = tfvr_health_overlay_world_width.GetFloat();
+    }
     
     // Make sure the panel is visible and positioned
     m_pPlayerStatusPanel->SetVisible(true);
-    m_pPlayerStatusPanel->SetPos(0, 0);
+    
+    // Position the widget within the larger capture area using ConVars
+    int posX = tfvr_health_overlay_panel_x.GetInt();
+    int posY = tfvr_health_overlay_panel_y.GetInt();
+    m_pPlayerStatusPanel->SetPos(posX, posY);
+    
+    // Give it a reasonable size - the panel needs SOME size to render into
     m_pPlayerStatusPanel->SetSize(panelWidth, panelHeight);
+    
+    // Force the panel to recalculate its layout
     m_pPlayerStatusPanel->InvalidateLayout(true);
+    
+    // Healing numbers should be handled by the main HUD system
+    
+    // Debug: Print panel info
+    int w, h;
+    m_pPlayerStatusPanel->GetSize(w, h);
     
     // Update the health panel with current values (we already validated health values above)
     if (m_pPlayerStatusPanel)
     {
-        // Update health using the proper CTFHudPlayerHealth method
-        m_pPlayerStatusPanel->SetHealth(health, maxHealth, maxHealth);
+        // The CTFHudPlayerStatus widget automatically updates via the HUD system
+        // No manual health setting needed
+        
+        // Debug: Check if the widget is valid and has content
+        if (m_pPlayerStatusPanel->IsVisible())
+        {
+        }
+        else
+        {
+            m_pPlayerStatusPanel->SetVisible(true);
+        }
         
         // Make sure the panel is ready for 3D rendering
         m_pPlayerStatusPanel->SetVisible(true);
         m_pPlayerStatusPanel->InvalidateLayout(true);
-        
-        // Debug player health occasionally
-        static float lastHealthDebugTime = 0.0f;
-        if (currentTime - lastHealthDebugTime > 3.0f)
-        {
-            DevMsg("VR Health Overlay: Rendering health widget - Health: %d/%d\n", health, maxHealth);
-            lastHealthDebugTime = currentTime;
-        }
+    }
+    
+    // Optional debug background to see quad boundaries
+    if (tfvr_health_overlay_debug_bg.GetBool())
+    {
+        // Set the panel background to a solid color so we can see the quad boundaries
+        m_pPlayerStatusPanel->SetBgColor(Color(0, 255, 0, 128)); // Semi-transparent green
+        m_pPlayerStatusPanel->SetPaintBackgroundEnabled(true);
+    }
+    else
+    {
+        // Normal transparent background
+        m_pPlayerStatusPanel->SetPaintBackgroundEnabled(false);
     }
     
     // Use DrawPanelIn3DSpace to render the panel directly in world space
@@ -284,13 +284,6 @@ void CVRHealthOverlay::RenderHealthQuad()
         worldWidth,                   // World width (meters)
         worldHeight                   // World height (meters)
     );
-    
-    if (currentTime - lastRenderDebugTime > 3.0f)
-    {
-        Vector panelPos = panelToWorld.GetTranslation();
-        DevMsg("VR Health Overlay: Drew player status panel - Size: %dx%d pixels, World: %.2fx%.2f, Pos: (%.1f,%.1f,%.1f)\n", 
-            panelWidth, panelHeight, worldWidth, worldHeight, panelPos.x, panelPos.y, panelPos.z);
-    }
 }
 
 //-----------------------------------------------------------------------------
@@ -315,12 +308,6 @@ bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
     // Use controller grip pose (legacy mode)
     if (!g_pOpenXRManager)
     {
-        static float lastDebugTime = 0.0f;
-        if (gpGlobals->realtime - lastDebugTime > 5.0f)
-        {
-            DevMsg("VR Health Overlay: OpenXR manager not available\n");
-            lastDebugTime = gpGlobals->realtime;
-        }
         return false;
     }
         
@@ -345,12 +332,6 @@ bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
     
     if (!handValid)
     {
-        static float lastHandDebugTime = 0.0f;
-        if (gpGlobals->realtime - lastHandDebugTime > 5.0f)
-        {
-            DevMsg("VR Health Overlay: Hand %d pose not valid - using fallback position\n", m_nAttachedHand);
-            lastHandDebugTime = gpGlobals->realtime;
-        }
         return false;
     }
     
@@ -429,24 +410,12 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
 {
     if (!g_pOpenXRManager)
     {
-        static float lastDebugTime = 0.0f;
-        if (gpGlobals->realtime - lastDebugTime > 5.0f)
-        {
-            DevMsg("VR Health Overlay: OpenXR manager not available for hand tracking\n");
-            lastDebugTime = gpGlobals->realtime;
-        }
         return false;
     }
     
     COpenXRHandTracker* handTracker = g_pOpenXRManager->GetHandTracker();
     if (!handTracker)
     {
-        static float lastTrackerDebugTime = 0.0f;
-        if (gpGlobals->realtime - lastTrackerDebugTime > 5.0f)
-        {
-            DevMsg("VR Health Overlay: Hand tracker not available\n");
-            lastTrackerDebugTime = gpGlobals->realtime;
-        }
         return false;
     }
     
@@ -459,12 +428,6 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     bool handTracked = leftHand ? handTracker->IsLeftHandTracked() : handTracker->IsRightHandTracked();
     if (!handTracked)
     {
-        static float lastHandTrackedDebugTime = 0.0f;
-        if (gpGlobals->realtime - lastHandTrackedDebugTime > 5.0f)
-        {
-            DevMsg("VR Health Overlay: %s hand not tracked\n", leftHand ? "Left" : "Right");
-            lastHandTrackedDebugTime = gpGlobals->realtime;
-        }
         return false;
     }
     
@@ -472,12 +435,6 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     bool palmValid = handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_PALM_EXT, palmPosition, palmAngles);
     if (!palmValid)
     {
-        static float lastPalmDebugTime = 0.0f;
-        if (gpGlobals->realtime - lastPalmDebugTime > 5.0f)
-        {
-            DevMsg("VR Health Overlay: Palm joint not valid for %s hand\n", leftHand ? "left" : "right");
-            lastPalmDebugTime = gpGlobals->realtime;
-        }
         return false;
     }
     
@@ -534,25 +491,11 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     quadTransform.SetTranslation(quadPosition);
     
     // Set orientation to face upward from the back of the hand
-    // The widget should lie flat on the back of the hand, facing upward
+    // Keep it simple - use the palm orientation directly
     
-    // For a flat widget on the back of the hand:
-    // - The widget's "up" should align with the hand's "up" (away from palm)
-    // - The widget's "forward" should point toward the fingers
-    // - The widget's "right" should align with the hand's right
-    
-    // Create a matrix where the widget lies flat on the back of the hand
+    // Create a matrix from the palm angles (this was working before)
     matrix3x4_t handMatrix;
-    AngleMatrix(QAngle(0,0,0), Vector(0,0,0), handMatrix);  // Initialize
-    
-    // Set the basis vectors for a flat widget:
-    // X-axis (forward): toward fingers
-    // Y-axis (left): opposite of hand right  
-    // Z-axis (up): away from palm (same as hand up)
-    handMatrix[0][0] = handForward.x; handMatrix[0][1] = handRight.x; handMatrix[0][2] = handUp.x;
-    handMatrix[1][0] = handForward.y; handMatrix[1][1] = handRight.y; handMatrix[1][2] = handUp.y;
-    handMatrix[2][0] = handForward.z; handMatrix[2][1] = handRight.z; handMatrix[2][2] = handUp.z;
-    handMatrix[0][3] = 0; handMatrix[1][3] = 0; handMatrix[2][3] = 0;
+    AngleMatrix(palmAngles, Vector(0,0,0), handMatrix);
     
     VMatrix handVMatrix;
     handVMatrix.CopyFrom3x4(handMatrix);
@@ -571,7 +514,7 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
         rotationMatrix.CopyFrom3x4(rotMatrix);
         quadTransform = quadTransform * rotationMatrix;
     }
-    else
+    else if (!tfvr_health_overlay_no_rotation.GetBool())
     {
         // Default: flip the widget 180° so it faces the correct direction
         VMatrix flipMatrix;
@@ -580,15 +523,6 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
         flipMatrix.CopyFrom3x4(flipMatrix3x4);
         quadTransform = quadTransform * flipMatrix;
     }
-    
-    static float lastHandDebugTime = 0.0f;
-    if (gpGlobals->realtime - lastHandDebugTime > 3.0f)
-    {
-        DevMsg("VR Health Overlay: Hand tracking - Palm: (%.1f,%.1f,%.1f), Quad: (%.1f,%.1f,%.1f)\n",
-            palmPosition.x, palmPosition.y, palmPosition.z,
-            quadPosition.x, quadPosition.y, quadPosition.z);
-        lastHandDebugTime = gpGlobals->realtime;
-    }
-    
+     
     return true;
 }

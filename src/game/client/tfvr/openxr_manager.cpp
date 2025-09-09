@@ -573,11 +573,13 @@ void COpenXRManager::ReleaseResources()
 
 bool COpenXRManager::BeginFrame()
 {
+    VPROF("OpenXRManager::BeginFrame");
     return dxvkBeginFrame();
 }
 
 bool COpenXRManager::EndFrame()
 {
+    VPROF("OpenXRManager::EndFrame");
     return dxvkEndFrame();
 }
 
@@ -672,6 +674,8 @@ void COpenXRManager::GetSpectatorScreenDims(uint32_t &width, uint32_t &height)
 
 void COpenXRManager::UpdateOpenXRViewData()
 {
+    VPROF("OpenXRManager::UpdateViewData");
+    
     if (!m_vrActive || !m_session)
     {
         return;
@@ -697,6 +701,8 @@ void COpenXRManager::UpdateOpenXRViewData()
 
 bool COpenXRManager::GetEyeViewLocations(VMatrix& leftEyePose, VMatrix& rightEyePose)
 {
+    VPROF("OpenXRManager::GetEyeViewLocations");
+    
     if (!m_vrActive || !m_session)
     {
         return false;
@@ -2001,6 +2007,8 @@ char* backBufferNamePerIndex(int i)
 
 void COpenXRManager::PollInput()
 {
+    VPROF("OpenXRManager::PollInput");
+    
     if (m_inputManager)
     {
         m_inputManager->PollInput();

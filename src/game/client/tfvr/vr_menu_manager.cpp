@@ -118,6 +118,8 @@ void CVRMenuManager::Shutdown()
 
 void CVRMenuManager::Update()
 {
+    VPROF("CVRMenuManager::Update");
+    
     if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
         return;
 
@@ -1281,6 +1283,8 @@ void CVRMenuManager::RenderLoadingScreenMode()
 //-----------------------------------------------------------------------------
 void CVRMenuManager::RenderVGUIToTexture()
 {
+    VPROF("VR_MenuManager_RenderVGUI");
+    
     // Find the VGUI render texture
     ITexture *pTexture = materials->FindTexture("_rt_vgui", NULL, false);
     if (!pTexture)
@@ -1403,10 +1407,8 @@ void CVRMenuManager::RenderVGUIToTexture()
 //-----------------------------------------------------------------------------
 void CVRMenuManager::CopyVGUIDirectlyToVR()
 {
-    // Render every frame for responsive loading screen
-    // Removed frame skipping to ensure loading screen appears immediately
-        
-    // Step 1: Render the actual TF2 menu to the VGUI texture
+    VPROF("VR_MenuManager_CopyToVR");
+     // Step 1: Render the actual TF2 menu to the VGUI texture
     RenderVGUIToTexture();
     
     // Step 2: Get both textures

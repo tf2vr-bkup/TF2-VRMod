@@ -1268,6 +1268,8 @@ void CClientVirtualReality::ClearCustomHUDBounds()
 // --------------------------------------------------------------------
 void CClientVirtualReality::RenderHUDQuad( bool bBlackout )
 {
+	VPROF("VR_ClientVR_RenderHUDQuad");
+	
 	// Debug: Check if this function is being called
 	static int s_callCount = 0;
 	s_callCount++;

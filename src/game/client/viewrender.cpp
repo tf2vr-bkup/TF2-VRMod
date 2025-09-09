@@ -2457,7 +2457,42 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 
 				// Material selection (translucent vs opaque) is now handled automatically
 				// based on whether HUD is attached to face or positioned in world space
-				g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD() );
+				// ConVar to control VR HUD quad rendering behavior (doesn't affect 2D screen HUD)
+				static ConVar tfvr_hud_only_in_menus("tfvr_hud_only_in_menus", "0", FCVAR_ARCHIVE, "Only render main VR HUD quad when in menus (0=always, 1=menus only). 2D screen HUD always renders.");
+				static ConVar tfvr_disable_hud("tfvr_disable_hud", "0", FCVAR_ARCHIVE, "Completely disable VR HUD rendering for performance testing (0=enabled, 1=disabled)");
+				
+				bool bShouldRenderVRQuad = true;
+				
+				// Performance testing: Completely disable HUD if requested
+				if (tfvr_disable_hud.GetBool())
+				{
+					bShouldRenderVRQuad = false;
+				}
+				else if (tfvr_hud_only_in_menus.GetBool())
+				{
+					// Menu-only mode: check if we're actually in a menu
+					extern class CVRMenuManager* g_pVRMenuManager;
+					if (g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible())
+					{
+						// Menu is open - render the VR HUD quad for menu interaction
+						bShouldRenderVRQuad = true;
+					}
+					else
+					{
+						// In gameplay - skip VR HUD quad, use hand health overlay instead
+						bShouldRenderVRQuad = false;
+					}
+				}
+				else
+				{
+					// Always render mode (default behavior)
+					bShouldRenderVRQuad = true;
+				}
+				
+				if (bShouldRenderVRQuad)
+				{
+					g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD() );
+				}
 				
 				// Render VR health overlay
 				if (g_pVRHealthOverlay)
