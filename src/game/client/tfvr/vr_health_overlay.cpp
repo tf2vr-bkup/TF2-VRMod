@@ -39,6 +39,8 @@ ConVar tfvr_health_overlay_debug_bg("tfvr_health_overlay_debug_bg", "0", FCVAR_A
 ConVar tfvr_health_overlay_simple_transform("tfvr_health_overlay_simple_transform", "0", FCVAR_ARCHIVE, "Use simple identity transform for debugging");
 ConVar tfvr_health_overlay_no_rotation("tfvr_health_overlay_no_rotation", "0", FCVAR_ARCHIVE, "Skip final 180-degree rotation for debugging");
 ConVar tfvr_health_overlay_world_width("tfvr_health_overlay_world_width", "0", FCVAR_ARCHIVE, "Override world width (0=auto)");
+ConVar tfvr_health_overlay_panel_width("tfvr_health_overlay_panel_width", "1024", FCVAR_ARCHIVE, "Panel capture width in pixels");
+ConVar tfvr_health_overlay_panel_height("tfvr_health_overlay_panel_height", "1024", FCVAR_ARCHIVE, "Panel capture height in pixels");
 
 // Global instance
 CVRHealthOverlay* g_pVRHealthOverlay = nullptr;
@@ -206,14 +208,15 @@ void CVRHealthOverlay::RenderHealthQuad()
         return;
     }
     
-    // Square aspect ratio capture area for testing
-    int panelWidth = 1024;   // Square format
-    int panelHeight = 1024;  // Square format
+    // Panel capture area dimensions from ConVars
+    int panelWidth = tfvr_health_overlay_panel_width.GetInt();
+    int panelHeight = tfvr_health_overlay_panel_height.GetInt();
     
-    // Square world size to match square capture area
+    // Calculate world size to match panel aspect ratio
     float scale = tfvr_health_overlay_scale.GetFloat();
-    float worldWidth = 0.6f * scale;   // 60cm square
-    float worldHeight = 0.6f * scale;  // 60cm square
+    float aspectRatio = (float)panelWidth / (float)panelHeight;
+    float worldWidth = scale * aspectRatio;
+    float worldHeight = scale;
     
     
     // Allow manual override of world width for debugging

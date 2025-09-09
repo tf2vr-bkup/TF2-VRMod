@@ -2458,7 +2458,7 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				// Material selection (translucent vs opaque) is now handled automatically
 				// based on whether HUD is attached to face or positioned in world space
 				// ConVar to control VR HUD quad rendering behavior (doesn't affect 2D screen HUD)
-				static ConVar tfvr_hud_only_in_menus("tfvr_hud_only_in_menus", "0", FCVAR_ARCHIVE, "Only render main VR HUD quad when in menus (0=always, 1=menus only). 2D screen HUD always renders.");
+				static ConVar tfvr_hud_only_in_menus("tfvr_hud_only_in_menus", "1", FCVAR_ARCHIVE, "Only render main VR HUD quad when in menus (0=always, 1=menus only). 2D screen HUD always renders.");
 				static ConVar tfvr_disable_hud("tfvr_disable_hud", "0", FCVAR_ARCHIVE, "Completely disable VR HUD rendering for performance testing (0=enabled, 1=disabled)");
 				
 				bool bShouldRenderVRQuad = true;
