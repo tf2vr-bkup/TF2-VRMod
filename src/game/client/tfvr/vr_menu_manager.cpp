@@ -337,17 +337,6 @@ void CVRMenuManager::HandleMenuInput()
 {
     bool menuVisible = IsMenuVisible();
     
-    // TF2VR: Debug menu input during compositor mode
-    static float lastDebugTime = 0;
-    static int callCount = 0;
-    callCount++;
-    if (dxvkIsCompositorActive() && gpGlobals->curtime - lastDebugTime > 3.0f)
-    {
-        DevMsg("VR Menu Input: HandleMenuInput() #%d - MenuVisible=%d (compositor mode)\n", 
-               callCount, menuVisible);
-        lastDebugTime = gpGlobals->curtime;
-    }
-    
     // Check for class menu button press (left A button)
     static bool bLastClassMenuButtonState = false;
     bool bCurrentClassMenuButtonState = m_pVRManager && m_pVRManager->IsButtonPressed("left_class_menu");
@@ -805,14 +794,6 @@ void CVRMenuManager::UpdateCursorPosition()
     // TF2VR: Allow cursor positioning without a local player (main menu case)
     if (!m_bMenuPositionFixed)
     {
-        // TF2VR: Debug cursor positioning during compositor mode
-        static float lastDebugTime = 0;
-        if (dxvkIsCompositorActive() && gpGlobals->curtime - lastDebugTime > 2.0f)
-        {
-            DevMsg("VR Cursor: Not updating - MenuFixed=%d (no player: %p)\n", 
-                   m_bMenuPositionFixed, m_pLocalPlayer);
-            lastDebugTime = gpGlobals->curtime;
-        }
         return;
     }
     
@@ -899,16 +880,20 @@ void CVRMenuManager::UpdateCursorPosition()
             static Vector lastHeadPos = currentHeadPos;
             float headMovementDistance = (currentHeadPos - lastHeadPos).Length();
             
+            // Use reduced threshold for compositor mode for more responsive cursor
+            float currentHeadThreshold = dxvkIsCompositorActive() ? 
+                (tfvr_cursor_head_threshold.GetFloat() * 0.1f) : tfvr_cursor_head_threshold.GetFloat();
+            
             // If head movement is too small, don't update cursor (preserve mouse input)
-            if (headMovementDistance < tfvr_cursor_head_threshold.GetFloat())
+            if (headMovementDistance < currentHeadThreshold)
             {
                 if (tfvr_cursor_debug.GetBool())
                 {
                     static float lastDebugTime = 0;
                     if (gpGlobals->curtime - lastDebugTime > 1.0f)
                     {
-                        DevMsg("VR Cursor: Head movement too small (%.2f < %.2f), preserving mouse input\n", 
-                               headMovementDistance, tfvr_cursor_head_threshold.GetFloat());
+                        DevMsg("VR Cursor: Head movement too small (%.2f < %.2f), preserving mouse input [%s mode]\n", 
+                               headMovementDistance, currentHeadThreshold, dxvkIsCompositorActive() ? "compositor" : "game");
                         lastDebugTime = gpGlobals->curtime;
                     }
                 }
@@ -917,7 +902,6 @@ void CVRMenuManager::UpdateCursorPosition()
             
             lastHeadPos = currentHeadPos;
         }
-        // For main menu (no player), continue without movement threshold checks
     }
 
     // Use the fixed menu position and rotation for cursor calculations
@@ -932,17 +916,6 @@ void CVRMenuManager::UpdateCursorPosition()
     // Update cursor if position changed
     if ((px != m_nOldCursorX) || (py != m_nOldCursorY))
     {
-        // TF2VR: Debug cursor updates during compositor mode
-        static float lastDebugTime = 0;
-        static int updateCount = 0;
-        updateCount++;
-        if (dxvkIsCompositorActive() && gpGlobals->curtime - lastDebugTime > 2.0f)
-        {
-            DevMsg("VR Cursor: UPDATE #%d - pos=(%d,%d) (compositor mode)\n", 
-                   updateCount, px, py);
-            lastDebugTime = gpGlobals->curtime;
-        }
-        
         // For ViewPort menus, we need to use surface cursor functions
         if (vgui::surface())
         {
