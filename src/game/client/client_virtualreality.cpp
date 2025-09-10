@@ -16,6 +16,7 @@
 #include "vgui_controls/Controls.h"
 #include "sourcevr/isourcevirtualreality.h"
 #include "ienginevgui.h"
+#include "tfvr/hmdWrapper.h"
 #include "cdll_client_int.h"
 #include "vgui/IVGui.h"
 #include "vgui_controls/Controls.h"
@@ -24,11 +25,16 @@
 #include "steam/steam_api.h"
 #include <tfvr/openxr_manager.h>
 #include "tf/c_tf_player.h"
+#include "engine/ivdebugoverlay.h"
 #include "econ/econ_ui.h"
 #include "tf/vgui/class_loadout_panel.h"
 #include "tf/vgui/character_info_panel.h"
+#include "tfvr/vr_menu_manager.h"
 
 const char *COM_GetModDirectory(); // return the mod dir (rather than the complete -game param, which can be a path)
+
+// External debug overlay interface for drawing debug visualizations
+extern IVDebugOverlay *debugoverlay;
 
 CClientVirtualReality g_ClientVirtualReality;
 EXPOSE_SINGLE_INTERFACE_GLOBALVAR( CClientVirtualReality, IClientVirtualReality, 
@@ -40,6 +46,8 @@ EXPOSE_SINGLE_INTERFACE_GLOBALVAR( CClientVirtualReality, IClientVirtualReality,
 // --------------------------------------------------------------------
 ConVar vr_activate_default( "vr_activate_default",		"1", FCVAR_ARCHIVE, "If this is true the game will switch to VR mode once startup is complete." );
 
+// Debug visualization ConVars
+ConVar tfvr_debug_playspace_origin( "tfvr_debug_playspace_origin", "0", FCVAR_NONE, "Draw a debug cube at the calculated playspace origin in world coordinates" );
 
 ConVar vr_moveaim_mode      ( "vr_moveaim_mode",      "3", FCVAR_ARCHIVE, "0=move+shoot from face. 1=move with torso. 2,3,4=shoot with face+mouse cursor. 5+ are probably not that useful." );
 ConVar vr_moveaim_mode_zoom ( "vr_moveaim_mode_zoom", "3", FCVAR_ARCHIVE, "0=move+shoot from face. 1=move with torso. 2,3,4=shoot with face+mouse cursor. 5+ are probably not that useful." );
@@ -1244,6 +1252,15 @@ void CClientVirtualReality::GetHUDBounds( Vector *pViewer, Vector *pUL, Vector *
 	*pUR = vHUDOrigin + vHalfWidth + vHalfHeight;
 	*pLL = vHUDOrigin - vHalfWidth - vHalfHeight;
 	*pLR = vHUDOrigin + vHalfWidth - vHalfHeight;
+	
+	// Only capture HUD position during gameplay (when compositor is NOT active)
+	// This preserves the last known gameplay position for seamless transitions
+	extern bool dxvkIsCompositorActive();
+	if ( !dxvkIsCompositorActive() )
+	{
+		// Notify compositor about dynamic HUD position (for gameplay)
+		NotifyCompositorHUDPosition( *pViewer, *pUL, *pUR, *pLL, *pLR, false );
+	}
 }
 
 // --------------------------------------------------------------------
@@ -1258,9 +1275,268 @@ void CClientVirtualReality::SetCustomHUDBounds( const Vector& viewer, const Vect
 }
 
 // --------------------------------------------------------------------
+bool CClientVirtualReality::GetCustomHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR )
+{
+	if ( !m_bCustomHUDBoundsSet )
+		return false;
+		
+	if ( pViewer )
+		*pViewer = m_CustomHUDViewer;
+	if ( pUL )
+		*pUL = m_CustomHUDUL;
+	if ( pUR )
+		*pUR = m_CustomHUDUR;
+	if ( pLL )
+		*pLL = m_CustomHUDLL;
+	if ( pLR )
+		*pLR = m_CustomHUDLR;
+		
+	return true;
+}
+
+// --------------------------------------------------------------------
 void CClientVirtualReality::ClearCustomHUDBounds()
 {
 	m_bCustomHUDBoundsSet = false;
+}
+
+// --------------------------------------------------------------------
+// Purpose: Notify the VR compositor about the current HUD quad position
+// Full coordinate conversion preserving exact calculated position
+// --------------------------------------------------------------------
+void CClientVirtualReality::NotifyCompositorHUDPosition( const Vector& viewer, const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr, bool isCustomBounds )
+{
+	// Only send updates when VR is active and we have valid data
+	if ( !UseVR() )
+		return;
+	
+	// Get the current frame number for tracking
+	static int s_frameNumber = 0;
+	s_frameNumber++;
+	
+	// DEBUG: Initialize debug counter
+	static int s_debugCallCount = 0;
+	s_debugCallCount++;
+	
+	// COORDINATE CONVERSION: Convert from Source world coordinates to playspace-anchored coordinates
+	// This follows the same approach as VR menu manager's playspace anchoring
+	
+	// Calculate the center of the HUD quad
+	Vector hudCenter = (ul + ur + ll + lr) * 0.25f;
+	
+	// Get the actual playspace origin from the VR system (same as VR menu manager)
+	// BUT force it to use canonical orientation instead of current player world yaw
+	Vector playspaceOriginWorldPos = Vector(0, 0, 0);
+	if (g_pVRMenuManager) {
+		// TODO: We need a version of GetPlayspaceOriginWorldPos that doesn't include player world rotation
+		// For now, use the current implementation but we'll correct for it below
+		playspaceOriginWorldPos = g_pVRMenuManager->GetPlayspaceOriginWorldPos();
+	}
+	
+	// FALLBACK: If playspace origin calculation fails, use current head position as approximation
+	if (playspaceOriginWorldPos == Vector(0, 0, 0)) {
+		if (C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer()) {
+			playspaceOriginWorldPos = pPlayer->EyePosition();
+			Msg("VR Client: Using head position fallback for playspace origin\n");
+		}
+	}
+	
+	// DEBUG: Check if the issue is player height offset
+	Vector currentHeadWorldPos = Vector(0,0,0);
+	QAngle currentHeadWorldAngles = QAngle(0,0,0);
+	if (C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer()) {
+		currentHeadWorldPos = pPlayer->EyePosition();
+		currentHeadWorldAngles = pPlayer->EyeAngles();
+	}
+
+	// PROPER APPROACH: Derive a complete worldToPlayspace transformation matrix
+	// This ensures we encode coordinates correctly in one clean operation
+	
+	// Get scale factor first
+	extern COpenXRManager* g_pOpenXRManager;
+	extern ConVar tfvr_worldscale;
+	float dynamicWorldScale = (g_pOpenXRManager && g_pOpenXRManager->IsActive()) ? 
+							   g_pOpenXRManager->GetWorldScale() : 48.0f;
+	
+	// Convert Source units to meters
+	float scaleToMeters = 1.0f / dynamicWorldScale;
+	
+	// Step 1: Get the complete playspace transformation matrix from VR manager
+	// This gives us the complete worldToPlayspace matrix including orientation
+	VMatrix playspaceWorldMatrix;
+	playspaceWorldMatrix.Identity();
+	
+	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (g_pVRMenuManager && g_pOpenXRManager && pPlayer) {
+		// Use the exact same calculation as CVRMenuManager::CalculateCurrentPlayspaceOriginWorldPos()
+		VMatrix headRelativeToPlayspace = g_pOpenXRManager->GetMideyePose();
+		
+		// Get current head world matrix (reuse existing variables)
+		// currentHeadWorldPos and currentHeadWorldAngles already defined above
+		
+		VMatrix currentHeadWorldMatrix;
+		currentHeadWorldMatrix.Identity();
+		matrix3x4_t headMatrix3x4;
+		Vector playerHeadPos = pPlayer->EyePosition();
+		QAngle playerHeadAngles = pPlayer->EyeAngles();
+		AngleMatrix(playerHeadAngles, playerHeadPos, headMatrix3x4);
+		currentHeadWorldMatrix.CopyFrom3x4(headMatrix3x4);
+		
+		// Calculate playspace origin relative to head
+		VMatrix headToPlayspaceTransform = headRelativeToPlayspace.InverseTR();
+		
+		// Get the complete playspace transformation (position + orientation)
+		playspaceWorldMatrix = currentHeadWorldMatrix * headToPlayspaceTransform;
+	} else {
+		// Fallback: Create matrix from just the position
+		matrix3x4_t playspaceMatrix3x4;
+		AngleMatrix(QAngle(0, 0, 0), playspaceOriginWorldPos, playspaceMatrix3x4);
+		playspaceWorldMatrix.CopyFrom3x4(playspaceMatrix3x4);
+	}
+	
+	// Step 2: Get the worldToPlayspace transformation matrix (inverse of playspaceWorldMatrix)
+	VMatrix worldToPlayspace = playspaceWorldMatrix.InverseTR();
+
+	// Step 3: Transform HUD center to playspace coordinates (in Source units first)
+	Vector hudPositionInPlayspace = worldToPlayspace * hudCenter;
+	
+	// Step 4: Apply scaling to convert Source units to meters AFTER the transformation
+	hudPositionInPlayspace *= scaleToMeters;
+	
+	// Scale factor already calculated above in worldToPlayspace matrix
+	
+	// Apply the worldToPlayspace matrix to all four corners, then scale
+	Vector hudULInPlayspace = worldToPlayspace * ul;
+	Vector hudURInPlayspace = worldToPlayspace * ur;
+	Vector hudLLInPlayspace = worldToPlayspace * ll;
+	Vector hudLRInPlayspace = worldToPlayspace * lr;
+	
+	// Apply scaling to convert Source units to meters AFTER the transformation
+	hudULInPlayspace *= scaleToMeters;
+	hudURInPlayspace *= scaleToMeters;
+	hudLLInPlayspace *= scaleToMeters;
+	hudLRInPlayspace *= scaleToMeters;
+	
+	// Coordinates are already scaled to meters by the worldToPlayspace matrix
+	Vector playspaceUL = hudULInPlayspace;
+	Vector playspaceUR = hudURInPlayspace;
+	Vector playspaceLL = hudLLInPlayspace;
+	Vector playspaceLR = hudLRInPlayspace;
+	Vector playspaceHudCenter = hudPositionInPlayspace;
+	
+	// Convert from Source coordinate system to OpenGL/Vulkan coordinate system  
+	// Source: +X=forward, +Y=left, +Z=up
+	// OpenGL/Vulkan: +X=right, +Y=up, +Z=back (negative Z = forward)
+	// TEST: Try multiple coordinate system mappings to find the right one
+	auto ConvertToVR = [&](const Vector& src) -> Vector {
+		Vector vr;
+		
+		// Source(X=fwd,Y=left,Z=up) -> VR(X=right,Y=up,Z=back)
+		vr.x = -src.y;  // Source Y (left) -> -X (right)
+		vr.y = -src.z;  // Source Z (up) -> Y (up), flipped for correct orientation
+		vr.z = -src.x;  // Source X (forward) -> -Z (back)
+
+		return vr;
+	};
+	
+	// Convert all corners to VR coordinate system
+	Vector vrUL = ConvertToVR(playspaceUL);
+	Vector vrUR = ConvertToVR(playspaceUR);
+	Vector vrLL = ConvertToVR(playspaceLL);
+	Vector vrLR = ConvertToVR(playspaceLR);
+	Vector vrHudCenter = ConvertToVR(playspaceHudCenter);
+
+	if (vrUL.y < vrLL.y) {
+		Vector tempUL = vrUL;
+		Vector tempUR = vrUR;
+		vrUL = vrLL;
+		vrUR = vrLR;
+		vrLL = tempUL;
+		vrLR = tempUR;
+	}
+	
+	// Calculate the distance for reference
+	float hudDistance = vrHudCenter.Length();
+	
+	// No artificial distance scaling - let the coordinate conversion be natural
+	// Focus on getting the Source->VR unit conversion correct
+	
+	// Fix aspect ratio to proper 16:9 while preserving orientation
+	Vector vrHudCenterUpdated = (vrUL + vrUR + vrLL + vrLR) * 0.25f;
+	Vector originalWidthVec = vrUR - vrUL;
+	Vector originalHeightVec = vrLL - vrUL;
+	
+	float measuredWidth = originalWidthVec.Length();
+	float measuredHeight = originalHeightVec.Length();
+	float actualAspectRatio = (measuredHeight > 0.01f) ? (measuredWidth / measuredHeight) : 0.0f;
+	
+	// Use natural HUD dimensions (aspect ratio correction disabled by default)
+	float correctedHeight = measuredHeight;
+	
+	// Log essential info for first few calls
+	if ( s_debugCallCount <= 3 ) {
+		DevMsg("VR Client: Positioning HUD #%d - Custom: %s, Distance: %.2fm\n", 
+			s_debugCallCount, isCustomBounds ? "true" : "false", hudDistance);
+	}
+	
+	// Send the converted coordinates to the compositor
+	extern void TF2VR_UpdateHUDPosition(
+		float viewer_x, float viewer_y, float viewer_z,
+		float ul_x, float ul_y, float ul_z,
+		float ur_x, float ur_y, float ur_z,
+		float ll_x, float ll_y, float ll_z,
+		float lr_x, float lr_y, float lr_z,
+		bool is_custom_bounds, int frame_number, float world_scale);
+	
+	TF2VR_UpdateHUDPosition(
+		0.0f, 0.0f, 0.0f,  // Viewer is now at origin (playspace center)
+		vrUL.x, vrUL.y, vrUL.z,  // Upper-left (converted)
+		vrUR.x, vrUR.y, vrUR.z,  // Upper-right (converted)
+		vrLL.x, vrLL.y, vrLL.z,  // Lower-left (converted)
+		vrLR.x, vrLR.y, vrLR.z,  // Lower-right (converted)
+		isCustomBounds, s_frameNumber, 1.0f  // world_scale = 1.0 since we already converted
+	);
+}
+
+// --------------------------------------------------------------------
+// Purpose: Update compositor HUD position when playspace anchor changes
+// This is called from VR menu manager during playspace updates
+// --------------------------------------------------------------------
+void NotifyCompositorPlayspaceUpdate()
+{
+	// Only send updates when VR is active
+	if ( !UseVR() )  // Fixed: should be NOT UseVR()
+		return;
+	
+	// Check if we have custom menu bounds set - use those instead of HUD bounds
+	Vector viewer, ul, ur, ll, lr;
+	bool hasCustomBounds = false;
+	
+	if ( g_ClientVirtualReality.GetCustomHUDBounds( &viewer, &ul, &ur, &ll, &lr ) )
+	{
+		// Use the custom menu bounds (close, comfortable for VR)
+		hasCustomBounds = true;
+		DevMsg( "VR Client: Using custom menu bounds for compositor update\n" );
+	}
+	else
+	{
+		// Fallback to HUD bounds (GetHUDBounds always succeeds)
+		g_ClientVirtualReality.GetHUDBounds( &viewer, &ul, &ur, &ll, &lr );
+		DevMsg( "VR Client: Using fallback HUD bounds for compositor update\n" );
+	}
+	
+	// Send the position to the compositor
+	g_ClientVirtualReality.NotifyCompositorHUDPosition(viewer, ul, ur, ll, lr, hasCustomBounds);
+}
+
+// --------------------------------------------------------------------
+// Purpose: Ensure compositor gets HUD position when it starts
+// This is called from DXVK side when compositor initializes
+// --------------------------------------------------------------------
+extern "C" void TF2VR_RefreshCompositorHUDPosition()
+{
+	// This is called from the compositor when it starts to get current HUD position
+	NotifyCompositorPlayspaceUpdate();
 }
 
 
@@ -1270,14 +1546,6 @@ void CClientVirtualReality::ClearCustomHUDBounds()
 void CClientVirtualReality::RenderHUDQuad( bool bBlackout )
 {
 	VPROF("VR_ClientVR_RenderHUDQuad");
-	
-	// Debug: Check if this function is being called
-	static int s_callCount = 0;
-	s_callCount++;
-	if ( s_callCount % 120 == 0 ) // Every 2 seconds at 60fps
-	{
-		DevMsg("RenderHUDQuad called (count: %d)\n", s_callCount);
-	}
 	
 	// If we can overlay the HUD directly onto the target later, we'll do that instead (higher image quality).
 	if ( CanOverlayHudQuad() )
@@ -1413,7 +1681,7 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout )
 		if ( s_bLastUseTranslucent != bUseTranslucent )
 		{
 			s_bLastUseTranslucent = bUseTranslucent;
-			Msg("VR HUD: Switching to %s rendering\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
+			DevMsg("VR HUD: Switching to %s rendering\n", bUseTranslucent ? "TRANSLUCENT" : "OPAQUE");
 		}
 	}
 		Assert( mymat && !mymat->IsErrorMaterial() );
@@ -1637,6 +1905,11 @@ void CClientVirtualReality::PostProcessFrame( StereoEye_t eEye )
 	if( !UseVR() )
 		return;
 
+	// Only draw debug overlays for the left eye to avoid duplicates
+	if (eEye == STEREO_EYE_LEFT) {
+		DrawPlayspaceDebugVisualization();
+	}
+
 	// g_pSourceVR->DoDistortionProcessing( eEye == STEREO_EYE_LEFT ? ISourceVirtualReality::VREye_Left : ISourceVirtualReality::VREye_Right );
 }
 
@@ -1769,5 +2042,59 @@ void CClientVirtualReality::StartupComplete()
 {
 	if ( vr_activate_default.GetBool() || ShouldForceVRActive() )
 		Activate();
+}
+
+// --------------------------------------------------------------------
+// Purpose: Draw debug visualizations for playspace origin and HUD positions
+// Called every frame during PostProcessFrame
+// --------------------------------------------------------------------
+void CClientVirtualReality::DrawPlayspaceDebugVisualization()
+{
+	if (!debugoverlay || !tfvr_debug_playspace_origin.GetBool())
+		return;
+		
+	// Get current player for head position
+	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (!pPlayer)
+		return;
+
+	// Get playspace origin from VR menu manager (same calculation as HUD positioning)
+	Vector playspaceOriginWorldPos = Vector(0, 0, 0);
+	if (g_pVRMenuManager) {
+		playspaceOriginWorldPos = g_pVRMenuManager->GetPlayspaceOriginWorldPos();
+	}
+	
+	// Fallback to head position if playspace calculation fails
+	if (playspaceOriginWorldPos == Vector(0, 0, 0)) {
+		playspaceOriginWorldPos = pPlayer->EyePosition();
+	}
+	
+	// Draw playspace origin - MAGENTA cube with coordinate axes
+	float cubeSize = 5.0f; // 50 Source units ≈ 1 meter
+	Vector boxSize(cubeSize, cubeSize, cubeSize);
+	debugoverlay->AddBoxOverlay(playspaceOriginWorldPos, -boxSize, boxSize, QAngle(0, 0, 0), 255, 0, 255, 100, 0.1f);
+	
+	// Draw Source coordinate system axes (no duration = persistent until next frame)
+	Vector forward = Vector(100, 0, 0);   // X-axis (forward in Source) = RED
+	Vector right = Vector(0, 100, 0);     // Y-axis (left in Source) = GREEN  
+	Vector up = Vector(0, 0, 100);        // Z-axis (up in Source) = BLUE
+	debugoverlay->AddLineOverlayAlpha(playspaceOriginWorldPos, playspaceOriginWorldPos + forward, 255, 0, 0, 255, false, 0.0f);
+	debugoverlay->AddLineOverlayAlpha(playspaceOriginWorldPos, playspaceOriginWorldPos + right, 0, 255, 0, 255, false, 0.0f);
+	debugoverlay->AddLineOverlayAlpha(playspaceOriginWorldPos, playspaceOriginWorldPos + up, 0, 0, 255, 255, false, 0.0f);
+	
+	// Draw current head position - CYAN cube for comparison
+	Vector headPos = pPlayer->EyePosition();
+	float headCubeSize = 25.0f;
+	Vector headBoxSize(headCubeSize, headCubeSize, headCubeSize);
+	debugoverlay->AddBoxOverlay(headPos, -headBoxSize, headBoxSize, QAngle(0, 0, 0), 0, 255, 255, 100, 0.0f);
+	
+	// If we have custom HUD bounds set, draw the HUD center too
+	if (m_bCustomHUDBoundsSet) {
+		Vector hudCenter = (m_CustomHUDUL + m_CustomHUDUR + m_CustomHUDLL + m_CustomHUDLR) * 0.25f;
+		float hudCubeSize = 20.0f;
+		Vector hudBoxSize(hudCubeSize, hudCubeSize, hudCubeSize);
+		// YELLOW cube for HUD center
+		debugoverlay->AddBoxOverlay(hudCenter, -hudBoxSize, hudBoxSize, QAngle(0, 0, 0), 255, 255, 0, 100, 0.0f);
+	}
 }
 

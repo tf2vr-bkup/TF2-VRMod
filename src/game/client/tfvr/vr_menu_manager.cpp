@@ -465,6 +465,14 @@ void CVRMenuManager::HandleMenuInput()
             {
                 // Calculate and store the menu's absolute position in playspace coordinates
                 CalculatePlayspaceAnchor();
+                
+                // For playspace-anchored menus, custom bounds are set in UpdatePlayspaceAnchoredPosition()
+                // So we need to call that first, then notify the compositor
+                UpdatePlayspaceAnchoredPosition();
+                
+                // Now trigger compositor HUD update with the custom bounds that were just set
+                extern void NotifyCompositorPlayspaceUpdate();
+                NotifyCompositorPlayspaceUpdate();
             }
             
             // For ViewPort menus, we need to make the cursor visible
@@ -486,7 +494,7 @@ void CVRMenuManager::HandleMenuInput()
                 // Create a quad representing the menu plane
                 // Use a fixed size that's reasonable for VR
                 float menuHeight = 80.0f; // Fixed height in world units
-                float menuWidth = menuHeight * 1.6f; // 16:10 aspect ratio
+                float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
                 
                 Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
                 Vector ur = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
@@ -494,7 +502,12 @@ void CVRMenuManager::HandleMenuInput()
                 Vector lr = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
                 
                 // Set the custom HUD bounds in the VR system
-                // g_ClientVirtualReality.SetCustomHUDBounds(m_fixedMenuPosition, ul, ur, ll, lr);
+                Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+                g_ClientVirtualReality.SetCustomHUDBounds(currentHeadWorldPos, ul, ur, ll, lr);
+                
+                // Trigger compositor HUD update for non-playspace-anchored menus too
+                extern void NotifyCompositorPlayspaceUpdate();
+                NotifyCompositorPlayspaceUpdate();
             }
          }
      }
@@ -954,7 +967,7 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     
     // Use the exact same size calculations as in HandleMenuInput
     float menuHeight = 80.0f; // Fixed height in world units
-    float menuWidth = menuHeight * 1.6f; // 16:10 aspect ratio
+    float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
     
     // Calculate menu plane corners - EXACTLY the same as in HandleMenuInput
     Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
@@ -1068,7 +1081,7 @@ Vector CVRMenuManager::GetMenuPlaneIntersection(const Vector& controllerPos, con
     
     // Use the exact same size calculations as in HandleMenuInput
     float menuHeight = 80.0f; // Fixed height in world units
-    float menuWidth = menuHeight * 1.6f; // 16:10 aspect ratio
+    float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
     
     // Calculate menu plane corners - EXACTLY the same as in ComputeCursorPosition
     Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
@@ -1136,20 +1149,15 @@ void CVRMenuManager::CalculatePlayspaceAnchor()
     matrix3x4_t menuMatrix3x4;
     AngleMatrix(leveledAngles, m_menuPositionInPlayspace, menuMatrix3x4);
     m_menuPlayspaceAnchor.CopyFrom3x4(menuMatrix3x4);
-    
-    DevMsg("VR Menu ANCHOR CALCULATION:\n");
-    DevMsg("  Current playspace origin: (%.1f, %.1f, %.1f)\n", 
-           playspaceOriginWorldPos.x, playspaceOriginWorldPos.y, playspaceOriginWorldPos.z);
-    DevMsg("  Menu world pos: (%.1f, %.1f, %.1f)\n", 
-           menuWorldPos.x, menuWorldPos.y, menuWorldPos.z);
-    DevMsg("  Menu playspace offset: (%.3f, %.3f, %.3f)\n", 
-           m_menuPositionInPlayspace.x, m_menuPositionInPlayspace.y, m_menuPositionInPlayspace.z);
 }
 
 Vector CVRMenuManager::CalculateCurrentPlayspaceOriginWorldPos()
 {
-    if (!m_pVRManager || !m_pLocalPlayer)
+    if (!m_pVRManager || !m_pLocalPlayer) {
+        DevMsg("VR Menu: CalculateCurrentPlayspaceOriginWorldPos failed - null pointers (VRManager: %s, Player: %s)\n",
+            m_pVRManager ? "valid" : "NULL", m_pLocalPlayer ? "valid" : "NULL");
         return Vector(0, 0, 0);
+    }
     
     // GetMideyePose() returns head position relative to playspace origin (in Source coordinates)
     VMatrix headRelativeToPlayspace = m_pVRManager->GetMideyePose();
@@ -1169,7 +1177,14 @@ Vector CVRMenuManager::CalculateCurrentPlayspaceOriginWorldPos()
     
     // Transform playspace origin to world coordinates
     VMatrix playspaceWorldMatrix = currentHeadWorldMatrix * headToPlayspaceTransform;
-    return playspaceWorldMatrix.GetTranslation();
+    Vector result = playspaceWorldMatrix.GetTranslation();
+
+    return result;
+}
+
+Vector CVRMenuManager::GetPlayspaceOriginWorldPos()
+{
+    return CalculateCurrentPlayspaceOriginWorldPos();
 }
 
 void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
@@ -1206,7 +1221,7 @@ void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
     
     // Update the HUD bounds using the new position
     float menuHeight = 80.0f;
-    float menuWidth = menuHeight * 1.6f;
+    float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
     
     Vector forward, right, up;
     AngleVectors(newMenuWorldAngles, &forward, &right, &up);

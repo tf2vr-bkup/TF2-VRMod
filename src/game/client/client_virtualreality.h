@@ -86,7 +86,9 @@ public:
 	bool CanOverlayHudQuad();
 	void GetHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR );
 	void SetCustomHUDBounds( const Vector& viewer, const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr );
+	bool GetCustomHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR );
 	void ClearCustomHUDBounds();
+	void NotifyCompositorHUDPosition( const Vector& viewer, const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr, bool isCustomBounds );
 	void RenderHUDQuad( bool bBlackout );
 	float GetZoomedModeMagnification();
 	bool ProcessCurrentTrackingState( float fGameFOV );
@@ -99,6 +101,7 @@ public:
 	void AlignTorsoAndViewToWeapon();
 	void PostProcessFrame( StereoEye_t eEye );
 	void OverlayHUDQuadWithUndistort( const CViewSetup &view, bool bDoUndistort, bool bBlackout, bool bTranslucent );
+	void DrawPlayspaceDebugVisualization();
 
 	//---------------------------------------------------------
 	// Enter/leave VR mode

@@ -48,6 +48,9 @@ public:
     
     // State determination and mode handling
     SourceEngineState DetermineSourceState();
+    
+    // Public method to get playspace origin for external access (needed for HUD positioning)
+    Vector GetPlayspaceOriginWorldPos();
 
 private:
     // Helper functions
