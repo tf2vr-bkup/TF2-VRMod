@@ -91,6 +91,10 @@ public:
     bool GetRightControllerGripPose(VMatrix& pose);
     bool IsLeftControllerPoseValid();
     bool IsRightControllerPoseValid();
+    
+    // Raw controller poses (playspace-relative, no player transforms)
+    bool GetLeftControllerPoseRaw(VMatrix& pose);
+    bool GetRightControllerPoseRaw(VMatrix& pose);
     bool IsLeftControllerGripPoseValid();
     bool IsRightControllerGripPoseValid();
 

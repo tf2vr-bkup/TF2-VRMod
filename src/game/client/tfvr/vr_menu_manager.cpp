@@ -337,6 +337,17 @@ void CVRMenuManager::HandleMenuInput()
 {
     bool menuVisible = IsMenuVisible();
     
+    // TF2VR: Debug menu input during compositor mode
+    static float lastDebugTime = 0;
+    static int callCount = 0;
+    callCount++;
+    if (dxvkIsCompositorActive() && gpGlobals->curtime - lastDebugTime > 3.0f)
+    {
+        DevMsg("VR Menu Input: HandleMenuInput() #%d - MenuVisible=%d (compositor mode)\n", 
+               callCount, menuVisible);
+        lastDebugTime = gpGlobals->curtime;
+    }
+    
     // Check for class menu button press (left A button)
     static bool bLastClassMenuButtonState = false;
     bool bCurrentClassMenuButtonState = m_pVRManager && m_pVRManager->IsButtonPressed("left_class_menu");
@@ -510,7 +521,38 @@ void CVRMenuManager::HandleMenuInput()
                 NotifyCompositorPlayspaceUpdate();
             }
          }
-     }
+         else
+         {
+             // TF2VR: Main menu case - no local player available
+             // Use a simple fixed position in front of the headset
+             if (m_pVRManager)
+             {
+                 // Get HMD pose for menu positioning
+                 Vector hmdOrigin;
+                 QAngle hmdAngles;
+                 m_pVRManager->GetHMDInChaperone(hmdOrigin, hmdAngles);
+                 
+                 // Use HMD position and orientation for menu
+                 m_fixedMenuPosition = hmdOrigin;
+                 m_fixedMenuRotation = hmdAngles;
+                     
+                     // Keep level (no pitch/roll)
+                     m_fixedMenuRotation.x = 0;
+                     m_fixedMenuRotation.z = 0;
+                     
+                     m_bMenuPositionFixed = true;
+                     m_bUsePlayspaceAnchoring = tfvr_playspace_anchoring.GetBool();
+                     
+                     DevMsg("VR Menu: Fixed menu position for main menu (no player) at HMD pose\n");
+                     
+                     // Make cursor visible for main menu
+                     if (vgui::surface())
+                     {
+                         vgui::surface()->SetCursorAlwaysVisible(true);
+                     }
+                 }
+             }
+        }
      
      // If menu just became hidden, reset the fixed position
     else if (!menuVisible && m_bMenuPositionFixed)
@@ -528,6 +570,17 @@ void CVRMenuManager::HandleMenuInput()
         
     }
     
+    // Always handle menu button input and cursor position when VR manager is available
+    if (m_pVRManager)
+    {
+        // Handle menu button input
+        HandleMenuButtonInput();
+        
+        // Update cursor position
+        UpdateCursorPosition();
+    }
+
+    // Additional menu input handling that requires player (for in-game menus)
     if (!menuVisible || m_savedPlayerViewOrigin == Vector(0, 0, 0))
     {
         return;
@@ -536,11 +589,7 @@ void CVRMenuManager::HandleMenuInput()
     if (!m_pLocalPlayer || !m_pVRManager)
         return;
 
-    // Handle menu button input
-    HandleMenuButtonInput();
-    
-    // Update cursor position
-    UpdateCursorPosition();
+    // Additional player-dependent menu logic can go here if needed
 }
 
 bool CVRMenuManager::IsMenuVisible()
@@ -753,8 +802,19 @@ void CVRMenuManager::HandleMenuButtonInput()
 
 void CVRMenuManager::UpdateCursorPosition()
 {
-    if (!m_pLocalPlayer || !m_bMenuPositionFixed)
+    // TF2VR: Allow cursor positioning without a local player (main menu case)
+    if (!m_bMenuPositionFixed)
+    {
+        // TF2VR: Debug cursor positioning during compositor mode
+        static float lastDebugTime = 0;
+        if (dxvkIsCompositorActive() && gpGlobals->curtime - lastDebugTime > 2.0f)
+        {
+            DevMsg("VR Cursor: Not updating - MenuFixed=%d (no player: %p)\n", 
+                   m_bMenuPositionFixed, m_pLocalPlayer);
+            lastDebugTime = gpGlobals->curtime;
+        }
         return;
+    }
     
     // Update playspace anchored position each frame if enabled
     if (m_bUsePlayspaceAnchoring)
@@ -771,7 +831,12 @@ void CVRMenuManager::UpdateCursorPosition()
         if (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
         {
             VMatrix controllerMatrix;
-            if (g_pOpenXRManager->GetLeftControllerPose(controllerMatrix))
+            // Use raw poses for compositor mode, world poses for in-game
+            bool poseValid = dxvkIsCompositorActive() ? 
+                g_pOpenXRManager->GetLeftControllerPoseRaw(controllerMatrix) :
+                g_pOpenXRManager->GetLeftControllerPose(controllerMatrix);
+            
+            if (poseValid)
             {
                 currentControllerPos = controllerMatrix.GetTranslation();
                 controllerValid = true;
@@ -783,7 +848,12 @@ void CVRMenuManager::UpdateCursorPosition()
         if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
         {
             VMatrix controllerMatrix;
-            if (g_pOpenXRManager->GetRightControllerPose(controllerMatrix))
+            // Use raw poses for compositor mode, world poses for in-game
+            bool poseValid = dxvkIsCompositorActive() ? 
+                g_pOpenXRManager->GetRightControllerPoseRaw(controllerMatrix) :
+                g_pOpenXRManager->GetRightControllerPose(controllerMatrix);
+            
+            if (poseValid)
             {
                 currentControllerPos = controllerMatrix.GetTranslation();
                 controllerValid = true;
@@ -817,11 +887,16 @@ void CVRMenuManager::UpdateCursorPosition()
     }
     else
     {
-        // No controller available, check head movement instead
-        if (m_pLocalPlayer)
+        // No controller available - for main menu case, we still want to allow cursor updates
+        // Skip movement threshold when no controller is available (main menu scenario)
+        // Use OpenXR HMD pose directly instead of player entity
+        if (g_pOpenXRManager)
         {
-            static Vector lastHeadPos = m_pLocalPlayer->EyePosition();
-            Vector currentHeadPos = m_pLocalPlayer->EyePosition();
+            Vector currentHeadPos;
+            QAngle currentHeadAngles;
+            g_pOpenXRManager->GetHMDInChaperone(currentHeadPos, currentHeadAngles);
+            
+            static Vector lastHeadPos = currentHeadPos;
             float headMovementDistance = (currentHeadPos - lastHeadPos).Length();
             
             // If head movement is too small, don't update cursor (preserve mouse input)
@@ -842,6 +917,7 @@ void CVRMenuManager::UpdateCursorPosition()
             
             lastHeadPos = currentHeadPos;
         }
+        // For main menu (no player), continue without movement threshold checks
     }
 
     // Use the fixed menu position and rotation for cursor calculations
@@ -856,6 +932,17 @@ void CVRMenuManager::UpdateCursorPosition()
     // Update cursor if position changed
     if ((px != m_nOldCursorX) || (py != m_nOldCursorY))
     {
+        // TF2VR: Debug cursor updates during compositor mode
+        static float lastDebugTime = 0;
+        static int updateCount = 0;
+        updateCount++;
+        if (dxvkIsCompositorActive() && gpGlobals->curtime - lastDebugTime > 2.0f)
+        {
+            DevMsg("VR Cursor: UPDATE #%d - pos=(%d,%d) (compositor mode)\n", 
+                   updateCount, px, py);
+            lastDebugTime = gpGlobals->curtime;
+        }
+        
         // For ViewPort menus, we need to use surface cursor functions
         if (vgui::surface())
         {
@@ -881,7 +968,14 @@ void CVRMenuManager::UpdateCursorPosition()
 
 void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const QAngle& pointerRotation, int& px, int& py)
 {
-    // Get the active controller pose for cursor control
+    // Special path for compositor mode - use simpler playspace-relative calculations
+    if (dxvkIsCompositorActive())
+    {
+        ComputeCursorPositionCompositor(px, py);
+        return;
+    }
+    
+    // Original world-space logic for in-game mode
     Vector controllerPos;
     QAngle controllerAngles;
     bool controllerValid = false;
@@ -935,14 +1029,38 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     else
     {
         // Fallback to head-based cursor if controller not available
-        QAngle currentViewAngles = m_pLocalPlayer->EyeAngles();
-        Vector rayDir;
-        AngleVectors(currentViewAngles, &rayDir);
-        VectorNormalize(rayDir);
-        
-        Vector currentEyePos = m_pLocalPlayer->EyePosition();
-        rayStart = currentEyePos;
-        VectorMA(currentEyePos, 1000.0f, rayDir, rayEnd);
+        if (m_pLocalPlayer)
+        {
+            // In-game: use player eye position and angles (world coordinates)
+            QAngle currentViewAngles = m_pLocalPlayer->EyeAngles();
+            Vector rayDir;
+            AngleVectors(currentViewAngles, &rayDir);
+            VectorNormalize(rayDir);
+            
+            Vector currentEyePos = m_pLocalPlayer->EyePosition();
+            rayStart = currentEyePos;
+            VectorMA(currentEyePos, 1000.0f, rayDir, rayEnd);
+        }
+        else if (dxvkIsCompositorActive() && m_pVRManager)
+        {
+            // Compositor/main menu: use OpenXR HMD pose (chaperone coordinates)
+            Vector hmdOrigin;
+            QAngle hmdAngles;
+            m_pVRManager->GetHMDInChaperone(hmdOrigin, hmdAngles);
+            
+            Vector rayDir;
+            AngleVectors(hmdAngles, &rayDir);
+            VectorNormalize(rayDir);
+            
+            rayStart = hmdOrigin;
+            VectorMA(hmdOrigin, 1000.0f, rayDir, rayEnd);
+        }
+        else
+        {
+            // No valid input source available
+            px = py = -1;
+            return;
+        }
         
         
     }
@@ -1829,4 +1947,237 @@ void CVRMenuManager::RenderMenuQuadIn3D()
     CMatRenderContextPtr pRenderContext2(materials);
     pRenderContext2->PopRenderTargetAndViewport();
     pRenderContext2->Flush();
+}
+
+//-----------------------------------------------------------------------------
+// Compositor-specific cursor positioning using playspace-relative poses
+//-----------------------------------------------------------------------------
+void CVRMenuManager::ComputeCursorPositionCompositor(int& px, int& py)
+{
+    // Initialize to invalid position
+    px = py = -1;
+    
+    if (!m_pVRManager)
+    {
+        DevMsg("VR Cursor (Compositor): No VR Manager available\n");
+        return;
+    }
+    
+    // Debug output (reduce frequency to avoid performance issues)
+    static float lastDebugTime = 0;
+    bool shouldDebug = tfvr_cursor_debug.GetBool() && (gpGlobals->curtime - lastDebugTime > 0.5f);
+    if (shouldDebug) lastDebugTime = gpGlobals->curtime;
+    
+    // Safety check: ensure OpenXR manager is fully initialized
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): OpenXR manager not active - skipping frame\n");
+        }
+        return;
+    }
+    
+    // Safety check: ensure VGUI surface is available
+    if (!vgui::surface())
+    {
+        if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): VGUI surface not available - skipping frame\n");
+        }
+        return;
+    }
+    
+    // For compositor mode, we work entirely in playspace/chaperone coordinates
+    // This avoids the need for world-space conversions that require a player entity
+    
+    Vector rayStart, rayDir;
+    bool validRay = false;
+    const char* inputSource = "none";
+    
+    // Try to get controller pose first (preferred) - use RAW poses for compositor
+    if (m_nMenuHand == 0) // Left hand
+    {
+        inputSource = "left_controller";
+        if (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            if (g_pOpenXRManager->GetLeftControllerPoseRaw(controllerMatrix))
+            {
+                rayStart = controllerMatrix.GetTranslation();
+                rayDir = controllerMatrix.GetForward();
+                validRay = true;
+                
+                if (shouldDebug)
+                {
+                    DevMsg("VR Cursor (Compositor): Left controller - pos=(%.1f,%.1f,%.1f) dir=(%.2f,%.2f,%.2f)\n",
+                           rayStart.x, rayStart.y, rayStart.z, rayDir.x, rayDir.y, rayDir.z);
+                }
+            }
+            else if (shouldDebug)
+            {
+                DevMsg("VR Cursor (Compositor): Left controller pose valid but GetLeftControllerPoseRaw failed\n");
+            }
+        }
+        else if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): Left controller pose not valid\n");
+        }
+    }
+    else // Right hand
+    {
+        inputSource = "right_controller";
+        if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            if (g_pOpenXRManager->GetRightControllerPoseRaw(controllerMatrix))
+            {
+                rayStart = controllerMatrix.GetTranslation();
+                rayDir = controllerMatrix.GetForward();
+                validRay = true;
+                
+                if (shouldDebug)
+                {
+                    DevMsg("VR Cursor (Compositor): Right controller - pos=(%.1f,%.1f,%.1f) dir=(%.2f,%.2f,%.2f)\n",
+                           rayStart.x, rayStart.y, rayStart.z, rayDir.x, rayDir.y, rayDir.z);
+                }
+            }
+            else if (shouldDebug)
+            {
+                DevMsg("VR Cursor (Compositor): Right controller pose valid but GetRightControllerPoseRaw failed\n");
+            }
+        }
+        else if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): Right controller pose not valid\n");
+        }
+    }
+    
+    // Fallback to HMD if no controller available
+    if (!validRay)
+    {
+        inputSource = "hmd_fallback";
+        Vector hmdOrigin;
+        QAngle hmdAngles;
+        m_pVRManager->GetHMDInChaperone(hmdOrigin, hmdAngles);
+        
+        rayStart = hmdOrigin;
+        AngleVectors(hmdAngles, &rayDir);
+        validRay = true;
+        
+        if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): HMD fallback - pos=(%.1f,%.1f,%.1f) angles=(%.1f,%.1f,%.1f) dir=(%.2f,%.2f,%.2f)\n",
+                   hmdOrigin.x, hmdOrigin.y, hmdOrigin.z, hmdAngles.x, hmdAngles.y, hmdAngles.z, rayDir.x, rayDir.y, rayDir.z);
+        }
+    }
+    
+    if (!validRay)
+    {
+        if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): No valid ray source available\n");
+        }
+        return;
+    }
+    
+    // For compositor mode, we need to work in playspace coordinates
+    // Use the same logic as the regular cursor positioning but with raw poses
+    
+    Vector ul, ur, ll, lr;
+    
+    // For compositor mode, use the cached coordinates that were last sent to the compositor
+    // This ensures perfect alignment between cursor collision and what's actually being rendered
+    if (g_ClientVirtualReality.HasCachedCompositorCoords())
+    {
+        // Get the exact same coordinates that were sent to the compositor
+        Vector cachedUL, cachedUR, cachedLL, cachedLR;
+        g_ClientVirtualReality.GetCachedCompositorCoords(cachedUL, cachedUR, cachedLL, cachedLR);
+        
+        ul = cachedUL;
+        ur = cachedUR;
+        ll = cachedLL;
+        lr = cachedLR;
+        
+        if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): Using cached compositor coordinates!\n");
+            DevMsg("VR Cursor (Compositor): Cached coords - UL=(%.1f,%.1f,%.1f) UR=(%.1f,%.1f,%.1f)\n",
+                   ul.x, ul.y, ul.z, ur.x, ur.y, ur.z);
+        }
+        }
+    else
+    {
+        // Fallback: No fixed menu position, use HMD-relative positioning
+        Vector currentHmdOrigin;
+        QAngle currentHmdAngles;
+        m_pVRManager->GetHMDInChaperone(currentHmdOrigin, currentHmdAngles);
+        
+        float menuDistance = tfvr_menu_distance.GetFloat();
+        Vector forward, right, up;
+        AngleVectors(currentHmdAngles, &forward, &right, &up);
+        Vector menuCenter = currentHmdOrigin + forward * menuDistance;
+        
+        float menuHeight = 80.0f;
+        float menuWidth = menuHeight * (16.0f / 9.0f);
+        
+        ul = menuCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+        ur = menuCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+        ll = menuCenter + right * (-menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+        lr = menuCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+        
+        if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): Using HMD-relative fallback - HMD=(%.1f,%.1f,%.1f) center=(%.1f,%.1f,%.1f)\n",
+                   currentHmdOrigin.x, currentHmdOrigin.y, currentHmdOrigin.z, menuCenter.x, menuCenter.y, menuCenter.z);
+        }
+    }
+    
+    if (shouldDebug)
+    {
+        DevMsg("VR Cursor (Compositor): Menu corners - UL=(%.1f,%.1f,%.1f) UR=(%.1f,%.1f,%.1f) LL=(%.1f,%.1f,%.1f) LR=(%.1f,%.1f,%.1f)\n",
+               ul.x, ul.y, ul.z, ur.x, ur.y, ur.z, ll.x, ll.y, ll.z, lr.x, lr.y, lr.z);
+    }
+    
+    // Ray-plane intersection
+    Vector rayEnd = rayStart + rayDir * 1000.0f;
+    
+    if (shouldDebug)
+    {
+        DevMsg("VR Cursor (Compositor): Ray - start=(%.1f,%.1f,%.1f) end=(%.1f,%.1f,%.1f)\n",
+               rayStart.x, rayStart.y, rayStart.z, rayEnd.x, rayEnd.y, rayEnd.z);
+    }
+    
+    float u, v;
+    if (ComputeIntersectionBarycentricCoordinates(rayStart, rayEnd, ul, ur, ll, lr, u, v))
+    {
+        // Convert UV coordinates to screen pixels
+        int screenWidth, screenHeight;
+        vgui::surface()->GetScreenSize(screenWidth, screenHeight);
+        
+        // Store original UV values for debug
+        float originalU = u, originalV = v;
+        
+        // Clamp to valid range
+        u = clamp(u, 0.0f, 1.0f);
+        v = clamp(v, 0.0f, 1.0f);
+        
+        px = (int)(u * screenWidth);
+        py = (int)(v * screenHeight);
+        
+        // Enhanced debug output
+        if (shouldDebug)
+        {
+            bool clamped = (originalU != u) || (originalV != v);
+            DevMsg("VR Cursor (Compositor): SUCCESS! Source=%s UV=(%.3f,%.3f) %s Screen=(%d,%d) ScreenSize=(%dx%d)\n", 
+                   inputSource, originalU, originalV, clamped ? "CLAMPED" : "", px, py, screenWidth, screenHeight);
+        }
+    }
+    else
+    {
+        if (shouldDebug)
+        {
+            DevMsg("VR Cursor (Compositor): MISS! Source=%s - ray does not intersect menu plane\n", inputSource);
+        }
+    }
 }

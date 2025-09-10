@@ -2464,5 +2464,38 @@ VMatrix COpenXRManager::ToSourceCoordinateSystemFloorAligned(const XrPosef& pose
     return result;
 }
 
+//-----------------------------------------------------------------------------
+// Raw controller poses (playspace-relative, no player transforms)
+//-----------------------------------------------------------------------------
+bool COpenXRManager::GetLeftControllerPoseRaw(VMatrix& pose)
+{
+    if (!m_inputManager) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("left_hand_pose", xrPose))
+    {
+        // Convert directly to Source coordinate system without any player transforms
+        pose = tfvr_use_floor_aligned_poses.GetBool() ? 
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
+        return true;
+    }
+    return false;
+}
+
+bool COpenXRManager::GetRightControllerPoseRaw(VMatrix& pose)
+{
+    if (!m_inputManager) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("right_hand_pose", xrPose))
+    {
+        // Convert directly to Source coordinate system without any player transforms
+        pose = tfvr_use_floor_aligned_poses.GetBool() ? 
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
+        return true;
+    }
+    return false;
+}
+
 COpenXRManager g_TFVR;
 COpenXRManager* g_pOpenXRManager = &g_TFVR;

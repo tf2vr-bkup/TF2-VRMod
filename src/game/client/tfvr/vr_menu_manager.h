@@ -56,6 +56,7 @@ private:
     // Helper functions
     void UpdateCursorPosition();
     void HandleMenuButtonInput();
+    void ComputeCursorPositionCompositor(int& px, int& py); // Playspace-relative cursor for compositor mode
     void HandleCompositorMode(SourceEngineState state);
     void HandleTraditionalVRMode(SourceEngineState state);
     

@@ -89,6 +89,11 @@ public:
 	bool GetCustomHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR );
 	void ClearCustomHUDBounds();
 	void NotifyCompositorHUDPosition( const Vector& viewer, const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr, bool isCustomBounds );
+	
+	// Cache the final coordinates sent to compositor for cursor collision
+	bool HasCachedCompositorCoords() const { return m_bHasCachedCompositorCoords; }
+	void GetCachedCompositorCoords( Vector& ul, Vector& ur, Vector& ll, Vector& lr ) const;
+	void SetCachedCompositorCoords( const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr );
 	void RenderHUDQuad( bool bBlackout );
 	float GetZoomedModeMagnification();
 	bool ProcessCurrentTrackingState( float fGameFOV );
@@ -133,6 +138,13 @@ private:
 	Vector			m_CustomHUDUR;
 	Vector			m_CustomHUDLL;
 	Vector			m_CustomHUDLR;
+	
+	// Cached compositor coordinates for cursor collision
+	bool			m_bHasCachedCompositorCoords;
+	Vector			m_CachedCompositorUL;
+	Vector			m_CachedCompositorUR;
+	Vector			m_CachedCompositorLL;
+	Vector			m_CachedCompositorLR;
 
 	// Where the current mideye is relative to the zero (torso) (currently always the same as m_MideyeZeroFromMideyeCurrent!)
 	VMatrix			m_TorsoFromMideye;

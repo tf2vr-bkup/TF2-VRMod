@@ -1411,6 +1411,19 @@ void CClientVirtualReality::NotifyCompositorHUDPosition( const Vector& viewer, c
 	Vector hudLLInPlayspace = worldToPlayspace * ll;
 	Vector hudLRInPlayspace = worldToPlayspace * lr;
 	
+	// CACHE: Scale coordinates back to base world scale for menu consistency
+	// If we saved coords at worldscale 52 (Heavy), scale them back to base worldscale 48
+	extern ConVar tfvr_worldscale;
+	float baseWorldScale = tfvr_worldscale.GetFloat(); // Base/standard world scale (usually 48.0)
+	float scaleRatio = baseWorldScale / dynamicWorldScale; // e.g., 48/52 = 0.923
+	
+	Vector cachedUL = hudULInPlayspace * scaleRatio;
+	Vector cachedUR = hudURInPlayspace * scaleRatio;
+	Vector cachedLL = hudLLInPlayspace * scaleRatio;
+	Vector cachedLR = hudLRInPlayspace * scaleRatio;
+	
+	SetCachedCompositorCoords(cachedUL, cachedUR, cachedLL, cachedLR);
+	
 	// Apply scaling to convert Source units to meters AFTER the transformation
 	hudULInPlayspace *= scaleToMeters;
 	hudURInPlayspace *= scaleToMeters;
@@ -1537,6 +1550,27 @@ extern "C" void TF2VR_RefreshCompositorHUDPosition()
 {
 	// This is called from the compositor when it starts to get current HUD position
 	NotifyCompositorPlayspaceUpdate();
+}
+
+// --------------------------------------------------------------------
+// Purpose: Cache the final coordinates sent to compositor for cursor collision
+// --------------------------------------------------------------------
+void CClientVirtualReality::SetCachedCompositorCoords( const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr )
+{
+	m_bHasCachedCompositorCoords = true;
+	m_CachedCompositorUL = ul;
+	m_CachedCompositorUR = ur;
+	m_CachedCompositorLL = ll;
+	m_CachedCompositorLR = lr;
+}
+
+// --------------------------------------------------------------------
+void CClientVirtualReality::GetCachedCompositorCoords( Vector& ul, Vector& ur, Vector& ll, Vector& lr ) const
+{
+	ul = m_CachedCompositorUL;
+	ur = m_CachedCompositorUR;
+	ll = m_CachedCompositorLL;
+	lr = m_CachedCompositorLR;
 }
 
 
