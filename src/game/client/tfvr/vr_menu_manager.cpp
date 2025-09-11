@@ -117,6 +117,11 @@ void CVRMenuManager::Initialize()
     }
     
     // VR Menu Manager initialized
+    
+    // Ensure initial HUD positioning is set up for compositor
+    // This handles the startup case when no player exists yet
+    extern void NotifyCompositorPlayspaceUpdate();
+    NotifyCompositorPlayspaceUpdate();
 }
 
 void CVRMenuManager::Shutdown()
@@ -534,13 +539,17 @@ void CVRMenuManager::HandleMenuInput()
                      
                      DevMsg("VR Menu: Fixed menu position for main menu (no player) at HMD pose\n");
                      
+                     // Trigger compositor HUD update for main menu positioning
+                     extern void NotifyCompositorPlayspaceUpdate();
+                     NotifyCompositorPlayspaceUpdate();
+                     
                      // Make cursor visible for main menu
                      if (vgui::surface())
                      {
                          vgui::surface()->SetCursorAlwaysVisible(true);
                      }
                  }
-             }
+            }
         }
      
      // If menu just became hidden, reset the fixed position

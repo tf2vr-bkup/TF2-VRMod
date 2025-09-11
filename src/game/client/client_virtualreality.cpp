@@ -1512,6 +1512,59 @@ void CClientVirtualReality::NotifyCompositorHUDPosition( const Vector& viewer, c
 }
 
 // --------------------------------------------------------------------
+// Purpose: Generate fallback HUD bounds for startup when no player exists
+// Uses raw head pose (already in playspace coordinates) to calculate menu position
+// --------------------------------------------------------------------
+void GetFallbackStartupHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vector *pLL, Vector *pLR )
+{
+	// Get the raw head pose (already in playspace coordinates)
+	extern COpenXRManager* g_pOpenXRManager;
+	if ( !g_pOpenXRManager )
+	{
+		// Fallback if no VR manager available
+		*pViewer = Vector( 0.0f, 0.0f, 64.0f );
+		*pUL = *pUR = *pLL = *pLR = *pViewer;
+		return;
+	}
+	
+	// Get head pose from VR manager (already in playspace/Source coordinates)
+	VMatrix headPose = g_pOpenXRManager->GetMideyePose();
+	Vector headPos = headPose.GetTranslation();
+	QAngle headAngles;
+	MatrixToAngles( headPose, headAngles );
+	
+	// Remove pitch rotation to keep HUD level (no tilting up/down)
+	headAngles.x = 0.0f;  // Zero out pitch
+	headAngles.z = 0.0f;  // Zero out roll
+	
+	// Use head position as viewer position
+	*pViewer = headPos;
+	
+	// Get menu distance from ConVar (same as used by VR menu manager)
+	extern ConVar tfvr_menu_distance;
+	float hudDistance = tfvr_menu_distance.GetFloat();
+	
+	// HUD dimensions: same as VR menu manager uses
+	float hudHeight = 80.0f;
+	float hudWidth = hudHeight * (16.0f / 9.0f); // 16:9 aspect ratio
+	
+	// Calculate forward direction from leveled head orientation (no pitch)
+	Vector forward, right, up;
+	AngleVectors( headAngles, &forward, &right, &up );
+	
+	// Position menu at the specified distance in front of head
+	Vector hudCenter = headPos + forward * hudDistance;
+	
+	// Calculate corner positions using the head orientation
+	*pUL = hudCenter + right * (-hudWidth * 0.5f) + up * (hudHeight * 0.5f);
+	*pUR = hudCenter + right * (hudWidth * 0.5f) + up * (hudHeight * 0.5f);
+	*pLL = hudCenter + right * (-hudWidth * 0.5f) + up * (-hudHeight * 0.5f);
+	*pLR = hudCenter + right * (hudWidth * 0.5f) + up * (-hudHeight * 0.5f);
+	
+	DevMsg( "VR Client: Generated startup fallback HUD bounds using raw head pose\n" );
+}
+
+// --------------------------------------------------------------------
 // Purpose: Update compositor HUD position when playspace anchor changes
 // This is called from VR menu manager during playspace updates
 // --------------------------------------------------------------------
@@ -1529,13 +1582,25 @@ void NotifyCompositorPlayspaceUpdate()
 	{
 		// Use the custom menu bounds (close, comfortable for VR)
 		hasCustomBounds = true;
-		DevMsg( "VR Client: Using custom menu bounds for compositor update\n" );
+		// DevMsg( "VR Client: Using custom menu bounds for compositor update\n" );
 	}
 	else
 	{
-		// Fallback to HUD bounds (GetHUDBounds always succeeds)
-		g_ClientVirtualReality.GetHUDBounds( &viewer, &ul, &ur, &ll, &lr );
-		DevMsg( "VR Client: Using fallback HUD bounds for compositor update\n" );
+		// Check if we have a valid player to get HUD bounds from
+		C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+		if ( pPlayer && pPlayer->IsAlive() )
+		{
+			// Player exists - use normal HUD bounds
+			g_ClientVirtualReality.GetHUDBounds( &viewer, &ul, &ur, &ll, &lr );
+			// DevMsg( "VR Client: Using player-based HUD bounds for compositor update\n" );
+		}
+		else
+		{
+			// No player available (startup) - use fallback bounds as if player at origin
+			GetFallbackStartupHUDBounds( &viewer, &ul, &ur, &ll, &lr );
+			hasCustomBounds = true;  // Treat as custom bounds since it's not player-based
+			// DevMsg( "VR Client: Using startup fallback HUD bounds (no player available)\n" );
+		}
 	}
 	
 	// Send the position to the compositor
