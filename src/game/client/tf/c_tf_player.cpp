@@ -5593,6 +5593,10 @@ void C_TFPlayer::TurnOnTauntCam( void )
 	if ( TFGameRules() && TFGameRules()->ShowMatchSummary() )
 		return;
 
+	// Don't activate taunt camera for VR players - they should maintain HMD control
+	if ( UseVR() )
+		return;
+
 	m_flTauntCamTargetDist = ( m_flTauntCamTargetDist != 0.0f ) ? m_flTauntCamTargetDist : tf_tauntcam_dist.GetFloat();
 	m_flTauntCamTargetDistUp = ( m_flTauntCamTargetDistUp != 0.0f ) ? m_flTauntCamTargetDistUp : 0.f;
 

@@ -21229,9 +21229,14 @@ void CTFGameRules::MatchSummaryTeleport()
 
 					if ( pObserverPoint )
 					{
-						pTFPlayer->SetViewEntity( pObserverPoint );
-						pTFPlayer->SetViewOffset( vec3_origin );
-						pTFPlayer->SetFOV( pObserverPoint, pObserverPoint->m_flFOV );
+						// Don't override camera control for VR players - let them maintain HMD control
+						bool bPlayerInVR = pTFPlayer->IsInVRMode() && !pTFPlayer->IsFakeClient();
+						if ( !bPlayerInVR )
+						{
+							pTFPlayer->SetViewEntity( pObserverPoint );
+							pTFPlayer->SetViewOffset( vec3_origin );
+							pTFPlayer->SetFOV( pObserverPoint, pObserverPoint->m_flFOV );
+						}
 					}
 
 					// use this to force the client player anim to face the right direction
