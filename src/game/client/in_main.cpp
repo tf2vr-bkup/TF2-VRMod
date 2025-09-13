@@ -1322,11 +1322,13 @@ void CInput::ExtraMouseSample( float frametime, bool active )
 				// Apply HMD yaw directly to m_headInPlayerA for immediate response
 				// This bypasses the engine view angle system that causes lag
 				pTFPlayer->m_headInPlayerA.y = freshRotation.y - pTFPlayer->m_calibratedHmdYaw;
+				pTFPlayer->m_headInPlayerA.x = freshRotation.x;
+				pTFPlayer->m_headInPlayerA.z = freshRotation.z;
 				
 				// Also update engine view angles for consistency (but this isn't what EyeAngles() uses for yaw)
 				QAngle currentViewAngles;
 				engine->GetViewAngles(currentViewAngles);
-				currentViewAngles.y = pTFPlayer->m_headInPlayerA.y;
+				currentViewAngles = pTFPlayer->m_headInPlayerA;
 				engine->SetViewAngles(currentViewAngles);
 				cmd->viewangles = currentViewAngles;
 			}
