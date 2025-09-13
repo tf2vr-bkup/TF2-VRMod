@@ -1466,7 +1466,12 @@ void CViewRender::ViewDrawScene( bool bDrew3dSkybox, SkyboxVisibility_t nSkyboxV
 
 	// Draw client side effects
 	// NOTE: These are not sorted against the rest of the frame
-	clienteffects->DrawEffects( gpGlobals->frametime );	
+	
+	// TFVR - Based on HL2VR: Only advance effects on the last eye to prevent double simulation
+	if (viewRender.m_eStereoEye == GetLastEye())
+		clienteffects->DrawEffects( gpGlobals->frametime );
+	else
+		clienteffects->DrawEffects( 0.0f );	
 
 	// Mark the frame as locked down for client fx additions
 	SetFXCreationAllowed( false );
@@ -5002,7 +5007,11 @@ void CSkyboxView::DrawInternal( view_id_t iSkyBoxViewID, bool bInvokePreAndPostR
 	BuildRenderableRenderLists( iSkyBoxViewID );
 	render->EndUpdateLightmaps();
 
-	g_pClientShadowMgr->ComputeShadowTextures( (*this), m_pWorldListInfo->m_LeafCount, m_pWorldListInfo->m_pLeafList );
+	// TFVR: Only compute shadow textures for the first eye to avoid double rendering in skybox
+	if (m_eStereoEye == STEREO_EYE_LEFT || !UseVR())
+	{
+		g_pClientShadowMgr->ComputeShadowTextures( (*this), m_pWorldListInfo->m_LeafCount, m_pWorldListInfo->m_pLeafList );
+	}
 
 	DrawWorld( 0.0f );
 
