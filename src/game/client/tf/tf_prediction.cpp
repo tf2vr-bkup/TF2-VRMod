@@ -48,6 +48,8 @@ void CTFPrediction::SetupMove( C_BasePlayer *player, CUserCmd *ucmd, IMoveHelper
 
 	// Call the default SetupMove code.
 	BaseClass::SetupMove( player, ucmd, pHelper, move );
+	
+	move->m_postFullBodyIKDeltaOrigin = ucmd->postFullBodyIKDeltaOrigin;
 }
 
 //-----------------------------------------------------------------------------
