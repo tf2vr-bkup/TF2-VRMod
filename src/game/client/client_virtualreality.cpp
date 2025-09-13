@@ -1676,10 +1676,39 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout )
 		bool bIsCursorVisible = vgui::surface() && vgui::surface()->IsCursorVisible();
 		bool bIsLoadoutOrArmoryScreen = false;
 		
+		// Check if normal gameplay HUD is visible (health, ammo, etc.)
+		bool bIsNormalHUDVisible = false;
+		bool bIsDeadPlayerInGame = false;
+		C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+		if (pPlayer && engine->IsInGame())
+		{
+			// Check if HUD elements are not hidden
+			int iHideHud = pPlayer->m_Local.m_iHideHUD;
+			extern ConVar hidehud;
+			if (hidehud.GetInt())
+			{
+				iHideHud = hidehud.GetInt();
+			}
+			
+			// HUD is visible if not all hidden and not in VGui input mode
+			bool bHUDNotHidden = !(iHideHud & HIDEHUD_ALL) && !pPlayer->IsInVGuiInputMode() && !bIsMainMenu;
+			
+			if (pPlayer->IsAlive())
+			{
+				// Living player with normal HUD
+				bIsNormalHUDVisible = bHUDNotHidden;
+			}
+			else 
+			{
+				// Dead player - check if they're spectating or in death cam (should still use translucent)
+				bIsDeadPlayerInGame = bHUDNotHidden;
+			}
+		}
+
 		if ( !m_bCustomHUDBoundsSet )
 		{
-			// HUD is attached to face - always use translucent for true HUD
-			bUseTranslucent = true;
+			// HUD is attached to face - use translucent for normal HUD or dead player
+			bUseTranslucent = bIsNormalHUDVisible || bIsDeadPlayerInGame;
 		}
 		else
 		{
@@ -1718,11 +1747,13 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout )
 			}
 		}
 		
-		// Decision logic:
-		// 1. Not connected to server = main menu (opaque)
-		// 2. Connected + detected loadout/armory = opaque
-		// 3. Connected + EconUI visible = opaque  
-		// 4. Connected + main menu but no special screens = pause menu (translucent)
+		// Material selection logic with proper priority (same as viewrender.cpp and vr_menu_manager.cpp):
+		// 1. True main menu (not connected) = opaque
+		// 2. Overlay menus (class select, loadout, inventory, etc.) = opaque  
+		// 3. In-game pause menu = translucent
+		// 4. Normal gameplay HUD (health, ammo, etc.) = translucent
+		// 5. Dead player in-game (spectating, death cam) = translucent
+		// 6. Default = opaque
 		if (!bIsConnectedToServer)
 		{
 			// True main menu (not connected) - use opaque
@@ -1730,12 +1761,17 @@ void CClientVirtualReality::RenderHUDQuad( bool bBlackout )
 		}
 		else if (bIsEconUIVisible || bIsLoadoutOrArmoryScreen)
 		{
-			// Overlay menus (loadout, inventory, etc.) - use opaque
+			// Overlay menus (class select, loadout, inventory, etc.) - use opaque
 			bUseTranslucent = false;
 		}
 		else if (bIsMainMenu)
 		{
 			// In-game pause menu - use translucent
+			bUseTranslucent = true;
+		}
+		else if (bIsNormalHUDVisible || bIsDeadPlayerInGame)
+		{
+			// Normal gameplay HUD with health/ammo OR dead player in-game - use translucent
 			bUseTranslucent = true;
 		}
 		else

@@ -85,6 +85,13 @@
 // Projective textures
 #include "C_Env_Projected_Texture.h"
 
+// TF2 UI panels for material selection logic
+#include "tf/vgui/character_info_panel.h"
+#include "tf/vgui/class_loadout_panel.h"
+#include "econ/econ_controls.h"
+#include "shareddefs.h"
+#include "game/client/iviewport.h"
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -6657,7 +6664,149 @@ void CViewRender::RenderMenuTextureToScreen(const CViewSetup &view, bool isCinem
 	}
 
 
-	IMaterial *pMenuFrameMat = materials->FindMaterial("vgui/inworldui", TEXTURE_GROUP_OTHER, true);
+	// Use proper material selection logic (same as RenderHUDQuad and VR menu manager)
+	bool bUseTranslucent = false;
+	
+	// Check if we're in main pause menu vs overlay menus
+	bool bIsMainMenu = enginevgui && enginevgui->IsGameUIVisible();
+	bool bIsEconUIVisible = false;
+	bool bIsConnectedToServer = engine && engine->IsConnected();
+	bool bIsLoadoutOrArmoryScreen = false;
+	
+	// Check if normal gameplay HUD is visible (health, ammo, etc.)
+	bool bIsNormalHUDVisible = false;
+	bool bIsDeadPlayerInGame = false;
+	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (pPlayer && engine->IsInGame())
+	{
+		// Check if HUD elements are not hidden
+		int iHideHud = pPlayer->m_Local.m_iHideHUD;
+		extern ConVar hidehud;
+		if (hidehud.GetInt())
+		{
+			iHideHud = hidehud.GetInt();
+		}
+		
+		// HUD is visible if not all hidden and not in VGui input mode
+		bool bHUDNotHidden = !(iHideHud & HIDEHUD_ALL) && !pPlayer->IsInVGuiInputMode() && !bIsMainMenu;
+		
+		if (pPlayer->IsAlive())
+		{
+			// Living player with normal HUD
+			bIsNormalHUDVisible = bHUDNotHidden;
+		}
+		else 
+		{
+			// Dead player - check if they're spectating or in death cam (should still use translucent)
+			bIsDeadPlayerInGame = bHUDNotHidden;
+		}
+	}
+	
+	// Check if any EconUI panels are visible (loadout, backpack, crafting, etc.)
+	if ( EconUI() )
+	{
+		bIsEconUIVisible = EconUI()->IsUIPanelVisible( ECONUI_BACKPACK ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_LOADOUT ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_CRAFTING ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_ARMORY ) ||
+						   EconUI()->IsUIPanelVisible( ECONUI_TRADING );
+	}
+	
+	// Additional checks for loadout/armory screens that EconUI might miss
+	if (engine && engine->IsConnected())
+	{
+		// Check for class menu state via console variables
+		ConVar* pClassMenuOpen = g_pCVar->FindVar("_cl_classmenuopen");
+		if (pClassMenuOpen && pClassMenuOpen->GetBool())
+		{
+			bIsLoadoutOrArmoryScreen = true;
+		}
+		
+		// Check for class loadout panel specifically
+		extern CClassLoadoutPanel* g_pClassLoadoutPanel;
+		if (g_pClassLoadoutPanel && g_pClassLoadoutPanel->IsVisible())
+		{
+			bIsLoadoutOrArmoryScreen = true;
+		}
+		
+		// Check for character info panel (class selection screen) 
+		extern CCharacterInfoPanel* GetCharInfoPanel(bool);
+		CCharacterInfoPanel* pCharInfoPanel = GetCharInfoPanel(false);
+		if (pCharInfoPanel && pCharInfoPanel->IsVisible())
+		{
+			bIsLoadoutOrArmoryScreen = true;
+		}
+		
+		// Check for ViewPort panels (class select, team select)
+		extern IViewPort* gViewPortInterface;
+		if (gViewPortInterface)
+		{
+			// Check class selection panels
+			IViewPortPanel* pPanel = gViewPortInterface->FindPanelByName("class_red");
+			if (pPanel && pPanel->IsVisible()) 
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			pPanel = gViewPortInterface->FindPanelByName("class_blue");
+			if (pPanel && pPanel->IsVisible()) 
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			// Check team selection panel
+			pPanel = gViewPortInterface->FindPanelByName("team");
+			if (pPanel && pPanel->IsVisible()) 
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+		}
+	}
+	
+	// Material selection logic with proper priority:
+	// 1. True main menu (not connected) = opaque
+	// 2. Overlay menus (class select, loadout, inventory, etc.) = opaque  
+	// 3. In-game pause menu = translucent
+	// 4. Normal gameplay HUD (health, ammo, etc.) = translucent
+	// 5. Dead player in-game (spectating, death cam) = translucent
+	// 6. Default = opaque
+	if (!bIsConnectedToServer)
+	{
+		// True main menu (not connected) - use opaque
+		bUseTranslucent = false;
+	}
+	else if (bIsEconUIVisible || bIsLoadoutOrArmoryScreen)
+	{
+		// Overlay menus (class select, loadout, inventory, etc.) - use opaque
+		bUseTranslucent = false;
+	}
+	else if (bIsMainMenu)
+	{
+		// In-game pause menu - use translucent
+		bUseTranslucent = true;
+	}
+	else if (bIsNormalHUDVisible || bIsDeadPlayerInGame)
+	{
+		// Normal gameplay HUD with health/ammo OR dead player in-game - use translucent
+		bUseTranslucent = true;
+	}
+	else
+	{
+		// Default: opaque for unknown states
+		bUseTranslucent = false;
+	}
+	
+	// Select the appropriate material based on menu type
+	IMaterial *pMenuFrameMat = nullptr;
+	if ( bUseTranslucent )
+	{
+		pMenuFrameMat = materials->FindMaterial("vgui/inworldui", TEXTURE_GROUP_OTHER, true);
+	}
+	else
+	{
+		pMenuFrameMat = materials->FindMaterial("vgui/inworldui_opaque", TEXTURE_GROUP_OTHER, true);
+	}
+	
 	pMenuFrameMat->IncrementReferenceCount();
 
 	CMatRenderContextPtr pRenderContext(materials);
