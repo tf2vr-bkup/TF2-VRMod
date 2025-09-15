@@ -1,8 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture"	"_rt_vr_health_overlay"
-	"$translucent"	"0" 
-	"$nofog"		"1"
-	"$nocull"		"1"
-	"$ignorez"	"1"
-}

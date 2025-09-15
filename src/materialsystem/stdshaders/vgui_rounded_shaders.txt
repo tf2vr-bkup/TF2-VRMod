@@ -1,8 +1,0 @@
-//
-// VGUI Rounded Corners Shader Collection
-//
-//  Simple shader for rounded corner VGUI elements
-//
-
-vgui_rounded_vs20.fxc
-vgui_rounded_ps20.fxc
