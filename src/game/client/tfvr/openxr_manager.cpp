@@ -1900,11 +1900,8 @@ void COpenXRManager::Update(float frametime)
 		m_menuManager->Update();
 	}
 	
-	// Update VR Laser Pointer
-	if (m_laserPointer)
-	{
-		m_laserPointer->Update(frametime);
-	}
+	// NOTE: VR Laser Pointer update moved to after CalcView for better timing
+	// (see view.cpp after CalcView)
 
 	// Poll OpenXR events
 	XrEventDataBuffer eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};

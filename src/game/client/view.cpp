@@ -47,6 +47,7 @@
 #include "client_virtualreality.h"
 #include "tfvr/openxr_manager.h"
 #include "tfvr/vr_input.h"
+#include "tfvr/vr_laser_pointer.h"
 
 #if defined( REPLAY_ENABLED )
 #include "replay/ireplaysystem.h"
@@ -719,6 +720,13 @@ void CViewRender::SetUpViews()
 				if (g_pVRMenuManager)
 				{
 					g_pVRMenuManager->UpdateCursorPosition();
+				}
+				
+				// Also update VR laser pointer with fresh data
+				extern class CVRLaserPointer* g_pVRLaserPointer;
+				if (g_pVRLaserPointer)
+				{
+					g_pVRLaserPointer->Update(gpGlobals->frametime);
 				}
 			}
 
