@@ -1542,10 +1542,13 @@ void GetFallbackStartupHUDBounds( Vector *pViewer, Vector *pUL, Vector *pUR, Vec
 	
 	// Get menu distance from ConVar (same as used by VR menu manager)
 	extern ConVar tfvr_menu_distance;
+	extern ConVar tfvr_menu_scale;
 	float hudDistance = tfvr_menu_distance.GetFloat();
 	
-	// HUD dimensions: same as VR menu manager uses
-	float hudHeight = 80.0f;
+	// HUD dimensions: same as VR menu manager uses (with scaling)
+	float baseHeight = 80.0f;
+	float scale = tfvr_menu_scale.GetFloat();
+	float hudHeight = baseHeight * scale;
 	float hudWidth = hudHeight * (16.0f / 9.0f); // 16:9 aspect ratio
 	
 	// Calculate forward direction from leveled head orientation (no pitch)

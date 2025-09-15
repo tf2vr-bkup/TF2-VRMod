@@ -40,11 +40,22 @@ extern IClientMode* g_pClientMode;
 // ConVars for VR menu control
 ConVar tfvr_primary_hand("tfvr_primary_hand", "1", FCVAR_ARCHIVE, "Primary hand for VR input: 0=left, 1=right");
 ConVar tfvr_menu_distance("tfvr_menu_distance", "100", FCVAR_ARCHIVE, "Distance from player to VR menu plane");
+extern ConVar tfvr_menu_scale;
 ConVar tfvr_cursor_threshold("tfvr_cursor_threshold", "0.05", FCVAR_ARCHIVE, "Minimum VR controller movement required to override mouse (in world units)");
 ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "1.0", FCVAR_ARCHIVE, "Minimum VR head movement required to override mouse (in world units)");
 ConVar tfvr_cursor_debug("tfvr_cursor_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR cursor threshold");
 ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
 ConVar tfvr_playspace_anchoring("tfvr_playspace_anchoring", "1", FCVAR_ARCHIVE, "Anchor menu to playspace origin instead of player");
+
+// Helper function to get scaled menu dimensions
+static void GetScaledMenuDimensions(float& menuWidth, float& menuHeight)
+{
+    float baseHeight = 80.0f; // Base height in world units
+    float scale = tfvr_menu_scale.GetFloat();
+    
+    menuHeight = baseHeight * scale;
+    menuWidth = menuHeight * (16.0f / 9.0f); // Maintain 16:9 aspect ratio
+}
 
 CVRMenuManager::CVRMenuManager()
     : m_bMenuButtonPressed(false)
@@ -497,9 +508,9 @@ void CVRMenuManager::HandleMenuInput()
                 Vector menuPlaneCenter = m_fixedMenuPosition + forward * menuDistance;
                 
                 // Create a quad representing the menu plane
-                // Use a fixed size that's reasonable for VR
-                float menuHeight = 80.0f; // Fixed height in world units
-                float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
+                // Use scaled size based on tfvr_menu_scale
+                float menuHeight, menuWidth;
+                GetScaledMenuDimensions(menuWidth, menuHeight);
                 
                 Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
                 Vector ur = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
@@ -1066,8 +1077,8 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     }
     
     // Use the exact same size calculations as in HandleMenuInput
-    float menuHeight = 80.0f; // Fixed height in world units
-    float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
+    float menuHeight, menuWidth;
+    GetScaledMenuDimensions(menuWidth, menuHeight);
     
     // Calculate menu plane corners - EXACTLY the same as in HandleMenuInput
     Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
@@ -1180,8 +1191,8 @@ Vector CVRMenuManager::GetMenuPlaneIntersection(const Vector& controllerPos, con
     }
     
     // Use the exact same size calculations as in HandleMenuInput
-    float menuHeight = 80.0f; // Fixed height in world units
-    float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
+    float menuHeight, menuWidth;
+    GetScaledMenuDimensions(menuWidth, menuHeight);
     
     // Calculate menu plane corners - EXACTLY the same as in ComputeCursorPosition
     Vector ul = menuPlaneCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
@@ -1320,8 +1331,8 @@ void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
     MatrixToAngles(m_menuPlayspaceAnchor, newMenuWorldAngles);
     
     // Update the HUD bounds using the new position
-    float menuHeight = 80.0f;
-    float menuWidth = menuHeight * (16.0f / 9.0f); // 16:9 aspect ratio
+    float menuHeight, menuWidth;
+    GetScaledMenuDimensions(menuWidth, menuHeight);
     
     Vector forward, right, up;
     AngleVectors(newMenuWorldAngles, &forward, &right, &up);
@@ -1769,6 +1780,36 @@ void CVRMenuManager::RenderMenuQuadIn3D()
     // Check if we're in main pause menu vs overlay menus
     bool bIsMainMenu = enginevgui && enginevgui->IsGameUIVisible();
     bool bIsEconUIVisible = false;
+    bool bIsConnectedToServer = engine && engine->IsConnected();
+    
+    // Check if normal gameplay HUD is visible (health, ammo, etc.)
+    bool bIsNormalHUDVisible = false;
+    bool bIsDeadPlayerInGame = false;
+    C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+    if (pPlayer && engine->IsInGame())
+    {
+        // Check if HUD elements are not hidden
+        int iHideHud = pPlayer->m_Local.m_iHideHUD;
+        extern ConVar hidehud;
+        if (hidehud.GetInt())
+        {
+            iHideHud = hidehud.GetInt();
+        }
+        
+        // HUD is visible if not all hidden and not in VGui input mode
+        bool bHUDNotHidden = !(iHideHud & HIDEHUD_ALL) && !pPlayer->IsInVGuiInputMode() && !bIsMainMenu;
+        
+        if (pPlayer->IsAlive())
+        {
+            // Living player with normal HUD
+            bIsNormalHUDVisible = bHUDNotHidden;
+        }
+        else 
+        {
+            // Dead player - check if they're spectating or in death cam (should still use translucent)
+            bIsDeadPlayerInGame = bHUDNotHidden;
+        }
+    }
     
     	// Check if any EconUI panels are visible (loadout, backpack, crafting, etc.)
 	if ( EconUI() )
@@ -1798,17 +1839,38 @@ void CVRMenuManager::RenderMenuQuadIn3D()
 		}
 	}
 	
-	// Use translucent for main pause menu, opaque for overlay menus
-	if ( bIsMainMenu && !bIsEconUIVisible && !bIsLoadoutOrArmoryScreen )
-    {
-        // Main pause menu - use translucent
-        bUseTranslucent = true;
-    }
-    else
-    {
-        // Overlay menus (loadout, items, etc.) - use opaque
-        bUseTranslucent = false;
-    }
+	// Material selection logic with proper priority (same as viewrender.cpp):
+	// 1. True main menu (not connected) = opaque
+	// 2. Overlay menus (class select, loadout, inventory, etc.) = opaque  
+	// 3. In-game pause menu = translucent
+	// 4. Normal gameplay HUD (health, ammo, etc.) = translucent
+	// 5. Dead player in-game (spectating, death cam) = translucent
+	// 6. Default = opaque
+	if (!bIsConnectedToServer)
+	{
+		// True main menu (not connected) - use opaque
+		bUseTranslucent = false;
+	}
+	else if (bIsEconUIVisible || bIsLoadoutOrArmoryScreen)
+	{
+		// Overlay menus (class select, loadout, inventory, etc.) - use opaque
+		bUseTranslucent = false;
+	}
+	else if (bIsMainMenu)
+	{
+		// In-game pause menu - use translucent
+		bUseTranslucent = true;
+	}
+	else if (bIsNormalHUDVisible || bIsDeadPlayerInGame)
+	{
+		// Normal gameplay HUD with health/ammo OR dead player in-game - use translucent
+		bUseTranslucent = true;
+	}
+	else
+	{
+		// Default: opaque for unknown states
+		bUseTranslucent = false;
+	}
     
     // Debug output
     static bool s_bLastUseTranslucent = true;
@@ -1867,8 +1929,11 @@ void CVRMenuManager::RenderMenuQuadIn3D()
 
     // Position the menu quad MUCH closer to the player
     Vector vCenter = Vector(0, 50, 64);  // 50 units in front, at head height  
-    float menuWidth = 80.0f;   // Smaller size
-    float menuHeight = 60.0f;  // Smaller size
+    float menuHeight, menuWidth;
+    GetScaledMenuDimensions(menuWidth, menuHeight);
+    // Scale down for closer 3D rendering
+    menuWidth *= 0.75f;
+    menuHeight *= 0.75f;
     
     // Create quad corners
     Vector vUL = vCenter + Vector(-menuWidth/2, 0, menuHeight/2);   // Upper Left
@@ -2100,8 +2165,8 @@ void CVRMenuManager::ComputeCursorPositionCompositor(int& px, int& py)
         AngleVectors(currentHmdAngles, &forward, &right, &up);
         Vector menuCenter = currentHmdOrigin + forward * menuDistance;
         
-        float menuHeight = 80.0f;
-        float menuWidth = menuHeight * (16.0f / 9.0f);
+        float menuHeight, menuWidth;
+        GetScaledMenuDimensions(menuWidth, menuHeight);
         
         ul = menuCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
         ur = menuCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
