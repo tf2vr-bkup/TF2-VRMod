@@ -6800,11 +6800,11 @@ void CViewRender::RenderMenuTextureToScreen(const CViewSetup &view, bool isCinem
 	IMaterial *pMenuFrameMat = nullptr;
 	if ( bUseTranslucent )
 	{
-		pMenuFrameMat = materials->FindMaterial("vgui/inworldui", TEXTURE_GROUP_OTHER, true);
+		pMenuFrameMat = materials->FindMaterial("vgui/screenui", TEXTURE_GROUP_OTHER, true);
 	}
 	else
 	{
-		pMenuFrameMat = materials->FindMaterial("vgui/inworldui_opaque", TEXTURE_GROUP_OTHER, true);
+		pMenuFrameMat = materials->FindMaterial("vgui/screenui_opaque", TEXTURE_GROUP_OTHER, true);
 	}
 	
 	pMenuFrameMat->IncrementReferenceCount();
