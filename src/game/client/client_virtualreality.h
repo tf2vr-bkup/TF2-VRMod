@@ -109,6 +109,12 @@ public:
 	void DrawPlayspaceDebugVisualization();
 
 	//---------------------------------------------------------
+	// VR Matrix Updates
+	//---------------------------------------------------------
+	void UpdateWorldFromMidEyeMatrices( const Vector &origin, const QAngle &angles );
+	const VMatrix & GetWorldFromMidEyeWithPitchRoll() const { return m_WorldFromMidEye; }
+
+	//---------------------------------------------------------
 	// Enter/leave VR mode
 	//---------------------------------------------------------
 	void Activate();

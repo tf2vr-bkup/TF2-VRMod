@@ -1301,6 +1301,21 @@ void CClientVirtualReality::ClearCustomHUDBounds()
 }
 
 // --------------------------------------------------------------------
+// Purpose: Update VR matrices with fresh player data
+// --------------------------------------------------------------------
+void CClientVirtualReality::UpdateWorldFromMidEyeMatrices( const Vector &origin, const QAngle &angles )
+{
+	// m_WorldFromMidEye: Full head orientation including pitch/roll (for menus)
+	m_WorldFromMidEye.SetupMatrixOrgAngles(origin, angles);
+	
+	// m_WorldFromMidEyeNoDebugCam: Torso angles without pitch/roll tilt (for player body/meathook)
+	QAngle torsoAngles = angles;
+	torsoAngles[PITCH] = 0.0f;  // Don't tilt the body up/down
+	torsoAngles[ROLL] = 0.0f;   // Don't roll the body
+	m_WorldFromMidEyeNoDebugCam.SetupMatrixOrgAngles(origin, torsoAngles);
+}
+
+// --------------------------------------------------------------------
 // Purpose: Notify the VR compositor about the current HUD quad position
 // Full coordinate conversion preserving exact calculated position
 // --------------------------------------------------------------------

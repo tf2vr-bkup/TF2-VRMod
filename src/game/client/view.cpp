@@ -696,6 +696,32 @@ void CViewRender::SetUpViews()
 		{
 			pPlayer->CalcView( viewEye.origin, viewEye.angles, viewEye.zNear, viewEye.zFar, viewEye.fov );
 
+			// This ensures VR positioning uses the same fresh data that the view system uses
+			extern CVRMenuManager* g_pVRMenuManager;
+			extern COpenXRManager* g_pOpenXRManager;
+			extern CClientVirtualReality g_ClientVirtualReality;
+			if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && UseVR())
+			{
+				// Force rebuild of VR matrices with fresh player data (after CalcView)
+				// This updates m_WorldFromMidEye with current frame data instead of stale input data
+				C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+				if (pTFPlayer)
+				{
+					// Get fresh player data (same as CalcView just used)
+					Vector freshOrigin = pTFPlayer->EyePosition();
+					QAngle freshAngles = pTFPlayer->EyeAngles();
+					
+					// Update the VR system matrices with fresh data using public method
+					g_ClientVirtualReality.UpdateWorldFromMidEyeMatrices(freshOrigin, freshAngles);
+				}
+				
+				// Now update menu cursor position with fresh VR matrices
+				if (g_pVRMenuManager)
+				{
+					g_pVRMenuManager->UpdateCursorPosition();
+				}
+			}
+
 			// If we are looking through another entities eyes, then override the angles/origin for view
 			int viewentity = render->GetViewEntity();
 
