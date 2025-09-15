@@ -11,4 +11,8 @@ $Include "$SRCDIR\materialsystem\stdshaders\game_shader_generic_example_base.vpc
 
 $Project "Game Shaders (TF)"
 {
+	$Folder	"Custom VGUI Shaders"
+	{
+		$File	"vgui_rounded.cpp"
+	}
 }
