@@ -1270,24 +1270,37 @@ Vector CVRMenuManager::CalculateCurrentPlayspaceOriginWorldPos()
         return Vector(0, 0, 0);
     }
     
-    // GetMideyePose() returns head position relative to playspace origin (in Source coordinates)
+    extern CClientVirtualReality g_ClientVirtualReality;
+    VMatrix currentHeadWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+    
+    // GetMideyePose() returns head position relative to playspace origin
     VMatrix headRelativeToPlayspace = m_pVRManager->GetMideyePose();
     
     // Calculate playspace origin relative to head
     VMatrix headToPlayspaceTransform = headRelativeToPlayspace.InverseTR();
     
-    // Get current head world position
+    // If WorldFromMidEye is valid, use it directly (should have fresh VR data)
+    if (!currentHeadWorldMatrix.IsIdentity())
+    {
+        // Calculate playspace origin in world coordinates using fresh VR matrix
+        VMatrix playspaceWorldMatrix = currentHeadWorldMatrix * headToPlayspaceTransform;
+        Vector result = playspaceWorldMatrix.GetTranslation();
+        
+        return result;
+    }
+    
+    // Fallback: If WorldFromMidEye is not available, fall back to player entity data
+    DevMsg("VR Menu: WorldFromMidEye not available, using fallback player position (BAD - this causes lag!)\n");
     Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
     QAngle currentHeadWorldAngles = m_pLocalPlayer->EyeAngles();
     
-    VMatrix currentHeadWorldMatrix;
-    currentHeadWorldMatrix.Identity();
+    VMatrix fallbackHeadWorldMatrix;
+    fallbackHeadWorldMatrix.Identity();
     matrix3x4_t headMatrix3x4;
     AngleMatrix(currentHeadWorldAngles, currentHeadWorldPos, headMatrix3x4);
-    currentHeadWorldMatrix.CopyFrom3x4(headMatrix3x4);
+    fallbackHeadWorldMatrix.CopyFrom3x4(headMatrix3x4);
     
-    // Transform playspace origin to world coordinates
-    VMatrix playspaceWorldMatrix = currentHeadWorldMatrix * headToPlayspaceTransform;
+    VMatrix playspaceWorldMatrix = fallbackHeadWorldMatrix * headToPlayspaceTransform;
     Vector result = playspaceWorldMatrix.GetTranslation();
 
     return result;

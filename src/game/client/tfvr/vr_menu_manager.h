@@ -51,10 +51,12 @@ public:
     
     // Public method to get playspace origin for external access (needed for HUD positioning)
     Vector GetPlayspaceOriginWorldPos();
+    
+    // Public method to update cursor position (called from OverridePlayerMotion for fresh positioning)
+    void UpdateCursorPosition();
 
 private:
     // Helper functions
-    void UpdateCursorPosition();
     void HandleMenuButtonInput();
     void ComputeCursorPositionCompositor(int& px, int& py); // Playspace-relative cursor for compositor mode
     void HandleCompositorMode(SourceEngineState state);
@@ -117,6 +119,9 @@ private:
     
     // VR frame management
     bool m_bVRFrameStarted;
+    
+    // VR tracking update optimization
+    int m_nLastVRTrackingUpdateFrame;
     
     // VR Health Overlay
     CVRHealthOverlay* m_pVRHealthOverlay;

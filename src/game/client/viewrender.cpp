@@ -2504,7 +2504,25 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				
 				if (bShouldRenderVRQuad)
 				{
-					g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD() );
+					// Ensure VR menu manager has processed menu visibility before rendering HUD quad
+					// This prevents single frame flash where menu shows at wrong scale/position
+					if (g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible())
+					{
+						// Menu is visible - let VR menu manager set proper bounds first
+						// Check if custom bounds are already set
+						Vector viewer, ul, ur, ll, lr;
+						if (g_ClientVirtualReality.GetCustomHUDBounds(&viewer, &ul, &ur, &ll, &lr))
+						{
+							// Custom bounds are set, safe to render
+							g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD() );
+						}
+						// If custom bounds not set yet, skip this frame to prevent wrong scale/position
+					}
+					else
+					{
+						// No menu visible, render normally
+						g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD() );
+					}
 				}
 				
 				// Render VR health overlay
@@ -6622,14 +6640,20 @@ void CViewRender::RenderHUD(const CViewSetup &view)
 // Input  : &view -
 //	
 //-----------------------------------------------------------------------------
-ConVar tfvr_hud_on_mirror("tfvr_hud_on_mirror", "1", FCVAR_ARCHIVE, "If enabled, displays the HUD on the desktop mirror window. Set to -1 if you also want to hide the main menu from the mirror.");
+ConVar tfvr_hud_on_mirror("tfvr_hud_on_mirror", "1", FCVAR_ARCHIVE, "If enabled, displays the HUD on the desktop mirror window.");
+ConVar tfvr_menu_on_mirror("tfvr_menu_on_mirror", "0", FCVAR_ARCHIVE, "If enabled, displays the HUD on the desktop mirror window.");
 void CViewRender::RenderMenuTextureToScreen(const CViewSetup &view, bool isCinema)
 {
-	if (tfvr_hud_on_mirror.GetInt() < 0)
+	if (!tfvr_menu_on_mirror.GetBool() && (enginevgui && enginevgui->IsGameUIVisible()))
 		return;
-	if (!tfvr_hud_on_mirror.GetBool() && !(enginevgui && enginevgui->IsGameUIVisible()))
-		return;
-
+		
+	if (!tfvr_hud_on_mirror.GetBool())
+	{
+		if (tfvr_menu_on_mirror.GetInt() < 0)
+			return;
+		if (!tfvr_menu_on_mirror.GetBool())
+			return;
+	}
 	ITexture* pMenuFrame = materials->FindTexture("_rt_vgui", NULL);
 
 	if (pMenuFrame == NULL)
