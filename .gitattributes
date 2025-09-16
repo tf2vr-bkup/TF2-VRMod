@@ -42,4 +42,7 @@ LICENSE text
 protoc binary
 ccache binary
 
+*.png binary
+*.vtf binary
+
 *_english.txt binary
