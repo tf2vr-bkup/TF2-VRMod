@@ -242,13 +242,34 @@ void CHudTFCrosshair::Paint()
 	bool bRotateCrosshair = false;
 	float flRotationAngle = 0.0f;
 	
-	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_crosshair_follow_controller_roll.GetBool())
+	if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
 	{
-		// Use the stored roll angle from OverrideWeaponHudAimVectors for consistency
-		if (g_ClientVirtualReality.m_bCrosshairRollValid)
+		if (tfvr_crosshair_follow_controller_roll.GetBool())
 		{
-			flRotationAngle = g_ClientVirtualReality.m_flCrosshairRollAngle;
-			bRotateCrosshair = true;
+			// Use the stored roll angle from OverrideWeaponHudAimVectors for consistency
+			if (g_ClientVirtualReality.m_bCrosshairRollValid)
+			{
+				flRotationAngle = g_ClientVirtualReality.m_flCrosshairRollAngle;
+				bRotateCrosshair = true;
+			}
+		}
+		
+		// Compensate for head roll to keep crosshair level when head tilts
+		// Since we zero head roll in m_headInPlayerA, we need to get the raw HMD roll
+		QAngle rawHmdAngles;
+		MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), rawHmdAngles);
+		float headRollCompensation = -rawHmdAngles.z; // Negative to counteract the roll
+		
+		if (bRotateCrosshair)
+		{
+			// Add head roll compensation to controller roll
+			flRotationAngle += headRollCompensation;
+		}
+		else
+		{
+			// Use only head roll compensation
+			flRotationAngle = headRollCompensation;
+			bRotateCrosshair = (fabs(flRotationAngle) > 0.1f);
 		}
 	}
 	
