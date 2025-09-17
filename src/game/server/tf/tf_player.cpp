@@ -3338,6 +3338,16 @@ void CTFPlayer::InitialSpawn( void )
 {
 	BaseClass::InitialSpawn();
 
+	// For VR players, reset server-side head tracking and send spawn angles
+	if ( IsInVRMode() && !IsFakeClient() )
+	{
+		m_headInPlayerO = vec3_origin;
+		m_roomscaleOffset = vec3_origin;
+		
+		// Send ForcePlayerViewAngles with the initial spawn angles for VR rotation calibration
+		ForcePlayerViewAngles( GetAbsAngles() );
+	}
+
 	m_AttributeManager.InitializeAttributes( this );
 	m_AttributeManager.SetPlayer( this );
 	m_AttributeList.SetManager( &m_AttributeManager );
@@ -3652,6 +3662,16 @@ void CTFPlayer::Spawn()
 
 	SetMoveType( MOVETYPE_WALK );
 	BaseClass::Spawn();
+	
+	// For VR players, reset server-side head tracking and send spawn angles
+	if ( IsInVRMode() && !IsFakeClient() )
+	{
+		m_headInPlayerO = vec3_origin;
+		m_roomscaleOffset = vec3_origin;
+		
+		// Send ForcePlayerViewAngles with the spawn point angles
+		ForcePlayerViewAngles( GetAbsAngles() );
+	}
 
 	// We have to clear this early, so that the sword knows its max health in ManageRegularWeapons below
 	m_Shared.SetDecapitations( 0 );

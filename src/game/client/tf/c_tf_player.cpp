@@ -6619,18 +6619,18 @@ ConVar tfvr_roomscale_debug("tfvr_roomscale_debug", "0");
 
 void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 {
-		if (!m_isCalibrated)
-		{
-			Log("Calibrating VR base position\n");
-			m_calibratedHmdXYPosition = g_pOpenXRManager->GetMideyePose().GetTranslation();
-			m_calibratedHmdXYPosition.z = 0; // cancel out the original vertical position so we don't correct for it
+	if (!m_isCalibrated)
+	{
+		Log("Calibrating VR base position\n");
+		m_calibratedHmdXYPosition = g_pOpenXRManager->GetMideyePose().GetTranslation();
+		m_calibratedHmdXYPosition.z = 0; // cancel out the original vertical position so we don't correct for it
 
-			QAngle tempYawContainer;
-			MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), tempYawContainer);
-			m_calibratedHmdYaw = tempYawContainer[YAW];
-			m_isCalibrated = true;
-			DevMsg("VR: Initial calibration - HMD Yaw: %.1f\n", m_calibratedHmdYaw);
-		}
+		QAngle tempYawContainer;
+		MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), tempYawContainer);
+		m_calibratedHmdYaw = tempYawContainer[YAW];
+		m_isCalibrated = true;
+		DevMsg("VR: Initial calibration - HMD Yaw: %.1f (will be recalibrated on spawn)\n", m_calibratedHmdYaw);
+	}
 
 	// world here is aligned with the identity rotation and has origin the player spawn;
 	Vector currentHmdInWorldO;
@@ -8109,8 +8109,38 @@ void C_TFPlayer::ClientPlayerRespawn( void )
 				float oldCalibratedYaw = m_calibratedHmdYaw;
 				m_calibratedHmdYaw = hmdAngles.y - m_spawnViewAngles.y;
 				
+				// Normalize the offset to be in the range [-180, 180]
+				while (m_calibratedHmdYaw > 180.0f) m_calibratedHmdYaw -= 360.0f;
+				while (m_calibratedHmdYaw < -180.0f) m_calibratedHmdYaw += 360.0f;
+				
+				// Reset VR position tracking completely
+				// The key insight: we need to reset BOTH the calibrated position AND the accumulated offset
+				// so that the HMD appears at the spawn point without affecting where the server thinks the player is
+				Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
+				
+				// Reset calibrated position to current HMD location
+				m_calibratedHmdXYPosition = currentHmdPos;
+				m_calibratedHmdXYPosition.z = 0;
+				
+				// CRITICAL: Reset local tracking accumulation to prevent server feedback
+				m_localRoomscaleOffset = vec3_origin;
+				
+				// Reset head-in-player offset to prevent server from using old position data
+				m_headInPlayerO = vec3_origin;
+				
+				// Add debug to understand what's happening
+				Vector spawnPos = GetAbsOrigin();
+				DevMsg("VR: Position reset - HMD at (%.1f, %.1f), Player spawn at (%.1f, %.1f), Resetting all VR offsets\n",
+					currentHmdPos.x, currentHmdPos.y, 
+					spawnPos.x, spawnPos.y);
+				DevMsg("VR: Reset - Calibrated: (%.1f, %.1f), LocalOffset: (%.1f, %.1f), HeadInPlayer: (%.1f, %.1f)\n",
+					m_calibratedHmdXYPosition.x, m_calibratedHmdXYPosition.y,
+					m_localRoomscaleOffset.x, m_localRoomscaleOffset.y,
+					m_headInPlayerO.x, m_headInPlayerO.y);
+				
 				// Set spawn time for VR rotation code
 				m_flSpawnTime = gpGlobals->curtime;
+				
 			}
 		}
 	}

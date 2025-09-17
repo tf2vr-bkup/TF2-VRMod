@@ -2443,15 +2443,42 @@ USER_MESSAGE( ForcePlayerViewAngles )
 		QAngle viewangles;
 		msg.ReadBitAngles( viewangles );
 
-		// Only force view angles if VR rotation is not being driven by our system
-		extern ConVar tfvr_hmd_drive_rotation;
-		if (!tfvr_hmd_drive_rotation.GetBool())
+		// Set the magic angles here!
+		pPlayer->SetLocalAngles( viewangles );
+		pPlayer->SetAbsAngles( viewangles );
+		pPlayer->SetTauntYaw( viewangles[YAW] );
+		pPlayer->m_Shared.SetVehicleMoveAngles( viewangles );
+		
+		// For VR players, recalibrate tracking offsets
+		if ( UseVR() && tfvr_hmd_drive_rotation.GetBool() )
 		{
-			// Set the magic angles here!
-			pPlayer->SetLocalAngles( viewangles );
-			pPlayer->SetAbsAngles( viewangles );
-			pPlayer->SetTauntYaw( viewangles[YAW] );
-			pPlayer->m_Shared.SetVehicleMoveAngles( viewangles );
+			C_TFPlayer* pTFPlayer = dynamic_cast<C_TFPlayer*>(pPlayer);
+			if (pTFPlayer)
+			{
+				// Store the new target angles for VR calibration
+				pTFPlayer->m_spawnViewAngles = viewangles;
+				
+				// Get current HMD angles and recalibrate tracking offsets
+				QAngle hmdAngles;
+				MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), hmdAngles);
+				
+				// Recalibrate VR tracking: set offset so current HMD orientation = target orientation
+				float newOffset = hmdAngles.y - viewangles.y;
+				
+				// Normalize the offset to be in the range [-180, 180]
+				while (newOffset > 180.0f) newOffset -= 360.0f;
+				while (newOffset < -180.0f) newOffset += 360.0f;
+				
+				pTFPlayer->m_calibratedHmdYaw = newOffset;
+				
+				// Reset roomscale position offset: set base position so current HMD position = target position
+				Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
+				pTFPlayer->m_calibratedHmdXYPosition = currentHmdPos;
+				pTFPlayer->m_calibratedHmdXYPosition.z = 0; // Don't correct Z axis
+				
+				// Reset local tracking accumulation
+				pTFPlayer->m_localRoomscaleOffset = vec3_origin;
+			}
 		}
 	}
 }
