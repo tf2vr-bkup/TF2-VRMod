@@ -361,6 +361,15 @@ void CVRMenuManager::HandleMenuInput()
     if (bCurrentClassMenuButtonState && !bLastClassMenuButtonState)
     {
         float currentTime = gpGlobals->curtime;
+        
+        // Detect if time has gone backwards (map change, etc.) and reset cooldown
+        if (currentTime < m_flLastClassMenuTime)
+        {
+            DevMsg("VR Menu: Time went backwards (%.1f -> %.1f), resetting class menu cooldown\n", 
+                   m_flLastClassMenuTime, currentTime);
+            m_flLastClassMenuTime = 0.0f;
+        }
+        
         // Prevent rapid-fire: require at least 0.5 seconds between executions
         if (currentTime - m_flLastClassMenuTime >= 0.5f)
         {
