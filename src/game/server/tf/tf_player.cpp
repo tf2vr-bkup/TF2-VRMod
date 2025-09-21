@@ -23392,6 +23392,10 @@ void CTFPlayer::CheckForHeadCollisions()
 	if (!IsInVRMode())
 		return;
 
+	// Only check when player is actually in-match (on a team with a class selected)
+	if (!IsReadyToPlay())
+		return;
+
 	// Use client's EyePosition for collision detection (we know this works correctly)
 	Vector clientHeadPosition = m_clientEyePosition;
 	if (clientHeadPosition == vec3_origin)
