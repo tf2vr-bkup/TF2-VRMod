@@ -23409,9 +23409,8 @@ void CTFPlayer::CheckForHeadCollisions()
 	// Use client position for collision detection (known to work correctly)
 	Vector headPosition = clientHeadPosition;
 
-	// Original HL2VR collision detection
 	trace_t pm;
-	Vector headHalfSize(3.f, 3.f, 0.1f);
+	Vector headHalfSize(3.5f, 3.5f, 0.1f);
 	CTraceFilterSimpleList filter(COLLISION_GROUP_PLAYER_MOVEMENT);
 	filter.AddEntityToIgnore(this);
 	unsigned int mask = MASK_PLAYERSOLID & ~CONTENTS_MONSTER;
