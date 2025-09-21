@@ -23465,8 +23465,8 @@ void CTFPlayer::CheckForHeadCollisions()
 	{
 		color32 fadeColor{ 0, 0, 0, fadeIntensity };
 		UTIL_ScreenFade(this, fadeColor, 0.1f, 0.1f, FFADE_IN);
-		if (fadeIntensity >= 192 && gpGlobals->curtime - m_lastTimeHeadCleared > 0.1f)
-			UTIL_CenterPrintAll("Please move back\n");
+		// if (fadeIntensity >= 192 && gpGlobals->curtime - m_lastTimeHeadCleared > 0.1f)
+		//	 UTIL_CenterPrintAll("Please move back\n");
 	}
 	else
 	{

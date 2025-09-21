@@ -4134,7 +4134,7 @@ const QAngle& C_TFPlayer::GetRenderAngles()
 Vector C_TFPlayer::Weapon_ShootPosition( void )
 {
 	// Check if VR is active and controller tracking is enabled
-	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	if (UseVR() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
 		// Get the right controller pose for weapon shooting (typically the shooting hand)
 		VMatrix rightControllerPose;
@@ -4163,8 +4163,8 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 //-----------------------------------------------------------------------------
 QAngle C_TFPlayer::Weapon_ShootAngles( void )
 {
-	// Check if VR is active and controller tracking is enabled
-	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	// Only use VR controller angles if VR is actually active
+	if (UseVR() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
 		// Get the right controller pose for weapon shooting (typically the shooting hand)
 		VMatrix rightControllerPose;
@@ -9222,8 +9222,6 @@ void C_TFPlayer::Simulate( void )
 		Flashlight();
 	}
 
-	// Use the standard base player simulate - TF's UpdateStepSound override
-	// will handle preventing inappropriate footstep sounds
 	BaseClass::Simulate();
 }
 
@@ -9392,7 +9390,7 @@ void C_TFPlayer::UpdateStepSound( surfacedata_t *psurface, const Vector &vecOrig
 	// Block velocity-based footsteps that would be called from C_BasePlayer::Simulate()
 	// Animation events (event 7001) reset m_flStepSoundTime to 0 before calling this,
 	// so we can use that to distinguish between animation events and velocity-based calls
-	if ( m_flStepSoundTime > 0 )
+	if ( m_flStepSoundTime > 0 && ShouldDrawLocalPlayer())
 	{
 		// This is a velocity-based call from C_BasePlayer::Simulate, block it
 		return;

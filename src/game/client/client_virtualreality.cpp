@@ -690,6 +690,13 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 	// Everything in here is in Source coordinate space.
 	if( !UseVR() )
 	{
+		// CRITICAL: When VR is off, ensure projection matrix overrides are disabled
+		// This restores normal FOV calculation instead of using VR projection matrices
+		DevMsg("OverrideStereoView: VR is OFF - resetting projection overrides. Middle was: %s\n", 
+			pViewMiddle->m_bViewToProjectionOverride ? "OVERRIDDEN" : "NORMAL");
+		pViewMiddle->m_bViewToProjectionOverride = false;
+		pViewLeft->m_bViewToProjectionOverride = false; 
+		pViewRight->m_bViewToProjectionOverride = false;
 		return false;
 	}
 
@@ -2147,6 +2154,12 @@ void CClientVirtualReality::Deactivate()
 		return;
 
 	g_pOpenXRManager->Shutdown();
+	
+	// CRITICAL: Notify server that VR mode is deactivated 
+	// This disables server-side VR features like head collision detection
+	KeyValues *kvMode = new KeyValues( "VRModeInactive" );
+	engine->ServerCmdKeyValues( kvMode );
+	DevMsg("VR Deactivate: Sent VRModeInactive to server - disabling head collision detection\n");
 
     static ConVarRef cl_software_cursor( "cl_software_cursor" );
     vgui::surface()->SetSoftwareCursor( cl_software_cursor.GetBool() );

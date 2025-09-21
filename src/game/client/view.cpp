@@ -675,7 +675,7 @@ void CViewRender::SetUpViews()
 	viewEye.fov				= default_fov.GetFloat();
 
 	viewEye.m_bOrtho			= false;
-	viewEye.m_bViewToProjectionOverride = true;
+	viewEye.m_bViewToProjectionOverride = UseVR();  // Only override projection in VR mode
 	viewEye.m_eStereoEye		= STEREO_EYE_MONO;
 
 	// Enable spatial partition access to edicts
@@ -824,6 +824,8 @@ void CViewRender::SetUpViews()
 		m_ViewRight = m_View;
 		m_ViewLeft.m_eStereoEye = STEREO_EYE_LEFT;
 		m_ViewRight.m_eStereoEye = STEREO_EYE_RIGHT;
+		m_ViewLeft.m_bViewToProjectionOverride = false;
+		m_ViewRight.m_bViewToProjectionOverride = false;
 	}
 
 	if ( bCalcViewModelView )

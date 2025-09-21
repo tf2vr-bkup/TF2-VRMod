@@ -14773,22 +14773,28 @@ const QAngle &CTFPlayer::EyeAngles()
 	m_cachedEyeAngles = BaseClass::EyeAngles();
 	
 #ifdef CLIENT_DLL
-	// In VR mode with HMD rotation enabled, use HMD yaw directly for immediate response
-	extern ConVar tfvr_hmd_drive_rotation;
-	if (tfvr_hmd_drive_rotation.GetBool())
+	// Only apply VR logic if VR is actually active
+	if (UseVR())
 	{
-		// Use HMD data for all three axes to ensure they're all immediate
-		m_cachedEyeAngles.x = m_headInPlayerA.x;  // HMD pitch
-		m_cachedEyeAngles.y = m_headInPlayerA.y;  // HMD yaw  
-		m_cachedEyeAngles.z = m_headInPlayerA.z;  // HMD roll
+		// In VR mode with HMD rotation enabled, use HMD yaw directly for immediate response
+		extern ConVar tfvr_hmd_drive_rotation;
+		if (tfvr_hmd_drive_rotation.GetBool())
+		{
+			// Use HMD data for all three axes to ensure they're all immediate
+			m_cachedEyeAngles.x = m_headInPlayerA.x;  // HMD pitch
+			m_cachedEyeAngles.y = m_headInPlayerA.y;  // HMD yaw  
+			m_cachedEyeAngles.z = m_headInPlayerA.z;  // HMD roll
+		}
+		else
+		{
+			// Standard VR mode: base yaw + HMD pitch/roll
+			QAngle HMDPitchRoll(m_headInPlayerA.x, 0, m_headInPlayerA.z);
+			m_cachedEyeAngles += HMDPitchRoll;
+		}
 	}
-	else
+	// When VR is completely off, just use the base class angles (no modification needed)
 #endif
-	{
-		// Standard VR mode: base yaw + HMD pitch/roll
-		QAngle HMDPitchRoll(m_headInPlayerA.x, 0, m_headInPlayerA.z);
-		m_cachedEyeAngles += HMDPitchRoll;
-	}
+	
 	return m_cachedEyeAngles;
 }
 

@@ -2042,13 +2042,15 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 
 	if (viewRender.m_eStereoEye == STEREO_EYE_MONO)
 	{
-		if (whatToDraw != -1)
+		// Only use VR rendering when VR is actually active
+		if (UseVR() && whatToDraw != -1)
 		{
 			RenderVREyeToScreen(viewRender, STEREO_EYE_LEFT);
 			//RenderMenuToMenuTexture(view);
 			RenderMenuTextureToScreen(viewRender, false);
 			return;
 		}
+		// When VR is off, proceed with normal rendering
 		whatToDraw = 0;
 	}
 	whatToDraw |= RENDERVIEW_DRAWHUD;
