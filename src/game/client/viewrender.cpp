@@ -38,6 +38,7 @@
 #include "c_rope.h"
 #include "c_effects.h"
 #include "smoke_fog_overlay.h"
+#include "menu.h"
 #include "materialsystem/imaterialsystemhardwareconfig.h"
 #include "VGuiMatSurface/IMatSystemSurface.h"
 #include "vgui_int.h"
@@ -91,6 +92,8 @@
 #include "econ/econ_controls.h"
 #include "shareddefs.h"
 #include "game/client/iviewport.h"
+#include "viewport_panel_names.h"
+#include "tf/tf_shareddefs.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -6644,8 +6647,62 @@ ConVar tfvr_hud_on_mirror("tfvr_hud_on_mirror", "1", FCVAR_ARCHIVE, "If enabled,
 ConVar tfvr_menu_on_mirror("tfvr_menu_on_mirror", "0", FCVAR_ARCHIVE, "If enabled, displays the HUD on the desktop mirror window.");
 void CViewRender::RenderMenuTextureToScreen(const CViewSetup &view, bool isCinema)
 {
-	if (!tfvr_menu_on_mirror.GetBool() && (enginevgui && enginevgui->IsGameUIVisible()))
-		return;
+	// Early exit if menu mirror is disabled and any menu type is visible
+	if (!tfvr_menu_on_mirror.GetBool())
+	{
+		// Check main game UI
+		if (enginevgui && enginevgui->IsGameUIVisible())
+			return;
+			
+		// Check for ViewPort panels (class select, team select, intro, MOTD, etc.)
+		extern IViewPort* gViewPortInterface;
+		if (gViewPortInterface)
+		{
+			IViewPortPanel* pPanel = nullptr;
+			
+			// Check class selection panels
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_RED);
+			if (pPanel && pPanel->IsVisible()) 
+				return;
+			
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_BLUE);
+			if (pPanel && pPanel->IsVisible()) 
+				return;
+			
+			// Check team selection panel
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_TEAM);
+			if (pPanel && pPanel->IsVisible()) 
+				return;
+			
+			// Check intro panel
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_INTRO);
+			if (pPanel && pPanel->IsVisible()) 
+				return;
+			
+			// Check info panel (MOTD, etc.)
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_INFO);
+			if (pPanel && pPanel->IsVisible()) 
+				return;
+			
+			// Check map info panel
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_MAPINFO);
+			if (pPanel && pPanel->IsVisible()) 
+				return;
+			
+			// Check arena team panel
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_ARENA_TEAM);
+			if (pPanel && pPanel->IsVisible()) 
+				return;
+		}
+		
+		// Check for HUD menus (voice commands, etc.)
+		if (g_pClientMode)
+		{
+			CHudMenu* pHudMenu = GET_HUDELEMENT(CHudMenu);
+			if (pHudMenu && pHudMenu->IsMenuOpen())
+				return;
+		}
+	}
 		
 	if (!tfvr_hud_on_mirror.GetBool())
 	{
@@ -6761,25 +6818,53 @@ void CViewRender::RenderMenuTextureToScreen(const CViewSetup &view, bool isCinem
 			bIsLoadoutOrArmoryScreen = true;
 		}
 		
-		// Check for ViewPort panels (class select, team select)
+		// Check for ViewPort panels (class select, team select, intro, MOTD, etc.)
 		extern IViewPort* gViewPortInterface;
 		if (gViewPortInterface)
 		{
 			// Check class selection panels
-			IViewPortPanel* pPanel = gViewPortInterface->FindPanelByName("class_red");
+			IViewPortPanel* pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_RED);
 			if (pPanel && pPanel->IsVisible()) 
 			{
 				bIsLoadoutOrArmoryScreen = true;
 			}
 			
-			pPanel = gViewPortInterface->FindPanelByName("class_blue");
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_BLUE);
 			if (pPanel && pPanel->IsVisible()) 
 			{
 				bIsLoadoutOrArmoryScreen = true;
 			}
 			
 			// Check team selection panel
-			pPanel = gViewPortInterface->FindPanelByName("team");
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_TEAM);
+			if (pPanel && pPanel->IsVisible()) 
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			// Check intro panel
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_INTRO);
+			if (pPanel && pPanel->IsVisible()) 
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			// Check info panel (MOTD, etc.)
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_INFO);
+			if (pPanel && pPanel->IsVisible()) 
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			// Check map info panel
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_MAPINFO);
+			if (pPanel && pPanel->IsVisible()) 
+			{
+				bIsLoadoutOrArmoryScreen = true;
+			}
+			
+			// Check arena team panel
+			pPanel = gViewPortInterface->FindPanelByName(PANEL_ARENA_TEAM);
 			if (pPanel && pPanel->IsVisible()) 
 			{
 				bIsLoadoutOrArmoryScreen = true;
