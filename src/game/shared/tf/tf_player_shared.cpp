@@ -14691,6 +14691,7 @@ Vector CTFPlayer::EyePosition()
 	
 	// VR-specific eye position calculation
 	Vector basePos = GetAbsOrigin();
+
 	Vector localHeadPos = m_headInPlayerO - m_roomscaleOffset;
 	
 	// Use raw VR headset position - let the world scaling system handle class height differences

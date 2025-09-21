@@ -206,6 +206,7 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	WriteVec3Diff(buf, to->playerToHmdOrigin, from->playerToHmdOrigin);
 	WriteVec3Diff(buf, to->playerToHmdAngles, from->playerToHmdAngles);
 	WriteVec3Diff(buf, to->postFullBodyIKDeltaOrigin, from->postFullBodyIKDeltaOrigin);
+	WriteVec3Diff(buf, to->clientEyePosition, from->clientEyePosition);
 	WriteVec3Diff(buf, to->leftControllerOrigin, from->leftControllerOrigin);
 	WriteVec3Diff(buf, to->leftControllerAngles, from->leftControllerAngles);
 	WriteVec3Diff(buf, to->rightControllerOrigin, from->rightControllerOrigin);
@@ -352,6 +353,7 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	ReadVec3Diff(buf, move->playerToHmdOrigin);
 	ReadVec3Diff(buf, move->playerToHmdAngles);
 	ReadVec3Diff(buf, move->postFullBodyIKDeltaOrigin);
+	ReadVec3Diff(buf, move->clientEyePosition);
 	ReadVec3Diff(buf, move->leftControllerOrigin);
 	ReadVec3Diff(buf, move->leftControllerAngles);
 	ReadVec3Diff(buf, move->rightControllerOrigin);

@@ -46,6 +46,7 @@ public:
 		postFullBodyIKDeltaOrigin.Init();
 		playerToHmdOrigin.Init();
 		playerToHmdAngles.Init();
+		clientEyePosition.Init();
 		leftControllerOrigin.Init();
 		leftControllerAngles.Init();
 		rightControllerOrigin.Init();
@@ -81,6 +82,7 @@ public:
 		postFullBodyIKDeltaOrigin = src.postFullBodyIKDeltaOrigin;
 		playerToHmdOrigin = src.playerToHmdOrigin;
 		playerToHmdAngles = src.playerToHmdAngles;
+		clientEyePosition = src.clientEyePosition;
 		leftControllerOrigin = src.leftControllerOrigin;
 		leftControllerAngles = src.leftControllerAngles;
 		rightControllerOrigin = src.rightControllerOrigin;
@@ -173,6 +175,7 @@ public:
 	Vector	postFullBodyIKDeltaOrigin;
 	Vector	playerToHmdOrigin;
 	QAngle	playerToHmdAngles;
+	Vector	clientEyePosition;  // Direct eye position from client for collision detection
 	
 	// VR Controller Tracking for weapon shooting
 	Vector	leftControllerOrigin;

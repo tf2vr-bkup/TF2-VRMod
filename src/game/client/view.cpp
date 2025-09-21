@@ -27,6 +27,7 @@
 #include "smoke_fog_overlay.h"
 #include "bitmap/tgawriter.h"
 #include "hltvcamera.h"
+#include "tf/c_tf_player.h"
 #if defined( REPLAY_ENABLED )
 #include "replay/replaycamera.h"
 #include "replay/replay_screenshot.h"
@@ -611,8 +612,17 @@ static QAngle s_DbgSetupAngles;
 //-----------------------------------------------------------------------------
 // Gets znear + zfar
 //-----------------------------------------------------------------------------
+ConVar tfvr_znear( "tfvr_znear", "2", FCVAR_ARCHIVE, "Z-near clipping distance for VR rendering (default: 7)" );
+
 float CViewRender::GetZNear()
 {
+	// Use VR-specific Z-near when in VR mode
+	C_TFPlayer *pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+	if ( pLocalPlayer && pLocalPlayer->IsInVRMode() )
+	{
+		return tfvr_znear.GetFloat();
+	}
+	
 	return VIEW_NEARZ;
 }
 

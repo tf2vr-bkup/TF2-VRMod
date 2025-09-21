@@ -6650,15 +6650,20 @@ void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 
 	if (!g_bExtraMouseSample)
 	{
-		// Use local accumulation with periodic server correction
+		// Calculate head movement delta (restore original logic)
 		Vector deltaHeadOrigin = currentHmdInWorldO - m_localRoomscaleOffset;
 		deltaHeadOrigin.z = currentHmdInWorldO.z;
 
 		m_headInPlayerO = currentHmdInWorldO;
 		m_headInPlayerA = currentHmdInWorldA;
 
+		// Send rotated position (restore original behavior)
 		pCmd->playerToHmdOrigin = m_headInPlayerO;
 		pCmd->playerToHmdAngles = m_headInPlayerA;
+		
+		// Send the client's actual eye position for collision detection
+		Vector clientEyePos = EyePosition();
+		pCmd->clientEyePosition = clientEyePos;
 		// DevMsg("Client playerToHmdAngles: %f %f %f\n", pCmd->playerToHmdAngles.x, pCmd->playerToHmdAngles.y, pCmd->playerToHmdAngles.z);
 		if (tfvr_roomscale_movement.GetBool())
 		{

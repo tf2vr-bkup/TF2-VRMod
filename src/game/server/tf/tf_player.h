@@ -1614,6 +1614,19 @@ public:
 public:
 	Vector 					m_headInPlayerO;
 	QAngle                  m_headInPlayerA;
+	
+	// VR Head collision detection
+	void					CheckForHeadCollisions( void );
+	
+	Vector					m_clientEyePosition;
+	
+	// VR methods that need to be public
+	virtual Vector			EyePosition();			// position of eyes
+    const QAngle			&EyeAngles();
+	virtual Vector			BodyTarget( const Vector &posSrc, bool bNoisy ) OVERRIDE;	// VR-aware body target
+
+	void					RecalibrateView();
+	float					VRHeightOffset();
 
 	QAngle                  m_cachedEyeAngles;
 	
@@ -1626,13 +1639,8 @@ public:
 
 	CNetworkVar(Vector, m_roomscaleOffset);
 
-	virtual Vector			EyePosition();			// position of eyes
-    const QAngle			&EyeAngles();
-	virtual Vector			BodyTarget( const Vector &posSrc, bool bNoisy ) OVERRIDE;	// VR-aware body target
-
-	void					RecalibrateView();
-
-	float					VRHeightOffset();
+private:
+	float					m_lastTimeHeadCleared;
 };
 
 //-----------------------------------------------------------------------------
