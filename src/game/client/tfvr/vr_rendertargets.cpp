@@ -1,6 +1,7 @@
 #include "cbase.h"
 #include "vr_rendertargets.h"
 #include "materialsystem\imaterialsystem.h"
+#include "materialsystem/materialsystem_config.h"
 #include "rendertexture.h"
 #include "../public/materialsystem/itexture.h"
 #include "hmdWrapper.h"
@@ -17,19 +18,38 @@ ITexture* CVrRenderTargets::CreateVGuiTexture(IMaterialSystem* pMaterialSystem)
 	// Note: sRGB correction will be handled in the VR compositor shader
 	ImageFormat vguiFormat = IMAGE_FORMAT_RGBA8888;
 	
+	// Check if MSAA is enabled via mat_antialias setting
+	const MaterialSystem_Config_t &config = pMaterialSystem->GetCurrentConfigForVideoCard();
+	bool bMSAAEnabled = config.m_nAASamples > 1;
+	
+	// For VGUI, we want RGBA format for alpha blending, but we can still benefit from MSAA
+	// Use back buffer format only if it supports alpha, otherwise stick with RGBA8888
+	ImageFormat targetFormat = vguiFormat;
+	if (bMSAAEnabled) {
+		// Check if back buffer format has alpha support for UI rendering
+		ImageFormat backBufferFormat = pMaterialSystem->GetBackBufferFormat();
+		if (backBufferFormat == IMAGE_FORMAT_RGBA8888 || backBufferFormat == IMAGE_FORMAT_BGRA8888) {
+			targetFormat = backBufferFormat;  // Use back buffer format to inherit MSAA
+		}
+		// Otherwise stick with RGBA8888 - MSAA inheritance happens through MATERIAL_RT_DEPTH_SHARED
+	}
+	
 	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
 		"_rt_vgui",
 		1280, 720,
 		RT_SIZE_LITERAL,
-		vguiFormat,
-		MATERIAL_RT_DEPTH_SHARED,			// Use shared depth like other alpha textures
+		targetFormat,								// Use appropriate format with MSAA consideration
+		MATERIAL_RT_DEPTH_SHARED,					// Use shared depth - this inherits MSAA from back buffer
 		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,	// Minimal flags like water refraction
-		CREATERENDERTARGETFLAGS_HDR);		// HDR flag for proper alpha handling
+		CREATERENDERTARGETFLAGS_HDR);				// HDR flag for proper alpha handling
 }
 
 ITexture* CVrRenderTargets::CreateVRTwoEyesHMDRenderTarget(IMaterialSystem* pMaterialSystem, int i)
 {
-	dxvkSetRenderTextureSize(g_pOpenXRManager->GetBufferSize().x * 2, g_pOpenXRManager->GetBufferSize().y, m_currentMsaa);
+	// Use the VR-specific MSAA setting (tfvr_msaa) instead of forcing it through DXVK
+	// This allows UI render targets to use mat_antialias while VR eyes use tfvr_msaa
+	int vrMSAA = tfvr_msaa.GetInt();
+	dxvkSetRenderTextureSize(g_pOpenXRManager->GetBufferSize().x * 2, g_pOpenXRManager->GetBufferSize().y, vrMSAA);
     const char* name = backBufferNamePerIndex(i);
     return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
         name,
@@ -37,7 +57,7 @@ ITexture* CVrRenderTargets::CreateVRTwoEyesHMDRenderTarget(IMaterialSystem* pMat
         g_pOpenXRManager->GetBufferSize().y,
         RT_SIZE_LITERAL, 
 		IMAGE_FORMAT_BGRA8888,
-        MATERIAL_RT_DEPTH_SEPARATE,
+        MATERIAL_RT_DEPTH_SEPARATE,		// VR eyes need separate depth for proper 3D rendering
         TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT | TEXTUREFLAGS_SRGB,
         0);
 }

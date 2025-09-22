@@ -53,11 +53,8 @@ CVRHealthOverlay::CVRHealthOverlay()
     m_bInitialized = false;
     m_bEnabled = false;
     m_nAttachedHand = 0; // Default to left hand
-    m_flLastHealthPercent = -1.0f;
-    m_nLastHealth = -1;
-    m_nLastMaxHealth = -1;
     m_flLastUpdateTime = 0.0f;
-    m_pPlayerStatusPanel = nullptr;
+    m_pMainPlayerStatusPanel = nullptr;
     
     // Set default offsets
     m_vQuadOffset.Init(
@@ -83,37 +80,14 @@ bool CVRHealthOverlay::Initialize()
 {
     if (m_bInitialized)
         return true;
-        
-    
-    // Create the full CTFHudPlayerStatus widget (includes health + class icon)
-    m_pPlayerStatusPanel = new CTFHudPlayerStatus("VRPlayerStatus");
-    if (!m_pPlayerStatusPanel)
-    {
-        return false;
-    }
 
-    // Set up the panel with safe initialization
-    try 
+    // NEW APPROACH: No need to create any panels! Just get reference to main HUD panel
+    
+    // Get reference to main player status panel (includes health + class icon)
+    m_pMainPlayerStatusPanel = GET_HUDELEMENT(CTFHudPlayerStatus);
+    if (!m_pMainPlayerStatusPanel)
     {
-        m_pPlayerStatusPanel->SetVisible(true);
-        m_pPlayerStatusPanel->SetPos(0, 0);
-        m_pPlayerStatusPanel->SetSize(200, 200);
-        
-        // Apply scheme settings to load the UI layout
-        vgui::IScheme* pScheme = vgui::scheme()->GetIScheme(vgui::scheme()->GetDefaultScheme());
-        if (pScheme)
-        {
-            m_pPlayerStatusPanel->ApplySchemeSettings(pScheme);
-        }
-        
-        // Force a layout update to position child elements properly
-        m_pPlayerStatusPanel->PerformLayout();
-        m_pPlayerStatusPanel->InvalidateLayout(true);
-    }
-    catch (...)
-    {
-        delete m_pPlayerStatusPanel;
-        m_pPlayerStatusPanel = nullptr;
+        Warning(_T("VR Health Overlay: Could not find main CTFHudPlayerStatus\n"));
         return false;
     }
     
@@ -132,11 +106,8 @@ void CVRHealthOverlay::Shutdown()
     if (!m_bInitialized)
         return;
     
-    if (m_pPlayerStatusPanel)
-    {
-        delete m_pPlayerStatusPanel;
-        m_pPlayerStatusPanel = nullptr;
-    }
+    // No panels to clean up - we just reference the main HUD panel!
+    m_pMainPlayerStatusPanel = nullptr;
     
     m_bInitialized = false;
 }
@@ -160,7 +131,7 @@ void CVRHealthOverlay::Update()
         tfvr_health_overlay_offset_z.GetFloat()
     );
     
-    // Health updates will be handled by the panel itself
+    // The main health panel updates automatically via the HUD system
 }
 
 //-----------------------------------------------------------------------------
@@ -170,7 +141,11 @@ void CVRHealthOverlay::RenderHealthQuad()
 {
     VPROF("VR_HealthOverlay_Render");
     
-    if (!m_bInitialized || !m_bEnabled || !m_pPlayerStatusPanel)
+    if (!m_bInitialized || !m_bEnabled || !m_pMainPlayerStatusPanel)
+        return;
+        
+    // Quick disable for testing
+    if (!tfvr_health_overlay_enabled.GetBool())
         return;
         
     // Safety check: Don't render if there's no valid player or we're in spectator mode
@@ -180,14 +155,14 @@ void CVRHealthOverlay::RenderHealthQuad()
         return;
     }
     
-    // Additional safety: Check for reasonable health values
-    int health = pPlayer->GetHealth();
-    int maxHealth = pPlayer->GetMaxHealth();
-    if (health <= 0 || maxHealth <= 0)
+    // SIMPLE APPROACH: Just render the main panel directly with minimal changes
+    // This avoids all the custom panel creation complexity
+    
+    if (!m_pMainPlayerStatusPanel->IsVisible())
     {
         return;
     }
-        
+    
     // Calculate panel-to-world transform based on hand position
     VMatrix panelToWorld;
     
@@ -208,84 +183,34 @@ void CVRHealthOverlay::RenderHealthQuad()
         return;
     }
     
-    // Panel capture area dimensions from ConVars
-    int panelWidth = tfvr_health_overlay_panel_width.GetInt();
-    int panelHeight = tfvr_health_overlay_panel_height.GetInt();
+    // Get panel dimensions for world size calculation
+    int panelWidth, panelHeight;
+    m_pMainPlayerStatusPanel->GetSize(panelWidth, panelHeight);
     
-    // Calculate world size to match panel aspect ratio
+    // Use reasonable defaults if panel size is weird
+    if (panelWidth <= 0 || panelWidth > 2000) panelWidth = 200;
+    if (panelHeight <= 0 || panelHeight > 2000) panelHeight = 200;
+    
+    // Calculate world size based on scale ConVar
     float scale = tfvr_health_overlay_scale.GetFloat();
     float aspectRatio = (float)panelWidth / (float)panelHeight;
     float worldWidth = scale * aspectRatio;
     float worldHeight = scale;
     
-    
-    // Allow manual override of world width for debugging
-    if (tfvr_health_overlay_world_width.GetFloat() > 0)
+    // Allow override of world width
+    if (tfvr_health_overlay_world_width.GetFloat() > 0.0f)
     {
         worldWidth = tfvr_health_overlay_world_width.GetFloat();
     }
     
-    // Make sure the panel is visible and positioned
-    m_pPlayerStatusPanel->SetVisible(true);
-    
-    // Position the widget within the larger capture area using ConVars
-    int posX = tfvr_health_overlay_panel_x.GetInt();
-    int posY = tfvr_health_overlay_panel_y.GetInt();
-    m_pPlayerStatusPanel->SetPos(posX, posY);
-    
-    // Give it a reasonable size - the panel needs SOME size to render into
-    m_pPlayerStatusPanel->SetSize(panelWidth, panelHeight);
-    
-    // Force the panel to recalculate its layout
-    m_pPlayerStatusPanel->InvalidateLayout(true);
-    
-    // Healing numbers should be handled by the main HUD system
-    
-    // Debug: Print panel info
-    int w, h;
-    m_pPlayerStatusPanel->GetSize(w, h);
-    
-    // Update the health panel with current values (we already validated health values above)
-    if (m_pPlayerStatusPanel)
-    {
-        // The CTFHudPlayerStatus widget automatically updates via the HUD system
-        // No manual health setting needed
-        
-        // Debug: Check if the widget is valid and has content
-        if (m_pPlayerStatusPanel->IsVisible())
-        {
-        }
-        else
-        {
-            m_pPlayerStatusPanel->SetVisible(true);
-        }
-        
-        // Make sure the panel is ready for 3D rendering
-        m_pPlayerStatusPanel->SetVisible(true);
-        m_pPlayerStatusPanel->InvalidateLayout(true);
-    }
-    
-    // Optional debug background to see quad boundaries
-    if (tfvr_health_overlay_debug_bg.GetBool())
-    {
-        // Set the panel background to a solid color so we can see the quad boundaries
-        m_pPlayerStatusPanel->SetBgColor(Color(0, 255, 0, 128)); // Semi-transparent green
-        m_pPlayerStatusPanel->SetPaintBackgroundEnabled(true);
-    }
-    else
-    {
-        // Normal transparent background
-        m_pPlayerStatusPanel->SetPaintBackgroundEnabled(false);
-    }
-    
-    // Use DrawPanelIn3DSpace to render the panel directly in world space
+    // Use DrawPanelIn3DSpace directly - simple and reliable!
     g_pMatSystemSurface->DrawPanelIn3DSpace(
-        m_pPlayerStatusPanel->GetVPanel(),  // The VGUI panel to render
-        panelToWorld,                 // Transform matrix (panel center to world)
-        panelWidth,                   // Panel pixel width
-        panelHeight,                  // Panel pixel height  
-        worldWidth,                   // World width (meters)
-        worldHeight                   // World height (meters)
+        m_pMainPlayerStatusPanel->GetVPanel(),  // The main player status panel
+        panelToWorld,                           // Transform matrix (panel center to world)
+        panelWidth,                             // Panel pixel width
+        panelHeight,                            // Panel pixel height
+        worldWidth,                             // World width (meters)
+        worldHeight                             // World height (meters)
     );
 }
 
@@ -385,26 +310,6 @@ bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
     return true;
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: Get current player health information
-//-----------------------------------------------------------------------------
-bool CVRHealthOverlay::GetPlayerHealthInfo(float& healthPercent, int& currentHealth, int& maxHealth)
-{
-    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
-    if (!pPlayer)
-        return false;
-        
-    currentHealth = pPlayer->GetHealth();
-    maxHealth = pPlayer->GetMaxHealth();
-    
-    if (maxHealth <= 0)
-        return false;
-        
-    healthPercent = (float)currentHealth / (float)maxHealth;
-    healthPercent = clamp(healthPercent, 0.0f, 2.0f); // Allow overheal up to 200%
-    
-    return true;
-}
 
 //-----------------------------------------------------------------------------
 // Purpose: Calculate transform using hand tracking instead of controller
@@ -528,4 +433,23 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     }
      
     return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Reset overlay state (called on map change to clear stale data)
+//-----------------------------------------------------------------------------
+void CVRHealthOverlay::ResetOverlayState()
+{
+    Msg(_T("VR Health Overlay: Resetting overlay state due to map change\n"));
+    
+    // Reset update time to force refresh
+    m_flLastUpdateTime = 0.0f;
+    
+    // Get a fresh reference to the main player status panel
+    // (the main player status panel is managed by the HUD system and should reset automatically)
+    m_pMainPlayerStatusPanel = GET_HUDELEMENT(CTFHudPlayerStatus);
+    if (!m_pMainPlayerStatusPanel)
+    {
+        Warning(_T("VR Health Overlay: Could not find main CTFHudPlayerStatus after map change\n"));
+    }
 }

@@ -10,13 +10,9 @@
 
 // Forward declarations
 class CTFHudWeaponAmmo;
-
 class IMaterial;
 class ITexture;
 class C_TFPlayer;
-
-// Forward declaration of VR ammo panel (implementation in .cpp)
-class CVRAmmoPanel;
 
 //-----------------------------------------------------------------------------
 // Purpose: Manages rendering of ammo display as a 3D quad attached to player's main shooting hand
@@ -49,6 +45,9 @@ public:
     // Set position offset relative to hand
     void SetQuadOffset(const Vector& offset) { m_vQuadOffset = offset; }
     void SetQuadRotation(const QAngle& rotation) { m_angQuadRotation = rotation; }
+    
+    // Reset overlay state (called on map change to clear stale data)
+    void ResetOverlayState();
 
 private:
     // Calculate the quad transform matrix based on hand position
@@ -57,33 +56,21 @@ private:
     // Calculate transform using hand tracking instead of controller
     bool CalculateHandTrackingTransform(VMatrix& quadTransform);
     
-    // Get current player ammo information
-    bool GetPlayerAmmoInfo(int& currentAmmo, int& reserveAmmo, int& maxAmmo, bool& usesClips);
-    
-    // Force the ammo panel to update (since we can't call protected OnThink directly)
-    void ForceAmmoUpdate();
-    // Rendering resources
-    CVRAmmoPanel* m_pAmmoPanel;          // VR-only ammo panel that doesn't draw to main HUD
-    
-    // State tracking
+    // Check if ammo display should be shown based on game state
+    bool ShouldDisplayAmmo();
+
+private:
     bool        m_bInitialized;
     bool        m_bEnabled;
     int         m_nAttachedHand;          // 0=left, 1=right (should be main shooting hand)
-    int         m_nLastAmmo;              // Cache to avoid unnecessary updates
-    int         m_nLastReserveAmmo;
-    int         m_nLastMaxAmmo;
-    bool        m_bLastUsesClips;
     float       m_flLastUpdateTime;
     
     // Positioning
     Vector      m_vQuadOffset;            // Offset from hand position
     QAngle      m_angQuadRotation;        // Rotation relative to hand
     
-    // Ammo region sampling from HUD (pixel coordinates in _rt_vgui)
-    static const int AMMO_REGION_X = 1500;      // X position of ammo in HUD (right side)
-    static const int AMMO_REGION_Y = 850;       // Y position of ammo in HUD (bottom)
-    static const int AMMO_REGION_WIDTH = 400;   // Width of ammo region
-    static const int AMMO_REGION_HEIGHT = 200;  // Height of ammo region
+    // Reference to the main ammo panel (we don't modify it!)
+    CTFHudWeaponAmmo* m_pMainAmmoPanel;
 };
 
 // Global instance

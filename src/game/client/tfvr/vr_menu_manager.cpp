@@ -25,6 +25,7 @@
 #include "tf/vgui/character_info_panel.h"
 #include "vr_health_overlay.h"
 #include "vr_ammo_overlay.h"
+#include "vr_objective_overlay.h"
 
 #include <algorithm>
 
@@ -74,8 +75,11 @@ CVRMenuManager::CVRMenuManager()
     , m_szLastMapName("")
     , m_flLastClassMenuTime(0.0f)
     , m_bVRFrameStarted(false)
+    , m_nLastVRTrackingUpdateFrame(-1)
     , m_pVRHealthOverlay(nullptr)
     , m_pVRAmmoOverlay(nullptr)
+    , m_pVRObjectiveOverlay(nullptr)
+    , m_pVRUnifiedHud(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -127,6 +131,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Objective Overlay
+    if (!m_pVRObjectiveOverlay)
+    {
+        m_pVRObjectiveOverlay = new CVRObjectiveOverlay();
+        if (m_pVRObjectiveOverlay->Initialize())
+        {
+            g_pVRObjectiveOverlay = m_pVRObjectiveOverlay;
+            DevMsg("VR Menu Manager: Objective overlay initialized\n");
+        }
+        else
+        {
+            delete m_pVRObjectiveOverlay;
+            m_pVRObjectiveOverlay = nullptr;
+            Warning("VR Menu Manager: Failed to initialize objective overlay\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -153,6 +174,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRAmmoOverlay;
         m_pVRAmmoOverlay = nullptr;
         g_pVRAmmoOverlay = nullptr;
+    }
+    
+    // Shutdown VR Objective Overlay
+    if (m_pVRObjectiveOverlay)
+    {
+        m_pVRObjectiveOverlay->Shutdown();
+        delete m_pVRObjectiveOverlay;
+        m_pVRObjectiveOverlay = nullptr;
+        g_pVRObjectiveOverlay = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -218,6 +248,14 @@ void CVRMenuManager::Update()
         m_pVRAmmoOverlay->Update();
     }
     
+    // Update VR Objective Overlay
+    if (m_pVRObjectiveOverlay)
+    {
+        m_pVRObjectiveOverlay->Update();
+    }
+    
+    // NOTE: Menu input handling moved to OverridePlayerMotion for fresh positioning data
+    // We still handle menu input here for non-positional aspects
     HandleMenuInput();
 }
 
@@ -431,12 +469,26 @@ void CVRMenuManager::HandleMenuInput()
         const char* currentMapName = engine->GetLevelName();
         if (currentMapName && strcmp(currentMapName, m_szLastMapName) != 0)
         {
-            DevMsg("VR Menu: Map changed from '%s' to '%s', resetting menu position\n", 
+            Msg(_T("VR Menu: Map changed from '%s' to '%s', resetting menu position and VR HUD overlays\n"), 
                    m_szLastMapName, currentMapName);
             m_bMenuPositionFixed = false;
             Q_strncpy(m_szLastMapName, currentMapName, sizeof(m_szLastMapName));
             // Clear the old HUD bounds
             g_ClientVirtualReality.ClearCustomHUDBounds();
+            
+            // IMPORTANT: Reset VR HUD overlays to clear stuck class/ammo data from previous map
+            if (m_pVRHealthOverlay)
+            {
+                m_pVRHealthOverlay->ResetOverlayState();
+            }
+            if (m_pVRAmmoOverlay)
+            {
+                m_pVRAmmoOverlay->ResetOverlayState();
+            }
+            if (m_pVRObjectiveOverlay)
+            {
+                m_pVRObjectiveOverlay->ResetOverlayState();
+            }
         }
     }
     
@@ -731,8 +783,8 @@ bool CVRMenuManager::IsMenuVisible()
          }
     }
     
-         // Menu is considered visible if any of these conditions are true
-     return bGameUIVisible || bViewPortVisible || bClassMenuOpen || bTF2MenuState;
+        // Menu is considered visible if any of these conditions are true
+    return bGameUIVisible || bViewPortVisible || bHudMenuVisible || bClassMenuOpen || bTF2MenuState;
     
     
 }

@@ -21,6 +21,7 @@ class CTFHudPlayerStatus;
 
 //-----------------------------------------------------------------------------
 // Purpose: Manages rendering of health bar as a 3D quad attached to player's hand
+// NEW APPROACH: References the main TF2 HUD panel directly (like objective overlay)
 //-----------------------------------------------------------------------------
 class CVRHealthOverlay
 {
@@ -50,45 +51,32 @@ public:
     // Set position offset relative to hand
     void SetQuadOffset(const Vector& offset) { m_vQuadOffset = offset; }
     void SetQuadRotation(const QAngle& rotation) { m_angQuadRotation = rotation; }
+    
+    // Reset overlay state (called on map change to clear stale data)
+    void ResetOverlayState();
 
 private:
-    // Create the render target texture for health display
-    bool CreateHealthTexture();
-    
-    // Update the health panel and render to texture
-    void UpdateHealthTexture(float healthPercent, int currentHealth, int maxHealth);
-    
     // Calculate the quad transform matrix based on hand position
     bool CalculateQuadTransform(VMatrix& quadTransform);
     
     // Calculate transform using hand tracking instead of controller
     bool CalculateHandTrackingTransform(VMatrix& quadTransform);
     
-    // Get current player health information
-    bool GetPlayerHealthInfo(float& healthPercent, int& currentHealth, int& maxHealth);
+    // Check if health display should be shown based on game state
+    bool ShouldDisplayHealth();
 
 private:
-    // Rendering resources
-    ITexture*   m_pHealthTexture;       // Render target for health display
-    IMaterial*  m_pHealthMaterial;      // Material for rendering the quad
-    CTFHudPlayerStatus* m_pPlayerStatusPanel; // TF2's full player status widget (health + class icon)
-    
-    // State tracking
     bool        m_bInitialized;
     bool        m_bEnabled;
     int         m_nAttachedHand;        // 0=left, 1=right
-    float       m_flLastHealthPercent;  // Cache to avoid unnecessary updates
-    int         m_nLastHealth;
-    int         m_nLastMaxHealth;
     float       m_flLastUpdateTime;
     
     // Positioning
     Vector      m_vQuadOffset;          // Offset from hand position
     QAngle      m_angQuadRotation;      // Rotation relative to hand
     
-    // Health panel dimensions (for texture size)
-    static const int HEALTH_TEXTURE_WIDTH = 64;
-    static const int HEALTH_TEXTURE_HEIGHT = 64;
+    // Reference to the main health/player status panel (we don't modify it!)
+    CTFHudPlayerStatus* m_pMainPlayerStatusPanel;
 };
 
 // Global instance

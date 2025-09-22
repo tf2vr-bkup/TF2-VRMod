@@ -993,6 +993,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_health_overlay.cpp"
 			$File   "tfvr\vr_ammo_overlay.h"
 			$File   "tfvr\vr_ammo_overlay.cpp"
+			$File   "tfvr\vr_objective_overlay.h"
+			$File   "tfvr\vr_objective_overlay.cpp"
 		}
 
 		$Folder	"game_controls"

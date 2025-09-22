@@ -33,29 +33,6 @@
 #include "tf/tf_hud_ammostatus.h"
 #include "tf/tf_weaponbase.h"
 
-//-----------------------------------------------------------------------------
-// Purpose: VR-only ammo panel that doesn't draw to main HUD
-//-----------------------------------------------------------------------------
-class CVRAmmoPanel : public CTFHudWeaponAmmo
-{
-    DECLARE_CLASS_SIMPLE(CVRAmmoPanel, CTFHudWeaponAmmo);
-
-public:
-    CVRAmmoPanel(const char* pElementName) : CTFHudWeaponAmmo(pElementName) {}
-    
-    // Override ShouldDraw to prevent drawing to main HUD
-    virtual bool ShouldDraw() override
-    {
-        // Never draw to main HUD - only render via DrawPanelIn3DSpace
-        return false;
-    }
-    
-    // Public method to check if we WOULD draw (for VR overlay logic)
-    bool ShouldDrawInVR()
-    {
-        return CTFHudWeaponAmmo::ShouldDraw();
-    }
-};
 
 // ConVars for configuration
 ConVar tfvr_ammo_overlay_enabled("tfvr_ammo_overlay_enabled", "1", FCVAR_ARCHIVE, "Enable VR ammo overlay on hand");
@@ -91,12 +68,8 @@ CVRAmmoOverlay::CVRAmmoOverlay()
     m_bInitialized = false;
     m_bEnabled = false;
     m_nAttachedHand = 1; // Default to right hand (main shooting hand for most players)
-    m_nLastAmmo = -1;
-    m_nLastReserveAmmo = -1;
-    m_nLastMaxAmmo = -1;
-    m_bLastUsesClips = false;
     m_flLastUpdateTime = 0.0f;
-    m_pAmmoPanel = nullptr;
+    m_pMainAmmoPanel = nullptr;
     
     // Set default offsets (slightly different from health overlay)
     m_vQuadOffset.Init(
@@ -123,25 +96,16 @@ bool CVRAmmoOverlay::Initialize()
     if (m_bInitialized)
         return true;
 
-    // Create VR-only ammo panel that won't draw to main HUD
-    m_pAmmoPanel = new CVRAmmoPanel("VRAmmoOverlay");
-    if (!m_pAmmoPanel)
+    // NEW APPROACH: No need to create any panels! Just get reference to main HUD panel
+    
+    // Get reference to main ammo panel
+    m_pMainAmmoPanel = GET_HUDELEMENT(CTFHudWeaponAmmo);
+    if (!m_pMainAmmoPanel)
     {
+        Warning(_T("VR Ammo Overlay: Could not find main CTFHudWeaponAmmo\n"));
         return false;
     }
-
-    // Set up the panel
-    m_pAmmoPanel->SetVisible(true);
-    m_pAmmoPanel->SetPos(0, 0);
-    m_pAmmoPanel->SetSize(400, 200);
-
-    // Apply scheme settings for proper TF2 styling
-    vgui::IScheme* pScheme = vgui::scheme()->GetIScheme(vgui::scheme()->GetDefaultScheme());
-    if (pScheme)
-    {
-        m_pAmmoPanel->ApplySchemeSettings(pScheme);
-    }
-
+    
     m_bEnabled = tfvr_ammo_overlay_enabled.GetBool();
     m_nAttachedHand = tfvr_ammo_overlay_hand.GetInt();
 
@@ -157,11 +121,8 @@ void CVRAmmoOverlay::Shutdown()
     if (!m_bInitialized)
         return;
     
-    if (m_pAmmoPanel)
-    {
-        delete m_pAmmoPanel;
-        m_pAmmoPanel = nullptr;
-    }
+    // No panels to clean up - we just reference the main HUD panel!
+    m_pMainAmmoPanel = nullptr;
     
     m_bInitialized = false;
 }
@@ -185,7 +146,7 @@ void CVRAmmoOverlay::Update()
         tfvr_ammo_overlay_offset_z.GetFloat()
     );
 
-    // No need to update ammo manually - we sample directly from the HUD render target
+    // The main ammo panel updates automatically via the HUD system
 }
 
 //-----------------------------------------------------------------------------
@@ -195,7 +156,11 @@ void CVRAmmoOverlay::RenderAmmoQuad()
 {
     VPROF("VR_AmmoOverlay_Render");
     
-    if (!m_bInitialized || !m_bEnabled || !m_pAmmoPanel)
+    if (!m_bInitialized || !m_bEnabled || !m_pMainAmmoPanel)
+        return;
+        
+    // Quick disable for testing
+    if (!tfvr_ammo_overlay_enabled.GetBool())
         return;
         
     // Safety check: Don't render if there's no valid player or we're in spectator mode
@@ -205,8 +170,10 @@ void CVRAmmoOverlay::RenderAmmoQuad()
         return;
     }
     
-    // Check if the ammo panel should be drawn using VR-specific logic
-    if (!m_pAmmoPanel->ShouldDrawInVR())
+    // SIMPLE APPROACH: Just render the main panel directly with minimal changes
+    // This avoids all the custom panel creation complexity
+    
+    if (!m_pMainAmmoPanel->IsVisible())
     {
         return;
     }
@@ -231,46 +198,37 @@ void CVRAmmoOverlay::RenderAmmoQuad()
         return;
     }
     
-    // Simple panel dimensions
-    int panelWidth = 400;
-    int panelHeight = 200;
+    // Get panel dimensions for world size calculation
+    int panelWidth, panelHeight;
+    m_pMainAmmoPanel->GetSize(panelWidth, panelHeight);
+    
+    // Use reasonable defaults if panel size is weird
+    if (panelWidth <= 0 || panelWidth > 2000) panelWidth = 400;
+    if (panelHeight <= 0 || panelHeight > 2000) panelHeight = 200;
     
     // Calculate world size based on scale ConVar
     float scale = tfvr_ammo_overlay_scale.GetFloat();
-    float worldWidth = 0.15f * scale;  // 15cm base width
-    float worldHeight = (worldWidth * panelHeight) / panelWidth;  // Maintain aspect ratio
+    float aspectRatio = (float)panelWidth / (float)panelHeight;
+    float worldWidth = scale * aspectRatio;
+    float worldHeight = scale;
     
     // Allow override of world width
     if (tfvr_ammo_overlay_world_width.GetFloat() > 0.0f)
     {
         worldWidth = tfvr_ammo_overlay_world_width.GetFloat();
-        worldHeight = (worldWidth * panelHeight) / panelWidth;
     }
     
-    // Use DrawPanelIn3DSpace to render the ammo panel in world space
+    // Use DrawPanelIn3DSpace directly - simple and reliable!
     g_pMatSystemSurface->DrawPanelIn3DSpace(
-        m_pAmmoPanel->GetVPanel(),  // The VR ammo panel to render
-        panelToWorld,               // Transform matrix (panel center to world)
-        panelWidth,                 // Panel pixel width
-        panelHeight,                // Panel pixel height  
-        worldWidth,                 // World width (meters)
-        worldHeight                 // World height (meters)
+        m_pMainAmmoPanel->GetVPanel(),  // The main ammo panel
+        panelToWorld,                   // Transform matrix (panel center to world)
+        panelWidth,                     // Panel pixel width
+        panelHeight,                    // Panel pixel height  
+        worldWidth,                     // World width (meters)
+        worldHeight                     // World height (meters)
     );
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: Force the ammo panel to update by triggering the same logic as OnThink
-//-----------------------------------------------------------------------------
-void CVRAmmoOverlay::ForceAmmoUpdate()
-{
-    // The ammo panel updates automatically via OnThink, but we can
-    // force a layout update if needed
-    if (m_pAmmoPanel)
-    {
-        m_pAmmoPanel->InvalidateLayout(true);
-        m_pAmmoPanel->PerformLayout();
-    }
-}
 
 //-----------------------------------------------------------------------------
 // Purpose: Set which hand the overlay is attached to
@@ -373,43 +331,6 @@ bool CVRAmmoOverlay::CalculateQuadTransform(VMatrix& quadTransform)
     return true;
 }
 
-//-----------------------------------------------------------------------------
-// Purpose: Get current player ammo information
-//-----------------------------------------------------------------------------
-bool CVRAmmoOverlay::GetPlayerAmmoInfo(int& currentAmmo, int& reserveAmmo, int& maxAmmo, bool& usesClips)
-{
-    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
-    if (!pPlayer)
-        return false;
-        
-    CTFWeaponBase* pWeapon = pPlayer->GetActiveTFWeapon();
-    if (!pWeapon || !pWeapon->UsesPrimaryAmmo())
-        return false;
-    
-    // Get ammo information
-    currentAmmo = pWeapon->Clip1();
-    reserveAmmo = 0;
-    usesClips = (currentAmmo >= 0);
-    
-    if (usesClips)
-    {
-        // Weapon uses clips - reserve ammo is total ammo
-        reserveAmmo = pPlayer->GetAmmoCount(pWeapon->GetPrimaryAmmoType());
-    }
-    else
-    {
-        // No clips - current ammo is total ammo
-        currentAmmo = pPlayer->GetAmmoCount(pWeapon->GetPrimaryAmmoType());
-    }
-    
-    maxAmmo = pPlayer->GetMaxAmmo(pWeapon->GetPrimaryAmmoType());
-    if (usesClips && pWeapon->GetMaxClip1() > 0)
-    {
-        maxAmmo += pWeapon->GetMaxClip1();
-    }
-    
-    return true;
-}
 
 //-----------------------------------------------------------------------------
 // Purpose: Calculate transform using hand tracking instead of controller
@@ -553,4 +474,23 @@ bool CVRAmmoOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     }
      
     return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Reset overlay state (called on map change to clear stale data)
+//-----------------------------------------------------------------------------
+void CVRAmmoOverlay::ResetOverlayState()
+{
+    Msg(_T("VR Ammo Overlay: Resetting overlay state due to map change\n"));
+    
+    // Reset update time to force refresh
+    m_flLastUpdateTime = 0.0f;
+    
+    // Get a fresh reference to the main ammo panel
+    // (the main ammo panel is managed by the HUD system and should reset automatically)
+    m_pMainAmmoPanel = GET_HUDELEMENT(CTFHudWeaponAmmo);
+    if (!m_pMainAmmoPanel)
+    {
+        Warning(_T("VR Ammo Overlay: Could not find main CTFHudWeaponAmmo after map change\n"));
+    }
 }

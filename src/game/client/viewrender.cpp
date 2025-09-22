@@ -58,6 +58,7 @@
 #include "tfvr/vr_laser_pointer.h"
 #include "tfvr/vr_health_overlay.h"
 #include "tfvr/vr_ammo_overlay.h"
+#include "tfvr/vr_objective_overlay.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2540,6 +2541,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRAmmoOverlay)
 				{
 					g_pVRAmmoOverlay->RenderAmmoQuad();
+				}
+				
+				// Render VR objective overlay
+				if (g_pVRObjectiveOverlay)
+				{
+					g_pVRObjectiveOverlay->RenderObjectiveQuad();
 				}
 				
 				// Render VR laser pointer on top of HUD/menus
