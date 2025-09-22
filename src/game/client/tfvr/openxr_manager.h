@@ -26,6 +26,8 @@ public:
 
     bool Initialize();
     void Shutdown();
+    void Deactivate(); // Deactivate session without destroying it
+    void Reactivate(); // Reactivate existing session
     bool IsActive() const { return m_vrActive; }
 
     bool BeginFrame();
@@ -124,6 +126,7 @@ private:
     XrSpace m_headSpace = nullptr;
     std::vector<XrSwapchain> m_swapchains;
     bool m_vrActive = false;
+    bool m_sessionInitialized = false; // Track if session was ever created
     
     bool m_sessionRunning = false;
 

@@ -312,7 +312,7 @@ bool COpenXRManager::Initialize()
 
 void COpenXRManager::Shutdown() 
 {
-    if (!m_vrActive) return;
+    if (!m_vrActive && !m_sessionInitialized) return;
 
     // Clean up VR Menu Manager
     if (m_menuManager)
@@ -349,7 +349,68 @@ void COpenXRManager::Shutdown()
     ReleaseResources();
 
     m_vrActive = false;
+    m_sessionInitialized = false;
     DevMsg("OpenXR resources cleaned up.\n");
+}
+
+void COpenXRManager::Deactivate()
+{
+    if (!m_vrActive) return;
+
+    DevMsg("Deactivating VR session (keeping all components alive)...\n");
+
+    // DON'T shutdown any components - just mark as inactive
+    // All VR components (input, hand tracking, menus, session) stay alive
+    // This avoids the "Failed to sync actions" error when reactivating
+
+    // Only clean up the shared render target since it can be recreated quickly
+    if (m_pSharedRenderTarget) 
+    {
+        m_pSharedRenderTarget->DecrementReferenceCount();
+        m_pSharedRenderTarget = nullptr;
+    }
+
+    m_vrActive = false;
+    DevMsg("VR session deactivated (all components preserved for instant reactivation)\n");
+}
+
+void COpenXRManager::Reactivate()
+{
+    if (m_vrActive) return;
+
+    if (!m_sessionInitialized || !m_session)
+    {
+        DevMsg("No existing session to reactivate, calling full Initialize()\n");
+        Initialize();
+        return;
+    }
+
+    DevMsg("Reactivating existing VR session...\n");
+
+    // All components are still alive, we just need to recreate the shared render target
+    // and mark as active again
+
+    // Reinitialize shared render target (the only thing we cleaned up)
+    if (!InitializeSharedRenderTarget())
+    {
+        DevMsg("Failed to reinitialize shared render target\n");
+        return;
+    }
+
+    // All components should still exist - just verify they're still valid
+    if (!m_inputManager || !m_menuManager || !m_laserPointer)
+    {
+        DevMsg("Warning: Some VR components were lost during deactivation, falling back to full Initialize()\n");
+        Initialize();
+        return;
+    }
+
+    // Set the global pointers for external access (in case they were cleared)
+    g_pVRMenuManager = m_menuManager;
+    g_pVRLaserPointer = m_laserPointer;
+
+    m_vrActive = true;
+    DevMsg("VR session reactivated instantly (all components preserved)\n");
 }
 
 bool COpenXRManager::CreateOpenXRInstance() 
@@ -502,6 +563,7 @@ bool COpenXRManager::CreateSession()
     }
     DevMsg("OpenXR session started successfully!\n");
 	m_sessionRunning = true;
+    m_sessionInitialized = true;
     return true;
 }
 

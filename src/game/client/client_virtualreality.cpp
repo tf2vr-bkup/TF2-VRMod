@@ -2119,7 +2119,15 @@ void CClientVirtualReality::OverlayHUDQuadWithUndistort( const CViewSetup &eyeVi
 // --------------------------------------------------------------------
 void CClientVirtualReality::Activate()
 {
-	if( !g_pOpenXRManager->Initialize() )
+	// Try to reactivate existing session first, fallback to full initialization
+	if( g_pOpenXRManager->IsActive() )
+		return; // Already active
+		
+	// Try reactivation first (faster if session exists)
+	g_pOpenXRManager->Reactivate();
+	
+	// If reactivation failed and we're still not active, do full initialization
+	if( !g_pOpenXRManager->IsActive() && !g_pOpenXRManager->Initialize() )
 		return;
 
 	// General all-game stuff
@@ -2153,7 +2161,7 @@ void CClientVirtualReality::Deactivate()
 	if( !UseVR() )
 		return;
 
-	g_pOpenXRManager->Shutdown();
+	g_pOpenXRManager->Deactivate();
 	
 	// CRITICAL: Notify server that VR mode is deactivated 
 	// This disables server-side VR features like head collision detection
