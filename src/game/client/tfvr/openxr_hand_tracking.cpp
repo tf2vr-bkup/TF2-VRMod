@@ -195,7 +195,7 @@ void COpenXRHandTracker::UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker
     if (!handData.isHandTracked)
         return;
     
-    // Convert joint data
+    // Store raw joint data (conversion to world space happens on-demand in GetHandJoint)
     for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
     {
         const XrHandJointLocationEXT& jointLoc = jointLocations[i];
@@ -206,10 +206,9 @@ void COpenXRHandTracker::UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker
         jointData.isValid = (jointLoc.locationFlags & requiredFlags) == requiredFlags;
         jointData.isTracked = (jointLoc.locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) != 0;
         
-        if (jointData.isValid)
-        {
-            ConvertXrPoseToSourceFormat(jointLoc.pose, jointData.position, jointData.angles);
-        }
+        // Store raw pose - DON'T convert to world space yet!
+        // This ensures we use the current frame's smoothed data when GetHandJoint() is called
+        jointData.rawPose = jointLoc.pose;
     }
 }
 
@@ -248,23 +247,48 @@ void COpenXRHandTracker::ConvertXrPoseToSourceFormat(const XrPosef& xrPose, Vect
     C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
     if (pPlayer)
     {
-        // Create player transform matrix (rotation + position) - SAME AS CONTROLLERS
-        VMatrix playerMatrix;
-        playerMatrix.Identity();
+        // VR FIX: Use the SAME smoothing logic as controllers!
+        // Calculate hand joint position RELATIVE to head in playspace,
+        // then apply that relative transform to the smoothed head in world space.
+        extern CClientVirtualReality g_ClientVirtualReality;
+        extern bool UseVR();
         
-        matrix3x4_t playerMatrix3x4;
-        AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
-        playerMatrix.CopyFrom3x4(playerMatrix3x4);
-        playerMatrix.SetTranslation(pPlayer->EyePosition());
-        
-        // Transform hand joint through player's world transform - SAME AS CONTROLLERS
-        VMatrix finalJointPose = playerMatrix * headRelativeJoint;
-        
-        // NOTE: Controllers apply tfvr_pose_offset_x/y/z here, but hand tracking doesn't need that
-        
-        // Extract final position and angles
-        position = finalJointPose.GetTranslation();
-        MatrixAngles(finalJointPose.As3x4(), angles);
+        if (UseVR())
+        {
+            // Get raw head pose in playspace (unsmoothed)
+            VMatrix rawHeadPlayspace = m_manager->GetMideyePose();
+            
+            // Calculate hand joint relative to head (both in playspace coordinates)
+            VMatrix jointRelativeToHead = rawHeadPlayspace.InverseTR() * jointMatrix;
+            
+            // Get smoothed head-in-world transform (includes stair/prediction smoothing)
+            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+            
+            // Apply the relative transform to the smoothed head position
+            VMatrix finalJointPose = smoothedHeadWorld * jointRelativeToHead;
+            
+            // Extract final position and angles
+            position = finalJointPose.GetTranslation();
+            MatrixAngles(finalJointPose.As3x4(), angles);
+        }
+        else
+        {
+            // Non-VR fallback: use raw player position
+            VMatrix playerMatrix;
+            playerMatrix.Identity();
+            
+            matrix3x4_t playerMatrix3x4;
+            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
+            playerMatrix.CopyFrom3x4(playerMatrix3x4);
+            playerMatrix.SetTranslation(pPlayer->EyePosition());
+            
+            // Transform hand joint through player's world transform
+            VMatrix finalJointPose = playerMatrix * headRelativeJoint;
+            
+            // Extract final position and angles
+            position = finalJointPose.GetTranslation();
+            MatrixAngles(finalJointPose.As3x4(), angles);
+        }
     }
     else
     {
@@ -284,8 +308,8 @@ bool COpenXRHandTracker::GetHandJoint(bool leftHand, XrHandJointEXT joint, Vecto
     if (!handData.isHandTracked || !handData.joints[joint].isValid)
         return false;
     
-    position = handData.joints[joint].position;
-    angles = handData.joints[joint].angles;
+    // Convert from raw playspace pose to world coordinates NOW (using current frame's smoothing)
+    ConvertXrPoseToSourceFormat(handData.joints[joint].rawPose, position, angles);
     return true;
 }
 
@@ -304,10 +328,15 @@ void COpenXRHandTracker::RenderDebugCubes() const
             const HandJointData& joint = m_leftHandData.joints[i];
             if (joint.isValid)
             {
+                // Convert from raw pose to world coordinates NOW (for current frame's smoothing)
+                Vector position;
+                QAngle angles;
+                ConvertXrPoseToSourceFormat(joint.rawPose, position, angles);
+                
                 Vector boxSize(cubeSize/2, cubeSize/2, cubeSize/2);
                 
                 // Use blue for left hand - SAME FORMAT AS CONTROLLERS
-                debugoverlay->AddBoxOverlay(joint.position, -boxSize, boxSize, joint.angles, 0, 0, 255, 128, 0.016f);
+                debugoverlay->AddBoxOverlay(position, -boxSize, boxSize, angles, 0, 0, 255, 128, 0.016f);
             }
         }
     }
@@ -320,10 +349,15 @@ void COpenXRHandTracker::RenderDebugCubes() const
             const HandJointData& joint = m_rightHandData.joints[i];
             if (joint.isValid)
             {
+                // Convert from raw pose to world coordinates NOW (for current frame's smoothing)
+                Vector position;
+                QAngle angles;
+                ConvertXrPoseToSourceFormat(joint.rawPose, position, angles);
+                
                 Vector boxSize(cubeSize/2, cubeSize/2, cubeSize/2);
                 
                 // Use red for right hand - SAME FORMAT AS CONTROLLERS
-                debugoverlay->AddBoxOverlay(joint.position, -boxSize, boxSize, joint.angles, 255, 0, 0, 128, 0.016f);
+                debugoverlay->AddBoxOverlay(position, -boxSize, boxSize, angles, 255, 0, 0, 128, 0.016f);
             }
         }
     }
@@ -388,17 +422,21 @@ CON_COMMAND(vr_debug_hand_positions, "Debug hand tracking positions and scale")
     if (rightHand.isHandTracked)
     {
         DevMsg("\\nRight Hand (tracked):\n");
-        Vector palmPos = rightHand.joints[XR_HAND_JOINT_PALM_EXT].position;
-        Vector wristPos = rightHand.joints[XR_HAND_JOINT_WRIST_EXT].position;
-        DevMsg("  Palm: (%.1f, %.1f, %.1f)\n", palmPos.x, palmPos.y, palmPos.z);
-        DevMsg("  Wrist: (%.1f, %.1f, %.1f)\n", wristPos.x, wristPos.y, wristPos.z);
-        DevMsg("  Distance palm->wrist: %.1f units\n", palmPos.DistTo(wristPos));
-        
-        // Compare with controller if available
-        if (rightControllerValid)
+        Vector palmPos, wristPos;
+        QAngle palmAngles, wristAngles;
+        if (handTracker->GetHandJoint(false, XR_HAND_JOINT_PALM_EXT, palmPos, palmAngles) &&
+            handTracker->GetHandJoint(false, XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
         {
-            Vector controllerPos = rightController.GetTranslation();
-            DevMsg("  Distance from right controller: %.1f units\n", palmPos.DistTo(controllerPos));
+            DevMsg("  Palm: (%.1f, %.1f, %.1f)\n", palmPos.x, palmPos.y, palmPos.z);
+            DevMsg("  Wrist: (%.1f, %.1f, %.1f)\n", wristPos.x, wristPos.y, wristPos.z);
+            DevMsg("  Distance palm->wrist: %.1f units\n", palmPos.DistTo(wristPos));
+            
+            // Compare with controller if available
+            if (rightControllerValid)
+            {
+                Vector controllerPos = rightController.GetTranslation();
+                DevMsg("  Distance from right controller: %.1f units\n", palmPos.DistTo(controllerPos));
+            }
         }
     }
     else
@@ -409,23 +447,31 @@ CON_COMMAND(vr_debug_hand_positions, "Debug hand tracking positions and scale")
     if (leftHand.isHandTracked)
     {
         DevMsg("\\nLeft Hand (tracked):\n");
-        Vector palmPos = leftHand.joints[XR_HAND_JOINT_PALM_EXT].position;
-        Vector wristPos = leftHand.joints[XR_HAND_JOINT_WRIST_EXT].position;
-        DevMsg("  Palm: (%.1f, %.1f, %.1f)\n", palmPos.x, palmPos.y, palmPos.z);
-        DevMsg("  Wrist: (%.1f, %.1f, %.1f)\n", wristPos.x, wristPos.y, wristPos.z);
-        DevMsg("  Distance palm->wrist: %.1f units\n", palmPos.DistTo(wristPos));
-        
-        // Compare with controller if available
-        if (leftControllerValid)
+        Vector palmPos, wristPos;
+        QAngle palmAngles, wristAngles;
+        if (handTracker->GetHandJoint(true, XR_HAND_JOINT_PALM_EXT, palmPos, palmAngles) &&
+            handTracker->GetHandJoint(true, XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
         {
-            Vector controllerPos = leftController.GetTranslation();
-            DevMsg("  Distance from left controller: %.1f units\n", palmPos.DistTo(controllerPos));
-        }
-        
-        if (rightHand.isHandTracked)
-        {
-            Vector rightPalm = rightHand.joints[XR_HAND_JOINT_PALM_EXT].position;
-            DevMsg("  Distance between palms: %.1f units\n", palmPos.DistTo(rightPalm));
+            DevMsg("  Palm: (%.1f, %.1f, %.1f)\n", palmPos.x, palmPos.y, palmPos.z);
+            DevMsg("  Wrist: (%.1f, %.1f, %.1f)\n", wristPos.x, wristPos.y, wristPos.z);
+            DevMsg("  Distance palm->wrist: %.1f units\n", palmPos.DistTo(wristPos));
+            
+            // Compare with controller if available
+            if (leftControllerValid)
+            {
+                Vector controllerPos = leftController.GetTranslation();
+                DevMsg("  Distance from left controller: %.1f units\n", palmPos.DistTo(controllerPos));
+            }
+            
+            if (rightHand.isHandTracked)
+            {
+                Vector rightPalm;
+                QAngle rightPalmAngles;
+                if (handTracker->GetHandJoint(false, XR_HAND_JOINT_PALM_EXT, rightPalm, rightPalmAngles))
+                {
+                    DevMsg("  Distance between palms: %.1f units\n", palmPos.DistTo(rightPalm));
+                }
+            }
         }
     }
     else

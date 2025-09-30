@@ -12,8 +12,7 @@ class COpenXRManager;
 // Hand tracking joint data
 struct HandJointData
 {
-    Vector position;
-    QAngle angles;
+    XrPosef rawPose;  // Store raw playspace pose instead of converted world position
     bool isValid;
     bool isTracked;
 };
@@ -52,6 +51,7 @@ private:
     bool CreateHandTrackers();
     void UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker, HandTrackingData& handData);
     void ConvertXrPoseToSourceFormat(const XrPosef& xrPose, Vector& position, QAngle& angles) const;
+    VMatrix ConvertXrPoseToPlayspaceMatrix(const XrPosef& xrPose) const;
 
     COpenXRManager* m_manager;
     XrInstance m_instance;

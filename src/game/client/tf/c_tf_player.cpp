@@ -9766,8 +9766,6 @@ void C_TFPlayer::CalcView( Vector &eyeOrigin, QAngle &eyeAngles, float &zNear, f
 {
 	HandleTaunting();
 	BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
-	eyeOrigin = EyePosition();
-	eyeAngles = EyeAngles();
 }
 
 void SelectDisguise( int iClass, int iTeam );

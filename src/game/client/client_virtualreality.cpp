@@ -471,141 +471,6 @@ void CClientVirtualReality::DrawMainMenu()
 // --------------------------------------------------------------------
 bool CClientVirtualReality::OverrideView ( CViewSetup *pViewMiddle, Vector *pViewModelOrigin, QAngle *pViewModelAngles, HeadtrackMovementMode_t hmmMovementOverride )
 {
-	if( !UseVR() )
-	{
-		return false;
-	}
-
-	pViewModelOrigin = &pViewMiddle->origin;
-	pViewModelAngles = &pViewMiddle->angles;
-
-
-	if ( hmmMovementOverride == HMM_NOOVERRIDE )
-	{
-		if ( CurrentlyZoomed() )
-		{
-			m_hmmMovementActual = static_cast<HeadtrackMovementMode_t>( vr_moveaim_mode_zoom.GetInt() );
-		}
-		else
-		{
-			m_hmmMovementActual = static_cast<HeadtrackMovementMode_t>( vr_moveaim_mode.GetInt() );
-		}
-	}
-	else
-	{
-		m_hmmMovementActual = hmmMovementOverride;
-	}
-
-
-	// Incoming data may or may not be useful - it is the origin and aim of the "player", i.e. where bullets come from.
-	// In some modes it is an independent thing, guided by the mouse & keyboard = useful.
-	// In other modes it's just where the HMD was pointed last frame, modified slightly by kbd+mouse.
-	// In those cases, we should use our internal reference (which keeps track thanks to OverridePlayerMotion)
-	QAngle originalMiddleAngles = pViewMiddle->angles;
-	Vector originalMiddleOrigin = pViewMiddle->origin;
-
-	// Figure out the in-game "torso" concept, which corresponds to the player's physical torso.
-	m_PlayerTorsoOrigin = pViewMiddle->origin;
-
-	// Ignore what was passed in - it's just the direction the weapon is pointing, which was determined by last frame's HMD orientation!
-	// Instead use our cached value.
-	QAngle torsoAngles = m_PlayerTorsoAngle;
-
-	VMatrix worldFromTorso;
-	worldFromTorso.SetupMatrixOrgAngles( m_PlayerTorsoOrigin, torsoAngles );
-
-	VMatrix matMideyeZeroFromMideyeCurrent = pViewMiddle->m_ViewToProjection;
-
-	m_TorsoFromMideye = matMideyeZeroFromMideyeCurrent;
-	m_WorldFromMidEye = worldFromTorso * matMideyeZeroFromMideyeCurrent;
-	m_WorldFromWeapon = m_WorldFromMidEye;
-
-	/*
-	if ( viewTranslation.IsLengthGreaterThan ( limit ) )
-	{
-		viewTranslation.NormalizeInPlace();
-		viewTranslation *= limit;
-		matMideyeZeroFromMideyeCurrent.SetTranslation( viewTranslation );
-	}
-	*/
-
-	// Now figure out the three principal matrices: m_TorsoFromMideye, m_WorldFromMidEye, m_WorldFromWeapon
-	// m_TorsoFromMideye is done so that OverridePlayerMotion knows what to do with WASD.
-/*
-	switch ( m_hmmMovementActual )
-	{
-	case HMM_SHOOTFACE_MOVEFACE:
-	case HMM_SHOOTFACE_MOVETORSO:
-		// Aim point is down your nose, i.e. same as the view angles.
-		m_TorsoFromMideye = matMideyeZeroFromMideyeCurrent;
-		m_WorldFromMidEye = worldFromTorso * matMideyeZeroFromMideyeCurrent;
-		m_WorldFromWeapon = m_WorldFromMidEye;
-		break;
-
-	case HMM_SHOOTBOUNDEDMOUSE_LOOKFACE_MOVEFACE:
-	case HMM_SHOOTBOUNDEDMOUSE_LOOKFACE_MOVEMOUSE:
-	case HMM_SHOOTMOUSE_MOVEFACE:
-	case HMM_SHOOTMOVEMOUSE_LOOKFACE:
-		// Aim point is independent of view - leave it as it was, just copy it into m_WorldFromWeapon for our use.
-		m_TorsoFromMideye = matMideyeZeroFromMideyeCurrent;
-		m_WorldFromMidEye = worldFromTorso * matMideyeZeroFromMideyeCurrent;
-		m_WorldFromWeapon.SetupMatrixOrgAngles( originalMiddleOrigin, originalMiddleAngles );
-		break;
-
-	case HMM_SHOOTMOVELOOKMOUSE:
-		// HMD is ignored completely, mouse does everything.
-		m_PlayerTorsoAngle = originalMiddleAngles;
-
-		worldFromTorso.SetupMatrixOrgAngles( m_PlayerTorsoOrigin, originalMiddleAngles );
-
-		m_TorsoFromMideye.Identity();
-		m_WorldFromMidEye = worldFromTorso;
-		m_WorldFromWeapon = worldFromTorso;
-		break;
-
-	case HMM_SHOOTMOVELOOKMOUSEFACE:
-		// mouse does everything, and then we add head tracking on top of that
-		worldFromTorso = worldFromTorso * matMideyeZeroFromMideyeCurrent; 
-
-		m_TorsoFromMideye = matMideyeZeroFromMideyeCurrent;
-		m_WorldFromWeapon = worldFromTorso;
-		m_WorldFromMidEye = worldFromTorso;
-		break;
-
-	default: Assert ( false ); break;
-	}
-
-	// Finally convert back to origin+angles that the game understands.
-	//pViewMiddle->origin = m_WorldFromMidEye.GetTranslation();
-	// VectorAngles ( m_WorldFromMidEye.GetForward(), m_WorldFromMidEye.GetUp(), pViewMiddle->angles );
-
-	*pViewModelAngles = pViewMiddle->angles;
-	if ( vr_viewmodel_translate_with_head.GetBool() )
-	{
-		*pViewModelOrigin = pViewMiddle->origin;
-	}
-	else
-	{
-		*pViewModelOrigin = originalMiddleOrigin;
-	}
-
-	m_WorldFromMidEyeNoDebugCam = m_WorldFromMidEye;
-	if ( vr_debug_remote_cam.GetBool() )
-	{
-		Vector vOffset ( vr_debug_remote_cam_pos_x.GetFloat(), vr_debug_remote_cam_pos_y.GetFloat(), vr_debug_remote_cam_pos_z.GetFloat() );
-		Vector vLookat ( vr_debug_remote_cam_target_x.GetFloat(), vr_debug_remote_cam_target_y.GetFloat(), vr_debug_remote_cam_target_z.GetFloat() );
-		// pViewMiddle->origin += vOffset;
-		Vector vView = vLookat - vOffset;
-		//VectorAngles ( vView, m_WorldFromMidEye.GetUp(), pViewMiddle->angles );
-
-		// m_WorldFromMidEye.SetupMatrixOrgAngles( pViewMiddle->origin, pViewMiddle->angles );
-
-		m_TorsoFromMideye.Identity();
-	}
-
-	// set the near clip plane so the local player clips less
-	// pViewMiddle->zNear *= vr_projection_znear_multiplier.GetFloat();
-*/
 	return true;
 }
 
@@ -698,6 +563,17 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 		pViewLeft->m_bViewToProjectionOverride = false; 
 		pViewRight->m_bViewToProjectionOverride = false;
 		return false;
+	}
+
+	// VR DEBUG: Log the view origins being used for rendering
+	static float s_flLastDebugTime = 0.0f;
+	static Vector s_lastOrigin(0,0,0);
+	if ( gpGlobals->curtime > s_flLastDebugTime + 0.5f || pViewMiddle->origin.DistTo(s_lastOrigin) > 5.0f )
+	{
+		s_flLastDebugTime = gpGlobals->curtime;
+		s_lastOrigin = pViewMiddle->origin;
+		DevMsg("VR OverrideStereoView: Using middle origin=(%.2f, %.2f, %.2f) for rendering\n",
+			pViewMiddle->origin.x, pViewMiddle->origin.y, pViewMiddle->origin.z);
 	}
 
 	const VMatrix viewAsMatrix = SetupMatrixOrgAngles(pViewMiddle->origin, pViewMiddle->angles);
@@ -893,11 +769,25 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
 
     if ( pPlayer )
     {
-        // CRITICAL FIX: Match OverrideView behavior exactly
-        // The torso origin should be the VIEW origin, not EyePosition()
-        m_PlayerTorsoOrigin = pPlayer->EyePosition();  // This was the view origin in OverrideView
+        // VR FIX: Calculate smoothed position directly here since OverridePlayerMotion
+        // runs BEFORE CalcView (during input processing, not view rendering)
+        // We need to apply the same smoothing that CalcView will apply
         
-        m_PlayerTorsoAngle = pPlayer->EyeAngles();
+        // Get base eye position
+        Vector eyeOrigin = pPlayer->EyePosition();
+        QAngle eyeAngles = pPlayer->EyeAngles();
+        
+        // Apply prediction error smoothing (same as CalcView does)
+        C_BasePlayer *pBasePlayer = dynamic_cast<C_BasePlayer*>(pPlayer);
+        if (pBasePlayer)
+        {
+            Vector smoothingOffset;
+            pBasePlayer->GetPredictionErrorSmoothingVector(smoothingOffset);
+            eyeOrigin += smoothingOffset;
+        }
+        
+        m_PlayerTorsoOrigin = eyeOrigin;
+        m_PlayerTorsoAngle = eyeAngles;
         m_PlayerTorsoAngle[PITCH] = 0.0f;  // Don't tilt the body up/down
         m_PlayerTorsoAngle[ROLL] = 0.0f;   // Don't roll the body
 		
@@ -910,14 +800,14 @@ bool CClientVirtualReality::OverridePlayerMotion( float flInputSampleFrametime, 
 		m_PlayerTorsoOrigin = Vector(0, 0, 0);
     }
     
-    // CRITICAL FIX: Recreate the exact matrix setup from OverrideView
+    // Update worldFromTorso with smoothed data
     worldFromTorso.SetupMatrixOrgAngles(m_PlayerTorsoOrigin, m_PlayerTorsoAngle);
 
-    // CRITICAL: Recreate the missing m_WorldFromMidEye that c_baseplayer.cpp needs
-    // Since matMideyeZeroFromMideyeCurrent was used as identity in most cases,
-    // m_WorldFromMidEye should just be worldFromTorso 
+    // NOTE: Don't update m_WorldFromMidEye here - it will be updated later by
+    // UpdateWorldFromMidEyeMatrices() with the FINAL smoothed data from CalcView
+    // which includes both stair smoothing AND prediction error smoothing
     m_TorsoFromMideye.Identity();
-    m_WorldFromMidEye = worldFromTorso;
+    // m_WorldFromMidEye = worldFromTorso;  // REMOVED - causes desync with smoothing
 
     // Weapon view = mideye view, so apply that to the torso to find the world view direction.
     // Set up m_WorldFromWeapon with correct VR position and orientation

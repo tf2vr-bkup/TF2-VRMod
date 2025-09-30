@@ -47,6 +47,7 @@
 #include "sourcevr/isourcevirtualreality.h"
 #include "client_virtualreality.h"
 #include "tfvr/openxr_manager.h"
+#include "tfvr/openxr_hand_tracking.h"
 #include "tfvr/vr_input.h"
 #include "tfvr/vr_laser_pointer.h"
 
@@ -713,17 +714,17 @@ void CViewRender::SetUpViews()
 			extern CClientVirtualReality g_ClientVirtualReality;
 			if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && UseVR())
 			{
-				// Force rebuild of VR matrices with fresh player data (after CalcView)
-				// This updates m_WorldFromMidEye with current frame data instead of stale input data
-				C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
-				if (pTFPlayer)
+				// CRITICAL: Use the smoothed viewEye.origin from CalcView - don't override it!
+				// CalcView already applied GetPredictionErrorSmoothingVector() smoothing
+			
+				// Store the smoothed view for VR rendering - DON'T modify viewEye.origin!
+				g_ClientVirtualReality.UpdateWorldFromMidEyeMatrices(viewEye.origin, viewEye.angles);
+				
+				// Render hand tracking debug visualization AFTER smoothing is set
+				// so the debug cubes use the current frame's smoothed transforms
+				if (g_pOpenXRManager->GetHandTracker())
 				{
-					// Get fresh player data (same as CalcView just used)
-					Vector freshOrigin = pTFPlayer->EyePosition();
-					QAngle freshAngles = pTFPlayer->EyeAngles();
-					
-					// Update the VR system matrices with fresh data using public method
-					g_ClientVirtualReality.UpdateWorldFromMidEyeMatrices(freshOrigin, freshAngles);
+					g_pOpenXRManager->GetHandTracker()->RenderDebugCubes();
 				}
 				
 				// Now update menu cursor position with fresh VR matrices

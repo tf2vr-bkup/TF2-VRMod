@@ -635,13 +635,13 @@ void COpenXRManager::ReleaseResources()
 
 bool COpenXRManager::BeginFrame()
 {
-    VPROF("OpenXRManager::BeginFrame");
+    VPROF_BUDGET("OpenXRManager::BeginFrame", VPROF_BUDGETGROUP_WORLD_RENDERING);
     return dxvkBeginFrame();
 }
 
 bool COpenXRManager::EndFrame()
 {
-    VPROF("OpenXRManager::EndFrame");
+    VPROF_BUDGET("OpenXRManager::EndFrame", VPROF_BUDGETGROUP_WORLD_RENDERING);
     return dxvkEndFrame();
 }
 
@@ -749,12 +749,10 @@ void COpenXRManager::UpdateOpenXRViewData()
         m_inputManager->PollInput();
     }
 
-    // Update hand tracking
+    // Update hand tracking (debug rendering moved to view.cpp after smoothing is applied)
     if (m_handTracker)
     {
         m_handTracker->UpdateHandTracking();
-        // Render debug visualization
-        m_handTracker->RenderDebugCubes();
     }
 
     uint32_t viewCount;
@@ -2122,25 +2120,17 @@ bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
     XrPosef xrPose;
     if (m_inputManager->GetControllerPose("left_hand_pose", xrPose))
     {
-        // Get the head pose from OpenXR (center eye)
-        XrPosef headPose = m_views[0].pose;
-        
-        // Create head transform matrix and get its inverse
-        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
-        VMatrix headInverse = headMatrix.InverseTR();
-        
-        // Convert controller pose to Source coordinate system using SAME method as HMD
-        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+        // Convert controller pose to Source coordinate system (in playspace)
+        VMatrix controllerInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
             this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
-        // Transform controller to head-relative space, then through player's world transform
-        // Use original head-relative transformation method
-        VMatrix headRelativeController = headInverse * controllerMatrix;
-        
-        // Apply position correction in head-relative space if enabled
+        // Apply position correction in playspace if enabled
         if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
         {
+            // Get raw head pose for calculating correction offset
+            VMatrix headInPlayspace = GetMideyePose();
+            VMatrix headRelativeController = headInPlayspace.InverseTR() * controllerInPlayspace;
+            
             Vector headRelativePos = headRelativeController.GetTranslation();
             // Scale the correction with the dynamic world scale to maintain consistency
             float baseScale = tfvr_worldscale.GetFloat();
@@ -2148,24 +2138,43 @@ bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
             float scaleFactor = currentScale / baseScale;
             float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
             headRelativePos.y += scaledCorrection;
+            
+            // Apply correction back to playspace controller pose
             headRelativeController.SetTranslation(headRelativePos);
+            controllerInPlayspace = headInPlayspace * headRelativeController;
         }
         
         // Get player's world transform
         C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
         if (pPlayer)
         {
-            // Create player transform matrix (rotation + position)
-            VMatrix playerMatrix;
-            playerMatrix.Identity();
+            // VR FIX: Transform controller from playspace directly to world using smoothed playspace-to-world transform
+            extern CClientVirtualReality g_ClientVirtualReality;
+            extern bool UseVR();
             
-            matrix3x4_t playerMatrix3x4;
-            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
-            playerMatrix.CopyFrom3x4(playerMatrix3x4);
-            playerMatrix.SetTranslation(pPlayer->EyePosition());
-            
-            // Transform controller through player's world transform
-            pose = playerMatrix * headRelativeController;
+            if (UseVR())
+            {
+                // VR FIX: Calculate controller position RELATIVE to head in playspace,
+                // then apply that relative transform to the smoothed head in world space.
+                // This ensures controllers stay at the correct position relative to the smoothed head.
+                
+                // Get raw head pose in playspace (unsmoothed)
+                VMatrix rawHeadPlayspace = GetMideyePose();
+                
+                // Calculate controller relative to head (both in playspace coordinates)
+                VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
+                
+                // Get smoothed head-in-world transform (includes stair/prediction smoothing)
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                
+                // Apply the relative transform to the smoothed head position
+                pose = smoothedHeadWorld * controllerRelativeToHead;
+            }
+            else
+            {
+                // Non-VR: just use controller in playspace directly
+                pose = controllerInPlayspace;
+            }
             
             // Enhanced debug visualization for both aim and grip poses
             if (debugoverlay && tfvr_controller_debug_draw.GetBool())
@@ -2222,25 +2231,17 @@ bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
     XrPosef xrPose;
     if (m_inputManager->GetControllerPose("right_hand_pose", xrPose))
     {
-        // Get the head pose from OpenXR (center eye)
-        XrPosef headPose = m_views[0].pose;
-        
-        // Create head transform matrix and get its inverse
-        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
-        VMatrix headInverse = headMatrix.InverseTR();
-        
-        // Convert controller pose to Source coordinate system using SAME method as HMD
-        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+        // Convert controller pose to Source coordinate system (in playspace)
+        VMatrix controllerInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
             this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
-        // Transform controller to head-relative space, then through player's world transform
-        // Use original head-relative transformation method
-        VMatrix headRelativeController = headInverse * controllerMatrix;
-        
-        // Apply position correction in head-relative space if enabled
+        // Apply position correction in playspace if enabled
         if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
         {
+            // Get raw head pose for calculating correction offset
+            VMatrix headInPlayspace = GetMideyePose();
+            VMatrix headRelativeController = headInPlayspace.InverseTR() * controllerInPlayspace;
+            
             Vector headRelativePos = headRelativeController.GetTranslation();
             // Scale the correction with the dynamic world scale to maintain consistency
             float baseScale = tfvr_worldscale.GetFloat();
@@ -2248,24 +2249,43 @@ bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
             float scaleFactor = currentScale / baseScale;
             float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
             headRelativePos.y += scaledCorrection;
+            
+            // Apply correction back to playspace controller pose
             headRelativeController.SetTranslation(headRelativePos);
+            controllerInPlayspace = headInPlayspace * headRelativeController;
         }
         
         // Get player's world transform
         C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
         if (pPlayer)
         {
-            // Create player transform matrix (rotation + position)
-            VMatrix playerMatrix;
-            playerMatrix.Identity();
+            // VR FIX: Transform controller from playspace directly to world using smoothed playspace-to-world transform
+            extern CClientVirtualReality g_ClientVirtualReality;
+            extern bool UseVR();
             
-            matrix3x4_t playerMatrix3x4;
-            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
-            playerMatrix.CopyFrom3x4(playerMatrix3x4);
-            playerMatrix.SetTranslation(pPlayer->EyePosition());
-            
-            // Transform controller through player's world transform
-            pose = playerMatrix * headRelativeController;
+            if (UseVR())
+            {
+                // VR FIX: Calculate controller position RELATIVE to head in playspace,
+                // then apply that relative transform to the smoothed head in world space.
+                // This ensures controllers stay at the correct position relative to the smoothed head.
+                
+                // Get raw head pose in playspace (unsmoothed)
+                VMatrix rawHeadPlayspace = GetMideyePose();
+                
+                // Calculate controller relative to head (both in playspace coordinates)
+                VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
+                
+                // Get smoothed head-in-world transform (includes stair/prediction smoothing)
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                
+                // Apply the relative transform to the smoothed head position
+                pose = smoothedHeadWorld * controllerRelativeToHead;
+            }
+            else
+            {
+                // Non-VR: just use controller in playspace directly
+                pose = controllerInPlayspace;
+            }
             
             // Apply manual testing offsets if set
             if (tfvr_pose_offset_x.GetFloat() != 0.0f || tfvr_pose_offset_y.GetFloat() != 0.0f || tfvr_pose_offset_z.GetFloat() != 0.0f)
@@ -2283,17 +2303,13 @@ bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
                 static float lastDebugTime = 0.0f;
                 if (gpGlobals && gpGlobals->realtime - lastDebugTime > 0.5f) // Every half second
                 {
-                    Vector controllerPos = controllerMatrix.GetTranslation();
-                    Vector headPos = headMatrix.GetTranslation();
-                    Vector headRelativePos = headRelativeController.GetTranslation();
+                    Vector controllerPos = controllerInPlayspace.GetTranslation();
                     Vector finalPos = pose.GetTranslation();
                     
-                    DevMsg("Right Controller Step-by-Step Debug:\n");
+                    DevMsg("Right Controller Debug:\n");
                     DevMsg("  1. Raw OpenXR: pos(%.3f, %.3f, %.3f)\n", xrPose.position.x, xrPose.position.y, xrPose.position.z);
-                    DevMsg("  2. After coord conv: pos(%.1f, %.1f, %.1f)\n", controllerPos.x, controllerPos.y, controllerPos.z);
-                    DevMsg("  3. Head matrix pos: pos(%.1f, %.1f, %.1f)\n", headPos.x, headPos.y, headPos.z);
-                    DevMsg("  4. Head-relative: pos(%.1f, %.1f, %.1f)\n", headRelativePos.x, headRelativePos.y, headRelativePos.z);
-                    DevMsg("  5. Final world: pos(%.1f, %.1f, %.1f)\n", finalPos.x, finalPos.y, finalPos.z);
+                    DevMsg("  2. Playspace (after coord conv): pos(%.1f, %.1f, %.1f)\n", controllerPos.x, controllerPos.y, controllerPos.z);
+                    DevMsg("  3. Final world (with smoothing): pos(%.1f, %.1f, %.1f)\n", finalPos.x, finalPos.y, finalPos.z);
                     lastDebugTime = gpGlobals->realtime;
                 }
             }
@@ -2354,25 +2370,17 @@ bool COpenXRManager::GetLeftControllerGripPose(VMatrix& pose)
     XrPosef xrPose;
     if (m_inputManager->GetControllerPose("left_hand_grip_pose", xrPose))
     {
-        // Get the head pose from OpenXR (center eye)
-        XrPosef headPose = m_views[0].pose;
-        
-        // Create head transform matrix and get its inverse
-        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
-        VMatrix headInverse = headMatrix.InverseTR();
-        
-        // Convert controller pose to Source coordinate system using SAME method as HMD
-        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+        // Convert controller pose to Source coordinate system (in playspace)
+        VMatrix controllerInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
             this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
-        // Transform controller to head-relative space, then through player's world transform
-        // Use original head-relative transformation method
-        VMatrix headRelativeController = headInverse * controllerMatrix;
-        
-        // Apply position correction in head-relative space if enabled
+        // Apply position correction in playspace if enabled
         if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
         {
+            // Get raw head pose for calculating correction offset
+            VMatrix headInPlayspace = GetMideyePose();
+            VMatrix headRelativeController = headInPlayspace.InverseTR() * controllerInPlayspace;
+            
             Vector headRelativePos = headRelativeController.GetTranslation();
             // Scale the correction with the dynamic world scale to maintain consistency
             float baseScale = tfvr_worldscale.GetFloat();
@@ -2380,24 +2388,43 @@ bool COpenXRManager::GetLeftControllerGripPose(VMatrix& pose)
             float scaleFactor = currentScale / baseScale;
             float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
             headRelativePos.y += scaledCorrection;
+            
+            // Apply correction back to playspace controller pose
             headRelativeController.SetTranslation(headRelativePos);
+            controllerInPlayspace = headInPlayspace * headRelativeController;
         }
         
         // Get player's world transform
         C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
         if (pPlayer)
         {
-            // Create player transform matrix (rotation + position)
-            VMatrix playerMatrix;
-            playerMatrix.Identity();
+            // VR FIX: Transform controller from playspace directly to world using smoothed playspace-to-world transform
+            extern CClientVirtualReality g_ClientVirtualReality;
+            extern bool UseVR();
             
-            matrix3x4_t playerMatrix3x4;
-            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
-            playerMatrix.CopyFrom3x4(playerMatrix3x4);
-            playerMatrix.SetTranslation(pPlayer->EyePosition());
-            
-            // Transform controller through player's world transform
-            pose = playerMatrix * headRelativeController;
+            if (UseVR())
+            {
+                // VR FIX: Calculate controller position RELATIVE to head in playspace,
+                // then apply that relative transform to the smoothed head in world space.
+                // This ensures controllers stay at the correct position relative to the smoothed head.
+                
+                // Get raw head pose in playspace (unsmoothed)
+                VMatrix rawHeadPlayspace = GetMideyePose();
+                
+                // Calculate controller relative to head (both in playspace coordinates)
+                VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
+                
+                // Get smoothed head-in-world transform (includes stair/prediction smoothing)
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                
+                // Apply the relative transform to the smoothed head position
+                pose = smoothedHeadWorld * controllerRelativeToHead;
+            }
+            else
+            {
+                // Non-VR: just use controller in playspace directly
+                pose = controllerInPlayspace;
+            }
             
             return true;
         }
@@ -2412,25 +2439,17 @@ bool COpenXRManager::GetRightControllerGripPose(VMatrix& pose)
     XrPosef xrPose;
     if (m_inputManager->GetControllerPose("right_hand_grip_pose", xrPose))
     {
-        // Get the head pose from OpenXR (center eye)
-        XrPosef headPose = m_views[0].pose;
-        
-        // Create head transform matrix and get its inverse
-        VMatrix headMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
-            this->ToSourceCoordinateSystemFloorAligned(headPose) : this->ToSourceCoordinateSystem(headPose);
-        VMatrix headInverse = headMatrix.InverseTR();
-        
-        // Convert controller pose to Source coordinate system using SAME method as HMD
-        VMatrix controllerMatrix = tfvr_use_floor_aligned_poses.GetBool() ? 
+        // Convert controller pose to Source coordinate system (in playspace)
+        VMatrix controllerInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
             this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
         
-        // Transform controller to head-relative space, then through player's world transform
-        // Use original head-relative transformation method
-        VMatrix headRelativeController = headInverse * controllerMatrix;
-        
-        // Apply position correction in head-relative space if enabled
+        // Apply position correction in playspace if enabled
         if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
         {
+            // Get raw head pose for calculating correction offset
+            VMatrix headInPlayspace = GetMideyePose();
+            VMatrix headRelativeController = headInPlayspace.InverseTR() * controllerInPlayspace;
+            
             Vector headRelativePos = headRelativeController.GetTranslation();
             // Scale the correction with the dynamic world scale to maintain consistency
             float baseScale = tfvr_worldscale.GetFloat();
@@ -2438,24 +2457,43 @@ bool COpenXRManager::GetRightControllerGripPose(VMatrix& pose)
             float scaleFactor = currentScale / baseScale;
             float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
             headRelativePos.y += scaledCorrection;
+            
+            // Apply correction back to playspace controller pose
             headRelativeController.SetTranslation(headRelativePos);
+            controllerInPlayspace = headInPlayspace * headRelativeController;
         }
         
         // Get player's world transform
         C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
         if (pPlayer)
         {
-            // Create player transform matrix (rotation + position)
-            VMatrix playerMatrix;
-            playerMatrix.Identity();
+            // VR FIX: Transform controller from playspace directly to world using smoothed playspace-to-world transform
+            extern CClientVirtualReality g_ClientVirtualReality;
+            extern bool UseVR();
             
-            matrix3x4_t playerMatrix3x4;
-            AngleMatrix(pPlayer->EyeAngles(), playerMatrix3x4);
-            playerMatrix.CopyFrom3x4(playerMatrix3x4);
-            playerMatrix.SetTranslation(pPlayer->EyePosition());
-            
-            // Transform controller through player's world transform
-            pose = playerMatrix * headRelativeController;
+            if (UseVR())
+            {
+                // VR FIX: Calculate controller position RELATIVE to head in playspace,
+                // then apply that relative transform to the smoothed head in world space.
+                // This ensures controllers stay at the correct position relative to the smoothed head.
+                
+                // Get raw head pose in playspace (unsmoothed)
+                VMatrix rawHeadPlayspace = GetMideyePose();
+                
+                // Calculate controller relative to head (both in playspace coordinates)
+                VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
+                
+                // Get smoothed head-in-world transform (includes stair/prediction smoothing)
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                
+                // Apply the relative transform to the smoothed head position
+                pose = smoothedHeadWorld * controllerRelativeToHead;
+            }
+            else
+            {
+                // Non-VR: just use controller in playspace directly
+                pose = controllerInPlayspace;
+            }
             
             return true;
         }
