@@ -932,16 +932,6 @@ void CVRMenuManager::UpdateCursorPosition()
         // If movement is too small, don't update cursor (preserve mouse input)
         if (movementDistance < tfvr_cursor_threshold.GetFloat())
         {
-            if (tfvr_cursor_debug.GetBool())
-            {
-                static float lastDebugTime = 0;
-                if (gpGlobals->curtime - lastDebugTime > 1.0f)
-                {
-                    DevMsg("VR Cursor: Controller movement too small (%.2f < %.2f), preserving mouse input\n", 
-                           movementDistance, tfvr_cursor_threshold.GetFloat());
-                    lastDebugTime = gpGlobals->curtime;
-                }
-            }
             return;
         }
         
@@ -968,16 +958,6 @@ void CVRMenuManager::UpdateCursorPosition()
             // If head movement is too small, don't update cursor (preserve mouse input)
             if (headMovementDistance < currentHeadThreshold)
             {
-                if (tfvr_cursor_debug.GetBool())
-                {
-                    static float lastDebugTime = 0;
-                    if (gpGlobals->curtime - lastDebugTime > 1.0f)
-                    {
-                        DevMsg("VR Cursor: Head movement too small (%.2f < %.2f), preserving mouse input [%s mode]\n", 
-                               headMovementDistance, currentHeadThreshold, dxvkIsCompositorActive() ? "compositor" : "game");
-                        lastDebugTime = gpGlobals->curtime;
-                    }
-                }
                 return;
             }
             
@@ -1391,13 +1371,7 @@ void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
     // STEP 3: Transform the stored playspace menu position to current world coordinates  
     Vector newMenuWorldPos = currentPlayspaceOriginWorldPos + m_menuPositionInPlayspace;
     
-    // DEBUG: Check for frame lag
     static Vector lastMenuWorldPos = newMenuWorldPos;
-    float menuMovement = (newMenuWorldPos - lastMenuWorldPos).Length();
-    if (menuMovement > 0.1f)
-    {
-        DevMsg("VR Menu: Menu moved %.2f units (potential frame lag)\n", menuMovement);
-    }
     lastMenuWorldPos = newMenuWorldPos;
     
     // Get menu rotation from stored anchor
