@@ -3136,6 +3136,11 @@ void CTFPlayerShared::ConditionThink( void )
 #endif
 				}
 			}
+			else
+			{
+				// RocketPack not found, may have been unequipped, or we may be a Medic who inherited the cond
+				RemoveCond( TF_COND_ROCKETPACK );
+			}
 		}
 	}
 
@@ -4769,14 +4774,8 @@ static void RemoveResistParticle( CTFPlayer* pPlayer, medigun_resist_types_t nRe
 	if ( bKeep )
 		return;
 	
-	if ( pPlayer->m_Shared.GetDisplayedTeam() == TF_TEAM_RED )
-	{
-		pPlayer->RemoveOverheadEffect( s_pszRedResistOverheadEffectName[ nResistType ], true );
-	}
-	else
-	{
-		pPlayer->RemoveOverheadEffect( s_pszBlueResistOverheadEffectName[ nResistType ], true );
-	}
+	pPlayer->RemoveOverheadEffect( s_pszRedResistOverheadEffectName[ nResistType ], true );
+	pPlayer->RemoveOverheadEffect( s_pszBlueResistOverheadEffectName[ nResistType ], true );
 }
 
 //-----------------------------------------------------------------------------
