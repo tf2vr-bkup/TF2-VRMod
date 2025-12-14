@@ -565,17 +565,6 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 		return false;
 	}
 
-	// VR DEBUG: Log the view origins being used for rendering
-	static float s_flLastDebugTime = 0.0f;
-	static Vector s_lastOrigin(0,0,0);
-	if ( gpGlobals->curtime > s_flLastDebugTime + 0.5f || pViewMiddle->origin.DistTo(s_lastOrigin) > 5.0f )
-	{
-		s_flLastDebugTime = gpGlobals->curtime;
-		s_lastOrigin = pViewMiddle->origin;
-		DevMsg("VR OverrideStereoView: Using middle origin=(%.2f, %.2f, %.2f) for rendering\n",
-			pViewMiddle->origin.x, pViewMiddle->origin.y, pViewMiddle->origin.z);
-	}
-
 	const VMatrix viewAsMatrix = SetupMatrixOrgAngles(pViewMiddle->origin, pViewMiddle->angles);
 
 	VMatrix leftEyeView = viewAsMatrix * g_pOpenXRManager->GetEyeViewFromMidEyeView(ISourceVirtualReality::VREye_Left);

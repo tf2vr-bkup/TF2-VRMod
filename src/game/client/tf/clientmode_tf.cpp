@@ -353,10 +353,12 @@ void CTFModeManager::LevelShutdown( void )
 	extern void CL_Coaching_LevelShutdown();
 	extern void CL_Consumables_LevelShutdown();
 	extern void CL_Halloween_LevelShutdown();
+	extern void CleanupAllVRHands();
 	CL_Training_LevelShutdown();
 	CL_Coaching_LevelShutdown();
 	CL_Consumables_LevelShutdown();
 	CL_Halloween_LevelShutdown();
+	CleanupAllVRHands();
 }
 
 //-----------------------------------------------------------------------------

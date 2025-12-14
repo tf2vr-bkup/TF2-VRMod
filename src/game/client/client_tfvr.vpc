@@ -967,6 +967,8 @@ $Project "Client (TFVR)"
 		
 		$Folder "VR"
 		{
+			$File   "tfvr\c_tfvr_hand.h"
+			$File   "tfvr\c_tfvr_hand.cpp"
 			$File   "tfvr\openxr_manager.h"
 			$File   "tfvr\openxr_manager.cpp"
 			$File   "tfvr\openxr_input.h"

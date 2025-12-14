@@ -254,6 +254,12 @@ void CVRMenuManager::Update()
         m_pVRObjectiveOverlay->Update();
     }
     
+    // Update VR Hands
+    // TODO: This is here to ensure update is late enough to ensure correct hand 
+    // tracking data is available for the hands. Should maybe be moved to a more appropriate place.
+    extern void UpdateVRHands();
+    UpdateVRHands();
+    
     // NOTE: Menu input handling moved to OverridePlayerMotion for fresh positioning data
     // We still handle menu input here for non-positional aspects
     HandleMenuInput();

@@ -96,6 +96,10 @@ extern ConVar tfvr_controller_tracking_debug;
 
 // VR rotation control
 extern ConVar tfvr_hmd_drive_rotation;
+
+// VR hands
+#include "tfvr/c_tfvr_hand.h"
+
 #include "confirm_dialog.h"
 #include "c_tf_weapon_builder.h"
 #include "tf_shared_content_manager.h"
@@ -4255,6 +4259,11 @@ void C_TFPlayer::UpdateOnRemove( void )
 	m_Shared.RemoveAllCond();
 
 	m_Inventory.RemoveListener( this );
+	
+	if ( IsLocalPlayer() )
+	{
+		C_TFVRHand::RemoveVRHands( this );
+	}
 
 	BaseClass::UpdateOnRemove();
 }
@@ -5304,6 +5313,10 @@ void C_TFPlayer::OnPlayerClassChange( void )
 	if ( IsLocalPlayer() )
 	{
 		g_ItemEffectMeterManager.SetPlayer( this );
+		
+		// Spawn VR hands when class changes (will respawn with new model)
+		extern void SpawnVRHandsForPlayer(C_TFPlayer *pPlayer);
+		SpawnVRHandsForPlayer(this);
 	}
 	ShowNemesisIcon( false );
 	ShowDuelingIcon( false );
@@ -12022,4 +12035,12 @@ static void cc_helpme_released( const CCommand &args )
 	engine->ServerCmdKeyValues( kv );
 }
 static ConCommand helpme_released( "-helpme", cc_helpme_released );
+
+void SpawnVRHandsForPlayer(C_TFPlayer *pPlayer)
+{
+	if (!pPlayer || !pPlayer->IsLocalPlayer())
+		return;
+		
+	C_TFVRHand::SpawnVRHands(pPlayer);
+}
 
