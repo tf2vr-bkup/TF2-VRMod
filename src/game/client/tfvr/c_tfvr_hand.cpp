@@ -16,6 +16,17 @@
 ConVar tfvr_hands_enabled("tfvr_hands_enabled", "1", FCVAR_ARCHIVE, "Enable VR hand rendering");
 ConVar tfvr_hands_debug("tfvr_hands_debug", "0", FCVAR_NONE, "Show debug info for VR hands");
 ConVar tfvr_hands_alpha("tfvr_hands_alpha", "1.0", FCVAR_ARCHIVE, "Alpha transparency for VR hands (0-1)");
+ConVar tfvr_hands_finger_tracking("tfvr_hands_finger_tracking", "1", FCVAR_ARCHIVE, "Enable finger tracking animation (0=disable, 1=enable)");
+ConVar tfvr_hands_animate_thumb_metacarpal("tfvr_hands_animate_thumb_metacarpal", "0", FCVAR_ARCHIVE, "Animate thumb metacarpal bone (usually should be 0)");
+
+// Finger rotation offset convars (to align OpenXR joint orientation with model bone orientation)
+// Separate offsets for left and right hands since they're mirrored
+ConVar tfvr_hands_finger_offset_pitch_L("tfvr_hands_finger_offset_pitch_L", "0", FCVAR_ARCHIVE, "Pitch offset for LEFT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_yaw_L("tfvr_hands_finger_offset_yaw_L", "0", FCVAR_ARCHIVE, "Yaw offset for LEFT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_roll_L("tfvr_hands_finger_offset_roll_L", "-90", FCVAR_ARCHIVE, "Roll offset for LEFT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_pitch_R("tfvr_hands_finger_offset_pitch_R", "0", FCVAR_ARCHIVE, "Pitch offset for RIGHT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_yaw_R("tfvr_hands_finger_offset_yaw_R", "0", FCVAR_ARCHIVE, "Yaw offset for RIGHT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_roll_R("tfvr_hands_finger_offset_roll_R", "-90", FCVAR_ARCHIVE, "Roll offset for RIGHT hand finger bones (degrees)");
 
 // Rotation offset convars - left hand
 ConVar tfvr_hands_left_offset_pitch("tfvr_hands_left_offset_pitch", "0", FCVAR_ARCHIVE, "Pitch offset for left VR hand (degrees)");
@@ -618,6 +629,9 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				ConcatTransforms(deltaTransform, originalChildTransform, pBoneToWorldOut[iChildBone]);
 			}
 		}
+		
+		// Apply finger tracking to left hand
+		ApplyFingerTracking(pBoneToWorldOut, nMaxBones, true);
 	}
 
 	// Position right hand bone at right controller and update all children
@@ -675,6 +689,9 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				ConcatTransforms(deltaTransform, originalChildTransform, pBoneToWorldOut[iChildBone]);
 			}
 		}
+		
+		// Apply finger tracking to right hand
+		ApplyFingerTracking(pBoneToWorldOut, nMaxBones, false);
 	}
 
 	return true;
@@ -736,8 +753,74 @@ void C_TFVRHand::SetupBoneMapping()
 			m_iLeftHandBone, m_iRightHandBone);
 	}
 
-	// TODO: Map individual finger bones for hand tracking animation
-	// For now, we just need the hand root bones
+	// Map finger bones for hand tracking animation
+	// OpenXR joint order: metacarpal (0), proximal (1), intermediate/middle (2), distal (3), tip (4)
+	// TF2 bone naming: bip_<finger>_0_<L/R>, bip_<finger>_1_<L/R>, bip_<finger>_2_<L/R>
+	
+	// Left hand finger mapping
+	// Thumb (OpenXR has 4 joints: metacarpal, proximal, distal, tip)
+	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_METACARPAL_EXT] = LookupBone("bip_thumb_0_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_PROXIMAL_EXT] = LookupBone("bip_thumb_1_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_DISTAL_EXT] = LookupBone("bip_thumb_2_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_TIP_EXT] = -1; // No tip bone in model
+	
+	// Index finger
+	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_METACARPAL_EXT] = -1; // Usually not animated
+	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_PROXIMAL_EXT] = LookupBone("bip_index_0_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT] = LookupBone("bip_index_1_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_DISTAL_EXT] = LookupBone("bip_index_2_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_TIP_EXT] = -1;
+	
+	// Middle finger
+	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_METACARPAL_EXT] = -1;
+	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT] = LookupBone("bip_middle_0_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT] = LookupBone("bip_middle_1_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_DISTAL_EXT] = LookupBone("bip_middle_2_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_TIP_EXT] = -1;
+	
+	// Ring finger
+	m_LeftBoneMapping[XR_HAND_JOINT_RING_METACARPAL_EXT] = -1;
+	m_LeftBoneMapping[XR_HAND_JOINT_RING_PROXIMAL_EXT] = LookupBone("bip_ring_0_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_RING_INTERMEDIATE_EXT] = LookupBone("bip_ring_1_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_RING_DISTAL_EXT] = LookupBone("bip_ring_2_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_RING_TIP_EXT] = -1;
+	
+	// Pinky finger
+	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_METACARPAL_EXT] = -1;
+	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_PROXIMAL_EXT] = LookupBone("bip_pinky_0_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT] = LookupBone("bip_pinky_1_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_DISTAL_EXT] = LookupBone("bip_pinky_2_L");
+	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_TIP_EXT] = -1;
+	
+	// Right hand finger mapping (same pattern with _R suffix)
+	m_RightBoneMapping[XR_HAND_JOINT_THUMB_METACARPAL_EXT] = LookupBone("bip_thumb_0_R");
+	m_RightBoneMapping[XR_HAND_JOINT_THUMB_PROXIMAL_EXT] = LookupBone("bip_thumb_1_R");
+	m_RightBoneMapping[XR_HAND_JOINT_THUMB_DISTAL_EXT] = LookupBone("bip_thumb_2_R");
+	m_RightBoneMapping[XR_HAND_JOINT_THUMB_TIP_EXT] = -1;
+	
+	m_RightBoneMapping[XR_HAND_JOINT_INDEX_METACARPAL_EXT] = -1;
+	m_RightBoneMapping[XR_HAND_JOINT_INDEX_PROXIMAL_EXT] = LookupBone("bip_index_0_R");
+	m_RightBoneMapping[XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT] = LookupBone("bip_index_1_R");
+	m_RightBoneMapping[XR_HAND_JOINT_INDEX_DISTAL_EXT] = LookupBone("bip_index_2_R");
+	m_RightBoneMapping[XR_HAND_JOINT_INDEX_TIP_EXT] = -1;
+	
+	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_METACARPAL_EXT] = -1;
+	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT] = LookupBone("bip_middle_0_R");
+	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT] = LookupBone("bip_middle_1_R");
+	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_DISTAL_EXT] = LookupBone("bip_middle_2_R");
+	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_TIP_EXT] = -1;
+	
+	m_RightBoneMapping[XR_HAND_JOINT_RING_METACARPAL_EXT] = -1;
+	m_RightBoneMapping[XR_HAND_JOINT_RING_PROXIMAL_EXT] = LookupBone("bip_ring_0_R");
+	m_RightBoneMapping[XR_HAND_JOINT_RING_INTERMEDIATE_EXT] = LookupBone("bip_ring_1_R");
+	m_RightBoneMapping[XR_HAND_JOINT_RING_DISTAL_EXT] = LookupBone("bip_ring_2_R");
+	m_RightBoneMapping[XR_HAND_JOINT_RING_TIP_EXT] = -1;
+	
+	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_METACARPAL_EXT] = -1;
+	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_PROXIMAL_EXT] = LookupBone("bip_pinky_0_R");
+	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT] = LookupBone("bip_pinky_1_R");
+	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_DISTAL_EXT] = LookupBone("bip_pinky_2_R");
+	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_TIP_EXT] = -1;
 
 	m_bBoneMappingSetup = true;
 }
@@ -760,6 +843,180 @@ bool C_TFVRHand::MapOpenXRJointToBone(XrHandJointEXT joint, bool bLeftHand, int 
 	}
 	
 	return (boneIndex >= 0);
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Apply finger tracking rotations to bone transforms
+//-----------------------------------------------------------------------------
+void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bLeftHand)
+{
+	if (!tfvr_hands_finger_tracking.GetBool())
+		return;
+		
+	if (!m_pHandTracker)
+		return;
+	
+	// Check if this hand is being tracked
+	bool bHandTracked = bLeftHand ? m_bLeftHandTrackingValid : m_bRightHandTrackingValid;
+	if (!bHandTracked)
+		return;
+	
+	// Get the bone mapping for this hand
+	int *boneMapping = bLeftHand ? m_LeftBoneMapping : m_RightBoneMapping;
+	
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if (!pStudioHdr)
+		return;
+	
+	// List of finger joints we want to animate (excluding tips and metacarpals which often aren't in the model)
+	XrHandJointEXT fingerJoints[] = {
+		// Thumb - metacarpal is optional (controlled by convar)
+		XR_HAND_JOINT_THUMB_PROXIMAL_EXT,
+		XR_HAND_JOINT_THUMB_DISTAL_EXT,
+		// Index
+		XR_HAND_JOINT_INDEX_PROXIMAL_EXT,
+		XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT,
+		XR_HAND_JOINT_INDEX_DISTAL_EXT,
+		// Middle
+		XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT,
+		XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT,
+		XR_HAND_JOINT_MIDDLE_DISTAL_EXT,
+		// Ring
+		XR_HAND_JOINT_RING_PROXIMAL_EXT,
+		XR_HAND_JOINT_RING_INTERMEDIATE_EXT,
+		XR_HAND_JOINT_RING_DISTAL_EXT,
+		// Pinky
+		XR_HAND_JOINT_LITTLE_PROXIMAL_EXT,
+		XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT,
+		XR_HAND_JOINT_LITTLE_DISTAL_EXT,
+	};
+	
+	// Optionally animate thumb metacarpal
+	if (tfvr_hands_animate_thumb_metacarpal.GetBool())
+	{
+		// Process thumb metacarpal separately
+		int thumbMetacarpalBone = boneMapping[XR_HAND_JOINT_THUMB_METACARPAL_EXT];
+		if (thumbMetacarpalBone >= 0 && thumbMetacarpalBone < nMaxBones)
+		{
+			Vector jointPos;
+			QAngle jointAngles;
+			if (m_pHandTracker->GetHandJoint(bLeftHand, XR_HAND_JOINT_THUMB_METACARPAL_EXT, jointPos, jointAngles))
+			{
+				const mstudiobone_t *pBone = pStudioHdr->pBone(thumbMetacarpalBone);
+				if (pBone)
+				{
+					int parentIndex = pBone->parent;
+					if (parentIndex >= 0 && parentIndex < nMaxBones)
+					{
+						Vector defaultLocalPos = pBone->pos;
+						
+						QAngle fingerOffset;
+						if (bLeftHand)
+						{
+							fingerOffset.x = tfvr_hands_finger_offset_pitch_L.GetFloat();
+							fingerOffset.y = tfvr_hands_finger_offset_yaw_L.GetFloat();
+							fingerOffset.z = tfvr_hands_finger_offset_roll_L.GetFloat();
+						}
+						else
+						{
+							fingerOffset.x = tfvr_hands_finger_offset_pitch_R.GetFloat();
+							fingerOffset.y = tfvr_hands_finger_offset_yaw_R.GetFloat();
+							fingerOffset.z = tfvr_hands_finger_offset_roll_R.GetFloat();
+						}
+						
+						matrix3x4_t parentInverse;
+						MatrixInvert(pBoneToWorldOut[parentIndex], parentInverse);
+						
+						matrix3x4_t trackedWorld;
+						AngleMatrix(jointAngles, trackedWorld);
+						
+						matrix3x4_t trackedLocal;
+						ConcatTransforms(parentInverse, trackedWorld, trackedLocal);
+						
+						matrix3x4_t offsetRotation;
+						AngleMatrix(fingerOffset, offsetRotation);
+						
+						matrix3x4_t localRotation;
+						ConcatTransforms(trackedLocal, offsetRotation, localRotation);
+						
+						MatrixSetColumn(defaultLocalPos, 3, localRotation);
+						
+						ConcatTransforms(pBoneToWorldOut[parentIndex], localRotation, pBoneToWorldOut[thumbMetacarpalBone]);
+					}
+				}
+			}
+		}
+	}
+	
+	// Apply rotation for each finger joint
+	for (int i = 0; i < ARRAYSIZE(fingerJoints); i++)
+	{
+		XrHandJointEXT joint = fingerJoints[i];
+		int boneIndex = boneMapping[joint];
+		
+		// Skip if this joint doesn't map to a bone
+		if (boneIndex < 0 || boneIndex >= nMaxBones)
+			continue;
+		
+		// Get the joint's world-space pose from hand tracking
+		Vector jointPos;
+		QAngle jointAngles;
+		if (m_pHandTracker->GetHandJoint(bLeftHand, joint, jointPos, jointAngles))
+		{
+			// Get the parent bone's transform
+			const mstudiobone_t *pBone = pStudioHdr->pBone(boneIndex);
+			if (!pBone)
+				continue;
+			
+			int parentIndex = pBone->parent;
+			if (parentIndex < 0 || parentIndex >= nMaxBones)
+				continue;
+			
+			// Get the bone's default position relative to its parent (from the skeleton)
+			Vector defaultLocalPos = pBone->pos;
+			
+			// Get hand-specific finger offset
+			QAngle fingerOffset;
+			if (bLeftHand)
+			{
+				fingerOffset.x = tfvr_hands_finger_offset_pitch_L.GetFloat();
+				fingerOffset.y = tfvr_hands_finger_offset_yaw_L.GetFloat();
+				fingerOffset.z = tfvr_hands_finger_offset_roll_L.GetFloat();
+			}
+			else
+			{
+				fingerOffset.x = tfvr_hands_finger_offset_pitch_R.GetFloat();
+				fingerOffset.y = tfvr_hands_finger_offset_yaw_R.GetFloat();
+				fingerOffset.z = tfvr_hands_finger_offset_roll_R.GetFloat();
+			}
+			
+			// Get parent's inverse to convert world rotation to local
+			matrix3x4_t parentInverse;
+			MatrixInvert(pBoneToWorldOut[parentIndex], parentInverse);
+			
+			// Create the tracked world-space rotation matrix
+			matrix3x4_t trackedWorld;
+			AngleMatrix(jointAngles, trackedWorld);
+			
+			// Convert to local space relative to parent
+			matrix3x4_t trackedLocal;
+			ConcatTransforms(parentInverse, trackedWorld, trackedLocal);
+			
+			// Create the offset rotation matrix
+			matrix3x4_t offsetRotation;
+			AngleMatrix(fingerOffset, offsetRotation);
+			
+			// Apply offset as a local rotation: final = tracked * offset
+			matrix3x4_t localRotation;
+			ConcatTransforms(trackedLocal, offsetRotation, localRotation);
+			
+			// Set the default local position but keep the rotation from tracking
+			MatrixSetColumn(defaultLocalPos, 3, localRotation);
+			
+			// Transform by parent to get world-space transform
+			ConcatTransforms(pBoneToWorldOut[parentIndex], localRotation, pBoneToWorldOut[boneIndex]);
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------

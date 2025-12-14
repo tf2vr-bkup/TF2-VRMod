@@ -59,6 +59,9 @@ public:
 	// Bone mapping
 	void SetupBoneMapping();
 	bool MapOpenXRJointToBone(XrHandJointEXT joint, bool bLeftHand, int &boneIndex);
+	
+	// Apply finger tracking to bones
+	void ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bLeftHand);
 
 	// Accessors
 	C_TFPlayer* GetOwnerPlayer() const { return m_hOwnerPlayer.Get(); }
@@ -84,6 +87,7 @@ private:
 
 	// Bone mapping: OpenXR joint index -> Source bone index (separate for each hand)
 	// -1 means no corresponding bone in the model
+	// These map ALL XR_HAND_JOINT_COUNT_EXT joints (including fingers)
 	int m_LeftBoneMapping[XR_HAND_JOINT_COUNT_EXT];
 	int m_RightBoneMapping[XR_HAND_JOINT_COUNT_EXT];
 	bool m_bBoneMappingSetup;
