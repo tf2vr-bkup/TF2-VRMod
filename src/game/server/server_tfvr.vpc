@@ -992,6 +992,27 @@ $Project "Server (TFVR)"
 				$File	"$SRCDIR\game\shared\tf\tf_progression_description_comp.h"
 				$File	"$SRCDIR\game\shared\tf\tf_progression_description_comp.cpp"
 			}
+			
+			$Folder "VR Weapons"
+			{
+				$File	"tfvr\tfvr_weapon_magazine.h"
+				$File	"tfvr\tfvr_weapon_magazine.cpp"
+				
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_base.h"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_base.cpp"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_gun.h"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_gun.cpp"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_melee.h"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_melee.cpp"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_parse.h"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_weapon_parse.cpp"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_bat.h"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_bat.cpp"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_scattergun.h"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_scattergun.cpp"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_pistol.h"
+				$File	"$SRCDIR\game\shared\tfvr\tfvr_pistol.cpp"
+			}
 		}
 
 		$Folder "NextBot"

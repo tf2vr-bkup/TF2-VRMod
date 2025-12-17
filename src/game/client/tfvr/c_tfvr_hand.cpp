@@ -3,6 +3,7 @@
 #include "cbase.h"
 #include "c_tfvr_hand.h"
 #include "tf/c_tf_player.h"
+#include "tf/tf_weaponbase.h"
 #include "tfvr/openxr_manager.h"
 #include "tfvr/openxr_hand_tracking.h"
 #include "bone_setup.h"
@@ -38,17 +39,22 @@ ConVar tfvr_hands_right_offset_pitch("tfvr_hands_right_offset_pitch", "0", FCVAR
 ConVar tfvr_hands_right_offset_yaw("tfvr_hands_right_offset_yaw", "0", FCVAR_ARCHIVE, "Yaw offset for right VR hand (degrees)");
 ConVar tfvr_hands_right_offset_roll("tfvr_hands_right_offset_roll", "180", FCVAR_ARCHIVE, "Roll offset for right VR hand (degrees)");
 
-// Global storage for active VR hands - since we only support local player, just use a single pointer
-static C_TFVRHand *g_pLocalPlayerVRHands = NULL;
+// Global storage for active VR hands - since we only support local player, use two pointers
+static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
+static C_TFVRHand *g_pLocalPlayerRightHand = NULL;
 
 //-----------------------------------------------------------------------------
 // Purpose: Global update function called every frame from VR menu manager
 //-----------------------------------------------------------------------------
 void UpdateVRHands()
 {
-	if (g_pLocalPlayerVRHands)
+	if (g_pLocalPlayerLeftHand)
 	{
-		g_pLocalPlayerVRHands->Update();
+		g_pLocalPlayerLeftHand->Update();
+	}
+	if (g_pLocalPlayerRightHand)
+	{
+		g_pLocalPlayerRightHand->Update();
 	}
 }
 
@@ -57,14 +63,36 @@ void UpdateVRHands()
 //-----------------------------------------------------------------------------
 void CleanupAllVRHands()
 {
-	if (g_pLocalPlayerVRHands)
+	if (g_pLocalPlayerLeftHand)
 	{
-		g_pLocalPlayerVRHands->Shutdown();
-		g_pLocalPlayerVRHands->RemoveFromLeafSystem();
-		g_pLocalPlayerVRHands->SetRemovalFlag(true);
-		delete g_pLocalPlayerVRHands;
-		g_pLocalPlayerVRHands = NULL;
+		g_pLocalPlayerLeftHand->Shutdown();
+		g_pLocalPlayerLeftHand->RemoveFromLeafSystem();
+		g_pLocalPlayerLeftHand->SetRemovalFlag(true);
+		delete g_pLocalPlayerLeftHand;
+		g_pLocalPlayerLeftHand = NULL;
 	}
+	if (g_pLocalPlayerRightHand)
+	{
+		g_pLocalPlayerRightHand->Shutdown();
+		g_pLocalPlayerRightHand->RemoveFromLeafSystem();
+		g_pLocalPlayerRightHand->SetRemovalFlag(true);
+		delete g_pLocalPlayerRightHand;
+		g_pLocalPlayerRightHand = NULL;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Get the opposite hand
+//-----------------------------------------------------------------------------
+C_TFVRHand* GetOppositeVRHand(C_TFVRHand *pHand)
+{
+	if (!pHand)
+		return NULL;
+	
+	if (pHand->IsLeftHand())
+		return g_pLocalPlayerRightHand;
+	else
+		return g_pLocalPlayerLeftHand;
 }
 
 //-----------------------------------------------------------------------------
@@ -72,28 +100,24 @@ void CleanupAllVRHands()
 //-----------------------------------------------------------------------------
 C_TFVRHand::C_TFVRHand()
 {
+	m_handSide = VR_HAND_LEFT; // Will be set in Initialize
 	m_hOwnerPlayer = NULL;
+	m_hHeldWeapon = NULL;
 	m_pHandTracker = NULL;
-	m_bLeftHandTrackingValid = false;
-	m_bRightHandTrackingValid = false;
+	m_bHandTrackingValid = false;
 	m_bBoneMappingSetup = false;
-	m_bLeftControllerTracked = false;
-	m_bRightControllerTracked = false;
+	m_bControllerTracked = false;
 	m_bShuttingDown = false;
 	m_iLastPlayerClass = TF_CLASS_UNDEFINED;
-	m_vecLeftLastValidPosition = vec3_origin;
-	m_angLeftLastValidAngles = vec3_angle;
-	m_vecRightLastValidPosition = vec3_origin;
-	m_angRightLastValidAngles = vec3_angle;
+	m_vecLastValidPosition = vec3_origin;
+	m_angLastValidAngles = vec3_angle;
 	m_szModelName[0] = '\0';
-	m_iLeftHandBone = -1;
-	m_iRightHandBone = -1;
+	m_iHandBone = -1;
 
-	// Initialize bone mapping to invalid for both hands
+	// Initialize bone mapping to invalid
 	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
 	{
-		m_LeftBoneMapping[i] = -1;
-		m_RightBoneMapping[i] = -1;
+		m_BoneMapping[i] = -1;
 	}
 
 	// This is a client-only entity
@@ -109,9 +133,9 @@ C_TFVRHand::~C_TFVRHand()
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Initialize the hand entity (contains both hands in one model)
+// Purpose: Initialize the hand entity (single hand)
 //-----------------------------------------------------------------------------
-bool C_TFVRHand::Initialize(C_TFPlayer *pOwner)
+bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 {
 	if (!pOwner)
 	{
@@ -123,6 +147,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner)
 	m_bShuttingDown = false;
 	
 	m_hOwnerPlayer = pOwner;
+	m_handSide = handSide;
 	
 	// Record current player class
 	m_iLastPlayerClass = pOwner->GetPlayerClass()->GetClassIndex();
@@ -139,8 +164,8 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner)
 		return false;
 	}
 
-	// For now, use the test scout model (contains both hands)
-	// TODO: Load per-class models based on player class
+	// For now, use the test scout model (contains both hands, but we'll only use one)
+	// TODO: Load per-class models based on player class and create separate left/right models
 	
 	// Try custom VR model first
 	Q_strncpy(m_szModelName, "models/weapons/vr_models/vr_scout_arms.mdl", sizeof(m_szModelName));
@@ -163,11 +188,11 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner)
 		}
 		
 		if (tfvr_hands_debug.GetBool())
-			Msg("VR Hands: Using fallback model\n");
+			Msg("VR Hand (%s): Using fallback model\n", IsLeftHand() ? "LEFT" : "RIGHT");
 	}
 	else if (tfvr_hands_debug.GetBool())
 	{
-		Msg("VR Hands: Using custom VR model\n");
+		Msg("VR Hand (%s): Using custom VR model\n", IsLeftHand() ? "LEFT" : "RIGHT");
 	}
 	
 	// Verify model pointer is valid
@@ -203,8 +228,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner)
 
 	// Note: We can't look up bones here because the model isn't fully initialized yet
 	// Bone lookup will happen in SetupBoneMapping() on first frame
-	m_iLeftHandBone = -1;
-	m_iRightHandBone = -1;
+	m_iHandBone = -1;
 
 	// Set to think every frame (do this after model is set)
 	SetNextClientThink(CLIENT_THINK_ALWAYS);
@@ -219,10 +243,12 @@ void C_TFVRHand::Shutdown()
 {
 	m_bShuttingDown = true;
 	
+	// Unequip any held weapon
+	UnequipWeapon();
+	
 	// Reset bone mapping so it gets recalculated on reinit
 	m_bBoneMappingSetup = false;
-	m_iLeftHandBone = -1;
-	m_iRightHandBone = -1;
+	m_iHandBone = -1;
 	
 	m_hOwnerPlayer = NULL;
 	m_pHandTracker = NULL;
@@ -240,7 +266,7 @@ void C_TFVRHand::Spawn()
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Spawn VR hands for a player (single entity with both hands)
+// Purpose: Spawn VR hands for a player (two separate hand entities)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 {
@@ -255,31 +281,47 @@ void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 		return;
 
 	// If hands already exist, reinitialize them
-	if (g_pLocalPlayerVRHands)
+	if (g_pLocalPlayerLeftHand && g_pLocalPlayerRightHand)
 	{
 		// Reinitialize with new player pointer
-		g_pLocalPlayerVRHands->Shutdown();
-		if (g_pLocalPlayerVRHands->Initialize(pPlayer))
+		g_pLocalPlayerLeftHand->Shutdown();
+		g_pLocalPlayerRightHand->Shutdown();
+		
+		if (g_pLocalPlayerLeftHand->Initialize(pPlayer, VR_HAND_LEFT) &&
+			g_pLocalPlayerRightHand->Initialize(pPlayer, VR_HAND_RIGHT))
 		{
-			g_pLocalPlayerVRHands->Spawn();
+			g_pLocalPlayerLeftHand->Spawn();
+			g_pLocalPlayerRightHand->Spawn();
 			return;
 		}
 	}
 
-	// Create new entity if none exists
-	C_TFVRHand *pHands = new C_TFVRHand();
-	if (pHands && pHands->Initialize(pPlayer))
+	// Create new left hand entity
+	C_TFVRHand *pLeftHand = new C_TFVRHand();
+	if (pLeftHand && pLeftHand->Initialize(pPlayer, VR_HAND_LEFT))
 	{
-		// Call Spawn to properly initialize the entity
-		pHands->Spawn();
-		
-		g_pLocalPlayerVRHands = pHands;
+		pLeftHand->Spawn();
+		g_pLocalPlayerLeftHand = pLeftHand;
 	}
 	else
 	{
-		Warning("VR Hands: Failed to create VR hands!\n");
-		if (pHands)
-			delete pHands;
+		Warning("VR Hands: Failed to create left hand!\n");
+		if (pLeftHand)
+			delete pLeftHand;
+	}
+
+	// Create new right hand entity
+	C_TFVRHand *pRightHand = new C_TFVRHand();
+	if (pRightHand && pRightHand->Initialize(pPlayer, VR_HAND_RIGHT))
+	{
+		pRightHand->Spawn();
+		g_pLocalPlayerRightHand = pRightHand;
+	}
+	else
+	{
+		Warning("VR Hands: Failed to create right hand!\n");
+		if (pRightHand)
+			delete pRightHand;
 	}
 }
 
@@ -291,10 +333,16 @@ void C_TFVRHand::RemoveVRHands(C_TFPlayer *pPlayer)
 	if (!pPlayer)
 		return;
 
-	if (g_pLocalPlayerVRHands)
+	if (g_pLocalPlayerLeftHand)
 	{
-		g_pLocalPlayerVRHands->Shutdown();
-		g_pLocalPlayerVRHands->AddEffects(EF_NODRAW);
+		g_pLocalPlayerLeftHand->Shutdown();
+		g_pLocalPlayerLeftHand->AddEffects(EF_NODRAW);
+	}
+	
+	if (g_pLocalPlayerRightHand)
+	{
+		g_pLocalPlayerRightHand->Shutdown();
+		g_pLocalPlayerRightHand->AddEffects(EF_NODRAW);
 	}
 }
 
@@ -351,35 +399,36 @@ void C_TFVRHand::Update()
 
 	RemoveEffects(EF_NODRAW);
 
-	// Update both hand positions and orientations
-	UpdateHandTransforms();
+	// Update this hand's position and orientation
+	UpdateHandTransform();
 
 	// Update bone animation from hand tracking
 	UpdateHandBones();
+	
+	// Update weapon position if we're holding one
+	UpdateWeaponTransform();
 
 	// Debug visualization
 	if (tfvr_hands_debug.GetBool() && debugoverlay)
 	{
-		// Show debug info for both hands
-		Vector leftPos = m_vecLeftLastValidPosition;
-		Vector rightPos = m_vecRightLastValidPosition;
+		Vector handPos = m_vecLastValidPosition;
+		QAngle handAngles = m_angLastValidAngles;
 		
-		debugoverlay->AddBoxOverlay(leftPos, Vector(-2, -2, -2), Vector(2, 2, 2), 
-			m_angLeftLastValidAngles, 0, 255, 0, 100, 0.0f);
-		debugoverlay->AddTextOverlay(leftPos, 0.0f, "Left Hand\nTracked: %s", 
-			m_bLeftControllerTracked ? "YES" : "NO");
+		int r = IsLeftHand() ? 0 : 255;
+		int g = IsLeftHand() ? 255 : 0;
 		
-		debugoverlay->AddBoxOverlay(rightPos, Vector(-2, -2, -2), Vector(2, 2, 2), 
-			m_angRightLastValidAngles, 255, 0, 0, 100, 0.0f);
-		debugoverlay->AddTextOverlay(rightPos, 0.0f, "Right Hand\nTracked: %s", 
-			m_bRightControllerTracked ? "YES" : "NO");
+		debugoverlay->AddBoxOverlay(handPos, Vector(-2, -2, -2), Vector(2, 2, 2), 
+			handAngles, r, g, 0, 100, 0.0f);
+		debugoverlay->AddTextOverlay(handPos, 0.0f, "%s Hand\nTracked: %s", 
+			IsLeftHand() ? "Left" : "Right",
+			m_bControllerTracked ? "YES" : "NO");
 	}
 }
 
 //-----------------------------------------------------------------------------
 // Purpose: Get wrist transform as a matrix (avoids gimbal lock)
 //-----------------------------------------------------------------------------
-bool C_TFVRHand::GetWristTransform(bool leftHand, VMatrix& outTransform)
+bool C_TFVRHand::GetWristTransform(VMatrix& outTransform)
 {
 	if (!m_pHandTracker)
 		return false;
@@ -388,7 +437,7 @@ bool C_TFVRHand::GetWristTransform(bool leftHand, VMatrix& outTransform)
 	Vector wristPos;
 	QAngle wristAngles;
 	
-	if (!m_pHandTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
+	if (!m_pHandTracker->GetHandJoint(IsLeftHand(), XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
 		return false;
 	
 	// Convert to matrix
@@ -400,10 +449,10 @@ bool C_TFVRHand::GetWristTransform(bool leftHand, VMatrix& outTransform)
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Update both hand positions from hand tracking wrist positions
+// Purpose: Update this hand's position from hand tracking wrist position
 //          We'll position the hand bones via SetupBones override later
 //-----------------------------------------------------------------------------
-void C_TFVRHand::UpdateHandTransforms()
+void C_TFVRHand::UpdateHandTransform()
 {
 	if (m_bShuttingDown)
 		return;
@@ -411,60 +460,40 @@ void C_TFVRHand::UpdateHandTransforms()
 	if (!g_pOpenXRManager || !m_pHandTracker)
 		return;
 
-	// Try to get wrist positions using matrices (avoids gimbal lock)
-	VMatrix leftWristMatrix, rightWristMatrix;
+	// Try to get wrist position using matrix (avoids gimbal lock)
+	VMatrix wristMatrix;
 	
-	bool leftHandValid = GetWristTransform(true, leftWristMatrix);
-	bool rightHandValid = GetWristTransform(false, rightWristMatrix);
+	bool handValid = GetWristTransform(wristMatrix);
 	
-	// Update left hand if valid, fallback to controller
-	if (leftHandValid)
+	// Update this hand if valid, fallback to controller
+	if (handValid)
 	{
-		m_vecLeftLastValidPosition = leftWristMatrix.GetTranslation();
-		MatrixAngles(leftWristMatrix.As3x4(), m_angLeftLastValidAngles);
-		m_bLeftControllerTracked = true;
+		m_vecLastValidPosition = wristMatrix.GetTranslation();
+		MatrixAngles(wristMatrix.As3x4(), m_angLastValidAngles);
+		m_bControllerTracked = true;
 	}
 	else
 	{
 		// Fallback to controller pose
-		VMatrix leftControllerPose;
-		m_bLeftControllerTracked = g_pOpenXRManager->GetLeftControllerPose(leftControllerPose);
+		VMatrix controllerPose;
+		if (IsLeftHand())
+			m_bControllerTracked = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
+		else
+			m_bControllerTracked = g_pOpenXRManager->GetRightControllerPose(controllerPose);
 		
-		if (m_bLeftControllerTracked)
+		if (m_bControllerTracked)
 		{
-			m_vecLeftLastValidPosition = leftControllerPose.GetTranslation();
-			MatrixAngles(leftControllerPose.As3x4(), m_angLeftLastValidAngles);
+			m_vecLastValidPosition = controllerPose.GetTranslation();
+			MatrixAngles(controllerPose.As3x4(), m_angLastValidAngles);
 		}
 	}
 
-	// Update right hand if valid, fallback to controller
-	if (rightHandValid)
-	{
-		m_vecRightLastValidPosition = rightWristMatrix.GetTranslation();
-		MatrixAngles(rightWristMatrix.As3x4(), m_angRightLastValidAngles);
-		m_bRightControllerTracked = true;
-	}
-	else
-	{
-		// Fallback to controller pose
-		VMatrix rightControllerPose;
-		m_bRightControllerTracked = g_pOpenXRManager->GetRightControllerPose(rightControllerPose);
-		
-		if (m_bRightControllerTracked)
-		{
-			m_vecRightLastValidPosition = rightControllerPose.GetTranslation();
-			MatrixAngles(rightControllerPose.As3x4(), m_angRightLastValidAngles);
-		}
-	}
+	// Position the entity at the hand position
+	SetAbsOrigin(m_vecLastValidPosition);
+	SetAbsAngles(m_angLastValidAngles);
 
-	// Position the entity at the midpoint between hands for now
-	// (The actual hand bones will be positioned in SetupBones)
-	Vector midpoint = (m_vecLeftLastValidPosition + m_vecRightLastValidPosition) * 0.5f;
-	SetAbsOrigin(midpoint);
-	SetAbsAngles(vec3_angle); // No rotation on the entity itself
-
-	// Fade out if both controllers are not tracked
-	if (!m_bLeftControllerTracked && !m_bRightControllerTracked)
+	// Fade out if controller is not tracked
+	if (!m_bControllerTracked)
 	{
 		SetRenderColor(255, 255, 255, 64); // Fade to 25%
 	}
@@ -485,13 +514,12 @@ void C_TFVRHand::UpdateHandBones()
 	if (!m_pHandTracker)
 	{
 		if (tfvr_hands_debug.GetBool())
-			Warning("VR Hands: No hand tracker in UpdateHandBones\n");
+			Warning("VR Hand: No hand tracker in UpdateHandBones\n");
 		return;
 	}
 
-	// Check if hand tracking is active for both hands
-	m_bLeftHandTrackingValid = m_pHandTracker->IsLeftHandTracked();
-	m_bRightHandTrackingValid = m_pHandTracker->IsRightHandTracked();
+	// Check if hand tracking is active for this hand
+	m_bHandTrackingValid = IsLeftHand() ? m_pHandTracker->IsLeftHandTracked() : m_pHandTracker->IsRightHandTracked();
 
 	// Set up bone mapping if not done yet
 	if (!m_bBoneMappingSetup)
@@ -500,7 +528,7 @@ void C_TFVRHand::UpdateHandBones()
 	}
 
 	// TODO: In next phase, drive bone transforms from hand tracking data
-	// For now, we'll just position the hand root bones at controller positions
+	// For now, we'll just position the hand root bone at controller position
 	// This happens in SetupBones() override
 }
 
@@ -526,7 +554,7 @@ static void AppendChildBones_R(CUtlVector<int> *pChildBones, CStudioHdr *pStudio
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Override SetupBones to position hand bones at controller locations
+// Purpose: Override SetupBones to position hand bone at controller location
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int boneMask, float currentTime)
 {
@@ -539,8 +567,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 	if (!pOwner)
 		return false;
 	
-	// Update hand transforms NOW to get the most recent data (avoid 1-frame lag)
-	UpdateHandTransforms();
+	// Update hand transform NOW to get the most recent data (avoid 1-frame lag)
+	UpdateHandTransform();
 	
 	// Let the base class set up the default bones first
 	if (!BaseClass::SetupBones(pBoneToWorldOut, nMaxBones, boneMask, currentTime))
@@ -562,39 +590,40 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			return true;
 	}
 	
-	// Safety check: validate bone indices are still valid for this model
+	// Safety check: validate bone index is still valid for this model
 	int modelBoneCount = pStudioHdr->numbones();
-	if (m_iLeftHandBone >= modelBoneCount || m_iRightHandBone >= modelBoneCount)
+	if (m_iHandBone >= modelBoneCount)
 	{
 		// Model changed, need to re-setup bone mapping
-		Warning("VR Hands: Bone indices invalid for current model, resetting\n");
+		Warning("VR Hand: Bone index invalid for current model, resetting\n");
 		m_bBoneMappingSetup = false;
-		m_iLeftHandBone = -1;
-		m_iRightHandBone = -1;
+		m_iHandBone = -1;
 		return true;
 	}
 
-	// Position left hand bone at left controller and update all children
-	if (m_iLeftHandBone >= 0 && m_iLeftHandBone < nMaxBones && m_bLeftControllerTracked)
+	// Position hand bone at controller and update all children
+	if (m_iHandBone >= 0 && m_iHandBone < nMaxBones && m_bControllerTracked)
 	{
 		// Store the original hand bone transform
 		matrix3x4_t originalHandTransform;
-		MatrixCopy(pBoneToWorldOut[m_iLeftHandBone], originalHandTransform);
+		MatrixCopy(pBoneToWorldOut[m_iHandBone], originalHandTransform);
 
 		// Start with the wrist transform
 		matrix3x4_t wristTransform;
-		AngleMatrix(m_angLeftLastValidAngles, m_vecLeftLastValidPosition, wristTransform);
+		AngleMatrix(m_angLastValidAngles, m_vecLastValidPosition, wristTransform);
 		
 		// Final transform after applying offsets
 		matrix3x4_t newHandTransform;
 		
-		// Apply rotation offset as a local rotation (use LEFT hand offsets)
-		if (tfvr_hands_left_offset_pitch.GetFloat() != 0 || tfvr_hands_left_offset_yaw.GetFloat() != 0 || tfvr_hands_left_offset_roll.GetFloat() != 0)
+		// Apply rotation offset as a local rotation (use appropriate hand offsets)
+		ConVar *pOffsetPitch = IsLeftHand() ? &tfvr_hands_left_offset_pitch : &tfvr_hands_right_offset_pitch;
+		ConVar *pOffsetYaw = IsLeftHand() ? &tfvr_hands_left_offset_yaw : &tfvr_hands_right_offset_yaw;
+		ConVar *pOffsetRoll = IsLeftHand() ? &tfvr_hands_left_offset_roll : &tfvr_hands_right_offset_roll;
+		
+		if (pOffsetPitch->GetFloat() != 0 || pOffsetYaw->GetFloat() != 0 || pOffsetRoll->GetFloat() != 0)
 		{
 			matrix3x4_t offsetMatrix;
-			QAngle offsetAngles(tfvr_hands_left_offset_pitch.GetFloat(), 
-			                    tfvr_hands_left_offset_yaw.GetFloat(), 
-			                    tfvr_hands_left_offset_roll.GetFloat());
+			QAngle offsetAngles(pOffsetPitch->GetFloat(), pOffsetYaw->GetFloat(), pOffsetRoll->GetFloat());
 			AngleMatrix(offsetAngles, offsetMatrix);
 			
 			// Apply offset as local rotation: final = wrist * offset
@@ -606,7 +635,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		}
 		
 		// Apply the new transform to the bone
-		MatrixCopy(newHandTransform, pBoneToWorldOut[m_iLeftHandBone]);
+		MatrixCopy(newHandTransform, pBoneToWorldOut[m_iHandBone]);
 
 		// Calculate the delta transform (from old to new)
 		matrix3x4_t deltaTransform;
@@ -616,7 +645,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 
 		// Apply the delta transform to all child bones
 		CUtlVector<int> vecChildBones;
-		AppendChildBones_R(&vecChildBones, pStudioHdr, m_iLeftHandBone);
+		AppendChildBones_R(&vecChildBones, pStudioHdr, m_iHandBone);
 		for (int i = 0; i < vecChildBones.Count(); ++i)
 		{
 			int iChildBone = vecChildBones[i];
@@ -630,68 +659,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			}
 		}
 		
-		// Apply finger tracking to left hand
-		ApplyFingerTracking(pBoneToWorldOut, nMaxBones, true);
-	}
-
-	// Position right hand bone at right controller and update all children
-	if (m_iRightHandBone >= 0 && m_iRightHandBone < nMaxBones && m_bRightControllerTracked)
-	{
-		// Store the original hand bone transform
-		matrix3x4_t originalHandTransform;
-		MatrixCopy(pBoneToWorldOut[m_iRightHandBone], originalHandTransform);
-
-		// Start with the wrist transform
-		matrix3x4_t wristTransform;
-		AngleMatrix(m_angRightLastValidAngles, m_vecRightLastValidPosition, wristTransform);
-		
-		// Final transform after applying offsets
-		matrix3x4_t newHandTransform;
-		
-		// Apply rotation offset as a local rotation (use RIGHT hand offsets)
-		if (tfvr_hands_right_offset_pitch.GetFloat() != 0 || tfvr_hands_right_offset_yaw.GetFloat() != 0 || tfvr_hands_right_offset_roll.GetFloat() != 0)
-		{
-			matrix3x4_t offsetMatrix;
-			QAngle offsetAngles(tfvr_hands_right_offset_pitch.GetFloat(), 
-			                    tfvr_hands_right_offset_yaw.GetFloat(), 
-			                    tfvr_hands_right_offset_roll.GetFloat());
-			AngleMatrix(offsetAngles, offsetMatrix);
-			
-			// Apply offset as local rotation: final = wrist * offset
-			ConcatTransforms(wristTransform, offsetMatrix, newHandTransform);
-		}
-		else
-		{
-			MatrixCopy(wristTransform, newHandTransform);
-		}
-		
-		// Apply the new transform to the bone
-		MatrixCopy(newHandTransform, pBoneToWorldOut[m_iRightHandBone]);
-
-		// Calculate the delta transform (from old to new)
-		matrix3x4_t deltaTransform;
-		matrix3x4_t inverseOriginal;
-		MatrixInvert(originalHandTransform, inverseOriginal);
-		ConcatTransforms(newHandTransform, inverseOriginal, deltaTransform);
-
-		// Apply the delta transform to all child bones
-		CUtlVector<int> vecChildBones;
-		AppendChildBones_R(&vecChildBones, pStudioHdr, m_iRightHandBone);
-		for (int i = 0; i < vecChildBones.Count(); ++i)
-		{
-			int iChildBone = vecChildBones[i];
-			if (iChildBone >= 0 && iChildBone < nMaxBones)
-			{
-				matrix3x4_t originalChildTransform;
-				MatrixCopy(pBoneToWorldOut[iChildBone], originalChildTransform);
-				
-				// Transform child bone by the delta
-				ConcatTransforms(deltaTransform, originalChildTransform, pBoneToWorldOut[iChildBone]);
-			}
-		}
-		
-		// Apply finger tracking to right hand
-		ApplyFingerTracking(pBoneToWorldOut, nMaxBones, false);
+		// Apply finger tracking to this hand
+		ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 	}
 
 	return true;
@@ -714,7 +683,7 @@ void C_TFVRHand::SetupBoneMapping()
 	
 	if (!pStudioHdr->IsValid())
 	{
-		Warning("VR Hands: StudioHdr is not valid!\n");
+		Warning("VR Hand: StudioHdr is not valid!\n");
 		return;
 	}
 
@@ -722,105 +691,88 @@ void C_TFVRHand::SetupBoneMapping()
 	
 	if (numBones <= 0 || numBones > 256)
 	{
-		Warning("VR Hands: Invalid bone count: %d\n", numBones);
+		Warning("VR Hand: Invalid bone count: %d\n", numBones);
 		return;
 	}
 
-	// Find the hand bones in the model
+	// Find the hand bone in the model
 	// Try common bone names for TF2 viewmodel arms
-	const char* leftBoneNames[] = { "bip_hand_L", "weapon_bone_L", "ValveBiped.Bip01_L_Hand", "bip_hand_l" };
-	const char* rightBoneNames[] = { "bip_hand_R", "weapon_bone_R", "ValveBiped.Bip01_R_Hand", "bip_hand_r" };
+	const char* handSuffix = IsLeftHand() ? "_L" : "_R";
+	const char* handSuffixLower = IsLeftHand() ? "_l" : "_r";
+	
+	const char* boneNames[4];
+	boneNames[0] = IsLeftHand() ? "bip_hand_L" : "bip_hand_R";
+	boneNames[1] = IsLeftHand() ? "weapon_bone_L" : "weapon_bone_R";
+	boneNames[2] = IsLeftHand() ? "ValveBiped.Bip01_L_Hand" : "ValveBiped.Bip01_R_Hand";
+	boneNames[3] = IsLeftHand() ? "bip_hand_l" : "bip_hand_r";
 
-	// Try to find left hand bone
-	for (int i = 0; i < ARRAYSIZE(leftBoneNames); i++)
+	// Try to find hand bone
+	for (int i = 0; i < 4; i++)
 	{
-		m_iLeftHandBone = LookupBone(leftBoneNames[i]);
-		if (m_iLeftHandBone != -1)
+		m_iHandBone = LookupBone(boneNames[i]);
+		if (m_iHandBone != -1)
 			break;
 	}
 
-	// Try to find right hand bone
-	for (int i = 0; i < ARRAYSIZE(rightBoneNames); i++)
+	if (m_iHandBone == -1)
 	{
-		m_iRightHandBone = LookupBone(rightBoneNames[i]);
-		if (m_iRightHandBone != -1)
-			break;
-	}
-
-	if (m_iLeftHandBone == -1 || m_iRightHandBone == -1)
-	{
-		Warning("VR Hands: Could not find hand bones! Left: %d, Right: %d\n", 
-			m_iLeftHandBone, m_iRightHandBone);
+		Warning("VR Hand (%s): Could not find hand bone!\n", IsLeftHand() ? "LEFT" : "RIGHT");
 	}
 
 	// Map finger bones for hand tracking animation
 	// OpenXR joint order: metacarpal (0), proximal (1), intermediate/middle (2), distal (3), tip (4)
 	// TF2 bone naming: bip_<finger>_0_<L/R>, bip_<finger>_1_<L/R>, bip_<finger>_2_<L/R>
 	
-	// Left hand finger mapping
+	char boneName[64];
+	
 	// Thumb (OpenXR has 4 joints: metacarpal, proximal, distal, tip)
-	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_METACARPAL_EXT] = LookupBone("bip_thumb_0_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_PROXIMAL_EXT] = LookupBone("bip_thumb_1_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_DISTAL_EXT] = LookupBone("bip_thumb_2_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_THUMB_TIP_EXT] = -1; // No tip bone in model
+	Q_snprintf(boneName, sizeof(boneName), "bip_thumb_0%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_THUMB_METACARPAL_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_thumb_1%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_THUMB_PROXIMAL_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_thumb_2%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_THUMB_DISTAL_EXT] = LookupBone(boneName);
+	m_BoneMapping[XR_HAND_JOINT_THUMB_TIP_EXT] = -1; // No tip bone in model
 	
 	// Index finger
-	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_METACARPAL_EXT] = -1; // Usually not animated
-	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_PROXIMAL_EXT] = LookupBone("bip_index_0_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT] = LookupBone("bip_index_1_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_DISTAL_EXT] = LookupBone("bip_index_2_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_INDEX_TIP_EXT] = -1;
+	m_BoneMapping[XR_HAND_JOINT_INDEX_METACARPAL_EXT] = -1; // Usually not animated
+	Q_snprintf(boneName, sizeof(boneName), "bip_index_0%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_INDEX_PROXIMAL_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_index_1%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_index_2%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_INDEX_DISTAL_EXT] = LookupBone(boneName);
+	m_BoneMapping[XR_HAND_JOINT_INDEX_TIP_EXT] = -1;
 	
 	// Middle finger
-	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_METACARPAL_EXT] = -1;
-	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT] = LookupBone("bip_middle_0_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT] = LookupBone("bip_middle_1_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_DISTAL_EXT] = LookupBone("bip_middle_2_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_MIDDLE_TIP_EXT] = -1;
+	m_BoneMapping[XR_HAND_JOINT_MIDDLE_METACARPAL_EXT] = -1;
+	Q_snprintf(boneName, sizeof(boneName), "bip_middle_0%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_middle_1%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_middle_2%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_MIDDLE_DISTAL_EXT] = LookupBone(boneName);
+	m_BoneMapping[XR_HAND_JOINT_MIDDLE_TIP_EXT] = -1;
 	
 	// Ring finger
-	m_LeftBoneMapping[XR_HAND_JOINT_RING_METACARPAL_EXT] = -1;
-	m_LeftBoneMapping[XR_HAND_JOINT_RING_PROXIMAL_EXT] = LookupBone("bip_ring_0_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_RING_INTERMEDIATE_EXT] = LookupBone("bip_ring_1_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_RING_DISTAL_EXT] = LookupBone("bip_ring_2_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_RING_TIP_EXT] = -1;
+	m_BoneMapping[XR_HAND_JOINT_RING_METACARPAL_EXT] = -1;
+	Q_snprintf(boneName, sizeof(boneName), "bip_ring_0%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_RING_PROXIMAL_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_ring_1%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_RING_INTERMEDIATE_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_ring_2%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_RING_DISTAL_EXT] = LookupBone(boneName);
+	m_BoneMapping[XR_HAND_JOINT_RING_TIP_EXT] = -1;
 	
 	// Pinky finger
-	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_METACARPAL_EXT] = -1;
-	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_PROXIMAL_EXT] = LookupBone("bip_pinky_0_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT] = LookupBone("bip_pinky_1_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_DISTAL_EXT] = LookupBone("bip_pinky_2_L");
-	m_LeftBoneMapping[XR_HAND_JOINT_LITTLE_TIP_EXT] = -1;
-	
-	// Right hand finger mapping (same pattern with _R suffix)
-	m_RightBoneMapping[XR_HAND_JOINT_THUMB_METACARPAL_EXT] = LookupBone("bip_thumb_0_R");
-	m_RightBoneMapping[XR_HAND_JOINT_THUMB_PROXIMAL_EXT] = LookupBone("bip_thumb_1_R");
-	m_RightBoneMapping[XR_HAND_JOINT_THUMB_DISTAL_EXT] = LookupBone("bip_thumb_2_R");
-	m_RightBoneMapping[XR_HAND_JOINT_THUMB_TIP_EXT] = -1;
-	
-	m_RightBoneMapping[XR_HAND_JOINT_INDEX_METACARPAL_EXT] = -1;
-	m_RightBoneMapping[XR_HAND_JOINT_INDEX_PROXIMAL_EXT] = LookupBone("bip_index_0_R");
-	m_RightBoneMapping[XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT] = LookupBone("bip_index_1_R");
-	m_RightBoneMapping[XR_HAND_JOINT_INDEX_DISTAL_EXT] = LookupBone("bip_index_2_R");
-	m_RightBoneMapping[XR_HAND_JOINT_INDEX_TIP_EXT] = -1;
-	
-	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_METACARPAL_EXT] = -1;
-	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT] = LookupBone("bip_middle_0_R");
-	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT] = LookupBone("bip_middle_1_R");
-	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_DISTAL_EXT] = LookupBone("bip_middle_2_R");
-	m_RightBoneMapping[XR_HAND_JOINT_MIDDLE_TIP_EXT] = -1;
-	
-	m_RightBoneMapping[XR_HAND_JOINT_RING_METACARPAL_EXT] = -1;
-	m_RightBoneMapping[XR_HAND_JOINT_RING_PROXIMAL_EXT] = LookupBone("bip_ring_0_R");
-	m_RightBoneMapping[XR_HAND_JOINT_RING_INTERMEDIATE_EXT] = LookupBone("bip_ring_1_R");
-	m_RightBoneMapping[XR_HAND_JOINT_RING_DISTAL_EXT] = LookupBone("bip_ring_2_R");
-	m_RightBoneMapping[XR_HAND_JOINT_RING_TIP_EXT] = -1;
-	
-	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_METACARPAL_EXT] = -1;
-	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_PROXIMAL_EXT] = LookupBone("bip_pinky_0_R");
-	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT] = LookupBone("bip_pinky_1_R");
-	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_DISTAL_EXT] = LookupBone("bip_pinky_2_R");
-	m_RightBoneMapping[XR_HAND_JOINT_LITTLE_TIP_EXT] = -1;
+	m_BoneMapping[XR_HAND_JOINT_LITTLE_METACARPAL_EXT] = -1;
+	Q_snprintf(boneName, sizeof(boneName), "bip_pinky_0%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_LITTLE_PROXIMAL_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_pinky_1%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT] = LookupBone(boneName);
+	Q_snprintf(boneName, sizeof(boneName), "bip_pinky_2%s", handSuffix);
+	m_BoneMapping[XR_HAND_JOINT_LITTLE_DISTAL_EXT] = LookupBone(boneName);
+	m_BoneMapping[XR_HAND_JOINT_LITTLE_TIP_EXT] = -1;
 
 	m_bBoneMappingSetup = true;
 }
@@ -828,19 +780,12 @@ void C_TFVRHand::SetupBoneMapping()
 //-----------------------------------------------------------------------------
 // Purpose: Map an OpenXR joint to a Source bone index
 //-----------------------------------------------------------------------------
-bool C_TFVRHand::MapOpenXRJointToBone(XrHandJointEXT joint, bool bLeftHand, int &boneIndex)
+bool C_TFVRHand::MapOpenXRJointToBone(XrHandJointEXT joint, int &boneIndex)
 {
 	if (joint < 0 || joint >= XR_HAND_JOINT_COUNT_EXT)
 		return false;
 
-	if (bLeftHand)
-	{
-		boneIndex = m_LeftBoneMapping[joint];
-	}
-	else
-	{
-		boneIndex = m_RightBoneMapping[joint];
-	}
+	boneIndex = m_BoneMapping[joint];
 	
 	return (boneIndex >= 0);
 }
@@ -848,7 +793,7 @@ bool C_TFVRHand::MapOpenXRJointToBone(XrHandJointEXT joint, bool bLeftHand, int 
 //-----------------------------------------------------------------------------
 // Purpose: Apply finger tracking rotations to bone transforms
 //-----------------------------------------------------------------------------
-void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bLeftHand)
+void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 {
 	if (!tfvr_hands_finger_tracking.GetBool())
 		return;
@@ -857,12 +802,11 @@ void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones
 		return;
 	
 	// Check if this hand is being tracked
-	bool bHandTracked = bLeftHand ? m_bLeftHandTrackingValid : m_bRightHandTrackingValid;
-	if (!bHandTracked)
+	if (!m_bHandTrackingValid)
 		return;
 	
 	// Get the bone mapping for this hand
-	int *boneMapping = bLeftHand ? m_LeftBoneMapping : m_RightBoneMapping;
+	int *boneMapping = m_BoneMapping;
 	
 	CStudioHdr *pStudioHdr = GetModelPtr();
 	if (!pStudioHdr)
@@ -900,7 +844,7 @@ void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones
 		{
 			Vector jointPos;
 			QAngle jointAngles;
-			if (m_pHandTracker->GetHandJoint(bLeftHand, XR_HAND_JOINT_THUMB_METACARPAL_EXT, jointPos, jointAngles))
+			if (m_pHandTracker->GetHandJoint(IsLeftHand(), XR_HAND_JOINT_THUMB_METACARPAL_EXT, jointPos, jointAngles))
 			{
 				const mstudiobone_t *pBone = pStudioHdr->pBone(thumbMetacarpalBone);
 				if (pBone)
@@ -911,7 +855,7 @@ void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones
 						Vector defaultLocalPos = pBone->pos;
 						
 						QAngle fingerOffset;
-						if (bLeftHand)
+						if (IsLeftHand())
 						{
 							fingerOffset.x = tfvr_hands_finger_offset_pitch_L.GetFloat();
 							fingerOffset.y = tfvr_hands_finger_offset_yaw_L.GetFloat();
@@ -961,7 +905,7 @@ void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones
 		// Get the joint's world-space pose from hand tracking
 		Vector jointPos;
 		QAngle jointAngles;
-		if (m_pHandTracker->GetHandJoint(bLeftHand, joint, jointPos, jointAngles))
+		if (m_pHandTracker->GetHandJoint(IsLeftHand(), joint, jointPos, jointAngles))
 		{
 			// Get the parent bone's transform
 			const mstudiobone_t *pBone = pStudioHdr->pBone(boneIndex);
@@ -977,7 +921,7 @@ void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones
 			
 			// Get hand-specific finger offset
 			QAngle fingerOffset;
-			if (bLeftHand)
+			if (IsLeftHand())
 			{
 				fingerOffset.x = tfvr_hands_finger_offset_pitch_L.GetFloat();
 				fingerOffset.y = tfvr_hands_finger_offset_yaw_L.GetFloat();
@@ -1084,6 +1028,51 @@ int C_TFVRHand::DrawModel(int flags)
 		return 0;
 	
 	return BaseClass::DrawModel(flags);
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Equip a weapon to this hand
+//-----------------------------------------------------------------------------
+void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon)
+		return;
+	
+	// Unequip current weapon if any
+	UnequipWeapon();
+	
+	// Set new weapon
+	m_hHeldWeapon = pWeapon;
+	
+	// TODO: Set weapon owner hand, position weapon, etc.
+	// This will be implemented when we create the VR weapon base class
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Unequip the currently held weapon
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UnequipWeapon()
+{
+	if (!m_hHeldWeapon.Get())
+		return;
+	
+	// TODO: Clear weapon owner hand, reset weapon position, etc.
+	// This will be implemented when we create the VR weapon base class
+	
+	m_hHeldWeapon = NULL;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update the position of the held weapon
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateWeaponTransform()
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon)
+		return;
+	
+	// TODO: Position weapon based on grip transform
+	// This will be implemented when we create the VR weapon base class
 }
 
 // Implement empty network table (client-only entity)

@@ -12,11 +12,19 @@
 
 class C_TFPlayer;
 class COpenXRHandTracker;
+class C_TFWeaponBase;
+
+// Hand side enum
+enum VRHandSide
+{
+	VR_HAND_LEFT = 0,
+	VR_HAND_RIGHT = 1
+};
 
 //-----------------------------------------------------------------------------
-// Purpose: Client-side VR hand entity that renders animated hands
+// Purpose: Client-side VR hand entity that renders a single animated hand
 //          driven by OpenXR hand tracking data
-//          NOTE: This is a SINGLE entity containing BOTH hands (like viewmodel arms)
+//          NOTE: This now represents a SINGLE hand (left OR right)
 //-----------------------------------------------------------------------------
 class C_TFVRHand : public C_BaseAnimating
 {
@@ -27,11 +35,11 @@ public:
 	C_TFVRHand();
 	virtual ~C_TFVRHand();
 
-	// Spawning and lifecycle (spawns single entity with both hands)
+	// Spawning and lifecycle (spawns two separate hand entities)
 	static void SpawnVRHands(C_TFPlayer *pPlayer);
 	static void RemoveVRHands(C_TFPlayer *pPlayer);
 	
-	bool Initialize(C_TFPlayer *pOwner);
+	bool Initialize(C_TFPlayer *pOwner, VRHandSide handSide);
 	void Shutdown();
 
 	// Spawn override
@@ -40,11 +48,11 @@ public:
 	// Update methods called every frame
 	virtual void ClientThink() override;
 	void Update(); // Manual update method
-	void UpdateHandTransforms();
+	void UpdateHandTransform();
 	void UpdateHandBones();
 	
 	// Helper to get wrist transform as matrix
-	bool GetWristTransform(bool leftHand, VMatrix& outTransform);
+	bool GetWristTransform(VMatrix& outTransform);
 
 	// Bone setup override to position hand bones
 	virtual bool SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int boneMask, float currentTime) override;
@@ -58,22 +66,36 @@ public:
 
 	// Bone mapping
 	void SetupBoneMapping();
-	bool MapOpenXRJointToBone(XrHandJointEXT joint, bool bLeftHand, int &boneIndex);
+	bool MapOpenXRJointToBone(XrHandJointEXT joint, int &boneIndex);
 	
 	// Apply finger tracking to bones
-	void ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bLeftHand);
+	void ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
 
 	// Accessors
 	C_TFPlayer* GetOwnerPlayer() const { return m_hOwnerPlayer.Get(); }
+	VRHandSide GetHandSide() const { return m_handSide; }
+	bool IsLeftHand() const { return m_handSide == VR_HAND_LEFT; }
+	bool IsRightHand() const { return m_handSide == VR_HAND_RIGHT; }
+	
+	// Weapon management
+	void EquipWeapon(C_TFWeaponBase *pWeapon);
+	void UnequipWeapon();
+	C_TFWeaponBase* GetHeldWeapon() const { return m_hHeldWeapon.Get(); }
+	void UpdateWeaponTransform();
 
 private:
+	// Which hand this entity represents
+	VRHandSide m_handSide;
+	
 	// Owner
 	CHandle<C_TFPlayer> m_hOwnerPlayer;
 
+	// Held weapon
+	CHandle<C_TFWeaponBase> m_hHeldWeapon;
+
 	// Hand tracking
 	COpenXRHandTracker *m_pHandTracker;
-	bool m_bLeftHandTrackingValid;
-	bool m_bRightHandTrackingValid;
+	bool m_bHandTrackingValid;
 	
 	// Shutdown flag
 	bool m_bShuttingDown;
@@ -81,24 +103,19 @@ private:
 	// Last known player class - to detect class changes
 	int m_iLastPlayerClass;
 
-	// Bone indices for hand roots
-	int m_iLeftHandBone;
-	int m_iRightHandBone;
+	// Bone index for hand root
+	int m_iHandBone;
 
-	// Bone mapping: OpenXR joint index -> Source bone index (separate for each hand)
+	// Bone mapping: OpenXR joint index -> Source bone index
 	// -1 means no corresponding bone in the model
 	// These map ALL XR_HAND_JOINT_COUNT_EXT joints (including fingers)
-	int m_LeftBoneMapping[XR_HAND_JOINT_COUNT_EXT];
-	int m_RightBoneMapping[XR_HAND_JOINT_COUNT_EXT];
+	int m_BoneMapping[XR_HAND_JOINT_COUNT_EXT];
 	bool m_bBoneMappingSetup;
 
-	// Tracking state for both controllers
-	bool m_bLeftControllerTracked;
-	bool m_bRightControllerTracked;
-	Vector m_vecLeftLastValidPosition;
-	QAngle m_angLeftLastValidAngles;
-	Vector m_vecRightLastValidPosition;
-	QAngle m_angRightLastValidAngles;
+	// Tracking state for this controller
+	bool m_bControllerTracked;
+	Vector m_vecLastValidPosition;
+	QAngle m_angLastValidAngles;
 
 	// Model info
 	char m_szModelName[MAX_PATH];
@@ -107,6 +124,9 @@ private:
 // Global functions
 void UpdateVRHands();
 void CleanupAllVRHands();
+
+// Helper to get the opposite hand
+C_TFVRHand* GetOppositeVRHand(C_TFVRHand *pHand);
 
 #endif // C_TFVR_HAND_H
 
