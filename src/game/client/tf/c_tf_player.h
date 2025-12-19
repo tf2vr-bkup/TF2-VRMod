@@ -112,6 +112,7 @@ public:
 	void    StopViewModelParticles( C_BaseEntity *pParticleEnt );
 
 	virtual void ClientThink();
+	void UpdateVRWeapons();
 
 	// Deal with recording
 	virtual void GetToolRecordingState( KeyValues *msg );

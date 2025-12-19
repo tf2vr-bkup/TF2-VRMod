@@ -13,6 +13,10 @@
 #include "econ_item_system.h"
 #include "activitylist.h"
 
+#ifdef CLIENT_DLL
+#include "tfvr/c_tfvr_hand.h"
+#endif
+
 #include "gcsdk/gcmsg.h"
 #include "econ_gcmessages.h"
 #include "tf_gcmessages.h"
@@ -333,6 +337,7 @@ CTFWeaponBase::CTFWeaponBase()
 #ifdef CLIENT_DLL
 	m_iCachedModelIndex = 0;
 	m_iEjectBrassAttachpoint = -2;
+	m_bHeldByVRHand = false;
 
 	m_bInitViewmodelOffset = false;
 	m_vecViewmodelOffset = vec3_origin;
@@ -3053,6 +3058,14 @@ bool CTFWeaponBase::IsFirstPersonView()
 
 bool CTFWeaponBase::UsingViewModel()
 {
+#ifdef CLIENT_DLL
+	// VR: If held by a VR hand, use world model (not viewmodel)
+	if ( m_bHeldByVRHand )
+	{
+		return false;
+	}
+#endif
+
 	C_TFPlayer *pPlayerOwner = GetTFPlayerOwner();
 	bool bIsFirstPersonView = IsFirstPersonView();
 	bool bUsingViewModel = bIsFirstPersonView && ( pPlayerOwner != NULL ) && !pPlayerOwner->ShouldDrawThisPlayer();
@@ -3061,6 +3074,14 @@ bool CTFWeaponBase::UsingViewModel()
 
 C_BaseAnimating *CTFWeaponBase::GetAppropriateWorldOrViewModel()
 {
+#ifdef CLIENT_DLL
+	// VR: Always use the weapon worldmodel (this) if held by VR hand
+	if ( m_bHeldByVRHand )
+	{
+		return this;
+	}
+#endif
+	
 	C_TFPlayer *pPlayerOwner = GetTFPlayerOwner();
 	if ( pPlayerOwner && UsingViewModel() )
 	{
@@ -3176,6 +3197,32 @@ void CTFWeaponBase::CreateMuzzleFlashEffects( C_BaseEntity *pAttachEnt, int nInd
 
 void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* pAttachEnt )
 {
+#ifdef CLIENT_DLL
+	// VR: For weapons held by VR hands, get muzzle position from the VR hand's render weapon
+	if ( m_bHeldByVRHand )
+	{
+		// Find the VR hand that's holding us
+		C_TFPlayer *pOwner = ToTFPlayer( GetOwner() );
+		if ( pOwner && pOwner->IsInVRMode() )
+		{
+			// Get the right hand (weapons are held in right hand)
+			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+			if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+			{
+				// Get muzzle position from the VR hand (which uses the render weapon)
+				Vector vecMuzzlePos;
+				QAngle angMuzzleAngles;
+				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( vecMuzzlePos, angMuzzleAngles ) )
+				{
+					DispatchParticleEffect( effectName, vecMuzzlePos, angMuzzleAngles, this );
+					return;
+				}
+			}
+		}
+	}
+#endif
+	
+	// Default: attach to the "muzzle" attachment point
 	DispatchParticleEffect( effectName, PATTACH_POINT_FOLLOW, pAttachEnt, "muzzle" );
 }
 
@@ -3191,6 +3238,14 @@ bool CTFWeaponBase::ShouldDraw( void )
 	C_TFPlayer *pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
 	if ( !pLocalPlayer )
 		return true;
+
+#ifdef CLIENT_DLL
+	// VR: If held by a VR hand, always draw (independent of player body visibility)
+	if ( m_bHeldByVRHand )
+	{
+		return true;
+	}
+#endif
 
 	if ( pOwner->IsPlayer() )
 	{
@@ -3329,6 +3384,28 @@ void CTFWeaponBase::ProcessMuzzleFlashEvent( void )
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: VR Override - Prevent re-parenting when held by VR hand
+//-----------------------------------------------------------------------------
+void CTFWeaponBase::SetParent( CBaseEntity *pNewParent, int iAttachment )
+{
+#ifdef CLIENT_DLL
+	// VR: Don't allow parenting when held by VR hand - we need absolute positioning!
+	if ( m_bHeldByVRHand && pNewParent != NULL )
+	{
+		static int blockCount = 0;
+		if ( ++blockCount % 30 == 0 )
+		{
+			DevMsg( "VR: BLOCKED SetParent to %p (%s)\n", pNewParent, pNewParent->GetClassname() );
+		}
+		// Ignore the parent change
+		return;
+	}
+#endif
+	
+	BaseClass::SetParent( pNewParent, iAttachment );
+}
+
+//-----------------------------------------------------------------------------
 // Purpose:
 // ----------------------------------------------------------------------------
 bool CTFWeaponBase::ShouldPredict()
@@ -3358,6 +3435,14 @@ void CTFWeaponBase::PostDataUpdate( DataUpdateType_t updateType )
 	UpdateModelIndex();
 
 	BaseClass::PostDataUpdate( updateType );
+	
+#ifdef CLIENT_DLL
+	// VR: Forcibly remove parent after base update - the engine might have re-parented us
+	if ( m_bHeldByVRHand && GetMoveParent() != NULL )
+	{
+		SetParent( NULL );
+	}
+#endif
 }
 
 void CTFWeaponBase::UpdateModelIndex()
@@ -3366,7 +3451,14 @@ void CTFWeaponBase::UpdateModelIndex()
 	// clientside animation sequences on this model, which will be using bad sequences for the world model.
 	int iDesiredModelIndex = 0;
 	C_BasePlayer *pOwner = ToBasePlayer(GetOwner());
-	if ( !pOwner->ShouldDrawThisPlayer() )
+	
+	// VR: If held by VR hand, always use world model
+	if ( m_bHeldByVRHand )
+	{
+		iDesiredModelIndex = GetWorldModelIndex();
+		SetSequence( 0 );
+	}
+	else if ( !pOwner->ShouldDrawThisPlayer() )
 	{
 		iDesiredModelIndex = m_iViewModelIndex;
 	}

@@ -2959,6 +2959,8 @@ void CTFPlayer::PrecacheTFPlayer()
 	
 	// Precache VR hand models
 	PrecacheModel("models/weapons/vr_models/vr_scout_arms.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_scout_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_scout_hand_r.mdl");
 
 	// Precache the player sounds.
 	PrecacheScriptSound( "Player.Spawn" );

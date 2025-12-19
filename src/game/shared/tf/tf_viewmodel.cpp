@@ -352,6 +352,14 @@ void CTFViewModel::ProcessMuzzleFlashEvent()
 	if ( !pWeapon || C_BasePlayer::ShouldDrawLocalPlayer() ) 
 		return;
 
+	// VR: Don't process muzzle flash from viewmodel if weapon is held by VR hand
+	// The muzzle flash will be created from the worldmodel weapon at the VR hand position
+	if ( pWeapon->IsHeldByVRHand() )
+	{
+		DevMsg("VR: BLOCKED viewmodel muzzle flash event\n");
+		return;
+	}
+
 	pWeapon->ProcessMuzzleFlashEvent();
 }
 

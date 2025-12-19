@@ -10,6 +10,7 @@
 #include "vr_menu_manager.h"
 #include "engine/ivdebugoverlay.h"
 #include "tf/c_tf_player.h"
+#include "c_tfvr_hand.h"
 
 // Engine interface for executing client commands
 extern IVEngineClient *engine;
@@ -467,18 +468,37 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         QAngle rightAngles;
         MatrixAngles(rightControllerPose.As3x4(), rightAngles);
         
-        // Store in command for weapon shooting synchronization
+        // Check if right hand is holding a weapon - if so, send muzzle position/angles
+        C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+        if (pRightHand && pRightHand->GetHeldWeapon())
+        {
+            Vector muzzlePos;
+            QAngle muzzleAngles;
+            if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+            {
+                // Send weapon muzzle position AND angles for server-side hit detection
+                cmd->rightControllerOrigin = muzzlePos;
+                cmd->rightControllerAngles = muzzleAngles;
+                
+                if (tfvr_controller_tracking_debug.GetBool())
+                {
+                    DevMsg("Right Hand: Weapon muzzle pos(%.2f, %.2f, %.2f), angles(%.1f, %.1f, %.1f)\n", 
+                           muzzlePos.x, muzzlePos.y, muzzlePos.z,
+                           muzzleAngles.x, muzzleAngles.y, muzzleAngles.z);
+                }
+                return; // Early return, we've set the values
+            }
+        }
+        
+        // Fallback: No weapon held, use controller position/angles
         cmd->rightControllerOrigin = rightPos;
         cmd->rightControllerAngles = rightAngles;
         
-        // Debug output
         if (tfvr_controller_tracking_debug.GetBool())
         {
             DevMsg("Right Controller: pos(%.2f, %.2f, %.1f) angles(%.1f, %.1f, %.1f)\n", 
                    rightPos.x, rightPos.y, rightPos.z, rightAngles.x, rightAngles.y, rightAngles.z);
         }
-        
-
     }
     
     // Laser pointer functionality is now handled by CVRLaserPointer class

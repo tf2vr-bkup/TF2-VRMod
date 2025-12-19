@@ -50,14 +50,17 @@ public:
     void ResetOverlayState();
 
 private:
-    // Calculate the quad transform matrix based on hand position
-    bool CalculateQuadTransform(VMatrix& quadTransform);
-    
-    // Calculate transform using hand tracking instead of controller
-    bool CalculateHandTrackingTransform(VMatrix& quadTransform);
-    
-    // Check if ammo display should be shown based on game state
-    bool ShouldDisplayAmmo();
+	// Calculate the quad transform matrix based on hand position
+	bool CalculateQuadTransform(VMatrix& quadTransform);
+	
+	// Calculate transform using hand tracking instead of controller
+	bool CalculateHandTrackingTransform(VMatrix& quadTransform);
+	
+	// Calculate transform using weapon's weapon_bone
+	bool CalculateWeaponBoneTransform(VMatrix& quadTransform);
+	
+	// Check if ammo display should be shown based on game state
+	bool ShouldDisplayAmmo();
 
 private:
     bool        m_bInitialized;

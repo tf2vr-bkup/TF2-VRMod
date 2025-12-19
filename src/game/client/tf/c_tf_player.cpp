@@ -4139,23 +4139,26 @@ const QAngle& C_TFPlayer::GetRenderAngles()
 Vector C_TFPlayer::Weapon_ShootPosition( void )
 {
 	// Check if VR is active and controller tracking is enabled
-	if (UseVR() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	if (IsInVRMode() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// Get the right controller pose for weapon shooting (typically the shooting hand)
+		// CRITICAL: Use weapon muzzle position from VR hand, NOT controller position!
+		C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+		if (pRightHand && pRightHand->GetHeldWeapon())
+		{
+			Vector muzzlePos;
+			QAngle muzzleAngles;
+			if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+			{
+				return muzzlePos;
+			}
+		}
+		
+		// Fallback: Get the right controller pose
 		VMatrix rightControllerPose;
 		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
 		{
-			// Extract position from the pose matrix
 			Vector controllerPos = rightControllerPose.GetTranslation();
-			QAngle controllerAngles;
-			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
-			
-			// Use raw controller position without offset for VR consistency
-			Vector shootPos = controllerPos;
-			
-			// Debug visualization removed for cleaner experience
-			
-			return shootPos;
+			return controllerPos;
 		}
 	}
 	
@@ -4169,16 +4172,26 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 QAngle C_TFPlayer::Weapon_ShootAngles( void )
 {
 	// Only use VR controller angles if VR is actually active
-	if (UseVR() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	if (IsInVRMode() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// Get the right controller pose for weapon shooting (typically the shooting hand)
+		// CRITICAL: Use weapon muzzle angles from VR hand, NOT controller angles!
+		C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+		if (pRightHand && pRightHand->GetHeldWeapon())
+		{
+			Vector muzzlePos;
+			QAngle muzzleAngles;
+			if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+			{
+				return muzzleAngles;
+			}
+		}
+		
+		// Fallback: Get the right controller pose
 		VMatrix rightControllerPose;
 		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
 		{
-			// Extract angles from the pose matrix
 			QAngle controllerAngles;
 			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
-			
 			return controllerAngles;
 		}
 	}
@@ -6199,6 +6212,39 @@ void C_TFPlayer::ClientThink()
 		    engine->ClientCmd("voicemenu 1 8");
 	    }
 	}
+
+	// VR weapon management - attach active weapon to hand
+	if ( IsLocalPlayer() && IsInVRMode() )
+	{
+		UpdateVRWeapons();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update VR weapon attachment to hands
+//-----------------------------------------------------------------------------
+void C_TFPlayer::UpdateVRWeapons()
+{
+	// Get the active weapon from TF2's weapon slot system
+	CTFWeaponBase *pActiveWeapon = GetActiveTFWeapon();
+	if ( !pActiveWeapon )
+		return;
+
+	// Get the dominant hand (right hand for now - could be made configurable)
+	C_TFVRHand *pDominantHand = GetLocalPlayerRightHand();
+	if ( !pDominantHand )
+		return;
+
+	// If the hand is already holding the active weapon, just update its transform
+	if ( pDominantHand->GetHeldWeapon() == pActiveWeapon )
+	{
+		pDominantHand->UpdateWeaponTransform();
+		return;
+	}
+
+	// Otherwise, equip the active weapon to the hand
+	DevMsg("TF2VR: Equipping weapon '%s' to right hand\n", pActiveWeapon->GetClassname());
+	pDominantHand->EquipWeapon( pActiveWeapon );
 }
 
 void C_TFPlayer::Touch( CBaseEntity *pOther )

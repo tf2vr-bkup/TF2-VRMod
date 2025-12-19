@@ -6,6 +6,7 @@
 #include "tf/tf_weaponbase.h"
 #include "tfvr/openxr_manager.h"
 #include "tfvr/openxr_hand_tracking.h"
+#include "tfvr/tfvr_weapon_base.h"
 #include "bone_setup.h"
 #include "engine/ivdebugoverlay.h"
 #include "filesystem.h"
@@ -38,6 +39,18 @@ ConVar tfvr_hands_left_offset_roll("tfvr_hands_left_offset_roll", "0", FCVAR_ARC
 ConVar tfvr_hands_right_offset_pitch("tfvr_hands_right_offset_pitch", "0", FCVAR_ARCHIVE, "Pitch offset for right VR hand (degrees)");
 ConVar tfvr_hands_right_offset_yaw("tfvr_hands_right_offset_yaw", "0", FCVAR_ARCHIVE, "Yaw offset for right VR hand (degrees)");
 ConVar tfvr_hands_right_offset_roll("tfvr_hands_right_offset_roll", "180", FCVAR_ARCHIVE, "Roll offset for right VR hand (degrees)");
+
+// Debug convars
+ConVar tfvr_debug_weapon_attachment("tfvr_debug_weapon_attachment", "0", FCVAR_NONE, "Draw debug lines showing weapon attachment");
+ConVar tfvr_debug_weapon_position("tfvr_debug_weapon_position", "0", FCVAR_NONE, "Print weapon position updates to console");
+
+// Weapon grip offset convars (for standard TF2 weapons without VR data)
+ConVar tfvr_weapon_grip_offset_x("tfvr_weapon_grip_offset_x", "0", FCVAR_ARCHIVE, "Default weapon grip offset X (forward)");
+ConVar tfvr_weapon_grip_offset_y("tfvr_weapon_grip_offset_y", "0", FCVAR_ARCHIVE, "Default weapon grip offset Y (right)");
+ConVar tfvr_weapon_grip_offset_z("tfvr_weapon_grip_offset_z", "0", FCVAR_ARCHIVE, "Default weapon grip offset Z (up)");
+ConVar tfvr_weapon_grip_angle_pitch("tfvr_weapon_grip_angle_pitch", "0", FCVAR_ARCHIVE, "Default weapon grip angle pitch");
+ConVar tfvr_weapon_grip_angle_yaw("tfvr_weapon_grip_angle_yaw", "0", FCVAR_ARCHIVE, "Default weapon grip angle yaw");
+ConVar tfvr_weapon_grip_angle_roll("tfvr_weapon_grip_angle_roll", "0", FCVAR_ARCHIVE, "Default weapon grip angle roll");
 
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
@@ -93,6 +106,19 @@ C_TFVRHand* GetOppositeVRHand(C_TFVRHand *pHand)
 		return g_pLocalPlayerRightHand;
 	else
 		return g_pLocalPlayerLeftHand;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Accessors for the local player's hands
+//-----------------------------------------------------------------------------
+C_TFVRHand* GetLocalPlayerLeftHand()
+{
+	return g_pLocalPlayerLeftHand;
+}
+
+C_TFVRHand* GetLocalPlayerRightHand()
+{
+	return g_pLocalPlayerRightHand;
 }
 
 //-----------------------------------------------------------------------------
@@ -164,22 +190,37 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 		return false;
 	}
 
-	// For now, use the test scout model (contains both hands, but we'll only use one)
-	// TODO: Load per-class models based on player class and create separate left/right models
+	// Use separate left and right hand models
+	const char *handModelPath = IsLeftHand() 
+		? "models/weapons/vr_models/vr_scout_hand_l.mdl"
+		: "models/weapons/vr_models/vr_scout_hand_r.mdl";
 	
-	// Try custom VR model first
-	Q_strncpy(m_szModelName, "models/weapons/vr_models/vr_scout_arms.mdl", sizeof(m_szModelName));
+	Q_strncpy(m_szModelName, handModelPath, sizeof(m_szModelName));
+	
+	Msg("VR Hand: Attempting to load model: %s\n", handModelPath);
+	
+	// Precache the model on client side
+	int modelIndex = modelinfo->GetModelIndex(handModelPath);
+	if (modelIndex == -1)
+	{
+		// Model not precached, try to precache it now
+		Warning("VR Hand: Model not precached, attempting to precache: %s\n", handModelPath);
+		CBaseEntity::PrecacheModel(handModelPath);
+		modelIndex = modelinfo->GetModelIndex(handModelPath);
+	}
 	
 	// Set a valid origin first (entities need to be in the world)
 	SetAbsOrigin(pOwner->EyePosition());
 	SetAbsAngles(vec3_angle);
 	
 	// Try using SetModel directly
-	bool bCustomModelWorked = SetModel(m_szModelName);
+	bool bCustomModelWorked = (modelIndex != -1) && SetModel(m_szModelName);
 	
 	if (!bCustomModelWorked)
 	{
-		// Use fallback
+		Warning("VR Hand: Failed to load %s (model index: %d), trying fallback\n", handModelPath, modelIndex);
+		
+		// Use fallback to combined arms model
 		Q_strncpy(m_szModelName, "models/weapons/c_models/c_scout_arms.mdl", sizeof(m_szModelName));
 		if (!SetModel(m_szModelName))
 		{
@@ -187,12 +228,11 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 			return false;
 		}
 		
-		if (tfvr_hands_debug.GetBool())
-			Msg("VR Hand (%s): Using fallback model\n", IsLeftHand() ? "LEFT" : "RIGHT");
+		Msg("VR Hand (%s): Using fallback combined arms model\n", IsLeftHand() ? "LEFT" : "RIGHT");
 	}
-	else if (tfvr_hands_debug.GetBool())
+	else
 	{
-		Msg("VR Hand (%s): Using custom VR model\n", IsLeftHand() ? "LEFT" : "RIGHT");
+		Msg("VR Hand (%s): Successfully loaded separate hand model: %s\n", IsLeftHand() ? "LEFT" : "RIGHT", handModelPath);
 	}
 	
 	// Verify model pointer is valid
@@ -220,11 +260,19 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 
 	// Set up rendering - make sure entity is visible
 	RemoveEffects(EF_NODRAW); // Make sure we're not hidden
+	RemoveEffects(EF_NOSHADOW); // Make sure shadows are enabled
 	SetRenderMode(kRenderTransTexture);
 	SetRenderColor(255, 255, 255, 255 * tfvr_hands_alpha.GetFloat());
 	
-	// Mark as always drawing
+	// Mark as always drawing in opaque group (needed for shadows!)
 	AddToLeafSystem(RENDER_GROUP_OPAQUE_ENTITY);
+	
+	// CRITICAL: Don't set an owner entity - this prevents shadow culling based on owner visibility
+	// SetOwnerEntity(NULL);  // Make sure we don't have an owner
+	
+	// Explicitly create shadow
+	DestroyShadow();  // Remove any existing shadow first
+	CreateShadow();   // Create a new shadow handle
 
 	// Note: We can't look up bones here because the model isn't fully initialized yet
 	// Bone lookup will happen in SetupBoneMapping() on first frame
@@ -352,6 +400,21 @@ void C_TFVRHand::RemoveVRHands(C_TFPlayer *pPlayer)
 void C_TFVRHand::ClientThink()
 {
 	BaseClass::ClientThink();
+	
+	// VR: Update weapon position every frame with fresh tracking
+	if (m_hRenderWeapon.Get())
+	{
+		// Get latest VR tracking
+		UpdateHandTransform();
+		
+		// Update weapon position
+		matrix3x4_t boneArray[MAXSTUDIOBONES];
+		SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+	}
+	
+	// Invalidate bone cache to ensure fresh rendering
+	InvalidateBoneCache();
+	
 	Update();
 }
 
@@ -398,6 +461,11 @@ void C_TFVRHand::Update()
 	}
 
 	RemoveEffects(EF_NODRAW);
+	RemoveEffects(EF_NOSHADOW);
+	
+	// Force shadow updates every frame
+	AddToLeafSystem(RENDER_GROUP_OPAQUE_ENTITY);
+	MarkShadowDirty(true);
 
 	// Update this hand's position and orientation
 	UpdateHandTransform();
@@ -508,9 +576,6 @@ void C_TFVRHand::UpdateHandTransform()
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UpdateHandBones()
 {
-	// TODO: Implement bone animation from OpenXR hand tracking
-	// For now, just use the default pose from the model
-	
 	if (!m_pHandTracker)
 	{
 		if (tfvr_hands_debug.GetBool())
@@ -527,9 +592,7 @@ void C_TFVRHand::UpdateHandBones()
 		SetupBoneMapping();
 	}
 
-	// TODO: In next phase, drive bone transforms from hand tracking data
-	// For now, we'll just position the hand root bone at controller position
-	// This happens in SetupBones() override
+	// Bone transforms are applied in SetupBones() override
 }
 
 //-----------------------------------------------------------------------------
@@ -659,8 +722,21 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			}
 		}
 		
-		// Apply finger tracking to this hand
-		ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+		// Apply finger tracking or weapon pose to this hand
+		if (m_hHeldWeapon.Get())
+		{
+			// Override finger tracking with weapon grip pose
+			ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
+			
+			// IMPORTANT: Position weapon immediately after pose is applied
+			// This ensures weapon_bone has the correct pose applied
+			PositionWeaponFromBones(pBoneToWorldOut, nMaxBones);
+		}
+		else
+		{
+			// Use normal finger tracking
+			ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+		}
 	}
 
 	return true;
@@ -964,6 +1040,329 @@ void C_TFVRHand::ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Hide the opposite hand by scaling its root bone to zero
+//-----------------------------------------------------------------------------
+void C_TFVRHand::HideOppositeHand(matrix3x4_t *pBoneToWorldOut, int nMaxBones, CStudioHdr *pStudioHdr)
+{
+	if (!pStudioHdr)
+		return;
+	
+	// Determine which hand suffix to hide (opposite of current hand)
+	const char *oppositeHandSuffix = IsLeftHand() ? "_R" : "_L";
+	int suffixLen = Q_strlen(oppositeHandSuffix);
+	
+	// Find and hide ALL bones that belong to the opposite hand
+	// We'll search for bone names that END with the opposite hand suffix
+	int modelBoneCount = pStudioHdr->numbones();
+	
+	for (int i = 0; i < modelBoneCount && i < nMaxBones; i++)
+	{
+		const char *boneName = pStudioHdr->pBone(i)->pszName();
+		int nameLen = Q_strlen(boneName);
+		
+		// Check if this bone name ends with the opposite hand suffix
+		if (nameLen >= suffixLen && 
+		    Q_stricmp(boneName + nameLen - suffixLen, oppositeHandSuffix) == 0)
+		{
+			// Scale this bone to zero
+			matrix3x4_t &boneMatrix = pBoneToWorldOut[i];
+			
+			// Set scale to zero by zeroing out the basis vectors
+			boneMatrix[0][0] = 0.0f;
+			boneMatrix[0][1] = 0.0f;
+			boneMatrix[0][2] = 0.0f;
+			
+			boneMatrix[1][0] = 0.0f;
+			boneMatrix[1][1] = 0.0f;
+			boneMatrix[1][2] = 0.0f;
+			
+			boneMatrix[2][0] = 0.0f;
+			boneMatrix[2][1] = 0.0f;
+			boneMatrix[2][2] = 0.0f;
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Position weapon using bone matrices from SetupBones
+//          Called during SetupBones after pose is applied to weapon_bone
+//-----------------------------------------------------------------------------
+void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
+{
+	// Position the RENDER weapon based on hand's weapon_bone
+	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+	if (!pRenderWeapon || !pBoneToWorldOut)
+		return;
+	
+	Vector weaponPos;
+	QAngle weaponAng;
+	
+	// Get the hand's weapon_bone world transform
+	int handWeaponBone = LookupBone("weapon_bone");
+	
+	if (handWeaponBone >= 0 && handWeaponBone < nMaxBones)
+	{
+		// Get weapon_bone transform from the computed bone matrices
+		matrix3x4_t handWeaponBoneMatrix;
+		MatrixCopy(pBoneToWorldOut[handWeaponBone], handWeaponBoneMatrix);
+		
+		// Extract position and angles
+		Vector bonePos;
+		QAngle boneAng;
+		MatrixAngles(handWeaponBoneMatrix, boneAng, bonePos);
+		
+		// Check if weapon has a weapon_bone we need to align
+		int weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone");
+		
+		if (weaponWeaponBone >= 0)
+		{
+			// Get weapon_bone position in MODEL SPACE
+			CStudioHdr *pWeaponHdr = pRenderWeapon->GetModelPtr();
+			if (pWeaponHdr)
+			{
+				mstudiobone_t *pWeaponBone = pWeaponHdr->pBone(weaponWeaponBone);
+				if (pWeaponBone)
+				{
+					Vector weaponBonePos = pWeaponBone->pos;
+					QAngle weaponBoneAng;
+					QuaternionAngles(pWeaponBone->quat, weaponBoneAng);
+					
+					// Build weapon_bone transform
+					matrix3x4_t weaponBoneMatrix;
+					AngleMatrix(weaponBoneAng, weaponBonePos, weaponBoneMatrix);
+					
+					// Invert to get transform from weapon_bone space to weapon origin
+					matrix3x4_t weaponBoneInverse;
+					MatrixInvert(weaponBoneMatrix, weaponBoneInverse);
+					
+					// Apply: weapon_origin = hand_weapon_bone * weapon_bone_inverse
+					matrix3x4_t weaponTransform;
+					ConcatTransforms(handWeaponBoneMatrix, weaponBoneInverse, weaponTransform);
+					
+					MatrixAngles(weaponTransform, weaponAng, weaponPos);
+				}
+				else
+				{
+					weaponPos = bonePos;
+					weaponAng = boneAng;
+				}
+			}
+			else
+			{
+				weaponPos = bonePos;
+				weaponAng = boneAng;
+			}
+		}
+		else
+		{
+		// No weapon_bone, use hand's weapon_bone directly
+		weaponPos = bonePos;
+		weaponAng = boneAng;
+	}
+	
+	// Apply user adjustments in local weapon space
+	Vector userOffset(
+		tfvr_weapon_grip_offset_x.GetFloat(),
+		tfvr_weapon_grip_offset_y.GetFloat(),
+		tfvr_weapon_grip_offset_z.GetFloat()
+	);
+	QAngle userAngles(
+		tfvr_weapon_grip_angle_pitch.GetFloat(),
+		tfvr_weapon_grip_angle_yaw.GetFloat(),
+		tfvr_weapon_grip_angle_roll.GetFloat()
+	);
+	
+	if (userOffset.x != 0 || userOffset.y != 0 || userOffset.z != 0 ||
+	    userAngles.x != 0 || userAngles.y != 0 || userAngles.z != 0)
+	{
+		// Build current weapon transform
+		matrix3x4_t weaponTransform;
+		AngleMatrix(weaponAng, weaponPos, weaponTransform);
+		
+		// Build offset matrix in local space
+		matrix3x4_t offsetMatrix;
+		AngleMatrix(userAngles, userOffset, offsetMatrix);
+		
+		// Apply offset: final = current * offset (local space)
+		matrix3x4_t finalTransform;
+		ConcatTransforms(weaponTransform, offsetMatrix, finalTransform);
+		
+		// Extract final position and angles
+		MatrixAngles(finalTransform, weaponAng, weaponPos);
+	}
+}
+	else
+	{
+		// No weapon_bone on hand, use hand origin
+		weaponPos = GetAbsOrigin();
+		weaponAng = GetAbsAngles();
+	}
+	
+	// Apply the position to the render weapon
+	pRenderWeapon->SetAbsOrigin(weaponPos);
+	pRenderWeapon->SetAbsAngles(weaponAng);
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Get the weapon's muzzle position and angles in world space
+//          Returns false if no weapon is held or muzzle can't be determined
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAngles)
+{
+	// Use the RENDER weapon for position calculations
+	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+	if (!pRenderWeapon)
+		return false;
+	
+	// CRITICAL: Get the absolute LATEST VR tracking data RIGHT NOW!
+	// This ensures we have the most up-to-date hand position
+	UpdateHandTransform();
+	
+	// CRITICAL: Update the render weapon position RIGHT NOW before getting muzzle
+	// This ensures we have the latest position based on fresh tracking data
+	matrix3x4_t boneArray[MAXSTUDIOBONES];
+	SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+	// SetupBones calls PositionWeaponFromBones which updates render weapon position
+	
+	// Force the weapon to update its bone matrices based on the position we set
+	pRenderWeapon->SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+	
+	// Now use the standard GetAttachment - it will work correctly!
+	int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
+	if (iMuzzle > 0 && pRenderWeapon->GetAttachment(iMuzzle, outPos, outAngles))
+	{
+		return true;
+	}
+	
+	// Fallback: no muzzle attachment found, use weapon's forward direction
+	outPos = pRenderWeapon->GetAbsOrigin();
+	outAngles = pRenderWeapon->GetAbsAngles();
+	
+	Vector forward, up;
+	AngleVectors(outAngles, &forward, NULL, &up);
+	outPos += forward * 15.0f + up * 2.0f;
+	
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
+//        Samples finger bone rotations from the hand model's weapon animation
+//-----------------------------------------------------------------------------
+void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
+{
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if (!pStudioHdr)
+		return;
+	
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon)
+		return;
+	
+	// Map weapon classnames to hand animation names
+	// These animations exist on the vr_scout_arms model
+	const char *animName = NULL;
+	const char *weaponClass = pWeapon->GetClassname();
+	
+	if (V_stristr(weaponClass, "scattergun"))
+	{
+		animName = "sg_idle";
+	}
+	else if (V_stristr(weaponClass, "pistol"))
+	{
+		animName = "p_idle";  // Pistol uses 'p_' prefix
+	}
+	else if (V_stristr(weaponClass, "bat"))
+	{
+		animName = "b_idle";  // Bat uses 'b_' prefix
+	}
+	else
+	{
+		// Default idle pose for unknown weapons
+		animName = "ref";
+	}
+	
+	// Look up the sequence
+	int sequence = LookupSequence(animName);
+	if (sequence < 0)
+	{
+		DevMsg("TF2VR: Could not find animation '%s' on hand model\n", animName);
+		return;
+	}
+	
+	
+	// Get the sequence descriptor
+	mstudioseqdesc_t &seqdesc = pStudioHdr->pSeqdesc(sequence);
+	
+	// Sample the animation at frame 0 (idle pose)
+	float cycle = 0.0f;
+	
+	// Temporary bone arrays for sampling the animation
+	Vector pos[MAXSTUDIOBONES];
+	Quaternion q[MAXSTUDIOBONES];
+	
+	// Sample the animation pose
+	IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, NULL);
+	boneSetup.InitPose(pos, q);
+	boneSetup.AccumulatePose(pos, q, sequence, cycle, 1.0f, gpGlobals->curtime, NULL);
+	
+	// Now apply the sampled finger bone rotations to the output bones
+	// We also need to apply it to weapon_bone so weapons attach correctly
+	
+	// List of finger bone prefixes (without L/R suffix) + weapon_bone
+	const char *fingerBones[] = {
+		"bip_thumb_0", "bip_thumb_1", "bip_thumb_2",
+		"bip_index_0", "bip_index_1", "bip_index_2",
+		"bip_middle_0", "bip_middle_1", "bip_middle_2",
+		"bip_ring_0", "bip_ring_1", "bip_ring_2",
+		"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
+		"weapon_bone",  // IMPORTANT: Also apply pose to weapon bone!
+	};
+	
+	for (int i = 0; i < ARRAYSIZE(fingerBones); i++)
+	{
+		// Try both left and right hand suffixes
+		char boneName[64];
+		const char* suffix = IsLeftHand() ? "_L" : "_R";
+		V_snprintf(boneName, sizeof(boneName), "%s%s", fingerBones[i], suffix);
+		
+		int boneIndex = LookupBone(boneName);
+		if (boneIndex < 0 || boneIndex >= nMaxBones)
+		{
+			// Try lowercase suffix
+			suffix = IsLeftHand() ? "_l" : "_r";
+			V_snprintf(boneName, sizeof(boneName), "%s%s", fingerBones[i], suffix);
+			boneIndex = LookupBone(boneName);
+		}
+		
+		// Also try without suffix for bones like "weapon_bone" that might not have L/R
+		if (boneIndex < 0 || boneIndex >= nMaxBones)
+		{
+			boneIndex = LookupBone(fingerBones[i]);
+		}
+		
+		if (boneIndex < 0 || boneIndex >= nMaxBones)
+			continue;
+		
+		// Get the bone's parent
+		const mstudiobone_t *pBone = pStudioHdr->pBone(boneIndex);
+		if (!pBone)
+			continue;
+		
+		int parentIndex = pBone->parent;
+		if (parentIndex < 0 || parentIndex >= nMaxBones)
+			continue;
+		
+		// Convert the sampled quaternion to a matrix
+		matrix3x4_t localBoneMatrix;
+		QuaternionMatrix(q[boneIndex], pos[boneIndex], localBoneMatrix);
+		
+		// Transform by parent to get world-space transform
+		ConcatTransforms(pBoneToWorldOut[parentIndex], localBoneMatrix, pBoneToWorldOut[boneIndex]);
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Should this hand be drawn?
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::ShouldDraw()
@@ -1031,6 +1430,24 @@ int C_TFVRHand::DrawModel(int flags)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Always cast shadows for VR hands
+//-----------------------------------------------------------------------------
+ShadowType_t C_TFVRHand::ShadowCastType()
+{
+	// Always cast high-quality shadows, regardless of owner visibility
+	return SHADOWS_RENDER_TO_TEXTURE;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Always receive projected textures (shadows) for VR hands
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::ShouldReceiveProjectedTextures(int flags)
+{
+	// Always receive shadows
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Equip a weapon to this hand
 //-----------------------------------------------------------------------------
 void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
@@ -1041,11 +1458,60 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// Unequip current weapon if any
 	UnequipWeapon();
 	
-	// Set new weapon
+	// Store reference to the actual weapon (for getting properties, firing, etc.)
 	m_hHeldWeapon = pWeapon;
 	
-	// TODO: Set weapon owner hand, position weapon, etc.
-	// This will be implemented when we create the VR weapon base class
+	// VR NEW APPROACH: Create a separate render-only entity for the weapon visual
+	// This way the player's actual weapon can remain in the viewmodel system
+	// and we have full control over a separate worldmodel entity for rendering
+	
+	const char *worldModel = pWeapon->GetWorldModel();
+	if (!worldModel || !worldModel[0])
+		return;
+	
+	// Create a simple animating entity for rendering the weapon
+	C_BaseAnimating *pRenderWeapon = new C_BaseAnimating;
+	if (!pRenderWeapon)
+		return;
+	
+	// Initialize it
+	if (!pRenderWeapon->InitializeAsClientEntity(worldModel, RENDER_GROUP_OPAQUE_ENTITY))
+	{
+		pRenderWeapon->Release();
+		return;
+	}
+	
+	// Store the render weapon
+	m_hRenderWeapon = pRenderWeapon;
+	
+	// Set it up
+	pRenderWeapon->SetModelIndex(modelinfo->GetModelIndex(worldModel));
+	pRenderWeapon->SetSequence(0);  // World models don't animate
+	pRenderWeapon->SetRenderMode(kRenderNormal);
+	pRenderWeapon->SetRenderColor(255, 255, 255, 255);
+	pRenderWeapon->RemoveEffects(EF_NODRAW);
+	
+	// VR: Don't parent - use manual positioning for better control
+	// Parenting doesn't work well because hand bones update at different times
+	
+	// Mark the actual weapon as held (for firing mechanics)
+	pWeapon->SetHeldByVRHand(true);
+	
+	// Try to cast to VR weapon base
+	CTFVRWeaponBase *pVRWeapon = dynamic_cast<CTFVRWeaponBase*>(pWeapon);
+	if (pVRWeapon)
+	{
+		// Tell weapon it's been equipped by this hand
+		pVRWeapon->SetOwnerHand(this);
+		pVRWeapon->OnEquippedByHand();
+		
+		// Parent weapon to hand for basic following
+		pWeapon->FollowEntity(this);
+		
+		// Set model for correct hand
+		pVRWeapon->SetModelForHand(IsRightHand());
+	}
+	
 }
 
 //-----------------------------------------------------------------------------
@@ -1053,17 +1519,36 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UnequipWeapon()
 {
-	if (!m_hHeldWeapon.Get())
+	// Clean up render weapon
+	if (m_hRenderWeapon.Get())
+	{
+		m_hRenderWeapon->Release();
+		m_hRenderWeapon = NULL;
+	}
+	
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon)
 		return;
 	
-	// TODO: Clear weapon owner hand, reset weapon position, etc.
-	// This will be implemented when we create the VR weapon base class
+	// Clear VR hand flag
+	pWeapon->SetHeldByVRHand( false );
+	
+	// Try to cast to VR weapon base
+	CTFVRWeaponBase *pVRWeapon = dynamic_cast<CTFVRWeaponBase*>(pWeapon);
+	if (pVRWeapon)
+	{
+		// Tell weapon it's been dropped
+		pVRWeapon->OnDroppedFromHand();
+		pVRWeapon->SetOwnerHand(NULL);
+	}
 	
 	m_hHeldWeapon = NULL;
 }
 
 //-----------------------------------------------------------------------------
 // Purpose: Update the position of the held weapon
+//          NOTE: Actual positioning happens in SetupBones() -> PositionWeaponFromBones()
+//          This function just maintains visibility and model state
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UpdateWeaponTransform()
 {
@@ -1071,11 +1556,275 @@ void C_TFVRHand::UpdateWeaponTransform()
 	if (!pWeapon)
 		return;
 	
-	// TODO: Position weapon based on grip transform
-	// This will be implemented when we create the VR weapon base class
+	// Ensure weapon stays visible and uses world model
+	pWeapon->RemoveEffects(EF_NODRAW);
+	pWeapon->RemoveEffects(EF_BONEMERGE);
+	pWeapon->RemoveEffects(EF_BONEMERGE_FASTCULL);
+	
+	// Double-check the model is correct (in case TF2 tried to switch it)
+	const char *worldModel = pWeapon->GetWorldModel();
+	if (worldModel && worldModel[0])
+	{
+		int worldModelIndex = modelinfo->GetModelIndex(worldModel);
+		if (worldModelIndex > 0 && pWeapon->GetModelIndex() != worldModelIndex)
+		{
+			// Model was switched - force it back to world model
+			pWeapon->SetModelIndex(worldModelIndex);
+			pWeapon->SetSequence(0);
+		}
+	}
+	
+	// NOTE: Weapon positioning is now handled in SetupBones() -> PositionWeaponFromBones()
+	// This ensures the weapon_bone has the correct pose applied before we read it
 }
 
-// Implement empty network table (client-only entity)
+//-----------------------------------------------------------------------------
+// Networking table (client-only entity, no networked properties)
+//-----------------------------------------------------------------------------
 IMPLEMENT_CLIENTCLASS_DT(C_TFVRHand, DT_TFVRHand, CTFVRHand)
 END_RECV_TABLE()
 
+//-----------------------------------------------------------------------------
+// Console Commands for Testing
+//-----------------------------------------------------------------------------
+
+CON_COMMAND(tfvr_adjust_grip, "Show current grip offset values and how to adjust them")
+{
+	Msg("=== TF2VR Weapon Grip Adjustment ===\n");
+	Msg("Current grip offset:\n");
+	Msg("  X (forward): %.2f\n", tfvr_weapon_grip_offset_x.GetFloat());
+	Msg("  Y (right):   %.2f\n", tfvr_weapon_grip_offset_y.GetFloat());
+	Msg("  Z (up):      %.2f\n", tfvr_weapon_grip_offset_z.GetFloat());
+	Msg("\nCurrent grip angles:\n");
+	Msg("  Pitch: %.2f\n", tfvr_weapon_grip_angle_pitch.GetFloat());
+	Msg("  Yaw:   %.2f\n", tfvr_weapon_grip_angle_yaw.GetFloat());
+	Msg("  Roll:  %.2f\n", tfvr_weapon_grip_angle_roll.GetFloat());
+	Msg("\nTo adjust:\n");
+	Msg("  tfvr_weapon_grip_offset_x <value>  // Move forward(+) or back(-)\n");
+	Msg("  tfvr_weapon_grip_offset_y <value>  // Move right(+) or left(-)\n");
+	Msg("  tfvr_weapon_grip_offset_z <value>  // Move up(+) or down(-)\n");
+	Msg("  tfvr_weapon_grip_angle_pitch <value>\n");
+	Msg("  tfvr_weapon_grip_angle_yaw <value>\n");
+	Msg("  tfvr_weapon_grip_angle_roll <value>\n");
+	Msg("\nChanges apply immediately! Enable tfvr_debug_weapon_attachment 1 to see the result.\n");
+}
+
+CON_COMMAND(tfvr_force_weapon_visible, "Force weapon to be visible")
+{
+	C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+	if (!pRightHand)
+	{
+		Warning("Right hand not found!\n");
+		return;
+	}
+
+	C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
+	if (!pWeapon)
+	{
+		Warning("Right hand is not holding a weapon!\n");
+		return;
+	}
+
+	// Force weapon visible
+	pWeapon->RemoveEffects(EF_NODRAW);
+	pWeapon->RemoveEffects(EF_BONEMERGE);
+	pWeapon->RemoveEffects(EF_BONEMERGE_FASTCULL);
+	pWeapon->RemoveEffects(EF_PARENT_ANIMATES);
+	pWeapon->SetRenderMode(kRenderNormal);
+	pWeapon->SetRenderColor(255, 255, 255, 255);
+	pWeapon->AddToLeafSystem(RENDER_GROUP_OPAQUE_ENTITY);
+	
+	Msg("Forced weapon '%s' to be visible\n", pWeapon->GetClassname());
+	Msg("  Model: %s\n", modelinfo->GetModelName(pWeapon->GetModel()));
+	Msg("  Effects: %d\n", pWeapon->GetEffects());
+	Msg("  RenderMode: %d\n", pWeapon->GetRenderMode());
+	Msg("  Position: %.1f, %.1f, %.1f\n", 
+		pWeapon->GetAbsOrigin().x,
+		pWeapon->GetAbsOrigin().y,
+		pWeapon->GetAbsOrigin().z);
+}
+
+CON_COMMAND(tfvr_test_weapon_follow, "Test if weapon is following hand movement")
+{
+	C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+	if (!pRightHand)
+	{
+		Warning("Right hand not found!\n");
+		return;
+	}
+
+	C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
+	if (!pWeapon)
+	{
+		Warning("Right hand is not holding a weapon!\n");
+		return;
+	}
+
+	Msg("=== Weapon Follow Test ===\n");
+	Msg("Hand position: %.1f, %.1f, %.1f\n", 
+		pRightHand->GetAbsOrigin().x,
+		pRightHand->GetAbsOrigin().y,
+		pRightHand->GetAbsOrigin().z);
+	Msg("Weapon position: %.1f, %.1f, %.1f\n",
+		pWeapon->GetAbsOrigin().x,
+		pWeapon->GetAbsOrigin().y,
+		pWeapon->GetAbsOrigin().z);
+	Msg("Distance: %.1f\n", (pWeapon->GetAbsOrigin() - pRightHand->GetAbsOrigin()).Length());
+	
+	int handWeaponBone = pRightHand->LookupBone("weapon_bone");
+	Msg("Hand weapon_bone index: %d\n", handWeaponBone);
+	
+	Msg("\nMove your hand and run this command again to see if weapon follows.\n");
+	Msg("Enable tfvr_debug_weapon_position 1 for continuous updates.\n");
+}
+
+CON_COMMAND(tfvr_test_equip_bat, "Test equipping the bat to the right hand")
+{
+	C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+	if (!pPlayer)
+	{
+		Warning("No local player found!\n");
+		return;
+	}
+
+	if (!pPlayer->IsInVRMode())
+	{
+		Warning("Player is not in VR mode!\n");
+		return;
+	}
+
+	C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+	if (!pRightHand)
+	{
+		Warning("Right hand not found!\n");
+		return;
+	}
+
+	// Get the player's active weapon
+	CTFWeaponBase *pActiveWeapon = pPlayer->GetActiveTFWeapon();
+	if (!pActiveWeapon)
+	{
+		Warning("No active weapon!\n");
+		return;
+	}
+
+	// Equip it to the hand
+	pRightHand->EquipWeapon(pActiveWeapon);
+	Msg("Equipped weapon '%s' to right hand\n", pActiveWeapon->GetClassname());
+}
+
+CON_COMMAND(tfvr_test_unequip_weapon, "Test unequipping weapon from right hand")
+{
+	C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+	if (!pRightHand)
+	{
+		Warning("Right hand not found!\n");
+		return;
+	}
+
+	C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
+	if (!pWeapon)
+	{
+		Warning("Right hand is not holding a weapon!\n");
+		return;
+	}
+
+	Msg("Unequipping weapon '%s' from right hand\n", pWeapon->GetClassname());
+	pRightHand->UnequipWeapon();
+}
+
+CON_COMMAND(tfvr_weapon_info, "Display info about the currently held weapon")
+{
+	C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+	if (!pPlayer)
+	{
+		Warning("No local player found!\n");
+		return;
+	}
+
+	Msg("=== VR Weapon System Status ===\n");
+	Msg("VR Mode: %s\n", pPlayer->IsInVRMode() ? "ENABLED" : "DISABLED");
+	
+	CTFWeaponBase *pActiveWeapon = pPlayer->GetActiveTFWeapon();
+	if (!pActiveWeapon)
+	{
+		Warning("No active weapon!\n");
+		return;
+	}
+
+	Msg("\n=== Active Weapon ===\n");
+	Msg("Classname: %s\n", pActiveWeapon->GetClassname());
+	Msg("Weapon ID: %d\n", pActiveWeapon->GetWeaponID());
+	Msg("Position: %.2f, %.2f, %.2f\n", 
+		pActiveWeapon->GetAbsOrigin().x,
+		pActiveWeapon->GetAbsOrigin().y,
+		pActiveWeapon->GetAbsOrigin().z);
+	Msg("Angles: %.2f, %.2f, %.2f\n",
+		pActiveWeapon->GetAbsAngles().x,
+		pActiveWeapon->GetAbsAngles().y,
+		pActiveWeapon->GetAbsAngles().z);
+
+	// Check if it's a VR weapon
+	CTFVRWeaponBase *pVRWeapon = dynamic_cast<CTFVRWeaponBase*>(pActiveWeapon);
+	if (pVRWeapon)
+	{
+		Msg("VR Weapon: YES\n");
+		Msg("Two-handed: %s\n", pVRWeapon->IsTwoHanded() ? "YES" : "NO");
+		
+		CTFVRHand *pOwnerHand = pVRWeapon->GetOwnerHand();
+		if (pOwnerHand)
+		{
+			Msg("Held by: %s hand\n", pOwnerHand->IsLeftHand() ? "LEFT" : "RIGHT");
+		}
+		else
+		{
+			Msg("Held by: NONE\n");
+		}
+	}
+	else
+	{
+		Msg("VR Weapon: NO (standard TF2 weapon)\n");
+	}
+
+	Msg("\n=== VR Hands ===\n");
+	C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+	C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+	
+	if (pLeftHand)
+	{
+		C_TFWeaponBase *pHeldWeapon = pLeftHand->GetHeldWeapon();
+		Msg("Left hand: %s\n", pHeldWeapon ? pHeldWeapon->GetClassname() : "EMPTY");
+		if (pHeldWeapon)
+		{
+			Msg("  Position: %.2f, %.2f, %.2f\n",
+				pHeldWeapon->GetAbsOrigin().x,
+				pHeldWeapon->GetAbsOrigin().y,
+				pHeldWeapon->GetAbsOrigin().z);
+		}
+	}
+	else
+	{
+		Msg("Left hand: NOT FOUND\n");
+	}
+	
+	if (pRightHand)
+	{
+		C_TFWeaponBase *pHeldWeapon = pRightHand->GetHeldWeapon();
+		Msg("Right hand: %s\n", pHeldWeapon ? pHeldWeapon->GetClassname() : "EMPTY");
+		if (pHeldWeapon)
+		{
+			Msg("  Position: %.2f, %.2f, %.2f\n",
+				pHeldWeapon->GetAbsOrigin().x,
+				pHeldWeapon->GetAbsOrigin().y,
+				pHeldWeapon->GetAbsOrigin().z);
+		}
+		Msg("  Hand position: %.2f, %.2f, %.2f\n",
+			pRightHand->GetAbsOrigin().x,
+			pRightHand->GetAbsOrigin().y,
+			pRightHand->GetAbsOrigin().z);
+	}
+	else
+	{
+		Msg("Right hand: NOT FOUND\n");
+	}
+}

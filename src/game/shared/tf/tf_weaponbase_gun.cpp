@@ -33,6 +33,7 @@
 	#include "c_tf_player.h"
 	#include "c_te_effect_dispatch.h"
 	#include "c_tf_gamestats.h"
+	#include "tfvr/c_tfvr_hand.h"
 
 #endif
 
@@ -493,11 +494,74 @@ void CTFWeaponBaseGun::FireBullet( CTFPlayer *pPlayer )
 {
 	PlayWeaponShootSound();
 
+#ifdef CLIENT_DLL
+	// Debug: Log which weapon is firing
+	static int debugCounter = 0;
+	if (++debugCounter % 5 == 0)
+	{
+		C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+		DevMsg("=== CLIENT FireBullet Debug ===\n");
+		DevMsg("Weapon ptr: %p, classname: %s\n", this, GetClassname());
+		DevMsg("UsingViewModel: %d, m_bHeldByVRHand: %d\n", UsingViewModel(), m_bHeldByVRHand);
+		
+		if (pTFPlayer && pTFPlayer->IsInVRMode())
+		{
+			C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+			if (pRightHand)
+			{
+				C_TFWeaponBase* pHandWeapon = pRightHand->GetHeldWeapon();
+				DevMsg("VR Hand weapon ptr: %p\n", pHandWeapon);
+				DevMsg("Is VR hand weapon: %s\n", (pHandWeapon == this) ? "YES" : "NO");
+				
+				if (pHandWeapon)
+				{
+					DevMsg("Hand weapon origin: (%.1f, %.1f, %.1f)\n",
+						pHandWeapon->GetAbsOrigin().x,
+						pHandWeapon->GetAbsOrigin().y,
+						pHandWeapon->GetAbsOrigin().z);
+				}
+				
+				DevMsg("This weapon origin: (%.1f, %.1f, %.1f)\n",
+					GetAbsOrigin().x, GetAbsOrigin().y, GetAbsOrigin().z);
+			}
+		}
+		
+		Vector shootPos = pPlayer->Weapon_ShootPosition();
+		QAngle shootAngles = pPlayer->Weapon_ShootAngles();
+		DevMsg("Shoot from: (%.1f, %.1f, %.1f), angles: (%.1f, %.1f, %.1f)\n",
+			shootPos.x, shootPos.y, shootPos.z,
+			shootAngles.x, shootAngles.y, shootAngles.z);
+	}
+	
+	// CRITICAL VR FIX: When in VR mode, only show visual effects from worldmodel, not viewmodel
+	// The same weapon entity switches between viewmodel/worldmodel rendering modes.
+	// When UsingViewModel() == true, effects are drawn at viewmodel position (wrong for VR)
+	// When UsingViewModel() == false, effects are drawn at worldmodel position (correct for VR hand)
+	C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
+	if (pTFPlayer && pTFPlayer->IsInVRMode())
+	{
+		if (UsingViewModel())
+		{
+			// Weapon is in viewmodel mode - DON'T show visual effects
+			// They will be shown when the weapon renders in worldmodel mode
+			if (debugCounter % 5 == 0)
+			{
+				DevMsg("BLOCKING visual effects - weapon is using VIEWMODEL mode!\n");
+			}
+			return;
+		}
+		else if (debugCounter % 5 == 0)
+		{
+			DevMsg("ALLOWING visual effects - weapon is using WORLDMODEL mode!\n");
+		}
+	}
+#endif
+
 	FX_FireBullets(
 		this,
 		pPlayer->entindex(),
 		pPlayer->Weapon_ShootPosition(),
-		pPlayer->Weapon_ShootAngles() + pPlayer->GetPunchAngle(),  // Use controller angles instead of EyeAngles
+		pPlayer->Weapon_ShootAngles() + pPlayer->GetPunchAngle(),
 		GetWeaponID(),
 		m_iWeaponMode,
 		CBaseEntity::GetPredictionRandomSeed( UseServerRandomSeed() ) & 255,

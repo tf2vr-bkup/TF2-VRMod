@@ -567,6 +567,13 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	virtual bool	ShouldDraw( void ) OVERRIDE;
 	virtual void	UpdateVisibility( void ) OVERRIDE;
 
+	// VR: Accessors for VR hand holding state
+	void			SetHeldByVRHand( bool bHeld ) { m_bHeldByVRHand = bHeld; }
+	bool			IsHeldByVRHand() const { return m_bHeldByVRHand; }
+	
+	// VR: Override SetParent to prevent re-parenting when held by VR hand
+	void			SetParent( CBaseEntity *pNewParent, int iAttachment = -1 );
+
 	virtual void	ProcessMuzzleFlashEvent( void );
 	virtual void	DispatchMuzzleFlash( const char* effectName, C_BaseEntity* pAttachEnt );
 	virtual int		InternalDrawModel( int flags );
@@ -720,6 +727,7 @@ protected:
 	bool m_bOldResetParity;
 	int m_iCachedModelIndex;
 	int m_iEjectBrassAttachpoint;
+	bool m_bHeldByVRHand;  // VR: True if held by a VR hand
 
 #endif
 

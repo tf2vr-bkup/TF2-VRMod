@@ -32,12 +32,13 @@
 // Include TF2 headers last, after VGUI types are defined
 #include "tf/tf_hud_ammostatus.h"
 #include "tf/tf_weaponbase.h"
+#include "tfvr/c_tfvr_hand.h"
 
 
 // ConVars for configuration
 ConVar tfvr_ammo_overlay_enabled("tfvr_ammo_overlay_enabled", "1", FCVAR_ARCHIVE, "Enable VR ammo overlay on hand");
 ConVar tfvr_ammo_overlay_hand("tfvr_ammo_overlay_hand", "1", FCVAR_ARCHIVE, "Hand to attach ammo overlay to: 0=left, 1=right (should be main shooting hand)");
-ConVar tfvr_ammo_overlay_use_hand_tracking("tfvr_ammo_overlay_use_hand_tracking", "1", FCVAR_ARCHIVE, "Use hand tracking instead of controller pose: 0=controller, 1=hand tracking");
+ConVar tfvr_ammo_overlay_use_hand_tracking("tfvr_ammo_overlay_use_hand_tracking", "1", FCVAR_ARCHIVE, "Use hand tracking instead of controller pose: 0=controller, 1=hand tracking, 2=weapon bone");
 ConVar tfvr_ammo_overlay_offset_x("tfvr_ammo_overlay_offset_x", "0", FCVAR_ARCHIVE, "X offset from hand position");
 ConVar tfvr_ammo_overlay_offset_y("tfvr_ammo_overlay_offset_y", "8", FCVAR_ARCHIVE, "Y offset from hand position (up)");
 ConVar tfvr_ammo_overlay_offset_z("tfvr_ammo_overlay_offset_z", "3", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
@@ -243,92 +244,99 @@ void CVRAmmoOverlay::SetHandAttachment(int hand)
 //-----------------------------------------------------------------------------
 bool CVRAmmoOverlay::CalculateQuadTransform(VMatrix& quadTransform)
 {
-    // Check if we should use hand tracking instead of controller
-    if (tfvr_ammo_overlay_use_hand_tracking.GetBool())
-    {
-        return CalculateHandTrackingTransform(quadTransform);
-    }
-    
-    // Use controller grip pose (legacy mode)
-    if (!g_pOpenXRManager)
-    {
-        return false;
-    }
-        
-    VMatrix handPose;
-    bool handValid = false;
-    
-    // Get the appropriate hand grip pose
-    if (m_nAttachedHand == 0) // Left hand
-    {
-        if (g_pOpenXRManager->IsLeftControllerPoseValid())
-        {
-            handValid = g_pOpenXRManager->GetLeftControllerGripPose(handPose);
-        }
-    }
-    else // Right hand
-    {
-        if (g_pOpenXRManager->IsRightControllerPoseValid())
-        {
-            handValid = g_pOpenXRManager->GetRightControllerGripPose(handPose);
-        }
-    }
-    
-    if (!handValid)
-    {
-        return false;
-    }
-    
-    // Get hand position and orientation
-    Vector handPos = handPose.GetTranslation();
-    Vector forward, right, up;
-    handPose.GetBasisVectors(forward, right, up);
-    
-    // Position like a tactical display behind the wrist
-    // Instead of using generic offset, position specifically for "pistol grip" viewing
-    Vector quadPos = handPos + 
-                     right * m_vQuadOffset.x +       // Side offset (slightly toward thumb side)
-                     up * m_vQuadOffset.y +          // Up/down (toward wrist)  
-                     forward * m_vQuadOffset.z;      // Forward/back (behind wrist)
-    
-    // Use the exact controller pose matrix directly
-    quadTransform = handPose;
-    quadTransform.SetTranslation(quadPos);
-    
-    // Apply rotations for tactical display orientation (face forward/up for pistol grip viewing)
-    if (m_angQuadRotation.x != 0 || m_angQuadRotation.y != 0 || m_angQuadRotation.z != 0)
-    {
-        VMatrix rotationMatrix;
-        QAngle totalRotation = m_angQuadRotation;
-        // Add tactical display orientation from ConVars
-        totalRotation.x += tfvr_ammo_overlay_pitch.GetFloat();  // Pitch: Tilt up/down
-        totalRotation.y += tfvr_ammo_overlay_yaw.GetFloat();    // Yaw: Turn left/right
-        totalRotation.z += tfvr_ammo_overlay_roll.GetFloat();   // Roll: Twist
-        
-        matrix3x4_t rotMatrix;
-        AngleMatrix(totalRotation, Vector(0,0,0), rotMatrix);
-        rotationMatrix.CopyFrom3x4(rotMatrix);
-        
-        // Apply rotation on top of hand pose
-        quadTransform = quadTransform * rotationMatrix;
-    }
-    else
-    {
-        // Default tactical display orientation using ConVars
-        VMatrix adjustMatrix;
-        matrix3x4_t adjustMatrix3x4;
-        QAngle tacticalAngles(
-            tfvr_ammo_overlay_pitch.GetFloat(),  // Pitch up/down
-            tfvr_ammo_overlay_yaw.GetFloat(),    // Yaw left/right
-            tfvr_ammo_overlay_roll.GetFloat()    // Roll twist
-        );
-        AngleMatrix(tacticalAngles, Vector(0,0,0), adjustMatrix3x4);
-        adjustMatrix.CopyFrom3x4(adjustMatrix3x4);
-        
-        quadTransform = quadTransform * adjustMatrix;
-    }
-    
-    return true;
+	int trackingMode = tfvr_ammo_overlay_use_hand_tracking.GetInt();
+	
+	// Mode 2: Attach to weapon's weapon_bone
+	if (trackingMode == 2)
+	{
+		return CalculateWeaponBoneTransform(quadTransform);
+	}
+	// Mode 1: Use hand tracking
+	else if (trackingMode == 1)
+	{
+		return CalculateHandTrackingTransform(quadTransform);
+	}
+	
+	// Mode 0: Use controller grip pose (legacy mode)
+	if (!g_pOpenXRManager)
+	{
+		return false;
+	}
+		
+	VMatrix handPose;
+	bool handValid = false;
+	
+	// Get the appropriate hand grip pose
+	if (m_nAttachedHand == 0) // Left hand
+	{
+		if (g_pOpenXRManager->IsLeftControllerPoseValid())
+		{
+			handValid = g_pOpenXRManager->GetLeftControllerGripPose(handPose);
+		}
+	}
+	else // Right hand
+	{
+		if (g_pOpenXRManager->IsRightControllerPoseValid())
+		{
+			handValid = g_pOpenXRManager->GetRightControllerGripPose(handPose);
+		}
+	}
+	
+	if (!handValid)
+	{
+		return false;
+	}
+	
+	// Get hand position and orientation
+	Vector handPos = handPose.GetTranslation();
+	Vector forward, right, up;
+	handPose.GetBasisVectors(forward, right, up);
+	
+	// Position like a tactical display behind the wrist
+	// Instead of using generic offset, position specifically for "pistol grip" viewing
+	Vector quadPos = handPos + 
+					 right * m_vQuadOffset.x +       // Side offset (slightly toward thumb side)
+					 up * m_vQuadOffset.y +          // Up/down (toward wrist)  
+					 forward * m_vQuadOffset.z;      // Forward/back (behind wrist)
+	
+	// Use the exact controller pose matrix directly
+	quadTransform = handPose;
+	quadTransform.SetTranslation(quadPos);
+	
+	// Apply rotations for tactical display orientation (face forward/up for pistol grip viewing)
+	if (m_angQuadRotation.x != 0 || m_angQuadRotation.y != 0 || m_angQuadRotation.z != 0)
+	{
+		VMatrix rotationMatrix;
+		QAngle totalRotation = m_angQuadRotation;
+		// Add tactical display orientation from ConVars
+		totalRotation.x += tfvr_ammo_overlay_pitch.GetFloat();  // Pitch: Tilt up/down
+		totalRotation.y += tfvr_ammo_overlay_yaw.GetFloat();    // Yaw: Turn left/right
+		totalRotation.z += tfvr_ammo_overlay_roll.GetFloat();   // Roll: Twist
+		
+		matrix3x4_t rotMatrix;
+		AngleMatrix(totalRotation, Vector(0,0,0), rotMatrix);
+		rotationMatrix.CopyFrom3x4(rotMatrix);
+		
+		// Apply rotation on top of hand pose
+		quadTransform = quadTransform * rotationMatrix;
+	}
+	else
+	{
+		// Default tactical display orientation using ConVars
+		VMatrix adjustMatrix;
+		matrix3x4_t adjustMatrix3x4;
+		QAngle tacticalAngles(
+			tfvr_ammo_overlay_pitch.GetFloat(),  // Pitch up/down
+			tfvr_ammo_overlay_yaw.GetFloat(),    // Yaw left/right
+			tfvr_ammo_overlay_roll.GetFloat()    // Roll twist
+		);
+		AngleMatrix(tacticalAngles, Vector(0,0,0), adjustMatrix3x4);
+		adjustMatrix.CopyFrom3x4(adjustMatrix3x4);
+		
+		quadTransform = quadTransform * adjustMatrix;
+	}
+	
+	return true;
 }
 
 
@@ -472,8 +480,91 @@ bool CVRAmmoOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
         tacticalMatrix.CopyFrom3x4(tacticalMatrix3x4);
         quadTransform = quadTransform * tacticalMatrix;
     }
-     
-    return true;
+	 
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Calculate transform using weapon's weapon_bone
+//-----------------------------------------------------------------------------
+bool CVRAmmoOverlay::CalculateWeaponBoneTransform(VMatrix& quadTransform)
+{
+	// Get the VR hand
+	C_TFVRHand *pHand = (m_nAttachedHand == 0) ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
+	if (!pHand)
+	{
+		return false;
+	}
+	
+	// Get the render weapon
+	C_BaseAnimating *pRenderWeapon = pHand->GetRenderWeapon();
+	if (!pRenderWeapon)
+	{
+		return false;
+	}
+	
+	// Look up the weapon_bone
+	int weaponBone = pRenderWeapon->LookupBone("weapon_bone");
+	if (weaponBone < 0)
+	{
+		// No weapon_bone, fallback to weapon origin
+		Vector weaponPos = pRenderWeapon->GetAbsOrigin();
+		QAngle weaponAngles = pRenderWeapon->GetAbsAngles();
+		
+		matrix3x4_t weaponMatrix;
+		AngleMatrix(weaponAngles, weaponPos, weaponMatrix);
+		quadTransform.CopyFrom3x4(weaponMatrix);
+	}
+	else
+	{
+		// Get the weapon_bone world transform
+		matrix3x4_t boneMatrix;
+		pRenderWeapon->GetBoneTransform(weaponBone, boneMatrix);
+		
+		// Convert to VMatrix
+		quadTransform.CopyFrom3x4(boneMatrix);
+	}
+	
+	// Apply user offsets in weapon space
+	Vector userOffset(
+		tfvr_ammo_overlay_offset_x.GetFloat(),
+		tfvr_ammo_overlay_offset_y.GetFloat(), 
+		tfvr_ammo_overlay_offset_z.GetFloat()
+	);
+	
+	if (userOffset.x != 0 || userOffset.y != 0 || userOffset.z != 0)
+	{
+		// Get weapon basis vectors
+		Vector weaponForward, weaponRight, weaponUp;
+		quadTransform.GetBasisVectors(weaponForward, weaponRight, weaponUp);
+		
+		// Apply offset in weapon space
+		Vector worldOffset = weaponRight * userOffset.x + 
+							weaponUp * userOffset.y + 
+							weaponForward * userOffset.z;
+		
+		Vector currentPos = quadTransform.GetTranslation();
+		quadTransform.SetTranslation(currentPos + worldOffset);
+	}
+	
+	// Apply rotation adjustments
+	if (!tfvr_ammo_overlay_no_rotation.GetBool())
+	{
+		VMatrix rotationMatrix;
+		matrix3x4_t rotMatrix;
+		QAngle rotation(
+			tfvr_ammo_overlay_pitch.GetFloat(),
+			tfvr_ammo_overlay_yaw.GetFloat(),
+			tfvr_ammo_overlay_roll.GetFloat()
+		);
+		
+		AngleMatrix(rotation, Vector(0,0,0), rotMatrix);
+		rotationMatrix.CopyFrom3x4(rotMatrix);
+		
+		quadTransform = quadTransform * rotationMatrix;
+	}
+	
+	return true;
 }
 
 //-----------------------------------------------------------------------------

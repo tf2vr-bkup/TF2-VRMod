@@ -38,6 +38,7 @@
 #ifdef CLIENT_DLL
 #include "c_baseviewmodel.h"
 #include "c_tf_player.h"
+#include "tfvr/c_tfvr_hand.h"
 #include "c_te_effect_dispatch.h"
 #include "c_tf_fx.h"
 #include "soundenvelope.h"
@@ -10462,15 +10463,37 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 
 				bool bInToolRecordingMode = clienttools->IsInRecordingMode();
 
-				// If we're using a viewmodel, override vecStart with the muzzle of that - just for the visual effect, not gameplay.
-				if ( ( pLocalPlayer != NULL ) && !pLocalPlayer->ShouldDrawThisPlayer() && !bInToolRecordingMode && pWpn )
+	// VR: Check for VR weapon FIRST before other logic
+	CTFWeaponBase *pTFWpn = dynamic_cast<CTFWeaponBase*>( pWpn );
+	if ( pTFWpn && pTFWpn->IsHeldByVRHand() && pLocalPlayer )
+	{
+		C_TFPlayer *pTFPlayer = ToTFPlayer( pLocalPlayer );
+		if ( pTFPlayer && pTFPlayer->IsInVRMode() )
+		{
+			// Get the right hand
+			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+			if ( pRightHand && pRightHand->GetHeldWeapon() == pTFWpn )
+			{
+				// Get muzzle position from VR hand (uses render weapon)
+				Vector muzzlePos;
+				QAngle muzzleAngles;
+				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
 				{
-					C_BaseAnimating *pAttachEnt = pWpn->GetAppropriateWorldOrViewModel();
-					if ( pAttachEnt != NULL )
-					{
-						pAttachEnt->GetAttachment( iAttachment, vecStart );
-					}
+					vecStart = muzzlePos;
 				}
+			}
+		}
+	}
+	// If we're using a viewmodel, override vecStart with the muzzle of that - just for the visual effect, not gameplay.
+	else if ( ( pLocalPlayer != NULL ) && !pLocalPlayer->ShouldDrawThisPlayer() && !bInToolRecordingMode && pWpn )
+	{
+		// Standard weapon - use viewmodel
+		C_BaseAnimating *pAttachEnt = pWpn->GetAppropriateWorldOrViewModel();
+		if ( pAttachEnt != NULL )
+		{
+			pAttachEnt->GetAttachment( iAttachment, vecStart );
+		}
+	}
 				else if ( !IsDormant() )
 				{
 					// fill in with third person weapon model index

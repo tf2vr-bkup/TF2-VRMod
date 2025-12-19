@@ -502,27 +502,19 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 			*pAimOrigin = pTFPlayer->Weapon_ShootPosition();
 			
 			// Use weapon shoot angles for direction (controller angles in VR)
+			QAngle weaponAngles = pTFPlayer->Weapon_ShootAngles();
 			Vector forward;
-			AngleVectors( pTFPlayer->Weapon_ShootAngles(), &forward );
+			AngleVectors( weaponAngles, &forward );
 			*pAimDirection = forward;
 			
-			// Store the controller angles for crosshair rotation consistency
+			// Store the weapon roll angle for crosshair rotation
 			extern ConVar tfvr_crosshair_follow_controller_roll;
-			if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_crosshair_follow_controller_roll.GetBool())
+			if (tfvr_crosshair_follow_controller_roll.GetBool())
 			{
-				// Get the same controller pose used for position/direction and store the roll
-				VMatrix rightControllerPose;
-				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
-				{
-					QAngle controllerAngles;
-					MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
-					m_flCrosshairRollAngle = controllerAngles.z; // Store roll for crosshair rendering
-					m_bCrosshairRollValid = true;
-				}
-				else
-				{
-					m_bCrosshairRollValid = false;
-				}
+				// Use weapon roll instead of controller roll
+				// Add 90 degree offset to account for weapon model orientation
+				m_flCrosshairRollAngle = weaponAngles.z - 90.0f;
+				m_bCrosshairRollValid = true;
 			}
 			else
 			{

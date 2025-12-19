@@ -60,6 +60,9 @@ public:
 	// Rendering control
 	virtual bool ShouldDraw() override;
 	virtual int DrawModel(int flags) override;
+	virtual ShadowType_t ShadowCastType() override;  // Always cast shadows
+	virtual bool ShouldReceiveProjectedTextures(int flags) override;  // Always receive shadows
+	virtual bool IsTransparent() override { return false; }  // Force opaque for shadows
 	
 	// Override to ensure hands are always in PVS
 	virtual void GetRenderBounds(Vector& mins, Vector& maxs) override;
@@ -70,6 +73,9 @@ public:
 	
 	// Apply finger tracking to bones
 	void ApplyFingerTracking(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
+	
+	// Hide the opposite hand (scale to zero)
+	void HideOppositeHand(matrix3x4_t *pBoneToWorldOut, int nMaxBones, CStudioHdr *pStudioHdr);
 
 	// Accessors
 	C_TFPlayer* GetOwnerPlayer() const { return m_hOwnerPlayer.Get(); }
@@ -81,7 +87,17 @@ public:
 	void EquipWeapon(C_TFWeaponBase *pWeapon);
 	void UnequipWeapon();
 	C_TFWeaponBase* GetHeldWeapon() const { return m_hHeldWeapon.Get(); }
+	C_BaseAnimating* GetRenderWeapon() const { return m_hRenderWeapon.Get(); }
 	void UpdateWeaponTransform();
+	
+	// Position weapon using already-computed bone matrices (called from SetupBones)
+	void PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
+	
+	// Get the weapon's muzzle position and angles in world space
+	bool GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAngles);
+	
+	// Weapon pose override
+	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
 
 private:
 	// Which hand this entity represents
@@ -91,7 +107,8 @@ private:
 	CHandle<C_TFPlayer> m_hOwnerPlayer;
 
 	// Held weapon
-	CHandle<C_TFWeaponBase> m_hHeldWeapon;
+	CHandle<C_TFWeaponBase> m_hHeldWeapon;  // The actual weapon (for mechanics/firing)
+	CHandle<C_BaseAnimating> m_hRenderWeapon;  // Separate render-only entity for visuals
 
 	// Hand tracking
 	COpenXRHandTracker *m_pHandTracker;
@@ -127,6 +144,10 @@ void CleanupAllVRHands();
 
 // Helper to get the opposite hand
 C_TFVRHand* GetOppositeVRHand(C_TFVRHand *pHand);
+
+// Accessors for the local player's hands
+C_TFVRHand* GetLocalPlayerLeftHand();
+C_TFVRHand* GetLocalPlayerRightHand();
 
 #endif // C_TFVR_HAND_H
 
