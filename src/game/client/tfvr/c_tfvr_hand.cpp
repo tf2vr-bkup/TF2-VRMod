@@ -1293,6 +1293,33 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 	int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
 	if (iMuzzle > 0 && pRenderWeapon->GetAttachment(iMuzzle, outPos, outAngles))
 	{
+		// Apply per-class aim direction corrections
+		// The weapon visual position is correct, but the muzzle attachment's orientation needs adjustment
+		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+		if (pOwner)
+		{
+			int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
+			
+			// Demoman weapons have a different muzzle attachment orientation
+			if (playerClass == TF_CLASS_DEMOMAN)
+			{
+				// Get the direction vectors from the muzzle
+				Vector forward, right, up;
+				AngleVectors(outAngles, &forward, &right, &up);
+				
+				// Rotate 90 degrees around the right axis (swap forward and up)
+				Vector newForward = up;      // What was pointing up is now forward
+				Vector newUp = -forward;     // What was pointing forward is now down (negated to point up)
+				
+				// Now rotate 90 degrees around the new forward axis (roll correction)
+				Vector newRight = newUp;
+				newUp = -right;
+				
+				// Build new angles from the rotated vectors
+				VectorAngles(newForward, newUp, outAngles);
+			}
+		}
+		
 		return true;
 	}
 	
@@ -1318,82 +1345,120 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 	switch (playerClass)
 	{
 		case TF_CLASS_SCOUT:
-			// Scout animations: sg_idle (scattergun), p_idle (pistol), b_idle (bat)
+			// Scout: sg_idle, p_idle, b_idle, wb_idle, ss_idle, db_idle, ed_idle, throw_idle, bm_idle, spell_*
 			if (V_stristr(weaponClass, "scattergun")) return "sg_idle";
+			if (V_stristr(weaponClass, "handgun_scout")) return "ss_idle"; // Shortstop
 			if (V_stristr(weaponClass, "pistol")) return "p_idle";
 			if (V_stristr(weaponClass, "bat")) return "b_idle";
 			if (V_stristr(weaponClass, "wrap")) return "wb_idle"; // Wrap Assassin
+			if (V_stristr(weaponClass, "drink")) return "db_idle"; // Bonk/Crit-a-Cola
+			if (V_stristr(weaponClass, "jar_milk")) return "ed_idle"; // Mad Milk
+			if (V_stristr(weaponClass, "cleaver")) return "throw_idle"; // Flying Guillotine
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
+			if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
 			break;
 			
 		case TF_CLASS_SOLDIER:
-			// Soldier: dh_idle (rockets), idle (shotgun), s_idle (shovel)
+			// Soldier: dh_idle, idle, s_idle, bb_idle, wh_idle, bison_idle, bet_idle, throw_idle
 			if (V_stristr(weaponClass, "rocketlauncher")) return "dh_idle";
 			if (V_stristr(weaponClass, "shotgun")) return "idle";
 			if (V_stristr(weaponClass, "shovel")) return "s_idle";
 			if (V_stristr(weaponClass, "pickaxe")) return "s_idle"; // Equalizer
-			if (V_stristr(weaponClass, "buff_item")) return "bb_idle"; // Buff Banner
+			if (V_stristr(weaponClass, "buff_item")) return "bb_idle"; // Buff Banner/Battalion's Backup/Concheror
+			if (V_stristr(weaponClass, "whip")) return "wh_idle"; // Disciplinary Action
+			if (V_stristr(weaponClass, "raygun")) return "bison_idle"; // Righteous Bison
+			if (V_stristr(weaponClass, "parachute")) return "bet_idle"; // B.A.S.E. Jumper
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			break;
 			
 		case TF_CLASS_PYRO:
-			// Pyro: ft_idle (flamethrower), fg_idle (flare gun), fa_idle (fire axe)
+			// Pyro: ft_idle, fg_idle, fa_idle, idle, mm_idle, throw_idle
 			if (V_stristr(weaponClass, "flamethrower")) return "ft_idle";
+			if (V_stristr(weaponClass, "rocketlauncher_fireball")) return "ft_idle"; // Dragon's Fury
 			if (V_stristr(weaponClass, "flaregun")) return "fg_idle";
 			if (V_stristr(weaponClass, "shotgun")) return "idle";
 			if (V_stristr(weaponClass, "fireaxe")) return "fa_idle";
 			if (V_stristr(weaponClass, "slap")) return "fa_idle"; // Hot Hand
+			if (V_stristr(weaponClass, "jar_gas")) return "mm_idle"; // Gas Passer
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			break;
 			
 		case TF_CLASS_DEMOMAN:
-			// Demo: g_idle (grenade launcher), sb_idle (stickybomb), b_idle (bottle), cm_idle (sword)
+			// Demo: g_idle, sb_idle, b_idle, cm_idle, throw_idle
 			if (V_stristr(weaponClass, "grenadelauncher")) return "g_idle";
+			if (V_stristr(weaponClass, "cannon")) return "g_idle"; // Loose Cannon
 			if (V_stristr(weaponClass, "pipebomblauncher")) return "sb_idle";
-			if (V_stristr(weaponClass, "bottle")) return "b_idle";
-			if (V_stristr(weaponClass, "sword")) return "cm_idle"; // Claymore/Eyelander
 			if (V_stristr(weaponClass, "stickbomb")) return "sb_idle";
+			if (V_stristr(weaponClass, "bottle")) return "b_idle";
+			if (V_stristr(weaponClass, "sword")) return "cm_idle"; // Eyelander, Half-Zatoichi, etc.
+			if (V_stristr(weaponClass, "katana")) return "cm_idle";
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			break;
 			
 		case TF_CLASS_HEAVYWEAPONS:
-			// Heavy: m_idle (minigun), idle (shotgun), f_idle (fists)
+			// Heavy: m_idle, idle, f_idle, bg_idle, sw_idle, throw_idle, breadglove_idle_*
 			if (V_stristr(weaponClass, "minigun")) return "m_idle";
 			if (V_stristr(weaponClass, "shotgun")) return "idle";
 			if (V_stristr(weaponClass, "fists")) return "f_idle";
-			if (V_stristr(weaponClass, "gloves")) return "bg_idle"; // KGB, GRU, etc.
+			if (V_stristr(weaponClass, "gloves")) return "bg_idle"; // KGB, GRU, Warrior's Spirit, etc.
+			if (V_stristr(weaponClass, "steak")) return "sw_idle"; // Buffalo Steak Sandvich
+			if (V_stristr(weaponClass, "lunchbox")) return "sw_idle"; // Sandvich, Dalokohs Bar, etc.
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			break;
 			
 		case TF_CLASS_ENGINEER:
-			// Engineer: idle (shotgun), pstl_idle (pistol), gun_idle (wrench), pda_idle (PDA)
+			// Engineer: idle, pstl_idle, gun_idle, pda_idle, bld_idle, fj_idle, wgl_idle, pdq_idle, spk_idle, pomson_idle, box_idle, throw_idle
+			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_idle"; // Frontier Justice (check first, before shotgun)
 			if (V_stristr(weaponClass, "shotgun")) return "idle";
 			if (V_stristr(weaponClass, "pistol")) return "pstl_idle";
 			if (V_stristr(weaponClass, "wrench")) return "gun_idle";
-			if (V_stristr(weaponClass, "pda")) return "pda_idle";
-			if (V_stristr(weaponClass, "builder")) return "bld_idle";
-			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_idle"; // Frontier Justice
+			if (V_stristr(weaponClass, "robot_arm")) return "gun_idle"; // Gunslinger
+			if (V_stristr(weaponClass, "pda_engineer_build")) return "bld_idle";
+			if (V_stristr(weaponClass, "pda_engineer_destroy")) return "pda_idle";
+			if (V_stristr(weaponClass, "laser_pointer")) return "wgl_idle"; // Wrangler
+			if (V_stristr(weaponClass, "drg_pomson")) return "pomson_idle"; // Pomson 6000
+			if (V_stristr(weaponClass, "raygun")) return "pomson_idle"; // Rescue Ranger
+			if (V_stristr(weaponClass, "mechanical_arm")) return "spk_idle"; // Short Circuit
+			if (V_stristr(weaponClass, "builder")) return "box_idle"; // Toolbox
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			break;
 			
 		case TF_CLASS_MEDIC:
-			// Medic: sg_idle (syringe gun), idle (medigun), bs_idle (bonesaw)
+			// Medic: sg_idle, idle, bs_idle, throw_idle
 			if (V_stristr(weaponClass, "syringegun")) return "sg_idle";
+			if (V_stristr(weaponClass, "crossbow")) return "sg_idle"; // Crusader's Crossbow
 			if (V_stristr(weaponClass, "medigun")) return "idle";
 			if (V_stristr(weaponClass, "bonesaw")) return "bs_idle";
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			break;
 			
 		case TF_CLASS_SNIPER:
-			// Sniper: bw_idle (sniper rifle/bow), smg_idle (SMG), m_idle (melee), pj_idle (jarate)
+			// Sniper: bw_idle, smg_idle, m_idle, pj_idle, idle, throw_idle, bm_idle, rifolver_idle
 			if (V_stristr(weaponClass, "sniperrifle")) return "bw_idle";
-			if (V_stristr(weaponClass, "compound_bow")) return "bw_idle";
+			if (V_stristr(weaponClass, "compound_bow")) return "bw_idle"; // Huntsman
 			if (V_stristr(weaponClass, "smg")) return "smg_idle";
-			if (V_stristr(weaponClass, "club")) return "m_idle";
+			if (V_stristr(weaponClass, "club")) return "m_idle"; // Kukri, Bushwacka, Shahanshah, etc.
+			if (V_stristr(weaponClass, "sword")) return "m_idle";
 			if (V_stristr(weaponClass, "jar")) return "pj_idle"; // Jarate
+			if (V_stristr(weaponClass, "cleaver")) return "throw_idle"; // Throwing weapons
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
+			if (V_stristr(weaponClass, "charged_smg")) return "idle"; // Cleaner's Carbine (uses generic idle)
 			break;
 			
 		case TF_CLASS_SPY:
-			// Spy: idle (revolver), knife_idle (knife), c_sapper_idle (sapper), offhand_idle (disguise kit)
+			// Spy: idle, knife_idle, c_sapper_idle, offhand_idle, eternal_idle, acr_idle, throw_idle, c_dart_gun_idle
 			if (V_stristr(weaponClass, "revolver")) return "idle";
 			if (V_stristr(weaponClass, "knife")) return "knife_idle";
 			if (V_stristr(weaponClass, "sapper")) return "c_sapper_idle";
-			if (V_stristr(weaponClass, "pda")) return "offhand_idle"; // Disguise kit
+			if (V_stristr(weaponClass, "pda_spy")) return "offhand_idle"; // Disguise kit
+			if (V_stristr(weaponClass, "invis")) return "offhand_idle"; // Invis watch
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			break;
 	}
+	
+	// Check for universal weapon types that apply to all classes
+	if (V_stristr(weaponClass, "melee_allclass")) return "melee_allclass_idle";
+	if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
 	
 	return defaultAnim;
 }

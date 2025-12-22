@@ -3214,6 +3214,14 @@ void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* p
 				QAngle angMuzzleAngles;
 				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( vecMuzzlePos, angMuzzleAngles ) )
 				{
+					// Apply additional particle effect orientation correction for Demoman
+					// The muzzle flash particle needs a different orientation than the shooting direction
+					if ( pOwner->GetPlayerClass()->GetClassIndex() == TF_CLASS_DEMOMAN )
+					{
+						// Rotate the angles 90 degrees in pitch to align the particle effect
+						angMuzzleAngles.x += 90.0f;
+					}
+					
 					DispatchParticleEffect( effectName, vecMuzzlePos, angMuzzleAngles, this );
 					return;
 				}
