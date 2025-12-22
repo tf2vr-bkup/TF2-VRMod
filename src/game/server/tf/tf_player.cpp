@@ -2957,10 +2957,25 @@ void CTFPlayer::PrecacheTFPlayer()
 	// Precache the player models and gibs.
 	PrecachePlayerModels();
 	
-	// Precache VR hand models
-	PrecacheModel("models/weapons/vr_models/vr_scout_arms.mdl");
+	// Precache VR hand models for all classes
 	PrecacheModel("models/weapons/vr_models/vr_scout_hand_l.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_scout_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_soldier_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_soldier_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_pyro_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_pyro_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_demo_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_demo_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_heavy_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_heavy_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_engineer_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_engineer_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_medic_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_medic_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_sniper_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_sniper_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_spy_hand_l.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_spy_hand_r.mdl");
 
 	// Precache the player sounds.
 	PrecacheScriptSound( "Player.Spawn" );

@@ -57,6 +57,69 @@ static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
 static C_TFVRHand *g_pLocalPlayerRightHand = NULL;
 
 //-----------------------------------------------------------------------------
+// Purpose: Get the hand model path for a specific class
+//-----------------------------------------------------------------------------
+const char* GetHandModelForClass(int playerClass, bool bLeftHand)
+{
+	const char *handSuffix = bLeftHand ? "_l" : "_r";
+	
+	switch (playerClass)
+	{
+		case TF_CLASS_SCOUT:
+			return bLeftHand ? "models/weapons/vr_models/vr_scout_hand_l.mdl" : "models/weapons/vr_models/vr_scout_hand_r.mdl";
+		case TF_CLASS_SOLDIER:
+			return bLeftHand ? "models/weapons/vr_models/vr_soldier_hand_l.mdl" : "models/weapons/vr_models/vr_soldier_hand_r.mdl";
+		case TF_CLASS_PYRO:
+			return bLeftHand ? "models/weapons/vr_models/vr_pyro_hand_l.mdl" : "models/weapons/vr_models/vr_pyro_hand_r.mdl";
+		case TF_CLASS_DEMOMAN:
+			return bLeftHand ? "models/weapons/vr_models/vr_demo_hand_l.mdl" : "models/weapons/vr_models/vr_demo_hand_r.mdl";
+		case TF_CLASS_HEAVYWEAPONS:
+			return bLeftHand ? "models/weapons/vr_models/vr_heavy_hand_l.mdl" : "models/weapons/vr_models/vr_heavy_hand_r.mdl";
+		case TF_CLASS_ENGINEER:
+			return bLeftHand ? "models/weapons/vr_models/vr_engineer_hand_l.mdl" : "models/weapons/vr_models/vr_engineer_hand_r.mdl";
+		case TF_CLASS_MEDIC:
+			return bLeftHand ? "models/weapons/vr_models/vr_medic_hand_l.mdl" : "models/weapons/vr_models/vr_medic_hand_r.mdl";
+		case TF_CLASS_SNIPER:
+			return bLeftHand ? "models/weapons/vr_models/vr_sniper_hand_l.mdl" : "models/weapons/vr_models/vr_sniper_hand_r.mdl";
+		case TF_CLASS_SPY:
+			return bLeftHand ? "models/weapons/vr_models/vr_spy_hand_l.mdl" : "models/weapons/vr_models/vr_spy_hand_r.mdl";
+		default:
+			// Default to Scout if unknown class
+			return bLeftHand ? "models/weapons/vr_models/vr_scout_hand_l.mdl" : "models/weapons/vr_models/vr_scout_hand_r.mdl";
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Get the fallback combined arms model for a class
+//-----------------------------------------------------------------------------
+const char* GetFallbackModelForClass(int playerClass)
+{
+	switch (playerClass)
+	{
+		case TF_CLASS_SCOUT:
+			return "models/weapons/c_models/c_scout_arms.mdl";
+		case TF_CLASS_SOLDIER:
+			return "models/weapons/c_models/c_soldier_arms.mdl";
+		case TF_CLASS_PYRO:
+			return "models/weapons/c_models/c_pyro_arms.mdl";
+		case TF_CLASS_DEMOMAN:
+			return "models/weapons/c_models/c_demo_arms.mdl";
+		case TF_CLASS_HEAVYWEAPONS:
+			return "models/weapons/c_models/c_heavy_arms.mdl";
+		case TF_CLASS_ENGINEER:
+			return "models/weapons/c_models/c_engineer_arms.mdl";
+		case TF_CLASS_MEDIC:
+			return "models/weapons/c_models/c_medic_arms.mdl";
+		case TF_CLASS_SNIPER:
+			return "models/weapons/c_models/c_sniper_arms.mdl";
+		case TF_CLASS_SPY:
+			return "models/weapons/c_models/c_spy_arms.mdl";
+		default:
+			return "models/weapons/c_models/c_scout_arms.mdl";
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Global update function called every frame from VR menu manager
 //-----------------------------------------------------------------------------
 void UpdateVRHands()
@@ -190,10 +253,8 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 		return false;
 	}
 
-	// Use separate left and right hand models
-	const char *handModelPath = IsLeftHand() 
-		? "models/weapons/vr_models/vr_scout_hand_l.mdl"
-		: "models/weapons/vr_models/vr_scout_hand_r.mdl";
+	// Get class-specific hand model path
+	const char *handModelPath = GetHandModelForClass(m_iLastPlayerClass, IsLeftHand());
 	
 	Q_strncpy(m_szModelName, handModelPath, sizeof(m_szModelName));
 	
@@ -220,15 +281,16 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	{
 		Warning("VR Hand: Failed to load %s (model index: %d), trying fallback\n", handModelPath, modelIndex);
 		
-		// Use fallback to combined arms model
-		Q_strncpy(m_szModelName, "models/weapons/c_models/c_scout_arms.mdl", sizeof(m_szModelName));
+		// Use fallback to combined arms model for this class
+		const char *fallbackModel = GetFallbackModelForClass(m_iLastPlayerClass);
+		Q_strncpy(m_szModelName, fallbackModel, sizeof(m_szModelName));
 		if (!SetModel(m_szModelName))
 		{
 			Warning("C_TFVRHand::Initialize - Failed to load hand model!\n");
 			return false;
 		}
 		
-		Msg("VR Hand (%s): Using fallback combined arms model\n", IsLeftHand() ? "LEFT" : "RIGHT");
+		Msg("VR Hand (%s): Using fallback combined arms model: %s\n", IsLeftHand() ? "LEFT" : "RIGHT", fallbackModel);
 	}
 	else
 	{
@@ -1246,6 +1308,97 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Get the appropriate hand animation name for a weapon
+//-----------------------------------------------------------------------------
+const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
+{
+	// Default fallback
+	const char *defaultAnim = "ref";
+	
+	switch (playerClass)
+	{
+		case TF_CLASS_SCOUT:
+			// Scout animations: sg_idle (scattergun), p_idle (pistol), b_idle (bat)
+			if (V_stristr(weaponClass, "scattergun")) return "sg_idle";
+			if (V_stristr(weaponClass, "pistol")) return "p_idle";
+			if (V_stristr(weaponClass, "bat")) return "b_idle";
+			if (V_stristr(weaponClass, "wrap")) return "wb_idle"; // Wrap Assassin
+			break;
+			
+		case TF_CLASS_SOLDIER:
+			// Soldier: dh_idle (rockets), idle (shotgun), s_idle (shovel)
+			if (V_stristr(weaponClass, "rocketlauncher")) return "dh_idle";
+			if (V_stristr(weaponClass, "shotgun")) return "idle";
+			if (V_stristr(weaponClass, "shovel")) return "s_idle";
+			if (V_stristr(weaponClass, "pickaxe")) return "s_idle"; // Equalizer
+			if (V_stristr(weaponClass, "buff_item")) return "bb_idle"; // Buff Banner
+			break;
+			
+		case TF_CLASS_PYRO:
+			// Pyro: ft_idle (flamethrower), fg_idle (flare gun), fa_idle (fire axe)
+			if (V_stristr(weaponClass, "flamethrower")) return "ft_idle";
+			if (V_stristr(weaponClass, "flaregun")) return "fg_idle";
+			if (V_stristr(weaponClass, "shotgun")) return "idle";
+			if (V_stristr(weaponClass, "fireaxe")) return "fa_idle";
+			if (V_stristr(weaponClass, "slap")) return "fa_idle"; // Hot Hand
+			break;
+			
+		case TF_CLASS_DEMOMAN:
+			// Demo: g_idle (grenade launcher), sb_idle (stickybomb), b_idle (bottle), cm_idle (sword)
+			if (V_stristr(weaponClass, "grenadelauncher")) return "g_idle";
+			if (V_stristr(weaponClass, "pipebomblauncher")) return "sb_idle";
+			if (V_stristr(weaponClass, "bottle")) return "b_idle";
+			if (V_stristr(weaponClass, "sword")) return "cm_idle"; // Claymore/Eyelander
+			if (V_stristr(weaponClass, "stickbomb")) return "sb_idle";
+			break;
+			
+		case TF_CLASS_HEAVYWEAPONS:
+			// Heavy: m_idle (minigun), idle (shotgun), f_idle (fists)
+			if (V_stristr(weaponClass, "minigun")) return "m_idle";
+			if (V_stristr(weaponClass, "shotgun")) return "idle";
+			if (V_stristr(weaponClass, "fists")) return "f_idle";
+			if (V_stristr(weaponClass, "gloves")) return "bg_idle"; // KGB, GRU, etc.
+			break;
+			
+		case TF_CLASS_ENGINEER:
+			// Engineer: idle (shotgun), pstl_idle (pistol), gun_idle (wrench), pda_idle (PDA)
+			if (V_stristr(weaponClass, "shotgun")) return "idle";
+			if (V_stristr(weaponClass, "pistol")) return "pstl_idle";
+			if (V_stristr(weaponClass, "wrench")) return "gun_idle";
+			if (V_stristr(weaponClass, "pda")) return "pda_idle";
+			if (V_stristr(weaponClass, "builder")) return "bld_idle";
+			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_idle"; // Frontier Justice
+			break;
+			
+		case TF_CLASS_MEDIC:
+			// Medic: sg_idle (syringe gun), idle (medigun), bs_idle (bonesaw)
+			if (V_stristr(weaponClass, "syringegun")) return "sg_idle";
+			if (V_stristr(weaponClass, "medigun")) return "idle";
+			if (V_stristr(weaponClass, "bonesaw")) return "bs_idle";
+			break;
+			
+		case TF_CLASS_SNIPER:
+			// Sniper: bw_idle (sniper rifle/bow), smg_idle (SMG), m_idle (melee), pj_idle (jarate)
+			if (V_stristr(weaponClass, "sniperrifle")) return "bw_idle";
+			if (V_stristr(weaponClass, "compound_bow")) return "bw_idle";
+			if (V_stristr(weaponClass, "smg")) return "smg_idle";
+			if (V_stristr(weaponClass, "club")) return "m_idle";
+			if (V_stristr(weaponClass, "jar")) return "pj_idle"; // Jarate
+			break;
+			
+		case TF_CLASS_SPY:
+			// Spy: idle (revolver), knife_idle (knife), c_sapper_idle (sapper), offhand_idle (disguise kit)
+			if (V_stristr(weaponClass, "revolver")) return "idle";
+			if (V_stristr(weaponClass, "knife")) return "knife_idle";
+			if (V_stristr(weaponClass, "sapper")) return "c_sapper_idle";
+			if (V_stristr(weaponClass, "pda")) return "offhand_idle"; // Disguise kit
+			break;
+	}
+	
+	return defaultAnim;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
 //        Samples finger bone rotations from the hand model's weapon animation
 //-----------------------------------------------------------------------------
@@ -1259,37 +1412,29 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 	if (!pWeapon)
 		return;
 	
-	// Map weapon classnames to hand animation names
-	// These animations exist on the vr_scout_arms model
-	const char *animName = NULL;
+	// Get the player to determine class
+	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+	if (!pOwner)
+		return;
+	
+	int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
 	const char *weaponClass = pWeapon->GetClassname();
 	
-	if (V_stristr(weaponClass, "scattergun"))
-	{
-		animName = "sg_idle";
-	}
-	else if (V_stristr(weaponClass, "pistol"))
-	{
-		animName = "p_idle";  // Pistol uses 'p_' prefix
-	}
-	else if (V_stristr(weaponClass, "bat"))
-	{
-		animName = "b_idle";  // Bat uses 'b_' prefix
-	}
-	else
-	{
-		// Default idle pose for unknown weapons
-		animName = "ref";
-	}
+	// Get the appropriate animation name for this weapon and class
+	const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass);
 	
 	// Look up the sequence
 	int sequence = LookupSequence(animName);
 	if (sequence < 0)
 	{
-		DevMsg("TF2VR: Could not find animation '%s' on hand model\n", animName);
-		return;
+		// Animation not found - try fallback to "ref" pose
+		sequence = LookupSequence("ref");
+		if (sequence < 0)
+		{
+			// No ref pose either, just return
+			return;
+		}
 	}
-	
 	
 	// Get the sequence descriptor
 	mstudioseqdesc_t &seqdesc = pStudioHdr->pSeqdesc(sequence);
