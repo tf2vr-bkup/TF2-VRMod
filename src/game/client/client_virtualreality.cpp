@@ -102,7 +102,7 @@ ConVar vr_viewmodel_offset_forward_large( "vr_viewmodel_offset_forward_large", "
 
 ConVar vr_force_windowed ( "vr_force_windowed", "0", FCVAR_ARCHIVE );
 
-ConVar vr_first_person_uses_world_model ( "vr_first_person_uses_world_model", "1", 0, "Causes the third person model to be drawn instead of the view model" );
+ConVar vr_first_person_uses_world_model ( "vr_first_person_uses_world_model", "0", 0, "Causes the third person model to be drawn instead of the view model" );
 
 extern ConVar tfvr_menu_distance;
 extern ConVar tfvr_menu_scale;
