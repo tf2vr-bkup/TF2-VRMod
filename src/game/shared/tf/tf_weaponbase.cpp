@@ -5762,33 +5762,39 @@ void CTFWeaponBase::GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset
 	// VR-specific implementation
 #ifdef CLIENT_DLL
 	extern ConVar tfvr_enable_controller_tracking;
-	extern ConVar tfvr_controller_tracking_debug;
 	C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
 	if (pTFPlayer && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// Get the right controller pose for projectile firing
+		// Try to get muzzle position from VR hand's render weapon first
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if (pRightHand && pRightHand->GetHeldWeapon() == this)
+		{
+			Vector muzzlePos;
+			QAngle muzzleAngles;
+			if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+			{
+				// Apply spread angles if any
+				QAngle angSpread = GetSpreadAngles();
+				
+				// Use muzzle position and angles for projectile
+				*vecSrc = muzzlePos;
+				*angForward = angSpread;
+				return;
+			}
+		}
+		
+		// Fallback: use raw controller position if muzzle not available
 		VMatrix rightControllerPose;
 		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
 		{
-			// Extract position and angles from the pose matrix
 			Vector controllerPos = rightControllerPose.GetTranslation();
 			QAngle controllerAngles;
 			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
 			
-			// Apply spread angles if any
-			CTFWeaponBase *pWeapon = pTFPlayer->GetActiveTFWeapon();
-			QAngle angSpread = pWeapon ? pWeapon->GetSpreadAngles() : controllerAngles;
+			QAngle angSpread = GetSpreadAngles();
 			
-			// Get firing vectors from controller angles
-			Vector vecForward, vecRight, vecUp;
-			AngleVectors(angSpread, &vecForward, &vecRight, &vecUp);
-			
-			// In VR, projectiles start exactly at the controller position without offsets
 			*vecSrc = controllerPos;
-			
-			// Use controller angles directly for projectile direction
 			*angForward = angSpread;
-			
 			return;
 		}
 	}
