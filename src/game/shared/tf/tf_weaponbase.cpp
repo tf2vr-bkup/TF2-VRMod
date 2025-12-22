@@ -3198,7 +3198,7 @@ void CTFWeaponBase::CreateMuzzleFlashEffects( C_BaseEntity *pAttachEnt, int nInd
 void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* pAttachEnt )
 {
 #ifdef CLIENT_DLL
-	// VR: For weapons held by VR hands, get muzzle position from the VR hand's render weapon
+	// VR: For weapons held by VR hands, attach to the render weapon's muzzle so it follows
 	if ( m_bHeldByVRHand )
 	{
 		// Find the VR hand that's holding us
@@ -3209,20 +3209,12 @@ void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* p
 			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 			if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 			{
-				// Get muzzle position from the VR hand (which uses the render weapon)
-				Vector vecMuzzlePos;
-				QAngle angMuzzleAngles;
-				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( vecMuzzlePos, angMuzzleAngles ) )
+				// Get the render weapon and attach muzzle flash to IT so it follows the weapon
+				C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+				if ( pRenderWeapon )
 				{
-					// Apply additional particle effect orientation correction for Demoman
-					// The muzzle flash particle needs a different orientation than the shooting direction
-					if ( pOwner->GetPlayerClass()->GetClassIndex() == TF_CLASS_DEMOMAN )
-					{
-						// Rotate the angles 90 degrees in pitch to align the particle effect
-						angMuzzleAngles.x += 90.0f;
-					}
-					
-					DispatchParticleEffect( effectName, vecMuzzlePos, angMuzzleAngles, this );
+					// Use PATTACH_POINT_FOLLOW so the particle effect follows the render weapon's muzzle
+					DispatchParticleEffect( effectName, PATTACH_POINT_FOLLOW, pRenderWeapon, "muzzle" );
 					return;
 				}
 			}

@@ -1290,6 +1290,11 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	// Apply the position to the render weapon
 	pRenderWeapon->SetAbsOrigin(weaponPos);
 	pRenderWeapon->SetAbsAngles(weaponAng);
+	
+	// CRITICAL: Reset interpolation to prevent lag between hand and weapon
+	// This ensures the weapon snaps to position immediately without lerping
+	pRenderWeapon->ResetLatched();
+	pRenderWeapon->InvalidateBoneCache();
 }
 
 //-----------------------------------------------------------------------------
@@ -1731,6 +1736,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	pRenderWeapon->SetRenderMode(kRenderNormal);
 	pRenderWeapon->SetRenderColor(255, 255, 255, 255);
 	pRenderWeapon->RemoveEffects(EF_NODRAW);
+	
+	// CRITICAL: Disable interpolation so weapon follows hand without lag
+	pRenderWeapon->SetPredictionEligible(false);
 	
 	// VR: Don't parent - use manual positioning for better control
 	// Parenting doesn't work well because hand bones update at different times
