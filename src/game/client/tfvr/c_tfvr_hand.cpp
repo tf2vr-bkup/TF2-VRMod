@@ -1222,6 +1222,33 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		weaponAng = boneAng;
 	}
 	
+	// Apply per-weapon angle corrections for specific weapons
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (pWeapon)
+	{
+		const char *weaponClass = pWeapon->GetClassname();
+		
+		// Wrap Assassin needs a 90-degree rotation correction
+		if (V_stristr(weaponClass, "wrap"))
+		{
+			// Build current weapon transform
+			matrix3x4_t weaponTransform;
+			AngleMatrix(weaponAng, weaponPos, weaponTransform);
+			
+			// Create a 90-degree rotation correction in local space
+			matrix3x4_t correctionMatrix;
+			QAngle correction(0, 0, 90.0f); // Try roll first
+			AngleMatrix(correction, correctionMatrix);
+			
+			// Apply correction: final = current * correction (local space)
+			matrix3x4_t correctedTransform;
+			ConcatTransforms(weaponTransform, correctionMatrix, correctedTransform);
+			
+			// Extract corrected position and angles
+			MatrixAngles(correctedTransform, weaponAng, weaponPos);
+		}
+	}
+	
 	// Apply user adjustments in local weapon space
 	Vector userOffset(
 		tfvr_weapon_grip_offset_x.GetFloat(),
@@ -1345,16 +1372,19 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 	switch (playerClass)
 	{
 		case TF_CLASS_SCOUT:
-			// Scout: sg_idle, p_idle, b_idle, wb_idle, ss_idle, db_idle, ed_idle, throw_idle, bm_idle, spell_*
+			// Scout: sg_idle, p_idle, b_idle, wb_idle, ss_idle (shortstop), db_idle (?), ed_idle (drinks/jars), throw_idle (throwables), bm_idle
+			if (V_stristr(weaponClass, "pep_brawler_blaster")) return "sg_idle"; // Baby Face's Blaster
+			if (V_stristr(weaponClass, "soda_popper")) return "sg_idle"; // Soda Popper
 			if (V_stristr(weaponClass, "scattergun")) return "sg_idle";
 			if (V_stristr(weaponClass, "handgun_scout")) return "ss_idle"; // Shortstop
 			if (V_stristr(weaponClass, "pistol")) return "p_idle";
+			if (V_stristr(weaponClass, "wrap")) return "wb_idle"; // Wrap Assassin (melee with ball)
 			if (V_stristr(weaponClass, "bat")) return "b_idle";
-			if (V_stristr(weaponClass, "wrap")) return "wb_idle"; // Wrap Assassin
-			if (V_stristr(weaponClass, "drink")) return "db_idle"; // Bonk/Crit-a-Cola
+			if (V_stristr(weaponClass, "lunchbox_drink")) return "ed_idle"; // Bonk/Crit-a-Cola
 			if (V_stristr(weaponClass, "jar_milk")) return "ed_idle"; // Mad Milk
+			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Generic jar
 			if (V_stristr(weaponClass, "cleaver")) return "throw_idle"; // Flying Guillotine
-			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle"; // Generic throwables
 			if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
 			break;
 			
@@ -1407,12 +1437,13 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 			break;
 			
 		case TF_CLASS_ENGINEER:
-			// Engineer: idle, pstl_idle, gun_idle, pda_idle, bld_idle, fj_idle, wgl_idle, pdq_idle, spk_idle, pomson_idle, box_idle, throw_idle
-			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_idle"; // Frontier Justice (check first, before shotgun)
-			if (V_stristr(weaponClass, "shotgun")) return "idle";
+			// Engineer: fj_idle, pstl_idle, gun_idle, pdq_idle_tap, pda_idle, bld_idle, wgl_idle, spk_idle, pomson_idle, box_idle, throw_idle
+			// Check specific weapons before generic shotgun
+			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_idle"; // Frontier Justice
+			if (V_stristr(weaponClass, "shotgun")) return "fj_idle"; // All other shotguns also use FJ pose
 			if (V_stristr(weaponClass, "pistol")) return "pstl_idle";
-			if (V_stristr(weaponClass, "wrench")) return "gun_idle";
-			if (V_stristr(weaponClass, "robot_arm")) return "gun_idle"; // Gunslinger
+			if (V_stristr(weaponClass, "wrench")) return "pdq_idle_tap"; // Wrench
+			if (V_stristr(weaponClass, "robot_arm")) return "pdq_idle_tap"; // Gunslinger
 			if (V_stristr(weaponClass, "pda_engineer_build")) return "bld_idle";
 			if (V_stristr(weaponClass, "pda_engineer_destroy")) return "pda_idle";
 			if (V_stristr(weaponClass, "laser_pointer")) return "wgl_idle"; // Wrangler

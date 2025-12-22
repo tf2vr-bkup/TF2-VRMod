@@ -232,9 +232,26 @@ void CTFBat_Wood::SecondaryAttackAnim( CTFPlayer *pPlayer )
 void CTFBat_Wood::GetBallDynamics( Vector& vecLoc, QAngle& vecAngles, Vector& vecVelocity, AngularImpulse& angImpulse, CTFPlayer* pPlayer )
 {
 	Vector vecForward, vecUp;
-	AngleVectors( pPlayer->EyeAngles(), &vecForward, NULL, &vecUp );
-	vecLoc    = pPlayer->GetAbsOrigin() + pPlayer->GetModelScale() * ( Vector( 0, 0, 50 ) + vecForward * 32.f );
-	vecAngles = pPlayer->GetAbsAngles();
+	QAngle shootAngles;
+	
+	// VR: Use weapon shoot position and angles (works on both client and server)
+	if ( pPlayer && pPlayer->IsInVRMode() )
+	{
+		shootAngles = pPlayer->Weapon_ShootAngles();
+		vecLoc = pPlayer->Weapon_ShootPosition();
+		vecAngles = shootAngles;
+	}
+	else
+	{
+		// Standard: Use eye angles and offset from player origin
+		shootAngles = pPlayer->EyeAngles();
+		AngleVectors( shootAngles, &vecForward, NULL, &vecUp );
+		vecLoc = pPlayer->GetAbsOrigin() + pPlayer->GetModelScale() * ( Vector( 0, 0, 50 ) + vecForward * 32.f );
+		vecAngles = pPlayer->GetAbsAngles();
+	}
+	
+	// Get direction vectors from shoot angles
+	AngleVectors( shootAngles, &vecForward, NULL, &vecUp );
 
 	// Calculate the initial impulse on the item.
 	vecVelocity = Vector( 0.0f, 0.0f, 0.0f );
