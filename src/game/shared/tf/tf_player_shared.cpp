@@ -118,9 +118,10 @@ ConVar tf_spy_invis_time( "tf_spy_invis_time", "1.0", FCVAR_DEVELOPMENTONLY | FC
 ConVar tf_spy_invis_unstealth_time( "tf_spy_invis_unstealth_time", "2.0", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED, "Transition time in and out of spy invisibility", true, 0.1, true, 5.0 );
 
 // VR tracer offset ConVars
-ConVar tfvr_tracer_offset_forward( "tfvr_tracer_offset_forward", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along forward axis" );
-ConVar tfvr_tracer_offset_right( "tfvr_tracer_offset_right", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along right axis" );
-ConVar tfvr_tracer_offset_up( "tfvr_tracer_offset_up", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along up axis" );
+ConVar tfvr_tracer_offset_forward( "tfvr_tracer_offset_forward", "0", FCVAR_ARCHIVE, "VR tracer offset along forward axis" );
+ConVar tfvr_tracer_offset_right( "tfvr_tracer_offset_right", "0", FCVAR_ARCHIVE, "VR tracer offset along right axis" );
+ConVar tfvr_tracer_offset_up( "tfvr_tracer_offset_up", "-4", FCVAR_ARCHIVE, "VR tracer offset along up axis" );
+ConVar tfvr_tracer_velocity_compensation( "tfvr_tracer_velocity_compensation", "0.033", FCVAR_ARCHIVE, "VR tracer velocity compensation factor (seconds)" );
 
 ConVar tf_spy_max_cloaked_speed( "tf_spy_max_cloaked_speed", "999", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );	// no cap
 ConVar tf_whip_speed_increase( "tf_whip_speed_increase", "105", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );
@@ -10492,6 +10493,12 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 					muzzlePos += forward * tfvr_tracer_offset_forward.GetFloat();
 					muzzlePos += right * tfvr_tracer_offset_right.GetFloat();
 					muzzlePos += up * tfvr_tracer_offset_up.GetFloat();
+					
+					// Compensate for player velocity - tracers render after the shot was fired,
+					// so offset the start position forward along velocity to match current visual
+					Vector velocity = pTFPlayer->GetAbsVelocity();
+					float velocityCompensation = tfvr_tracer_velocity_compensation.GetFloat();
+					muzzlePos += velocity * velocityCompensation;
 					
 					vecStart = muzzlePos;
 				}

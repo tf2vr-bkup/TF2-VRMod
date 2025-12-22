@@ -3198,7 +3198,7 @@ void CTFWeaponBase::CreateMuzzleFlashEffects( C_BaseEntity *pAttachEnt, int nInd
 void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* pAttachEnt )
 {
 #ifdef CLIENT_DLL
-	// VR: For weapons held by VR hands, attach to the render weapon's muzzle so it follows
+	// VR: For weapons held by VR hands, spawn at muzzle position with velocity compensation
 	if ( m_bHeldByVRHand )
 	{
 		// Find the VR hand that's holding us
@@ -3209,12 +3209,19 @@ void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* p
 			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 			if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 			{
-				// Get the render weapon and attach muzzle flash to IT so it follows the weapon
-				C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
-				if ( pRenderWeapon )
+				// Get muzzle position and angles from VR hand
+				Vector vecMuzzlePos;
+				QAngle angMuzzleAngles;
+				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( vecMuzzlePos, angMuzzleAngles ) )
 				{
-					// Use PATTACH_POINT_FOLLOW so the particle effect follows the render weapon's muzzle
-					DispatchParticleEffect( effectName, PATTACH_POINT_FOLLOW, pRenderWeapon, "muzzle" );
+					// Compensate for player velocity (same as tracers)
+					extern ConVar tfvr_tracer_velocity_compensation;
+					Vector velocity = pOwner->GetAbsVelocity();
+					float velocityCompensation = tfvr_tracer_velocity_compensation.GetFloat();
+					vecMuzzlePos += velocity * velocityCompensation;
+					
+					// Spawn at world position - muzzle flash is short-lived so won't drift noticeably
+					DispatchParticleEffect( effectName, vecMuzzlePos, angMuzzleAngles );
 					return;
 				}
 			}
