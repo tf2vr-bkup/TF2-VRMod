@@ -117,6 +117,11 @@ ConVar tf_scout_air_dash_count( "tf_scout_air_dash_count", "1", FCVAR_REPLICATED
 ConVar tf_spy_invis_time( "tf_spy_invis_time", "1.0", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED, "Transition time in and out of spy invisibility", true, 0.1, true, 5.0 );
 ConVar tf_spy_invis_unstealth_time( "tf_spy_invis_unstealth_time", "2.0", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED, "Transition time in and out of spy invisibility", true, 0.1, true, 5.0 );
 
+// VR tracer offset ConVars
+ConVar tfvr_tracer_offset_forward( "tfvr_tracer_offset_forward", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along forward axis" );
+ConVar tfvr_tracer_offset_right( "tfvr_tracer_offset_right", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along right axis" );
+ConVar tfvr_tracer_offset_up( "tfvr_tracer_offset_up", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along up axis" );
+
 ConVar tf_spy_max_cloaked_speed( "tf_spy_max_cloaked_speed", "999", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );	// no cap
 ConVar tf_whip_speed_increase( "tf_whip_speed_increase", "105", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );
 ConVar tf_max_health_boost( "tf_max_health_boost", "1.5", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED, "Max health factor that players can be boosted to by healers.", true, 1.0, false, 0 );
@@ -10479,6 +10484,15 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 				QAngle muzzleAngles;
 				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
 				{
+					// Apply adjustable offset to align tracers with muzzle
+					Vector forward, right, up;
+					AngleVectors( muzzleAngles, &forward, &right, &up );
+					
+					// Apply ConVar-controlled offsets along each axis
+					muzzlePos += forward * tfvr_tracer_offset_forward.GetFloat();
+					muzzlePos += right * tfvr_tracer_offset_right.GetFloat();
+					muzzlePos += up * tfvr_tracer_offset_up.GetFloat();
+					
 					vecStart = muzzlePos;
 				}
 			}

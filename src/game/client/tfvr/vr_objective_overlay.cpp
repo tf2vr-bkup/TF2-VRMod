@@ -254,15 +254,6 @@ void CVRObjectiveOverlay::RenderObjectiveQuad()
         worldWidth = tfvr_objective_overlay_world_width.GetFloat();
     }
     
-    // Debug output
-    static float lastDebugTime = 0.0f;
-    if (gpGlobals->curtime - lastDebugTime > 2.0f)
-    {
-        Msg(_T("VR Objective: Rendering panel %dx%d at scale %.2f (world %.2fx%.2f)\n"), 
-            panelWidth, panelHeight, scale, worldWidth, worldHeight);
-        lastDebugTime = gpGlobals->curtime;
-    }
-    
     // Use DrawPanelIn3DSpace directly - simple and reliable!
     g_pMatSystemSurface->DrawPanelIn3DSpace(
         m_pMainObjectivePanel->GetVPanel(),  // The main objective panel

@@ -1372,7 +1372,7 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 	switch (playerClass)
 	{
 		case TF_CLASS_SCOUT:
-			// Scout: sg_idle, p_idle, b_idle, wb_idle, ss_idle (shortstop), db_idle (?), ed_idle (drinks/jars), throw_idle (throwables), bm_idle
+			// Scout: sg_idle, p_idle, b_idle, wb_idle, ss_idle (shortstop), db_idle (?), ed_idle (drinks/milk), throw_idle (guillotine), bm_idle
 			if (V_stristr(weaponClass, "pep_brawler_blaster")) return "sg_idle"; // Baby Face's Blaster
 			if (V_stristr(weaponClass, "soda_popper")) return "sg_idle"; // Soda Popper
 			if (V_stristr(weaponClass, "scattergun")) return "sg_idle";
@@ -1381,16 +1381,16 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 			if (V_stristr(weaponClass, "wrap")) return "wb_idle"; // Wrap Assassin (melee with ball)
 			if (V_stristr(weaponClass, "bat")) return "b_idle";
 			if (V_stristr(weaponClass, "lunchbox_drink")) return "ed_idle"; // Bonk/Crit-a-Cola
-			if (V_stristr(weaponClass, "jar_milk")) return "ed_idle"; // Mad Milk
-			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Generic jar
-			if (V_stristr(weaponClass, "cleaver")) return "throw_idle"; // Flying Guillotine
-			if (V_stristr(weaponClass, "throwable")) return "throw_idle"; // Generic throwables
+			if (V_stristr(weaponClass, "jar_milk")) return "ed_idle"; // Mad Milk (check first - more specific)
+			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Flying Guillotine (tf_weapon_jar) - temporarily using ed_idle
+			if (V_stristr(weaponClass, "throwable")) return "ed_idle"; // Generic throwables - temporarily using ed_idle
 			if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
 			break;
 			
 		case TF_CLASS_SOLDIER:
 			// Soldier: dh_idle, idle, s_idle, bb_idle, wh_idle, bison_idle, bet_idle, throw_idle
 			if (V_stristr(weaponClass, "rocketlauncher")) return "dh_idle";
+			if (V_stristr(weaponClass, "particle_cannon")) return "dh_idle"; // Cow Mangler
 			if (V_stristr(weaponClass, "shotgun")) return "idle";
 			if (V_stristr(weaponClass, "shovel")) return "s_idle";
 			if (V_stristr(weaponClass, "pickaxe")) return "s_idle"; // Equalizer
