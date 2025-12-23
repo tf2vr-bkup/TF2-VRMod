@@ -10,9 +10,33 @@
 #include "bone_setup.h"
 #include "engine/ivdebugoverlay.h"
 #include "filesystem.h"
+#include "econ/ihasowner.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+//-----------------------------------------------------------------------------
+// Purpose: Custom render weapon class that implements IHasOwner for material proxies
+//          This allows crit glow and other effects to work properly
+//-----------------------------------------------------------------------------
+class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
+{
+	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
+	
+public:
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL) {}
+	
+	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
+	
+	// IHasOwner interface
+	virtual CBaseEntity *GetOwnerViaInterface(void) OVERRIDE
+	{
+		return m_hOwnerPlayer.Get();
+	}
+	
+private:
+	CHandle<C_TFPlayer> m_hOwnerPlayer;
+};
 
 // ConVars for debugging and control
 ConVar tfvr_hands_enabled("tfvr_hands_enabled", "1", FCVAR_ARCHIVE, "Enable VR hand rendering");
@@ -342,6 +366,11 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 
 	// Set to think every frame (do this after model is set)
 	SetNextClientThink(CLIENT_THINK_ALWAYS);
+	
+	// Set initial skin based on team
+	int iTeamNumber = pOwner->GetTeamNumber();
+	m_nSkin = (iTeamNumber == TF_TEAM_BLUE) ? 1 : 0;
+	Msg("VR Hand (%s): Team=%d, Skin=%d\n", IsLeftHand() ? "LEFT" : "RIGHT", iTeamNumber, m_nSkin);
 
 	return true;
 }
@@ -528,6 +557,38 @@ void C_TFVRHand::Update()
 	// Force shadow updates every frame
 	AddToLeafSystem(RENDER_GROUP_OPAQUE_ENTITY);
 	MarkShadowDirty(true);
+	
+	// Check if the player's active weapon has changed (for right hand only)
+	if (IsRightHand())
+	{
+		C_TFWeaponBase *pActiveWeapon = pOwner->GetActiveTFWeapon();
+		C_TFWeaponBase *pCurrentHeld = m_hHeldWeapon.Get();
+		
+		// Detect weapon change: either different weapon, or current held weapon is now invalid
+		bool bNeedsWeaponUpdate = false;
+		
+		if (pActiveWeapon != pCurrentHeld)
+		{
+			bNeedsWeaponUpdate = true;
+		}
+		else if (pCurrentHeld && !pCurrentHeld->GetOwner())
+		{
+			// Held weapon is orphaned (regenerated/respawned), need to refresh
+			bNeedsWeaponUpdate = true;
+		}
+		
+		if (bNeedsWeaponUpdate)
+		{
+			if (pActiveWeapon)
+			{
+				EquipWeapon(pActiveWeapon);
+			}
+			else
+			{
+				UnequipWeapon();
+			}
+		}
+	}
 
 	// Update this hand's position and orientation
 	UpdateHandTransform();
@@ -537,6 +598,9 @@ void C_TFVRHand::Update()
 	
 	// Update weapon position if we're holding one
 	UpdateWeaponTransform();
+	
+	// Sync skins for hands and weapons (team colors, crit effects, etc.)
+	UpdateSkins();
 
 	// Debug visualization
 	if (tfvr_hands_debug.GetBool() && debugoverlay)
@@ -1715,8 +1779,12 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	if (!worldModel || !worldModel[0])
 		return;
 	
-	// Create a simple animating entity for rendering the weapon
-	C_BaseAnimating *pRenderWeapon = new C_BaseAnimating;
+	// Get owner player for effects
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	
+	// Create our custom render weapon that implements IHasOwner for material proxies
+	// (This allows crit glow and other effects to work properly)
+	C_VRRenderWeapon *pRenderWeapon = new C_VRRenderWeapon;
 	if (!pRenderWeapon)
 		return;
 	
@@ -1726,6 +1794,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		pRenderWeapon->Release();
 		return;
 	}
+	
+	// Set owner for material proxies (crit glow, etc.)
+	pRenderWeapon->SetOwnerPlayer(pOwner);
 	
 	// Store the render weapon
 	m_hRenderWeapon = pRenderWeapon;
@@ -1739,6 +1810,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// CRITICAL: Disable interpolation so weapon follows hand without lag
 	pRenderWeapon->SetPredictionEligible(false);
+	
+	// Set initial skin for team colors (will be updated each frame for crit effects, etc.)
+	pRenderWeapon->m_nSkin = pWeapon->GetSkin();
 	
 	// VR: Don't parent - use manual positioning for better control
 	// Parenting doesn't work well because hand bones update at different times
@@ -1825,6 +1899,52 @@ void C_TFVRHand::UpdateWeaponTransform()
 	
 	// NOTE: Weapon positioning is now handled in SetupBones() -> PositionWeaponFromBones()
 	// This ensures the weapon_bone has the correct pose applied before we read it
+}
+
+// Debug output for skin issues
+static ConVar tfvr_debug_skins("tfvr_debug_skins", "0", FCVAR_NONE, "Debug VR hand/weapon skin changes");
+
+//-----------------------------------------------------------------------------
+// Purpose: Update skins for hands and weapons based on team, crit state, etc.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateSkins()
+{
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (!pOwner)
+		return;
+	
+	int iTeamNumber = pOwner->GetTeamNumber();
+	
+	// Determine hand skin based on team
+	// TF2 hand models typically use skin 0 for RED, skin 1 for BLU
+	int nHandSkin = (iTeamNumber == TF_TEAM_BLUE) ? 1 : 0;
+	
+	// Apply hand skin if changed
+	if (m_nSkin != nHandSkin)
+	{
+		if (tfvr_debug_skins.GetBool())
+		{
+			Msg("VR Hand (%s): Changing skin from %d to %d (team=%d, TF_TEAM_RED=%d, TF_TEAM_BLUE=%d)\n",
+				IsLeftHand() ? "LEFT" : "RIGHT", m_nSkin, nHandSkin, iTeamNumber, TF_TEAM_RED, TF_TEAM_BLUE);
+		}
+		m_nSkin = nHandSkin;
+	}
+	
+	// Update render weapon skin
+	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+	C_TFWeaponBase *pHeldWeapon = m_hHeldWeapon.Get();
+	
+	if (pRenderWeapon && pHeldWeapon)
+	{
+		// Get the weapon's proper skin (handles team colors, item skins, etc.)
+		int nWeaponSkin = pHeldWeapon->GetSkin();
+		
+		// Apply to render weapon if changed
+		if (pRenderWeapon->m_nSkin != nWeaponSkin)
+		{
+			pRenderWeapon->m_nSkin = nWeaponSkin;
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------

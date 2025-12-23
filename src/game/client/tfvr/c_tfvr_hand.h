@@ -89,6 +89,7 @@ public:
 	C_TFWeaponBase* GetHeldWeapon() const { return m_hHeldWeapon.Get(); }
 	C_BaseAnimating* GetRenderWeapon() const { return m_hRenderWeapon.Get(); }
 	void UpdateWeaponTransform();
+	void UpdateSkins();  // Sync skins for team colors, crit effects, etc.
 	
 	// Position weapon using already-computed bone matrices (called from SetupBones)
 	void PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
