@@ -4573,6 +4573,20 @@ CTFPlayer *CTFWeaponBase::GetTFPlayerOwner() const
 // -----------------------------------------------------------------------------
 C_BaseEntity *CTFWeaponBase::GetWeaponForEffect()
 {
+	// In VR, get the VR render weapon from the hand - it has correct position and attachments
+	if ( m_bHeldByVRHand )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand )
+		{
+			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+			if ( pRenderWeapon )
+			{
+				return pRenderWeapon;
+			}
+		}
+	}
+	
 	return GetAppropriateWorldOrViewModel();
 }
 
@@ -4966,20 +4980,46 @@ bool CTFWeaponBase::OnFireEvent( C_BaseViewModel *pViewModel, const Vector& orig
 		}
 
 		CEffectData data;
-		// Look for 'eject_brass' attachment first instead of using options which is a seemingly magic number
-		if ( m_iEjectBrassAttachpoint == -2 )
+		bool bGotAttachment = false;
+		
+		// In VR, get the attachment from the VR render weapon instead of viewmodel
+		if ( m_bHeldByVRHand )
 		{
-			m_iEjectBrassAttachpoint = pViewModel->LookupAttachment( "eject_brass" );
+			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+			if ( pRightHand )
+			{
+				C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+				if ( pRenderWeapon )
+				{
+					int iEjectAttach = pRenderWeapon->LookupAttachment( "eject_brass" );
+					if ( iEjectAttach > 0 )
+					{
+						pRenderWeapon->GetAttachment( iEjectAttach, data.m_vOrigin, data.m_vAngles );
+						bGotAttachment = true;
+					}
+				}
+			}
 		}
+		
+		// Fallback to viewmodel if VR attachment not found
+		if ( !bGotAttachment )
+		{
+			// Look for 'eject_brass' attachment first instead of using options which is a seemingly magic number
+			if ( m_iEjectBrassAttachpoint == -2 )
+			{
+				m_iEjectBrassAttachpoint = pViewModel->LookupAttachment( "eject_brass" );
+			}
 
-		if ( m_iEjectBrassAttachpoint > 0 )
-		{
-			pViewModel->GetAttachment( m_iEjectBrassAttachpoint, data.m_vOrigin, data.m_vAngles );
+			if ( m_iEjectBrassAttachpoint > 0 )
+			{
+				pViewModel->GetAttachment( m_iEjectBrassAttachpoint, data.m_vOrigin, data.m_vAngles );
+			}
+			else
+			{
+				pViewModel->GetAttachment( atoi(options), data.m_vOrigin, data.m_vAngles );
+			}
 		}
-		else
-		{
-			pViewModel->GetAttachment( atoi(options), data.m_vOrigin, data.m_vAngles );
-		}
+		
 		data.m_nDamageType = GetAttributeContainer()->GetItem() ? GetAttributeContainer()->GetItem()->GetItemDefIndex() : 0;
 		data.m_nHitBox = GetWeaponID();
 		DispatchEffect( "TF_EjectBrass", data );
