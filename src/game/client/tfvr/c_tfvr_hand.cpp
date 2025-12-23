@@ -1240,37 +1240,85 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		// Check if weapon has a weapon_bone we need to align
 		int weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone");
 		
+		if (tfvr_debug_weapon_position.GetBool())
+		{
+			C_TFWeaponBase *pDebugWeapon = m_hHeldWeapon.Get();
+			Msg("Weapon: %s, weapon_bone index: %d, hand weapon_bone: %d\n", 
+				pDebugWeapon ? pDebugWeapon->GetClassname() : "null",
+				weaponWeaponBone,
+				handWeaponBone);
+			Msg("Hand anim sequence: %d, Hand model: %s\n",
+				GetSequence(), 
+				GetModelName() ? GetModelName() : "null");
+		}
+		
 		if (weaponWeaponBone >= 0)
 		{
-			// Get weapon_bone position in MODEL SPACE
+			// Get the weapon's weapon_bone transform in MODEL SPACE (bind pose)
+			// We need to walk up the bone hierarchy to get the full transform
 			CStudioHdr *pWeaponHdr = pRenderWeapon->GetModelPtr();
 			if (pWeaponHdr)
 			{
-				mstudiobone_t *pWeaponBone = pWeaponHdr->pBone(weaponWeaponBone);
-				if (pWeaponBone)
+				// Build the full model-space transform by walking up the bone hierarchy
+				matrix3x4_t weaponBoneModelSpace;
+				SetIdentityMatrix(weaponBoneModelSpace);
+				
+				int currentBone = weaponWeaponBone;
+				int boneCount = 0;
+				while (currentBone >= 0)
 				{
-					Vector weaponBonePos = pWeaponBone->pos;
-					QAngle weaponBoneAng;
-					QuaternionAngles(pWeaponBone->quat, weaponBoneAng);
+					mstudiobone_t *pBone = pWeaponHdr->pBone(currentBone);
+					if (!pBone)
+						break;
 					
-					// Build weapon_bone transform
-					matrix3x4_t weaponBoneMatrix;
-					AngleMatrix(weaponBoneAng, weaponBonePos, weaponBoneMatrix);
+					if (tfvr_debug_weapon_position.GetBool())
+					{
+						QAngle debugAng;
+						QuaternionAngles(pBone->quat, debugAng);
+						Msg("  Bone[%d] '%s': pos=(%.1f, %.1f, %.1f) ang=(%.1f, %.1f, %.1f) parent=%d\n",
+							currentBone, pBone->pszName(),
+							pBone->pos.x, pBone->pos.y, pBone->pos.z,
+							debugAng.x, debugAng.y, debugAng.z,
+							pBone->parent);
+					}
 					
-					// Invert to get transform from weapon_bone space to weapon origin
-					matrix3x4_t weaponBoneInverse;
-					MatrixInvert(weaponBoneMatrix, weaponBoneInverse);
+					// Get this bone's local transform
+					matrix3x4_t localBoneMatrix;
+					QAngle localAng;
+					QuaternionAngles(pBone->quat, localAng);
+					AngleMatrix(localAng, pBone->pos, localBoneMatrix);
 					
-					// Apply: weapon_origin = hand_weapon_bone * weapon_bone_inverse
-					matrix3x4_t weaponTransform;
-					ConcatTransforms(handWeaponBoneMatrix, weaponBoneInverse, weaponTransform);
+					// Prepend to the chain: modelSpace = local * child
+					matrix3x4_t temp;
+					ConcatTransforms(localBoneMatrix, weaponBoneModelSpace, temp);
+					MatrixCopy(temp, weaponBoneModelSpace);
 					
-					MatrixAngles(weaponTransform, weaponAng, weaponPos);
+					// Move to parent
+					currentBone = pBone->parent;
+					boneCount++;
 				}
-				else
+				
+				// Invert to get transform from weapon_bone space to weapon origin
+				matrix3x4_t weaponBoneInverse;
+				MatrixInvert(weaponBoneModelSpace, weaponBoneInverse);
+				
+				// Apply: weapon_origin = hand_weapon_bone * weapon_bone_inverse
+				matrix3x4_t weaponTransform;
+				ConcatTransforms(handWeaponBoneMatrix, weaponBoneInverse, weaponTransform);
+				
+				MatrixAngles(weaponTransform, weaponAng, weaponPos);
+				
+				if (tfvr_debug_weapon_position.GetBool())
 				{
-					weaponPos = bonePos;
-					weaponAng = boneAng;
+					Vector debugBonePos;
+					QAngle debugBoneAng;
+					MatrixAngles(weaponBoneModelSpace, debugBoneAng, debugBonePos);
+					Msg("Final weapon_bone model-space (%d bones): pos=(%.1f, %.1f, %.1f) ang=(%.1f, %.1f, %.1f)\n",
+						boneCount, debugBonePos.x, debugBonePos.y, debugBonePos.z,
+						debugBoneAng.x, debugBoneAng.y, debugBoneAng.z);
+					Msg("Hand weapon_bone world: pos=(%.1f, %.1f, %.1f) ang=(%.1f, %.1f, %.1f)\n",
+						bonePos.x, bonePos.y, bonePos.z,
+						boneAng.x, boneAng.y, boneAng.z);
 				}
 			}
 			else
@@ -1281,37 +1329,17 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		}
 		else
 		{
-		// No weapon_bone, use hand's weapon_bone directly
-		weaponPos = bonePos;
-		weaponAng = boneAng;
-	}
-	
-	// Apply per-weapon angle corrections for specific weapons
-	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
-	if (pWeapon)
-	{
-		const char *weaponClass = pWeapon->GetClassname();
-		
-		// Wrap Assassin needs a 90-degree rotation correction
-		if (V_stristr(weaponClass, "wrap"))
-		{
-			// Build current weapon transform
-			matrix3x4_t weaponTransform;
-			AngleMatrix(weaponAng, weaponPos, weaponTransform);
-			
-			// Create a 90-degree rotation correction in local space
-			matrix3x4_t correctionMatrix;
-			QAngle correction(0, 0, 90.0f); // Try roll first
-			AngleMatrix(correction, correctionMatrix);
-			
-			// Apply correction: final = current * correction (local space)
-			matrix3x4_t correctedTransform;
-			ConcatTransforms(weaponTransform, correctionMatrix, correctedTransform);
-			
-			// Extract corrected position and angles
-			MatrixAngles(correctedTransform, weaponAng, weaponPos);
+			// No weapon_bone, use hand's weapon_bone directly
+			if (tfvr_debug_weapon_position.GetBool())
+			{
+				Msg("No weapon_bone found, using hand weapon_bone directly\n");
+			}
+			weaponPos = bonePos;
+			weaponAng = boneAng;
 		}
-	}
+	
+	// Per-weapon corrections can be added here if needed
+	// (Most weapons should work with proper bone hierarchy calculation above)
 	
 	// Apply user adjustments in local weapon space
 	Vector userOffset(
@@ -1433,10 +1461,42 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 //-----------------------------------------------------------------------------
 // Purpose: Get the appropriate hand animation name for a weapon
 //-----------------------------------------------------------------------------
-const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
+const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
 {
 	// Default fallback
 	const char *defaultAnim = "ref";
+	
+	// Check if this is an all-class melee weapon (frying pan, saxxy, etc.)
+	// These should use the class's default melee animation
+	// NOTE: melee_allclass_idle animation crashes in AccumulatePose, so we use class-specific melee anims
+	bool bIsAllClassMelee = false;
+	if (pWeapon)
+	{
+		const char *worldModel = pWeapon->GetWorldModel();
+		if (worldModel)
+		{
+			if (V_stristr(worldModel, "frying_pan") ||
+				V_stristr(worldModel, "saxxy") ||
+				V_stristr(worldModel, "golden_wrench") ||
+				V_stristr(worldModel, "necro_smasher") ||
+				V_stristr(worldModel, "crossing_guard") ||
+				V_stristr(worldModel, "freedom_staff") ||
+				V_stristr(worldModel, "ham_shank") ||
+				V_stristr(worldModel, "memory_maker") ||
+				V_stristr(worldModel, "prinny_machete") ||
+				V_stristr(worldModel, "conscientious"))
+			{
+				bIsAllClassMelee = true;
+			}
+		}
+	}
+	
+	// For all-class melee weapons, use melee_allclass_idle
+	// AccumulatePose will detect invalid animation data and skip it gracefully
+	if (bIsAllClassMelee)
+	{
+		return "melee_allclass_idle";
+	}
 	
 	switch (playerClass)
 	{
@@ -1450,9 +1510,10 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 			if (V_stristr(weaponClass, "wrap")) return "wb_idle"; // Wrap Assassin (melee with ball)
 			if (V_stristr(weaponClass, "bat")) return "b_idle";
 			if (V_stristr(weaponClass, "lunchbox_drink")) return "ed_idle"; // Bonk/Crit-a-Cola
-			if (V_stristr(weaponClass, "jar_milk")) return "ed_idle"; // Mad Milk (check first - more specific)
-			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Flying Guillotine (tf_weapon_jar) - temporarily using ed_idle
-			if (V_stristr(weaponClass, "throwable")) return "ed_idle"; // Generic throwables - temporarily using ed_idle
+			if (V_stristr(weaponClass, "jar_milk")) return "ed_idle"; // Mad Milk
+			if (V_stristr(weaponClass, "cleaver")) return "throw_idle"; // Flying Guillotine
+			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Other jars/throwables
+			if (V_stristr(weaponClass, "throwable")) return "throw_idle"; // Generic throwables
 			if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
 			break;
 			
@@ -1558,8 +1619,7 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 			break;
 	}
 	
-	// Check for universal weapon types that apply to all classes
-	if (V_stristr(weaponClass, "melee_allclass")) return "melee_allclass_idle";
+	// Check for other universal weapon types (melee_allclass is handled at the start via GetActivityWeaponRole)
 	if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
 	
 	return defaultAnim;
@@ -1588,7 +1648,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 	const char *weaponClass = pWeapon->GetClassname();
 	
 	// Get the appropriate animation name for this weapon and class
-	const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass);
+	const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass, pWeapon);
 	
 	// Look up the sequence
 	int sequence = LookupSequence(animName);
@@ -1613,10 +1673,55 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 	Vector pos[MAXSTUDIOBONES];
 	Quaternion q[MAXSTUDIOBONES];
 	
+	// Create pose parameter array with default values
+	// This is needed for sequences with blendlayers (like melee_allclass which uses r_handposes)
+	float poseParameters[MAXSTUDIOPOSEPARAM];
+	for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+	{
+		poseParameters[i] = 0.0f;
+	}
+	
 	// Sample the animation pose
-	IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, NULL);
+	IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
 	boneSetup.InitPose(pos, q);
-	boneSetup.AccumulatePose(pos, q, sequence, cycle, 1.0f, gpGlobals->curtime, NULL);
+	
+	// Check if this sequence has valid local animation data
+	// $declaresequence animations for melee_allclass reference data that may not be 
+	// in the included animation model. We need to sample from a model that has the data.
+	bool bHasValidAnimData = (seqdesc.groupsize[0] > 0 && seqdesc.groupsize[1] > 0);
+	
+	// For animations without valid local data (like melee_allclass from $declaresequence)
+	// we simply skip the AccumulatePose and use the bind pose for fingers
+	// The weapon positioning still works via weapon_bone
+	bool bSampledFromAnimModel = false;
+	
+	// Debug: compare working vs non-working animations
+	if (tfvr_debug_weapon_position.GetBool())
+	{
+		// Also check a known working animation for comparison
+		int testSeq = LookupSequence("s_idle");
+		if (testSeq >= 0)
+		{
+			mstudioseqdesc_t &testDesc = pStudioHdr->pSeqdesc(testSeq);
+			Msg("ANIM DEBUG: '%s' seq=%d groupsize=[%d,%d] vs 's_idle' seq=%d groupsize=[%d,%d]\n",
+				animName, sequence, seqdesc.groupsize[0], seqdesc.groupsize[1],
+				testSeq, testDesc.groupsize[0], testDesc.groupsize[1]);
+		}
+		else
+		{
+			Msg("ANIM DEBUG: '%s' seq=%d groupsize=[%d,%d] (s_idle not found)\n",
+				animName, sequence, seqdesc.groupsize[0], seqdesc.groupsize[1]);
+		}
+		
+		// Log sequence flags and other info
+		Msg("ANIM DEBUG: seqdesc.flags=0x%x numblends=%d numautolayers=%d animindexindex=%d\n",
+			seqdesc.flags, seqdesc.numblends, seqdesc.numautolayers, seqdesc.animindexindex);
+	}
+	
+	if (!bSampledFromAnimModel && bHasValidAnimData)
+	{
+		boneSetup.AccumulatePose(pos, q, sequence, cycle, 1.0f, gpGlobals->curtime, NULL);
+	}
 	
 	// Now apply the sampled finger bone rotations to the output bones
 	// We also need to apply it to weapon_bone so weapons attach correctly
