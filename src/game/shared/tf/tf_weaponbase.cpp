@@ -3209,20 +3209,30 @@ void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* p
 			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 			if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 			{
-				// Get muzzle position and angles from VR hand
-				Vector vecMuzzlePos;
-				QAngle angMuzzleAngles;
-				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( vecMuzzlePos, angMuzzleAngles ) )
+				// Get the render weapon and use its muzzle attachment directly
+				// This avoids aim corrections that are applied for projectile direction
+				C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+				if ( pRenderWeapon )
 				{
-					// Compensate for player velocity (same as tracers)
-					extern ConVar tfvr_tracer_velocity_compensation;
-					Vector velocity = pOwner->GetAbsVelocity();
-					float velocityCompensation = tfvr_tracer_velocity_compensation.GetFloat();
-					vecMuzzlePos += velocity * velocityCompensation;
+					Vector vecMuzzlePos;
+					QAngle angMuzzleAngles;
 					
-					// Spawn at world position - muzzle flash is short-lived so won't drift noticeably
-					DispatchParticleEffect( effectName, vecMuzzlePos, angMuzzleAngles );
-					return;
+					// Get raw muzzle attachment position/angles (no aim correction)
+					int muzzleAttach = pRenderWeapon->LookupAttachment( "muzzle" );
+					if ( muzzleAttach > 0 )
+					{
+						pRenderWeapon->GetAttachment( muzzleAttach, vecMuzzlePos, angMuzzleAngles );
+						
+						// Compensate for player velocity (same as tracers)
+						extern ConVar tfvr_tracer_velocity_compensation;
+						Vector velocity = pOwner->GetAbsVelocity();
+						float velocityCompensation = tfvr_tracer_velocity_compensation.GetFloat();
+						vecMuzzlePos += velocity * velocityCompensation;
+						
+						// Spawn at world position - muzzle flash is short-lived so won't drift noticeably
+						DispatchParticleEffect( effectName, vecMuzzlePos, angMuzzleAngles );
+						return;
+					}
 				}
 			}
 		}
