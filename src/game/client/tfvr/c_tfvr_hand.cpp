@@ -1461,6 +1461,8 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass)
 			if (V_stristr(weaponClass, "rocketlauncher")) return "dh_idle";
 			if (V_stristr(weaponClass, "particle_cannon")) return "dh_idle"; // Cow Mangler
 			if (V_stristr(weaponClass, "shotgun")) return "idle";
+			if (V_stristr(weaponClass, "katana")) return "s_idle"; // Half-Zatoichi
+			if (V_stristr(weaponClass, "sword")) return "s_idle"; // Any sword weapons
 			if (V_stristr(weaponClass, "shovel")) return "s_idle";
 			if (V_stristr(weaponClass, "pickaxe")) return "s_idle"; // Equalizer
 			if (V_stristr(weaponClass, "buff_item")) return "bb_idle"; // Buff Banner/Battalion's Backup/Concheror
