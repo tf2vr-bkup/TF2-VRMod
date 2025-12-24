@@ -21,6 +21,8 @@
 #include "c_tf_player.h"
 // NVNT haptics system interface
 #include "haptics/ihaptics.h"
+// VR hand support
+#include "tfvr/c_tfvr_hand.h"
 #endif
 
 ConVar tf_weapon_criticals_melee( "tf_weapon_criticals_melee", "1", FCVAR_REPLICATED | FCVAR_NOTIFY, "Controls random crits for melee weapons. 0 - Melee weapons do not randomly crit. 1 - Melee weapons can randomly crit only if tf_weapon_criticals is also enabled. 2 - Melee weapons can always randomly crit regardless of the tf_weapon_criticals setting." );
@@ -284,6 +286,18 @@ void CTFWeaponBaseMelee::Swing( CTFPlayer *pPlayer )
 	SendPlayerAnimEvent( pPlayer );
 
 	DoViewModelAnimation();
+
+#ifdef CLIENT_DLL
+	// VR: Trigger swing animation on the VR hand
+	if ( m_bHeldByVRHand )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+		{
+			pRightHand->PlayWeaponFireAnimation();
+		}
+	}
+#endif
 
 	// Set next attack times.
 	float flFireDelay = ApplyFireDelay( m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeFireDelay );

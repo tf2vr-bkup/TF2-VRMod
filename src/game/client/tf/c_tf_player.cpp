@@ -63,6 +63,7 @@
 #include "materialsystem/itexturecompositor.h"
 #include "c_tf_team.h"
 #include "tf_item_inventory.h"
+#include "tf_item_constants.h"
 #include "model_types.h"
 #include "dt_utlvector_recv.h"
 #include "tf_item_wearable.h"
@@ -4174,10 +4175,25 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 	// Only use VR controller angles if VR is actually active
 	if (IsInVRMode() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// CRITICAL: Use weapon muzzle angles from VR hand, NOT controller angles!
 		C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
 		if (pRightHand && pRightHand->GetHeldWeapon())
 		{
+			// For melee weapons, use raw controller forward direction
+			// Melee weapons don't have meaningful "muzzle" attachments
+			C_TFWeaponBase* pWeapon = pRightHand->GetHeldWeapon();
+			if (pWeapon && pWeapon->GetTFWpnData().m_iWeaponType == TF_WPN_TYPE_MELEE)
+			{
+				// Use controller angles directly for melee
+				VMatrix rightControllerPose;
+				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+				{
+					QAngle controllerAngles;
+					MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+					return controllerAngles;
+				}
+			}
+			
+			// For ranged weapons, use weapon muzzle angles
 			Vector muzzlePos;
 			QAngle muzzleAngles;
 			if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))

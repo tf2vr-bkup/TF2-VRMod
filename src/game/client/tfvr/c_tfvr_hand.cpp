@@ -1858,10 +1858,10 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			break;
 			
 		case TF_CLASS_SOLDIER:
-			// Soldier: dh_fire, idle_fire (?), s_swing_*, bison_fire, throw_fire
+			// Soldier: dh_fire, fire (shotgun), s_swing_*, bison_fire, throw_fire
 			if (V_stristr(weaponClass, "rocketlauncher")) return "dh_fire";
 			if (V_stristr(weaponClass, "particle_cannon")) return "dh_fire"; // Cow Mangler
-			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "fire";
 			if (V_stristr(weaponClass, "katana")) return "s_swing_a";
 			if (V_stristr(weaponClass, "sword")) return "s_swing_a";
 			if (V_stristr(weaponClass, "shovel")) return "s_swing_a";
@@ -1872,11 +1872,11 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			break;
 			
 		case TF_CLASS_PYRO:
-			// Pyro: ft_fire, fg_fire, fa_swing_*, idle_fire, mm_throw, throw_fire
+			// Pyro: ft_fire, fg_fire, fa_swing_*, fire (shotgun), mm_throw, throw_fire
 			if (V_stristr(weaponClass, "flamethrower")) return "ft_fire";
 			if (V_stristr(weaponClass, "rocketlauncher_fireball")) return "ft_fire"; // Dragon's Fury
 			if (V_stristr(weaponClass, "flaregun")) return "fg_fire";
-			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "fire";
 			if (V_stristr(weaponClass, "fireaxe")) return "fa_swing_a";
 			if (V_stristr(weaponClass, "slap")) return "fa_swing_a"; // Hot Hand
 			if (V_stristr(weaponClass, "jar_gas")) return "mm_throw"; // Gas Passer
@@ -1896,34 +1896,34 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			break;
 			
 		case TF_CLASS_HEAVYWEAPONS:
-			// Heavy: m_fire, idle_fire, f_swing_*, bg_swing_*, throw_fire
+			// Heavy: m_fire, fire (shotgun), f_swing_*, bg_swing_*, throw_fire
 			if (V_stristr(weaponClass, "minigun")) return "m_fire";
-			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "fire";
 			if (V_stristr(weaponClass, "fists")) return "f_swing_a";
 			if (V_stristr(weaponClass, "gloves")) return "bg_swing_a"; // KGB, GRU, etc.
 			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
 			break;
 			
 		case TF_CLASS_ENGINEER:
-			// Engineer: fj_fire, pstl_fire, pdq_swing, bld_fire (?), wgl_fire, spk_fire, pomson_fire, throw_fire
+			// Engineer: fj_fire, pstl_fire, pdq_swing_a, gun_swing_a, wgl_fire, spk_swing_a, pomson_fire, throw_fire
 			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_fire"; // Frontier Justice
 			if (V_stristr(weaponClass, "shotgun")) return "fj_fire";
 			if (V_stristr(weaponClass, "pistol")) return "pstl_fire";
-			if (V_stristr(weaponClass, "wrench")) return "pdq_swing";
-			if (V_stristr(weaponClass, "robot_arm")) return "pdq_swing"; // Gunslinger
-			if (V_stristr(weaponClass, "laser_pointer")) return "wgl_fire"; // Wrangler
+			if (V_stristr(weaponClass, "wrench")) return "pdq_swing_a";
+			if (V_stristr(weaponClass, "robot_arm")) return "gun_swing_a"; // Gunslinger
+			if (V_stristr(weaponClass, "laser_pointer")) return "wgl_fire"; // Wrangler (no fire anim, just idle)
 			if (V_stristr(weaponClass, "drg_pomson")) return "pomson_fire"; // Pomson 6000
 			if (V_stristr(weaponClass, "raygun")) return "pomson_fire"; // Rescue Ranger
-			if (V_stristr(weaponClass, "mechanical_arm")) return "spk_fire"; // Short Circuit
+			if (V_stristr(weaponClass, "mechanical_arm")) return "spk_swing_a"; // Short Circuit
 			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
 			break;
 			
 		case TF_CLASS_MEDIC:
-			// Medic: mg_fire, idle_fire, bonesaw_swing_*, cs_fire
-			if (V_stristr(weaponClass, "syringegun")) return "mg_fire";
-			if (V_stristr(weaponClass, "crossbow")) return "cs_fire";
-			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
-			if (V_stristr(weaponClass, "bonesaw")) return "bonesaw_swing_a";
+			// Medic: sg_fire (syringe), bs_swing_a (bonesaw), fire_loop (medigun)
+			if (V_stristr(weaponClass, "syringegun")) return "sg_fire";
+			if (V_stristr(weaponClass, "crossbow")) return "sg_fire"; // Uses same anim as syringe gun
+			if (V_stristr(weaponClass, "medigun")) return "fire_loop";
+			if (V_stristr(weaponClass, "bonesaw")) return "bs_swing_a";
 			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
 			break;
 			
@@ -1941,10 +1941,9 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			break;
 			
 		case TF_CLASS_SPY:
-			// Spy: r_fire, idle_fire, k_swing_*, cs_fire
-			if (V_stristr(weaponClass, "revolver")) return "r_fire";
-			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
-			if (V_stristr(weaponClass, "knife")) return "k_swing_a";
+			// Spy: fire (revolver), knife_stab_a (knife)
+			if (V_stristr(weaponClass, "revolver")) return "fire";
+			if (V_stristr(weaponClass, "knife")) return "knife_stab_a";
 			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
 			break;
 	}
