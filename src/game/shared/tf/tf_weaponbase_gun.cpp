@@ -1133,6 +1133,18 @@ void CTFWeaponBaseGun::DoFireEffects()
 	{
 		pPlayer->DoMuzzleFlash();
 	}
+	
+#ifdef CLIENT_DLL
+	// VR: Trigger fire animation on the held weapon
+	if ( m_bHeldByVRHand )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+		{
+			pRightHand->PlayWeaponFireAnimation();
+		}
+	}
+#endif
 }
 
 //-----------------------------------------------------------------------------

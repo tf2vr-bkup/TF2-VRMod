@@ -24,7 +24,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL) {}
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false) {}
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	
@@ -34,8 +34,85 @@ public:
 		return m_hOwnerPlayer.Get();
 	}
 	
+	// Fire animation support - set the fire sequence index directly from the hand
+	void SetFireSequence(int iSequence)
+	{
+		m_iFireSequence = iSequence;
+	}
+	
+	void SetupAnimations()
+	{
+		extern ConVar tfvr_weapon_fire_anim_debug;
+		
+		// Look up idle sequence on weapon model
+		m_iIdleSequence = LookupSequence("idle");
+		if (m_iIdleSequence < 0)
+			m_iIdleSequence = LookupSequence("idle01");
+		if (m_iIdleSequence < 0)
+			m_iIdleSequence = LookupSequence("seq_idle");
+		if (m_iIdleSequence < 0)
+			m_iIdleSequence = 0;  // Fallback to first sequence
+		
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: Weapon model animation setup - fire seq: %d (from hand), idle seq: %d\n", 
+				m_iFireSequence, m_iIdleSequence);
+		}
+	}
+	
+	void PlayFireAnimation()
+	{
+		extern ConVar tfvr_weapon_fire_anim;
+		extern ConVar tfvr_weapon_fire_anim_debug;
+		
+		if (!tfvr_weapon_fire_anim.GetBool())
+			return;
+		
+		if (m_iFireSequence >= 0)
+		{
+			SetSequence(m_iFireSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+			m_bPlayingFireAnim = true;
+			
+			if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR: Playing fire animation (sequence %d)\n", m_iFireSequence);
+			}
+		}
+		else if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: No fire animation found for this weapon\n");
+		}
+	}
+	
+	// Override to return to idle after fire animation completes
+	virtual float FrameAdvance(float flInterval = 0.0f) OVERRIDE
+	{
+		float flReturn = BaseClass::FrameAdvance(flInterval);
+		
+		// Check if fire animation has completed
+		if (m_bPlayingFireAnim && GetCycle() >= 1.0f)
+		{
+			// Return to idle
+			if (m_iIdleSequence >= 0)
+			{
+				SetSequence(m_iIdleSequence);
+				SetCycle(0.0f);
+			}
+			m_bPlayingFireAnim = false;
+		}
+		
+		return flReturn;
+	}
+	
+	bool HasFireAnimation() const { return m_iFireSequence >= 0; }
+	
 private:
 	CHandle<C_TFPlayer> m_hOwnerPlayer;
+	int m_iIdleSequence;
+	int m_iFireSequence;
+	bool m_bPlayingFireAnim;
 };
 
 // ConVars for debugging and control
@@ -75,6 +152,17 @@ ConVar tfvr_weapon_grip_offset_z("tfvr_weapon_grip_offset_z", "0", FCVAR_ARCHIVE
 ConVar tfvr_weapon_grip_angle_pitch("tfvr_weapon_grip_angle_pitch", "0", FCVAR_ARCHIVE, "Default weapon grip angle pitch");
 ConVar tfvr_weapon_grip_angle_yaw("tfvr_weapon_grip_angle_yaw", "0", FCVAR_ARCHIVE, "Default weapon grip angle yaw");
 ConVar tfvr_weapon_grip_angle_roll("tfvr_weapon_grip_angle_roll", "0", FCVAR_ARCHIVE, "Default weapon grip angle roll");
+
+// Weapon fire animation convars
+ConVar tfvr_weapon_fire_anim("tfvr_weapon_fire_anim", "1", FCVAR_ARCHIVE, "Enable fire animations on VR-held weapons");
+ConVar tfvr_weapon_fire_anim_debug("tfvr_weapon_fire_anim_debug", "0", FCVAR_NONE, "Debug fire animation triggering");
+ConVar tfvr_weapon_fire_anim_scale("tfvr_weapon_fire_anim_scale", "1.0", FCVAR_ARCHIVE, "Scale factor for fire animation recoil (0=off, 1=normal, 2=double)");
+ConVar tfvr_weapon_fire_anim_pos_scale("tfvr_weapon_fire_anim_pos_scale", "1.0", FCVAR_ARCHIVE, "Extra scale for position offset (on top of main scale)");
+ConVar tfvr_weapon_fire_anim_pitch_scale("tfvr_weapon_fire_anim_pitch_scale", "1.0", FCVAR_ARCHIVE, "Scale/invert pitch rotation (negative to flip)");
+ConVar tfvr_weapon_fire_anim_yaw_scale("tfvr_weapon_fire_anim_yaw_scale", "1.0", FCVAR_ARCHIVE, "Scale/invert yaw rotation (negative to flip)");
+ConVar tfvr_weapon_fire_anim_roll_scale("tfvr_weapon_fire_anim_roll_scale", "1.0", FCVAR_ARCHIVE, "Scale/invert roll rotation (negative to flip)");
+ConVar tfvr_weapon_fire_anim_pos_rotation("tfvr_weapon_fire_anim_pos_rotation", "0", FCVAR_ARCHIVE, "Rotation correction for position vector (degrees around Z axis)");
+ConVar tfvr_weapon_fire_anim_angle_rotation("tfvr_weapon_fire_anim_angle_rotation", "90", FCVAR_ARCHIVE, "Coordinate space rotation for fire animation (degrees around Z axis)");
 
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
@@ -222,6 +310,10 @@ C_TFVRHand::C_TFVRHand()
 	m_bControllerTracked = false;
 	m_bShuttingDown = false;
 	m_iLastPlayerClass = TF_CLASS_UNDEFINED;
+	m_iFireSequence = -1;
+	m_iIdleSequence = -1;
+	m_bPlayingFireAnim = false;
+	m_flFireAnimStartTime = 0.0f;
 	m_vecLastValidPosition = vec3_origin;
 	m_angLastValidAngles = vec3_angle;
 	m_szModelName[0] = '\0';
@@ -492,6 +584,47 @@ void C_TFVRHand::ClientThink()
 {
 	BaseClass::ClientThink();
 	
+	extern ConVar tfvr_weapon_fire_anim_debug;
+	static float s_flLastDebugTime = 0.0f;
+	
+	// Debug output every 0.5 seconds to confirm ClientThink is being called
+	if (tfvr_weapon_fire_anim_debug.GetBool() && (gpGlobals->curtime - s_flLastDebugTime) > 0.5f)
+	{
+		DevMsg("VR: ClientThink called - sequence: %d, cycle: %.2f, playingFireAnim: %d\n", 
+			GetSequence(), GetCycle(), m_bPlayingFireAnim);
+		s_flLastDebugTime = gpGlobals->curtime;
+	}
+	
+	// Advance animation frame
+	StudioFrameAdvance();
+	
+	// Check if fire animation has completed and return to idle
+	if (m_bPlayingFireAnim)
+	{
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: Fire anim playing - cycle: %.2f, time: %.2f, elapsed: %.2f\n", 
+				GetCycle(), gpGlobals->curtime, gpGlobals->curtime - m_flFireAnimStartTime);
+		}
+		
+		// Check if animation cycle has completed (or timed out after 1 second)
+		if (GetCycle() >= 1.0f || (gpGlobals->curtime - m_flFireAnimStartTime) > 1.0f)
+		{
+			// Return to idle animation
+			if (m_iIdleSequence >= 0)
+			{
+				SetSequence(m_iIdleSequence);
+				SetCycle(0.0f);
+			}
+			m_bPlayingFireAnim = false;
+			
+			if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR: Fire animation completed, returning to idle (seq %d)\n", m_iIdleSequence);
+			}
+		}
+	}
+	
 	// VR: Update weapon position every frame with fresh tracking
 	if (m_hRenderWeapon.Get())
 	{
@@ -525,6 +658,38 @@ void C_TFVRHand::Update()
 		// Owner is gone, hide ourselves
 		AddEffects(EF_NODRAW);
 		return;
+	}
+	
+	// Advance animation frame
+	StudioFrameAdvance();
+	
+	// Check if fire animation has completed and return to idle
+	if (m_bPlayingFireAnim)
+	{
+		extern ConVar tfvr_weapon_fire_anim_debug;
+		
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: Fire anim playing - cycle: %.2f, time: %.2f, elapsed: %.2f\n", 
+				GetCycle(), gpGlobals->curtime, gpGlobals->curtime - m_flFireAnimStartTime);
+		}
+		
+		// Check if animation cycle has completed (or timed out after 1 second)
+		if (GetCycle() >= 1.0f || (gpGlobals->curtime - m_flFireAnimStartTime) > 1.0f)
+		{
+			// Return to idle animation
+			if (m_iIdleSequence >= 0)
+			{
+				SetSequence(m_iIdleSequence);
+				SetCycle(0.0f);
+			}
+			m_bPlayingFireAnim = false;
+			
+			if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR: Fire animation completed, returning to idle (seq %d)\n", m_iIdleSequence);
+			}
+		}
 	}
 	
 	// Check if player class has changed - if so, hide hands temporarily to avoid crash
@@ -801,6 +966,16 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		matrix3x4_t wristTransform;
 		AngleMatrix(m_angLastValidAngles, m_vecLastValidPosition, wristTransform);
 		
+		// Get fire animation recoil offset (if playing a fire animation)
+		matrix3x4_t fireAnimOffset;
+		SetIdentityMatrix(fireAnimOffset);
+		
+		extern ConVar tfvr_weapon_fire_anim;
+		if (tfvr_weapon_fire_anim.GetBool() && m_bPlayingFireAnim && m_iFireSequence >= 0 && m_iIdleSequence >= 0)
+		{
+			GetFireAnimationOffset(fireAnimOffset);
+		}
+		
 		// Final transform after applying offsets
 		matrix3x4_t newHandTransform;
 		
@@ -815,12 +990,15 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			QAngle offsetAngles(pOffsetPitch->GetFloat(), pOffsetYaw->GetFloat(), pOffsetRoll->GetFloat());
 			AngleMatrix(offsetAngles, offsetMatrix);
 			
-			// Apply offset as local rotation: final = wrist * offset
-			ConcatTransforms(wristTransform, offsetMatrix, newHandTransform);
+			// Apply offsets as local rotations: final = wrist * fireAnim * offset
+			matrix3x4_t tempTransform;
+			ConcatTransforms(wristTransform, fireAnimOffset, tempTransform);
+			ConcatTransforms(tempTransform, offsetMatrix, newHandTransform);
 		}
 		else
 		{
-			MatrixCopy(wristTransform, newHandTransform);
+			// Apply fire animation offset: final = wrist * fireAnim
+			ConcatTransforms(wristTransform, fireAnimOffset, newHandTransform);
 		}
 		
 		// Apply the new transform to the bone
@@ -1626,6 +1804,155 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Get the appropriate fire animation name for a weapon
+//-----------------------------------------------------------------------------
+const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
+{
+	// Default fallback - no fire animation
+	const char *defaultAnim = NULL;
+	
+	// Check if this is an all-class melee weapon
+	bool bIsAllClassMelee = false;
+	if (pWeapon)
+	{
+		const char *worldModel = pWeapon->GetWorldModel();
+		if (worldModel)
+		{
+			if (V_stristr(worldModel, "frying_pan") ||
+				V_stristr(worldModel, "saxxy") ||
+				V_stristr(worldModel, "golden_wrench") ||
+				V_stristr(worldModel, "necro_smasher") ||
+				V_stristr(worldModel, "crossing_guard") ||
+				V_stristr(worldModel, "freedom_staff") ||
+				V_stristr(worldModel, "ham_shank") ||
+				V_stristr(worldModel, "memory_maker") ||
+				V_stristr(worldModel, "prinny_machete") ||
+				V_stristr(worldModel, "conscientious"))
+			{
+				bIsAllClassMelee = true;
+			}
+		}
+	}
+	
+	// For all-class melee weapons, use melee_allclass_swing
+	if (bIsAllClassMelee)
+	{
+		return "melee_allclass_swing";
+	}
+	
+	switch (playerClass)
+	{
+		case TF_CLASS_SCOUT:
+			// Scout fire animations: sg_fire, SS_fire, p_fire, b_swing_*, wb_fire, db_fire, throw_fire, spell_fire, bm_fire
+			if (V_stristr(weaponClass, "pep_brawler_blaster")) return "sg_fire"; // Baby Face's Blaster
+			if (V_stristr(weaponClass, "soda_popper")) return "sg_fire"; // Soda Popper
+			if (V_stristr(weaponClass, "scattergun")) return "sg_fire";
+			if (V_stristr(weaponClass, "handgun_scout")) return "SS_fire"; // Shortstop
+			if (V_stristr(weaponClass, "pistol")) return "p_fire";
+			if (V_stristr(weaponClass, "wrap")) return "wb_fire"; // Wrap Assassin
+			if (V_stristr(weaponClass, "bat")) return "b_swing_a"; // Could cycle through a/b/c
+			if (V_stristr(weaponClass, "cleaver")) return "throw_fire"; // Flying Guillotine
+			if (V_stristr(weaponClass, "jar")) return "throw_fire"; // Throwables
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			if (V_stristr(weaponClass, "spellbook")) return "spell_fire";
+			break;
+			
+		case TF_CLASS_SOLDIER:
+			// Soldier: dh_fire, idle_fire (?), s_swing_*, bison_fire, throw_fire
+			if (V_stristr(weaponClass, "rocketlauncher")) return "dh_fire";
+			if (V_stristr(weaponClass, "particle_cannon")) return "dh_fire"; // Cow Mangler
+			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "katana")) return "s_swing_a";
+			if (V_stristr(weaponClass, "sword")) return "s_swing_a";
+			if (V_stristr(weaponClass, "shovel")) return "s_swing_a";
+			if (V_stristr(weaponClass, "pickaxe")) return "s_swing_a";
+			if (V_stristr(weaponClass, "whip")) return "wh_fire"; // Disciplinary Action
+			if (V_stristr(weaponClass, "raygun")) return "bison_fire"; // Righteous Bison
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+			
+		case TF_CLASS_PYRO:
+			// Pyro: ft_fire, fg_fire, fa_swing_*, idle_fire, mm_throw, throw_fire
+			if (V_stristr(weaponClass, "flamethrower")) return "ft_fire";
+			if (V_stristr(weaponClass, "rocketlauncher_fireball")) return "ft_fire"; // Dragon's Fury
+			if (V_stristr(weaponClass, "flaregun")) return "fg_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "fireaxe")) return "fa_swing_a";
+			if (V_stristr(weaponClass, "slap")) return "fa_swing_a"; // Hot Hand
+			if (V_stristr(weaponClass, "jar_gas")) return "mm_throw"; // Gas Passer
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+			
+		case TF_CLASS_DEMOMAN:
+			// Demo: g_fire, sb_fire, b_swing_*, cm_swing_*, throw_fire
+			if (V_stristr(weaponClass, "grenadelauncher")) return "g_fire";
+			if (V_stristr(weaponClass, "cannon")) return "g_fire"; // Loose Cannon
+			if (V_stristr(weaponClass, "pipebomblauncher")) return "sb_fire";
+			if (V_stristr(weaponClass, "stickbomb")) return "sb_fire";
+			if (V_stristr(weaponClass, "bottle")) return "b_swing_a";
+			if (V_stristr(weaponClass, "sword")) return "cm_swing_a"; // Eyelander, etc.
+			if (V_stristr(weaponClass, "katana")) return "cm_swing_a";
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+			
+		case TF_CLASS_HEAVYWEAPONS:
+			// Heavy: m_fire, idle_fire, f_swing_*, bg_swing_*, throw_fire
+			if (V_stristr(weaponClass, "minigun")) return "m_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "fists")) return "f_swing_a";
+			if (V_stristr(weaponClass, "gloves")) return "bg_swing_a"; // KGB, GRU, etc.
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+			
+		case TF_CLASS_ENGINEER:
+			// Engineer: fj_fire, pstl_fire, pdq_swing, bld_fire (?), wgl_fire, spk_fire, pomson_fire, throw_fire
+			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_fire"; // Frontier Justice
+			if (V_stristr(weaponClass, "shotgun")) return "fj_fire";
+			if (V_stristr(weaponClass, "pistol")) return "pstl_fire";
+			if (V_stristr(weaponClass, "wrench")) return "pdq_swing";
+			if (V_stristr(weaponClass, "robot_arm")) return "pdq_swing"; // Gunslinger
+			if (V_stristr(weaponClass, "laser_pointer")) return "wgl_fire"; // Wrangler
+			if (V_stristr(weaponClass, "drg_pomson")) return "pomson_fire"; // Pomson 6000
+			if (V_stristr(weaponClass, "raygun")) return "pomson_fire"; // Rescue Ranger
+			if (V_stristr(weaponClass, "mechanical_arm")) return "spk_fire"; // Short Circuit
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+			
+		case TF_CLASS_MEDIC:
+			// Medic: mg_fire, idle_fire, bonesaw_swing_*, cs_fire
+			if (V_stristr(weaponClass, "syringegun")) return "mg_fire";
+			if (V_stristr(weaponClass, "crossbow")) return "cs_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "bonesaw")) return "bonesaw_swing_a";
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+			
+		case TF_CLASS_SNIPER:
+			// Sniper: sr_fire, smg_fire, j_swing_*, cs_fire, ss_fire, throw_fire
+			if (V_stristr(weaponClass, "sniperrifle")) return "sr_fire";
+			if (V_stristr(weaponClass, "smg")) return "smg_fire";
+			if (V_stristr(weaponClass, "club")) return "j_swing_a";
+			if (V_stristr(weaponClass, "sword")) return "j_swing_a"; // Bushwacka
+			if (V_stristr(weaponClass, "crossbow")) return "cs_fire"; // Huntsman
+			if (V_stristr(weaponClass, "compound_bow")) return "cs_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "ss_fire";
+			if (V_stristr(weaponClass, "jar")) return "throw_fire"; // Jarate
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+			
+		case TF_CLASS_SPY:
+			// Spy: r_fire, idle_fire, k_swing_*, cs_fire
+			if (V_stristr(weaponClass, "revolver")) return "r_fire";
+			if (V_stristr(weaponClass, "shotgun")) return "idle_fire";
+			if (V_stristr(weaponClass, "knife")) return "k_swing_a";
+			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
+			break;
+	}
+	
+	return defaultAnim; // No fire animation for this weapon
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
 //        Samples finger bone rotations from the hand model's weapon animation
 //-----------------------------------------------------------------------------
@@ -1685,42 +2012,42 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 	IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
 	boneSetup.InitPose(pos, q);
 	
-	// Check if this sequence has valid local animation data
-	// $declaresequence animations for melee_allclass reference data that may not be 
-	// in the included animation model. We need to sample from a model that has the data.
-	bool bHasValidAnimData = (seqdesc.groupsize[0] > 0 && seqdesc.groupsize[1] > 0);
-	
-	// For animations without valid local data (like melee_allclass from $declaresequence)
-	// we simply skip the AccumulatePose and use the bind pose for fingers
-	// The weapon positioning still works via weapon_bone
-	bool bSampledFromAnimModel = false;
-	
-	// Debug: compare working vs non-working animations
+	// Debug output
 	if (tfvr_debug_weapon_position.GetBool())
 	{
-		// Also check a known working animation for comparison
-		int testSeq = LookupSequence("s_idle");
-		if (testSeq >= 0)
-		{
-			mstudioseqdesc_t &testDesc = pStudioHdr->pSeqdesc(testSeq);
-			Msg("ANIM DEBUG: '%s' seq=%d groupsize=[%d,%d] vs 's_idle' seq=%d groupsize=[%d,%d]\n",
-				animName, sequence, seqdesc.groupsize[0], seqdesc.groupsize[1],
-				testSeq, testDesc.groupsize[0], testDesc.groupsize[1]);
-		}
-		else
-		{
-			Msg("ANIM DEBUG: '%s' seq=%d groupsize=[%d,%d] (s_idle not found)\n",
-				animName, sequence, seqdesc.groupsize[0], seqdesc.groupsize[1]);
-		}
-		
-		// Log sequence flags and other info
-		Msg("ANIM DEBUG: seqdesc.flags=0x%x numblends=%d numautolayers=%d animindexindex=%d\n",
-			seqdesc.flags, seqdesc.numblends, seqdesc.numautolayers, seqdesc.animindexindex);
+		Msg("ANIM DEBUG: '%s' seq=%d groupsize=[%d,%d] flags=0x%x numblends=%d numautolayers=%d\n",
+			animName, sequence, seqdesc.groupsize[0], seqdesc.groupsize[1],
+			seqdesc.flags, seqdesc.numblends, seqdesc.numautolayers);
 	}
 	
-	if (!bSampledFromAnimModel && bHasValidAnimData)
+	// AccumulatePose samples the animation and applies it to the bone arrays
+	// Now that we properly pass poseParameters, this is safe for all sequences
+	// including $declaresequence animations that get their data via $includemodel
+	boneSetup.AccumulatePose(pos, q, sequence, cycle, 1.0f, gpGlobals->curtime, NULL);
+	
+	// Debug: Check weapon_bone values after AccumulatePose
+	if (tfvr_debug_weapon_position.GetBool())
 	{
-		boneSetup.AccumulatePose(pos, q, sequence, cycle, 1.0f, gpGlobals->curtime, NULL);
+		int weaponBoneIdx = LookupBone("weapon_bone");
+		if (weaponBoneIdx >= 0)
+		{
+			QAngle weaponBoneAng;
+			QuaternionAngles(q[weaponBoneIdx], weaponBoneAng);
+			Msg("ANIM DEBUG: weapon_bone[%d] after AccumulatePose: pos=(%.2f, %.2f, %.2f) ang=(%.1f, %.1f, %.1f)\n",
+				weaponBoneIdx, pos[weaponBoneIdx].x, pos[weaponBoneIdx].y, pos[weaponBoneIdx].z,
+				weaponBoneAng.x, weaponBoneAng.y, weaponBoneAng.z);
+			
+			// Also log bind pose for comparison
+			const mstudiobone_t *pWpnBone = pStudioHdr->pBone(weaponBoneIdx);
+			if (pWpnBone)
+			{
+				QAngle bindAng;
+				QuaternionAngles(pWpnBone->quat, bindAng);
+				Msg("ANIM DEBUG: weapon_bone bind pose: pos=(%.2f, %.2f, %.2f) ang=(%.1f, %.1f, %.1f)\n",
+					pWpnBone->pos.x, pWpnBone->pos.y, pWpnBone->pos.z,
+					bindAng.x, bindAng.y, bindAng.z);
+			}
+		}
 	}
 	
 	// Now apply the sampled finger bone rotations to the output bones
@@ -1910,10 +2237,47 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Set it up
 	pRenderWeapon->SetModelIndex(modelinfo->GetModelIndex(worldModel));
-	pRenderWeapon->SetSequence(0);  // World models don't animate
 	pRenderWeapon->SetRenderMode(kRenderNormal);
 	pRenderWeapon->SetRenderColor(255, 255, 255, 255);
 	pRenderWeapon->RemoveEffects(EF_NODRAW);
+	
+	// Determine the correct fire animation for this weapon and hand
+	// NOTE: We look it up on the HAND model, not the weapon model
+	if (pOwner)
+	{
+		int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
+		const char *weaponClass = pWeapon->GetClassname();
+		const char *fireAnimName = GetWeaponFireAnimation(playerClass, weaponClass, pWeapon);
+		const char *idleAnimName = GetWeaponPoseAnimation(playerClass, weaponClass, pWeapon);
+		
+		// Look up the fire sequence on the HAND model
+		m_iFireSequence = -1;
+		m_iIdleSequence = -1;
+		
+		if (fireAnimName && fireAnimName[0])
+		{
+			extern ConVar tfvr_weapon_fire_anim_debug;
+			
+			m_iFireSequence = LookupSequence(fireAnimName);
+			
+			if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR: Hand fire animation lookup - name: '%s', sequence: %d\n", 
+					fireAnimName, m_iFireSequence);
+			}
+		}
+		
+		if (idleAnimName && idleAnimName[0])
+		{
+			m_iIdleSequence = LookupSequence(idleAnimName);
+		}
+		
+		// Also pass fire sequence to render weapon (in case it has its own animations)
+		pRenderWeapon->SetFireSequence(m_iFireSequence);
+	}
+	
+	// Set up idle animations for the weapon model
+	pRenderWeapon->SetupAnimations();
 	
 	// CRITICAL: Disable interpolation so weapon follows hand without lag
 	pRenderWeapon->SetPredictionEligible(false);
@@ -2051,6 +2415,256 @@ void C_TFVRHand::UpdateSkins()
 		{
 			pRenderWeapon->m_nSkin = nWeaponSkin;
 		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Trigger fire animation on the hand (animates fingers during firing)
+//-----------------------------------------------------------------------------
+void C_TFVRHand::PlayWeaponFireAnimation()
+{
+	extern ConVar tfvr_weapon_fire_anim;
+	extern ConVar tfvr_weapon_fire_anim_debug;
+	
+	if (!tfvr_weapon_fire_anim.GetBool())
+		return;
+	
+	if (m_iFireSequence < 0)
+	{
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: No fire animation sequence set for this hand\n");
+		}
+		return;
+	}
+	
+	// Play the fire animation on the HAND model
+	SetSequence(m_iFireSequence);
+	SetCycle(0.0f);
+	SetPlaybackRate(1.0f);
+	m_bPlayingFireAnim = true;
+	m_flFireAnimStartTime = gpGlobals->curtime;
+	
+	// Force animation frame advance to start immediately
+	InvalidateBoneCache();
+	
+	if (tfvr_weapon_fire_anim_debug.GetBool())
+	{
+		DevMsg("VR: Playing fire animation on hand (sequence %d) at time %.2f\n", 
+			m_iFireSequence, gpGlobals->curtime);
+	}
+	
+	// Also trigger animation on the render weapon (if it has one)
+	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+	if (pRenderWeapon)
+	{
+		pRenderWeapon->PlayFireAnimation();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Sample fire animation to get recoil offset (delta from IDLE pose)
+//          Computes the world-space delta of the hand bone
+//-----------------------------------------------------------------------------
+void C_TFVRHand::GetFireAnimationOffset(matrix3x4_t &outOffset)
+{
+	SetIdentityMatrix(outOffset);
+	
+	extern ConVar tfvr_weapon_fire_anim_scale;
+	float flScale = tfvr_weapon_fire_anim_scale.GetFloat();
+	
+	if (flScale <= 0.0f)
+		return;
+	
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if (!pStudioHdr || m_iFireSequence < 0 || m_iIdleSequence < 0 || m_iHandBone < 0)
+		return;
+	
+	int numBones = pStudioHdr->numbones();
+	if (numBones <= 0 || numBones > MAXSTUDIOBONES || m_iHandBone >= numBones)
+		return;
+	
+	// Sample the animation at the current cycle
+	float flCycle = GetCycle();
+	
+	// Initialize pose parameters (all zeros)
+	float poseParameters[MAXSTUDIOPOSEPARAM];
+	memset(poseParameters, 0, sizeof(poseParameters));
+	
+	// Set up bone setup interface
+	IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
+	
+	// === Sample FIRE animation and build world-space transforms ===
+	Vector posFireAnim[MAXSTUDIOBONES];
+	Quaternion qFireAnim[MAXSTUDIOBONES];
+	
+	// Initialize arrays
+	for (int i = 0; i < MAXSTUDIOBONES; i++)
+	{
+		posFireAnim[i].Init();
+		qFireAnim[i].Init(0, 0, 0, 1);
+	}
+	
+	boneSetup.InitPose(posFireAnim, qFireAnim);
+	boneSetup.AccumulatePose(posFireAnim, qFireAnim, m_iFireSequence, flCycle, 1.0f, gpGlobals->curtime, NULL);
+	
+	// Build world-space matrices for fire animation
+	matrix3x4_t boneToWorldFire[MAXSTUDIOBONES];
+	memset(boneToWorldFire, 0, sizeof(boneToWorldFire));
+	
+	for (int i = 0; i < numBones; i++)
+	{
+		matrix3x4_t boneToParent;
+		QuaternionMatrix(qFireAnim[i], posFireAnim[i], boneToParent);
+		
+		const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+		if (!pBone)
+		{
+			SetIdentityMatrix(boneToWorldFire[i]);
+			continue;
+		}
+			
+		if (pBone->parent == -1)
+		{
+			MatrixCopy(boneToParent, boneToWorldFire[i]);
+		}
+		else if (pBone->parent >= 0 && pBone->parent < numBones)
+		{
+			ConcatTransforms(boneToWorldFire[pBone->parent], boneToParent, boneToWorldFire[i]);
+		}
+		else
+		{
+			SetIdentityMatrix(boneToWorldFire[i]);
+		}
+	}
+	
+	// === Sample IDLE animation and build world-space transforms ===
+	Vector posIdleAnim[MAXSTUDIOBONES];
+	Quaternion qIdleAnim[MAXSTUDIOBONES];
+	
+	// Initialize arrays
+	for (int i = 0; i < MAXSTUDIOBONES; i++)
+	{
+		posIdleAnim[i].Init();
+		qIdleAnim[i].Init(0, 0, 0, 1);
+	}
+	
+	boneSetup.InitPose(posIdleAnim, qIdleAnim);
+	boneSetup.AccumulatePose(posIdleAnim, qIdleAnim, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+	
+	// Build world-space matrices for idle animation
+	matrix3x4_t boneToWorldIdle[MAXSTUDIOBONES];
+	memset(boneToWorldIdle, 0, sizeof(boneToWorldIdle));
+	
+	for (int i = 0; i < numBones; i++)
+	{
+		matrix3x4_t boneToParent;
+		QuaternionMatrix(qIdleAnim[i], posIdleAnim[i], boneToParent);
+		
+		const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+		if (!pBone)
+		{
+			SetIdentityMatrix(boneToWorldIdle[i]);
+			continue;
+		}
+			
+		if (pBone->parent == -1)
+		{
+			MatrixCopy(boneToParent, boneToWorldIdle[i]);
+		}
+		else if (pBone->parent >= 0 && pBone->parent < numBones)
+		{
+			ConcatTransforms(boneToWorldIdle[pBone->parent], boneToParent, boneToWorldIdle[i]);
+		}
+		else
+		{
+			SetIdentityMatrix(boneToWorldIdle[i]);
+		}
+	}
+	
+	// Get world-space transforms for hand bone
+	matrix3x4_t fireHandWorld = boneToWorldFire[m_iHandBone];
+	matrix3x4_t idleHandWorld = boneToWorldIdle[m_iHandBone];
+	
+	// Compute the delta: deltaTransform = fireHandWorld * inverse(idleHandWorld)
+	matrix3x4_t invIdleHandWorld;
+	MatrixInvert(idleHandWorld, invIdleHandWorld);
+	matrix3x4_t deltaTransform;
+	ConcatTransforms(fireHandWorld, invIdleHandWorld, deltaTransform);
+	
+	// Extract position and rotation from delta
+	Vector deltaPos;
+	QAngle deltaAngles;
+	MatrixGetColumn(deltaTransform, 3, deltaPos);
+	MatrixAngles(deltaTransform, deltaAngles);
+	
+	// Apply scale
+	extern ConVar tfvr_weapon_fire_anim_pos_scale;
+	extern ConVar tfvr_weapon_fire_anim_pitch_scale;
+	extern ConVar tfvr_weapon_fire_anim_yaw_scale;
+	extern ConVar tfvr_weapon_fire_anim_roll_scale;
+	extern ConVar tfvr_weapon_fire_anim_pos_rotation;
+	extern ConVar tfvr_weapon_fire_anim_angle_rotation;
+	
+	deltaPos *= flScale * tfvr_weapon_fire_anim_pos_scale.GetFloat();
+	deltaAngles.x *= flScale * tfvr_weapon_fire_anim_pitch_scale.GetFloat();
+	deltaAngles.y *= flScale * tfvr_weapon_fire_anim_yaw_scale.GetFloat();
+	deltaAngles.z *= flScale * tfvr_weapon_fire_anim_roll_scale.GetFloat();
+	
+	// IMPORTANT: Rotate the POSITION vector to transform animation space to VR hand space
+	// This rotates the direction of movement so "inward" becomes "upward" for recoil
+	float posRotation = tfvr_weapon_fire_anim_pos_rotation.GetFloat();
+	if (posRotation != 0.0f)
+	{
+		// Rotate position vector around Z axis
+		float radians = DEG2RAD(posRotation);
+		float cosAngle = cos(radians);
+		float sinAngle = sin(radians);
+		
+		Vector rotatedPos;
+		rotatedPos.x = deltaPos.x * cosAngle - deltaPos.y * sinAngle;
+		rotatedPos.y = deltaPos.x * sinAngle + deltaPos.y * cosAngle;
+		rotatedPos.z = deltaPos.z;
+		deltaPos = rotatedPos;
+	}
+	
+	// Apply coordinate space rotation correction
+	// The animation is authored in viewmodel space which is rotated relative to VR hand space
+	// We apply a conjugation: correctedOffset = R * rawOffset * R^-1
+	// This rotates both the position vector AND the rotation axes
+	float angleRotation = tfvr_weapon_fire_anim_angle_rotation.GetFloat();
+	
+	// Build the raw offset matrix first
+	matrix3x4_t rawOffset;
+	AngleMatrix(deltaAngles, deltaPos, rawOffset);
+	
+	if (angleRotation != 0.0f)
+	{
+		// Create rotation matrix (around Z axis / roll)
+		matrix3x4_t rotationMatrix;
+		QAngle rotationAngles(0, 0, angleRotation);
+		AngleMatrix(rotationAngles, vec3_origin, rotationMatrix);
+		
+		// Create inverse rotation
+		matrix3x4_t invRotationMatrix;
+		QAngle invRotationAngles(0, 0, -angleRotation);
+		AngleMatrix(invRotationAngles, vec3_origin, invRotationMatrix);
+		
+		// Apply conjugation: R * rawOffset * R^-1
+		matrix3x4_t tempOffset;
+		ConcatTransforms(rotationMatrix, rawOffset, tempOffset);
+		ConcatTransforms(tempOffset, invRotationMatrix, outOffset);
+	}
+	else
+	{
+		MatrixCopy(rawOffset, outOffset);
+	}
+	
+	extern ConVar tfvr_weapon_fire_anim_debug;
+	if (tfvr_weapon_fire_anim_debug.GetBool())
+	{
+		DevMsg("VR: Fire anim WORLD offset at cycle %.2f - pos: (%.2f, %.2f, %.2f), angles: (%.1f, %.1f, %.1f)\n", 
+			flCycle, deltaPos.x, deltaPos.y, deltaPos.z, deltaAngles.x, deltaAngles.y, deltaAngles.z);
 	}
 }
 

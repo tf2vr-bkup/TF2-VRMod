@@ -99,6 +99,12 @@ public:
 	
 	// Weapon pose override
 	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
+	
+	// Fire animation - trigger weapon fire animation
+	void PlayWeaponFireAnimation();
+	
+	// Get fire animation offset for recoil
+	void GetFireAnimationOffset(matrix3x4_t &outOffset);
 
 private:
 	// Which hand this entity represents
@@ -137,6 +143,12 @@ private:
 
 	// Model info
 	char m_szModelName[MAX_PATH];
+	
+	// Fire animation
+	int m_iFireSequence;           // Fire animation sequence index
+	int m_iIdleSequence;           // Idle animation sequence to return to
+	bool m_bPlayingFireAnim;       // Currently playing fire animation
+	float m_flFireAnimStartTime;   // When fire animation started
 };
 
 // Global functions
