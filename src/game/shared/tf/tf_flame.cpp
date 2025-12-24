@@ -19,6 +19,7 @@
 
 #ifdef CLIENT_DLL
 #include "in_buttons.h"
+#include "tfvr/c_tfvr_hand.h"
 #endif // CLIENT_DLL
 
 const float tf_flame_burn_index_drain_rate = 1.25f;
@@ -282,7 +283,37 @@ Vector CTFFlameManager::GetInitialVelocity() const
 		CTFPlayer *pTFPlayer = ToTFPlayer( m_hAttacker );
 		if ( pTFPlayer )
 		{
-			QAngle angFlame = pTFPlayer->EyeAngles();
+			QAngle angFlame;
+			
+#ifdef CLIENT_DLL
+			// VR: Get flame direction from VR weapon muzzle if in VR mode
+			if ( m_hWeapon && m_hWeapon->IsHeldByVRHand() )
+			{
+				C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+				if ( pRightHand )
+				{
+					Vector muzzlePos;
+					QAngle muzzleAngles;
+					if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
+					{
+						angFlame = muzzleAngles;
+					}
+					else
+					{
+						angFlame = pTFPlayer->EyeAngles();
+					}
+				}
+				else
+				{
+					angFlame = pTFPlayer->EyeAngles();
+				}
+			}
+			else
+#endif
+			{
+				// Non-VR or server: use Weapon_ShootAngles
+				angFlame = pTFPlayer->Weapon_ShootAngles();
+			}
 #ifdef WATERFALL_FLAMETHROWER_TEST
 			if ( m_iWaterfallMode && m_iStreamIndex >= 0 )
 			{
@@ -902,11 +933,27 @@ void CTFFlameManager::UpdateWeaponParticleControlPoint( const flame_point_t *pNe
 	const float flStartRadius = 3.f;
 	Vector vMuzzlePos;
 	QAngle qMuzzleAng;
-	if ( m_nMuzzleAttachment == INVALID_PARTICLE_ATTACHMENT )
+	
+	// VR: Get muzzle position from VR render weapon if weapon is held by VR hand
+	C_BaseAnimating *pMuzzleWeapon = m_hWeapon.Get();
+	if ( m_hWeapon->IsHeldByVRHand() )
 	{
-		m_nMuzzleAttachment = m_hWeapon->LookupAttachment( "muzzle" );
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand )
+		{
+			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+			if ( pRenderWeapon )
+			{
+				pMuzzleWeapon = pRenderWeapon;
+			}
+		}
 	}
-	m_hWeapon->GetAttachment( m_nMuzzleAttachment, vMuzzlePos, qMuzzleAng );
+	
+	if ( m_nMuzzleAttachment == INVALID_PARTICLE_ATTACHMENT || pMuzzleWeapon != m_hWeapon.Get() )
+	{
+		m_nMuzzleAttachment = pMuzzleWeapon->LookupAttachment( "muzzle" );
+	}
+	pMuzzleWeapon->GetAttachment( m_nMuzzleAttachment, vMuzzlePos, qMuzzleAng );
 	if ( m_hParticleEffect )
 	{
 		Vector vMuzzleForward, vMuzzleRight, vMuzzleUp;

@@ -830,7 +830,8 @@ void CTFFlameThrower::PrimaryAttack()
 		// Find eligible entities in a cone in front of us.
 		// Vector vOrigin = pOwner->Weapon_ShootPosition();
 		Vector vForward, vRight, vUp;
-		QAngle vAngles = pOwner->EyeAngles() + pOwner->GetPunchAngle();
+		// VR: Use Weapon_ShootAngles for VR support (controller direction if in VR)
+		QAngle vAngles = pOwner->Weapon_ShootAngles() + pOwner->GetPunchAngle();
 		AngleVectors( vAngles, &vForward, &vRight, &vUp );
 
 		#define NUM_TEST_VECTORS	30
@@ -2337,7 +2338,8 @@ void CTFFlameThrower::StartFlame()
 {
 	if ( m_iWeaponState == FT_STATE_SECONDARY )
 	{
-		GetAppropriateWorldOrViewModel()->ParticleProp()->Create( "pyro_blast", PATTACH_POINT_FOLLOW, "muzzle" );
+		// VR: Use GetWeaponForEffect() to attach to VR render weapon's muzzle
+		GetWeaponForEffect()->ParticleProp()->Create( "pyro_blast", PATTACH_POINT_FOLLOW, "muzzle" );
 		CLocalPlayerFilter filter;
 		const char *shootsound = GetShootSound( WPN_DOUBLE );
 		EmitSound( filter, entindex(), shootsound );
