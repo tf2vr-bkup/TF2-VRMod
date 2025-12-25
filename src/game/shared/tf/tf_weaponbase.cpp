@@ -3121,7 +3121,8 @@ void CTFWeaponBase::CreateMuzzleFlashEffects( C_BaseEntity *pAttachEnt, int nInd
 	if ( !pAttachEnt )
 		return;
 
-	if ( UsingViewModel() && !g_pClientMode->ShouldDrawViewModel() )
+	// VR: Don't block muzzle flashes in VR mode - we're using world models
+	if ( !m_bHeldByVRHand && UsingViewModel() && !g_pClientMode->ShouldDrawViewModel() )
 	{
 		// Prevent effects when the ViewModel is hidden with r_drawviewmodel=0
 		return;
@@ -3134,8 +3135,12 @@ void CTFWeaponBase::CreateMuzzleFlashEffects( C_BaseEntity *pAttachEnt, int nInd
 	const char *pszMuzzleFlashParticleEffect = GetMuzzleFlashParticleEffect();
 
 	// Pick the right muzzleflash (3rd / 1st person)
-	// (this uses IsFirstPersonView() rather than UsingViewModel() because even when NOT using the viewmodel, in 1st-person mode we still want the 1st-person muzzleflash effect)
-	if ( IsFirstPersonView() )
+	// VR: Always use 3rd person muzzle flash since we're using world models
+	if ( m_bHeldByVRHand )
+	{
+		pszMuzzleFlashEffect = GetMuzzleFlashEffectName_3rd();
+	}
+	else if ( IsFirstPersonView() )
 	{
 		pszMuzzleFlashEffect = GetMuzzleFlashEffectName_1st();
 	}
@@ -3257,10 +3262,12 @@ bool CTFWeaponBase::ShouldDraw( void )
 		return true;
 
 #ifdef CLIENT_DLL
-	// VR: If held by a VR hand, always draw (independent of player body visibility)
+	// VR: If held by a VR hand, DON'T draw the original weapon - we use a separate VR render weapon instead
+	// The VR render weapon is positioned by the VR hand and draws the weapon model
+	// Drawing this would cause a "ghost" weapon at player origin
 	if ( m_bHeldByVRHand )
 	{
-		return true;
+		return false;
 	}
 #endif
 
@@ -3373,12 +3380,36 @@ bool CTFWeaponBase::OnInternalDrawModel( ClientModelRenderInfo_t *pInfo )
 
 void CTFWeaponBase::ProcessMuzzleFlashEvent( void )
 {
-	C_BaseAnimating *pAttachEnt = GetAppropriateWorldOrViewModel();
 	C_TFPlayer *pOwner = ToTFPlayer( GetOwnerEntity() );
 
 	if ( pOwner == NULL )
 		return;
 
+	C_BaseAnimating *pAttachEnt = NULL;
+	
+	// VR: Use the VR render weapon for muzzle flashes
+#ifdef CLIENT_DLL
+	if ( m_bHeldByVRHand )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+		{
+			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+			if ( pRenderWeapon )
+			{
+				// Force bone setup on the render weapon so attachments work
+				pRenderWeapon->SetupBones( NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime );
+				pAttachEnt = pRenderWeapon;
+			}
+		}
+	}
+#endif // CLIENT_DLL
+	
+	// Fall back to normal behavior
+	if ( !pAttachEnt )
+	{
+		pAttachEnt = GetAppropriateWorldOrViewModel();
+	}
 
 	bool bDrawMuzzleFlashOnViewModel = ( pAttachEnt != this );
 	{
@@ -7108,6 +7139,17 @@ bool CTFWeaponAttachmentModel::ShouldDraw( void )
 	// some code is overriding the weapon model (taunt), don't show the attachment model
 	if ( m_hWeaponAssociatedWith->IsUsingOverrideModel() )
 		return false;
+
+	// VR: If weapon is held by VR hand, always draw (we re-parent to VR render weapon)
+	if ( m_hWeaponAssociatedWith->IsHeldByVRHand() )
+	{
+		// Make sure the weapon is still active
+		C_TFPlayer *pOwner = ToTFPlayer( m_hWeaponAssociatedWith->GetOwner() );
+		if ( pOwner && pOwner->GetActiveWeapon() == m_hWeaponAssociatedWith.Get() )
+		{
+			return true;
+		}
+	}
 
 	if ( m_hWeaponAssociatedWith->IsFirstPersonView() && !m_bIsViewModelAttachment )
 	{

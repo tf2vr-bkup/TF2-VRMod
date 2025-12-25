@@ -4,6 +4,10 @@
 #include "c_tfvr_hand.h"
 #include "tf/c_tf_player.h"
 #include "tf/tf_weaponbase.h"
+#include "tf/tf_item_wearable.h"
+#include "econ/econ_entity.h"
+#include "econ/econ_item_schema.h"
+#include "model_types.h"
 #include "tfvr/openxr_manager.h"
 #include "tfvr/openxr_hand_tracking.h"
 #include "tfvr/tfvr_weapon_base.h"
@@ -107,6 +111,59 @@ public:
 	}
 	
 	bool HasFireAnimation() const { return m_iFireSequence >= 0; }
+	
+	// Copy attached models (festivizers, etc.) from the source weapon
+	void CopyAttachedModels(C_TFWeaponBase *pSourceWeapon)
+	{
+		m_vecAttachedModels.Purge();
+		
+		if (!pSourceWeapon)
+			return;
+		
+		// Copy from source weapon's attached models
+		for (int i = 0; i < pSourceWeapon->m_vecAttachedModels.Count(); i++)
+		{
+			m_vecAttachedModels.AddToTail(pSourceWeapon->m_vecAttachedModels[i]);
+		}
+	}
+	
+	// Override to draw attached models (festivizers, etc.)
+	virtual bool OnInternalDrawModel(ClientModelRenderInfo_t *pInfo) OVERRIDE
+	{
+		if (!BaseClass::OnInternalDrawModel(pInfo))
+			return false;
+		
+		// Draw attached models (festivizers, bot-killers, etc.)
+		for (int i = 0; i < m_vecAttachedModels.Count(); i++)
+		{
+			const AttachedModelData_t& attachedModel = m_vecAttachedModels[i];
+			
+			// Use world model display flag since we're in VR world space
+			if (attachedModel.m_pModel && (attachedModel.m_iModelDisplayFlags & kAttachedModelDisplayFlag_WorldModel))
+			{
+				ClientModelRenderInfo_t infoAttached = *pInfo;
+				
+				infoAttached.pRenderable = this;
+				infoAttached.instance = MODEL_INSTANCE_INVALID;
+				infoAttached.entity_index = this->index;
+				infoAttached.pModel = attachedModel.m_pModel;
+				infoAttached.pModelToWorld = &infoAttached.modelToWorld;
+				
+				// Turns the origin + angles into a matrix
+				AngleMatrix(infoAttached.angles, infoAttached.origin, infoAttached.modelToWorld);
+				
+				DrawModelState_t state;
+				matrix3x4_t *pBoneToWorld = NULL;
+				bool bMarkAsDrawn = modelrender->DrawModelSetup(infoAttached, &state, NULL, &pBoneToWorld);
+				DoInternalDrawModel(&infoAttached, (bMarkAsDrawn && (infoAttached.flags & STUDIO_RENDER)) ? &state : NULL, pBoneToWorld);
+			}
+		}
+		
+		return true;
+	}
+	
+	// Storage for attached models (copied from source weapon)
+	CUtlVector<AttachedModelData_t> m_vecAttachedModels;
 	
 private:
 	CHandle<C_TFPlayer> m_hOwnerPlayer;
@@ -2278,11 +2335,42 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// Set up idle animations for the weapon model
 	pRenderWeapon->SetupAnimations();
 	
+	// Copy attached models (festivizers, bot-killers, etc.) from the source weapon
+	pRenderWeapon->CopyAttachedModels(pWeapon);
+	
 	// CRITICAL: Disable interpolation so weapon follows hand without lag
 	pRenderWeapon->SetPredictionEligible(false);
 	
 	// Set initial skin for team colors (will be updated each frame for crit effects, etc.)
 	pRenderWeapon->m_nSkin = pWeapon->GetSkin();
+	
+	// VR: Attach extra wearables (bot-killer skulls, etc.) if the weapon has them
+	// NOTE: Festivizers are handled via m_vecAttachedModels (copied in CopyAttachedModels above)
+	C_TFWearable *pExtraWearable = pWeapon->m_hExtraWearable.Get();
+	if (pExtraWearable)
+	{
+		pExtraWearable->FollowEntity(pRenderWeapon, true);
+		pExtraWearable->ValidateModelIndex();
+		pExtraWearable->UpdateVisibility();
+		pExtraWearable->CreateShadow();
+	}
+	
+	C_TFWearable *pExtraWearableVM = pWeapon->m_hExtraWearableViewModel.Get();
+	if (pExtraWearableVM)
+	{
+		pExtraWearableVM->FollowEntity(pRenderWeapon, true);
+		pExtraWearableVM->UpdateVisibility();
+	}
+	
+	// Re-parent stat-trak addons to VR render weapon if they exist
+	if (pWeapon->m_viewmodelStatTrakAddon.Get())
+	{
+		pWeapon->m_viewmodelStatTrakAddon->FollowEntity(pRenderWeapon, true);
+	}
+	if (pWeapon->m_worldmodelStatTrakAddon.Get())
+	{
+		pWeapon->m_worldmodelStatTrakAddon->FollowEntity(pRenderWeapon, true);
+	}
 	
 	// VR: Don't parent - use manual positioning for better control
 	// Parenting doesn't work well because hand bones update at different times
@@ -2312,6 +2400,26 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UnequipWeapon()
 {
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	
+	// VR: Reattach extra wearables back to the original weapon before cleaning up
+	// This ensures festivizers/bot-killer skulls follow the weapon when it's dropped or switched
+	if (pWeapon && m_hRenderWeapon.Get())
+	{
+		C_TFWearable *pExtraWearable = pWeapon->m_hExtraWearable.Get();
+		if (pExtraWearable)
+		{
+			// Re-parent to the original weapon (with bonemerge for proper attachment)
+			pExtraWearable->FollowEntity(pWeapon, true);
+		}
+		
+		C_TFWearable *pExtraWearableVM = pWeapon->m_hExtraWearableViewModel.Get();
+		if (pExtraWearableVM)
+		{
+			pExtraWearableVM->FollowEntity(pWeapon, true);
+		}
+	}
+	
 	// Clean up render weapon
 	if (m_hRenderWeapon.Get())
 	{
@@ -2319,7 +2427,6 @@ void C_TFVRHand::UnequipWeapon()
 		m_hRenderWeapon = NULL;
 	}
 	
-	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
 	if (!pWeapon)
 		return;
 	
