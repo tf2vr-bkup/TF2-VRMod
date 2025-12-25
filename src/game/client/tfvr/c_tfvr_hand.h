@@ -102,9 +102,6 @@ public:
 	
 	// Fire animation - trigger weapon fire animation
 	void PlayWeaponFireAnimation();
-	
-	// Get fire animation offset for recoil
-	void GetFireAnimationOffset(matrix3x4_t &outOffset);
 
 private:
 	// Which hand this entity represents
@@ -149,6 +146,10 @@ private:
 	int m_iIdleSequence;           // Idle animation sequence to return to
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
+	
+	// Cached transform from idle hand bone to VR controller (calculated once)
+	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose
+	bool m_bHandBoneOffsetValid;             // Whether the offset has been calculated
 };
 
 // Global functions

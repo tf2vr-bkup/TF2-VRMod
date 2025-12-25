@@ -175,6 +175,7 @@ private:
 // ConVars for debugging and control
 ConVar tfvr_hands_enabled("tfvr_hands_enabled", "1", FCVAR_ARCHIVE, "Enable VR hand rendering");
 ConVar tfvr_hands_debug("tfvr_hands_debug", "0", FCVAR_NONE, "Show debug info for VR hands");
+ConVar tfvr_hands_debug_bones("tfvr_hands_debug_bones", "0", FCVAR_NONE, "Draw bone positions on VR hands/weapons (1=hand, 2=weapon, 3=both)");
 ConVar tfvr_hands_alpha("tfvr_hands_alpha", "1.0", FCVAR_ARCHIVE, "Alpha transparency for VR hands (0-1)");
 ConVar tfvr_hands_finger_tracking("tfvr_hands_finger_tracking", "1", FCVAR_ARCHIVE, "Enable finger tracking animation (0=disable, 1=enable)");
 ConVar tfvr_hands_animate_thumb_metacarpal("tfvr_hands_animate_thumb_metacarpal", "0", FCVAR_ARCHIVE, "Animate thumb metacarpal bone (usually should be 0)");
@@ -374,6 +375,8 @@ C_TFVRHand::C_TFVRHand()
 	m_vecLastValidPosition = vec3_origin;
 	m_angLastValidAngles = vec3_angle;
 	m_szModelName[0] = '\0';
+	SetIdentityMatrix(m_matIdleHandBoneTransform);
+	m_bHandBoneOffsetValid = false;
 	m_iHandBone = -1;
 
 	// Initialize bone mapping to invalid
@@ -536,6 +539,7 @@ void C_TFVRHand::Shutdown()
 	
 	// Reset bone mapping so it gets recalculated on reinit
 	m_bBoneMappingSetup = false;
+	m_bHandBoneOffsetValid = false;
 	m_iHandBone = -1;
 	
 	m_hOwnerPlayer = NULL;
@@ -839,6 +843,121 @@ void C_TFVRHand::Update()
 			IsLeftHand() ? "Left" : "Right",
 			m_bControllerTracked ? "YES" : "NO");
 	}
+	
+	// Debug bone visualization - show all bones in the hand model skeleton
+	if (tfvr_hands_debug_bones.GetInt() > 0 && debugoverlay)
+	{
+		// Draw hand model bones (mode 1 or 3)
+		if ((tfvr_hands_debug_bones.GetInt() & 1) && GetModelPtr())
+		{
+			// Ensure bones are set up
+			SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+			
+			CStudioHdr *pStudioHdr = GetModelPtr();
+			int numBones = pStudioHdr->numbones();
+			
+			for (int i = 0; i < numBones; i++)
+			{
+				const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+				if (!pBone)
+					continue;
+				
+				// Get bone position in world space
+				matrix3x4_t boneMatrix;
+				GetBoneTransform(i, boneMatrix);
+				
+				Vector bonePos;
+				MatrixPosition(boneMatrix, bonePos);
+				
+				// Skip bones at origin (not set up properly)
+				if (bonePos.IsZero())
+					continue;
+				
+				// Draw bone as small box
+				int r = IsLeftHand() ? 100 : 255;
+				int g = IsLeftHand() ? 255 : 100;
+				int b = 100;
+				
+				debugoverlay->AddBoxOverlay(bonePos, Vector(-0.5, -0.5, -0.5), Vector(0.5, 0.5, 0.5), 
+					vec3_angle, r, g, b, 150, 0.0f);
+				
+				// Draw bone name
+				debugoverlay->AddTextOverlay(bonePos, 0.0f, "%d: %s", i, pBone->pszName());
+				
+				// Draw line to parent bone
+				int parentIdx = pBone->parent;
+				if (parentIdx >= 0 && parentIdx < numBones)
+				{
+					matrix3x4_t parentMatrix;
+					GetBoneTransform(parentIdx, parentMatrix);
+					
+					Vector parentPos;
+					MatrixPosition(parentMatrix, parentPos);
+					
+					if (!parentPos.IsZero())
+					{
+						debugoverlay->AddLineOverlay(parentPos, bonePos, r, g, b, true, 0.0f);
+					}
+				}
+			}
+		}
+		
+		// Draw weapon model bones (mode 2 or 3)
+		C_VRRenderWeapon *pRenderWeapon = dynamic_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+		if ((tfvr_hands_debug_bones.GetInt() & 2) && pRenderWeapon && pRenderWeapon->GetModelPtr())
+		{
+			// Ensure bones are set up
+			pRenderWeapon->SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+			
+			CStudioHdr *pStudioHdr = pRenderWeapon->GetModelPtr();
+			int numBones = pStudioHdr->numbones();
+			
+			for (int i = 0; i < numBones; i++)
+			{
+				const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+				if (!pBone)
+					continue;
+				
+				// Get bone position in world space
+				matrix3x4_t boneMatrix;
+				pRenderWeapon->GetBoneTransform(i, boneMatrix);
+				
+				Vector bonePos;
+				MatrixPosition(boneMatrix, bonePos);
+				
+				// Skip bones at origin (not set up properly)
+				if (bonePos.IsZero())
+					continue;
+				
+				// Draw weapon bones in different color (yellow/orange)
+				int r = 255;
+				int g = 200;
+				int b = 0;
+				
+				debugoverlay->AddBoxOverlay(bonePos, Vector(-0.3, -0.3, -0.3), Vector(0.3, 0.3, 0.3), 
+					vec3_angle, r, g, b, 150, 0.0f);
+				
+				// Draw bone name
+				debugoverlay->AddTextOverlay(bonePos, 0.0f, "W%d: %s", i, pBone->pszName());
+				
+				// Draw line to parent bone
+				int parentIdx = pBone->parent;
+				if (parentIdx >= 0 && parentIdx < numBones)
+				{
+					matrix3x4_t parentMatrix;
+					pRenderWeapon->GetBoneTransform(parentIdx, parentMatrix);
+					
+					Vector parentPos;
+					MatrixPosition(parentMatrix, parentPos);
+					
+					if (!parentPos.IsZero())
+					{
+						debugoverlay->AddLineOverlay(parentPos, bonePos, r, g, b, true, 0.0f);
+					}
+				}
+			}
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -904,7 +1023,8 @@ void C_TFVRHand::UpdateHandTransform()
 		}
 	}
 
-	// Position the entity at the hand position
+	// Position the entity at the VR controller position
+	// The animation bones will be positioned relative to this
 	SetAbsOrigin(m_vecLastValidPosition);
 	SetAbsAngles(m_angLastValidAngles);
 
@@ -1008,35 +1128,95 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// Model changed, need to re-setup bone mapping
 		Warning("VR Hand: Bone index invalid for current model, resetting\n");
 		m_bBoneMappingSetup = false;
+		m_bHandBoneOffsetValid = false;
 		m_iHandBone = -1;
 		return true;
 	}
 
-	// Position hand bone at controller and update all children
+	// Position bones for VR hand
 	if (m_iHandBone >= 0 && m_iHandBone < nMaxBones && m_bControllerTracked)
 	{
-		// Store the original hand bone transform
-		matrix3x4_t originalHandTransform;
-		MatrixCopy(pBoneToWorldOut[m_iHandBone], originalHandTransform);
-
-		// Start with the wrist transform
-		matrix3x4_t wristTransform;
-		AngleMatrix(m_angLastValidAngles, m_vecLastValidPosition, wristTransform);
-		
-		// Get fire animation recoil offset (if playing a fire animation)
-		matrix3x4_t fireAnimOffset;
-		SetIdentityMatrix(fireAnimOffset);
-		
-		extern ConVar tfvr_weapon_fire_anim;
-		if (tfvr_weapon_fire_anim.GetBool() && m_bPlayingFireAnim && m_iFireSequence >= 0 && m_iIdleSequence >= 0)
+		// Cache the LOCAL hand bone transform on first frame after weapon equip
+		// EquipWeapon forces idle pose, so we'll cache the correct idle position
+		if (!m_bHandBoneOffsetValid)
 		{
-			GetFireAnimationOffset(fireAnimOffset);
+			// Get entity transform
+			matrix3x4_t entityTransform;
+			AngleMatrix(GetAbsAngles(), GetAbsOrigin(), entityTransform);
+			
+			// Get inverse of entity transform
+			matrix3x4_t invEntityTransform;
+			MatrixInvert(entityTransform, invEntityTransform);
+			
+			// Calculate LOCAL hand bone transform = inverse(entity) * worldHandBone
+			ConcatTransforms(invEntityTransform, pBoneToWorldOut[m_iHandBone], m_matIdleHandBoneTransform);
+			m_bHandBoneOffsetValid = true;
+			
+			if (tfvr_hands_debug.GetBool())
+			{
+				Vector pos;
+				QAngle angles;
+				MatrixAngles(m_matIdleHandBoneTransform, angles, pos);
+				DevMsg("VR Hand: Cached idle hand bone - local pos: (%.1f, %.1f, %.1f)\n", pos.x, pos.y, pos.z);
+			}
 		}
 		
-		// Final transform after applying offsets
-		matrix3x4_t newHandTransform;
+		// Sample the current animation directly using IBoneSetup
+		// This bypasses any entity interpolation for instant pose changes
+		int numBones = pStudioHdr->numbones();
+		int currentSeq = GetSequence();
+		float currentCycle = GetCycle();
 		
-		// Apply rotation offset as a local rotation (use appropriate hand offsets)
+		// If fire animation is playing, use fire sequence, otherwise use idle
+		int seqToSample = m_bPlayingFireAnim && m_iFireSequence >= 0 ? m_iFireSequence : m_iIdleSequence;
+		float cycleToSample = m_bPlayingFireAnim ? currentCycle : 0.0f;
+		
+		if (seqToSample < 0)
+			seqToSample = 0;  // Fallback to first sequence
+		
+		// Sample animation directly
+		float poseParameters[MAXSTUDIOPOSEPARAM];
+		memset(poseParameters, 0, sizeof(poseParameters));
+		
+		IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
+		
+		Vector posAnim[MAXSTUDIOBONES];
+		Quaternion qAnim[MAXSTUDIOBONES];
+		for (int i = 0; i < MAXSTUDIOBONES; i++)
+		{
+			posAnim[i].Init();
+			qAnim[i].Init(0, 0, 0, 1);
+		}
+		boneSetup.InitPose(posAnim, qAnim);
+		boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
+		
+		// Build bone transforms from sampled animation
+		matrix3x4_t sampledBones[MAXSTUDIOBONES];
+		for (int i = 0; i < numBones; i++)
+		{
+			matrix3x4_t boneToParent;
+			QuaternionMatrix(qAnim[i], posAnim[i], boneToParent);
+			
+			const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+			if (!pBone)
+			{
+				SetIdentityMatrix(sampledBones[i]);
+				continue;
+			}
+			
+			if (pBone->parent == -1)
+				MatrixCopy(boneToParent, sampledBones[i]);
+			else if (pBone->parent >= 0 && pBone->parent < numBones)
+				ConcatTransforms(sampledBones[pBone->parent], boneToParent, sampledBones[i]);
+			else
+				SetIdentityMatrix(sampledBones[i]);
+		}
+		
+		// Get VR controller transform (where we want the hand bone to be)
+		matrix3x4_t controllerTransform;
+		AngleMatrix(m_angLastValidAngles, m_vecLastValidPosition, controllerTransform);
+		
+		// Apply hand rotation offsets if any
 		ConVar *pOffsetPitch = IsLeftHand() ? &tfvr_hands_left_offset_pitch : &tfvr_hands_right_offset_pitch;
 		ConVar *pOffsetYaw = IsLeftHand() ? &tfvr_hands_left_offset_yaw : &tfvr_hands_right_offset_yaw;
 		ConVar *pOffsetRoll = IsLeftHand() ? &tfvr_hands_left_offset_roll : &tfvr_hands_right_offset_roll;
@@ -1045,42 +1225,25 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		{
 			matrix3x4_t offsetMatrix;
 			QAngle offsetAngles(pOffsetPitch->GetFloat(), pOffsetYaw->GetFloat(), pOffsetRoll->GetFloat());
-			AngleMatrix(offsetAngles, offsetMatrix);
+			AngleMatrix(offsetAngles, vec3_origin, offsetMatrix);
 			
-			// Apply offsets as local rotations: final = wrist * fireAnim * offset
-			matrix3x4_t tempTransform;
-			ConcatTransforms(wristTransform, fireAnimOffset, tempTransform);
-			ConcatTransforms(tempTransform, offsetMatrix, newHandTransform);
-		}
-		else
-		{
-			// Apply fire animation offset: final = wrist * fireAnim
-			ConcatTransforms(wristTransform, fireAnimOffset, newHandTransform);
+			matrix3x4_t temp;
+			ConcatTransforms(controllerTransform, offsetMatrix, temp);
+			MatrixCopy(temp, controllerTransform);
 		}
 		
-		// Apply the new transform to the bone
-		MatrixCopy(newHandTransform, pBoneToWorldOut[m_iHandBone]);
-
-		// Calculate the delta transform (from old to new)
-		matrix3x4_t deltaTransform;
-		matrix3x4_t inverseOriginal;
-		MatrixInvert(originalHandTransform, inverseOriginal);
-		ConcatTransforms(newHandTransform, inverseOriginal, deltaTransform);
-
-		// Apply the delta transform to all child bones
-		CUtlVector<int> vecChildBones;
-		AppendChildBones_R(&vecChildBones, pStudioHdr, m_iHandBone);
-		for (int i = 0; i < vecChildBones.Count(); ++i)
+		// Calculate anchor delta from cached idle hand bone to controller
+		// anchorDelta = controller * inverse(idleHandBone)
+		matrix3x4_t invIdleHandBone;
+		MatrixInvert(m_matIdleHandBoneTransform, invIdleHandBone);
+		
+		matrix3x4_t anchorDelta;
+		ConcatTransforms(controllerTransform, invIdleHandBone, anchorDelta);
+		
+		// Apply anchor delta to ALL sampled bones and write to output
+		for (int i = 0; i < numBones && i < nMaxBones; i++)
 		{
-			int iChildBone = vecChildBones[i];
-			if (iChildBone >= 0 && iChildBone < nMaxBones)
-			{
-				matrix3x4_t originalChildTransform;
-				MatrixCopy(pBoneToWorldOut[iChildBone], originalChildTransform);
-				
-				// Transform child bone by the delta
-				ConcatTransforms(deltaTransform, originalChildTransform, pBoneToWorldOut[iChildBone]);
-			}
+			ConcatTransforms(anchorDelta, sampledBones[i], pBoneToWorldOut[i]);
 		}
 		
 		// Apply finger tracking or weapon pose to this hand
@@ -1090,7 +1253,6 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
 			
 			// IMPORTANT: Position weapon immediately after pose is applied
-			// This ensures weapon_bone has the correct pose applied
 			PositionWeaponFromBones(pBoneToWorldOut, nMaxBones);
 		}
 		else
@@ -2393,6 +2555,88 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		pVRWeapon->SetModelForHand(IsRightHand());
 	}
 	
+	// Reset animation state and force idle pose
+	m_bPlayingFireAnim = false;
+	if (m_iIdleSequence >= 0)
+	{
+		SetSequence(m_iIdleSequence);
+		SetCycle(0.0f);
+		SetPlaybackRate(0.0f);  // Don't animate - just hold the pose
+	}
+	
+	// Force snap to new pose - disable all interpolation
+	ResetLatched();
+	InvalidateBoneCache();
+	
+	// Additional interpolation reset
+	m_flAnimTime = gpGlobals->curtime;
+	m_flSimulationTime = gpGlobals->curtime;
+	
+	// Disable interpolation temporarily by adding EF_NOINTERP
+	AddEffects(EF_NOINTERP);
+	
+	// Sample the idle animation DIRECTLY using IBoneSetup
+	// This bypasses any entity animation state and gives us the pure idle pose
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if (pStudioHdr && m_iHandBone >= 0 && m_iIdleSequence >= 0)
+	{
+		int numBones = pStudioHdr->numbones();
+		if (m_iHandBone < numBones)
+		{
+			// Initialize pose parameters
+			float poseParameters[MAXSTUDIOPOSEPARAM];
+			memset(poseParameters, 0, sizeof(poseParameters));
+			
+			// Sample the idle animation at cycle 0
+			IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
+			
+			Vector posAnim[MAXSTUDIOBONES];
+			Quaternion qAnim[MAXSTUDIOBONES];
+			for (int i = 0; i < MAXSTUDIOBONES; i++)
+			{
+				posAnim[i].Init();
+				qAnim[i].Init(0, 0, 0, 1);
+			}
+			boneSetup.InitPose(posAnim, qAnim);
+			boneSetup.AccumulatePose(posAnim, qAnim, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+			
+			// Build world-space matrix for hand bone
+			// Need to walk up hierarchy to get correct world transform
+			matrix3x4_t boneToWorld[MAXSTUDIOBONES];
+			for (int i = 0; i < numBones; i++)
+			{
+				matrix3x4_t boneToParent;
+				QuaternionMatrix(qAnim[i], posAnim[i], boneToParent);
+				
+				const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+				if (!pBone)
+				{
+					SetIdentityMatrix(boneToWorld[i]);
+					continue;
+				}
+				
+				if (pBone->parent == -1)
+					MatrixCopy(boneToParent, boneToWorld[i]);
+				else if (pBone->parent >= 0 && pBone->parent < numBones)
+					ConcatTransforms(boneToWorld[pBone->parent], boneToParent, boneToWorld[i]);
+				else
+					SetIdentityMatrix(boneToWorld[i]);
+			}
+			
+			// Cache the LOCAL hand bone transform (this is relative to model origin)
+			// Since we sampled the animation at origin, the bone transform IS the local offset
+			MatrixCopy(boneToWorld[m_iHandBone], m_matIdleHandBoneTransform);
+			m_bHandBoneOffsetValid = true;
+			
+			if (tfvr_hands_debug.GetBool())
+			{
+				Vector pos;
+				QAngle angles;
+				MatrixAngles(m_matIdleHandBoneTransform, angles, pos);
+				DevMsg("VR Hand: Sampled idle pose directly - hand bone pos: (%.1f, %.1f, %.1f)\n", pos.x, pos.y, pos.z);
+			}
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -2565,212 +2809,6 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	if (pRenderWeapon)
 	{
 		pRenderWeapon->PlayFireAnimation();
-	}
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: Sample fire animation to get recoil offset (delta from IDLE pose)
-//          Computes the world-space delta of the hand bone
-//-----------------------------------------------------------------------------
-void C_TFVRHand::GetFireAnimationOffset(matrix3x4_t &outOffset)
-{
-	SetIdentityMatrix(outOffset);
-	
-	extern ConVar tfvr_weapon_fire_anim_scale;
-	float flScale = tfvr_weapon_fire_anim_scale.GetFloat();
-	
-	if (flScale <= 0.0f)
-		return;
-	
-	CStudioHdr *pStudioHdr = GetModelPtr();
-	if (!pStudioHdr || m_iFireSequence < 0 || m_iIdleSequence < 0 || m_iHandBone < 0)
-		return;
-	
-	int numBones = pStudioHdr->numbones();
-	if (numBones <= 0 || numBones > MAXSTUDIOBONES || m_iHandBone >= numBones)
-		return;
-	
-	// Sample the animation at the current cycle
-	float flCycle = GetCycle();
-	
-	// Initialize pose parameters (all zeros)
-	float poseParameters[MAXSTUDIOPOSEPARAM];
-	memset(poseParameters, 0, sizeof(poseParameters));
-	
-	// Set up bone setup interface
-	IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
-	
-	// === Sample FIRE animation and build world-space transforms ===
-	Vector posFireAnim[MAXSTUDIOBONES];
-	Quaternion qFireAnim[MAXSTUDIOBONES];
-	
-	// Initialize arrays
-	for (int i = 0; i < MAXSTUDIOBONES; i++)
-	{
-		posFireAnim[i].Init();
-		qFireAnim[i].Init(0, 0, 0, 1);
-	}
-	
-	boneSetup.InitPose(posFireAnim, qFireAnim);
-	boneSetup.AccumulatePose(posFireAnim, qFireAnim, m_iFireSequence, flCycle, 1.0f, gpGlobals->curtime, NULL);
-	
-	// Build world-space matrices for fire animation
-	matrix3x4_t boneToWorldFire[MAXSTUDIOBONES];
-	memset(boneToWorldFire, 0, sizeof(boneToWorldFire));
-	
-	for (int i = 0; i < numBones; i++)
-	{
-		matrix3x4_t boneToParent;
-		QuaternionMatrix(qFireAnim[i], posFireAnim[i], boneToParent);
-		
-		const mstudiobone_t *pBone = pStudioHdr->pBone(i);
-		if (!pBone)
-		{
-			SetIdentityMatrix(boneToWorldFire[i]);
-			continue;
-		}
-			
-		if (pBone->parent == -1)
-		{
-			MatrixCopy(boneToParent, boneToWorldFire[i]);
-		}
-		else if (pBone->parent >= 0 && pBone->parent < numBones)
-		{
-			ConcatTransforms(boneToWorldFire[pBone->parent], boneToParent, boneToWorldFire[i]);
-		}
-		else
-		{
-			SetIdentityMatrix(boneToWorldFire[i]);
-		}
-	}
-	
-	// === Sample IDLE animation and build world-space transforms ===
-	Vector posIdleAnim[MAXSTUDIOBONES];
-	Quaternion qIdleAnim[MAXSTUDIOBONES];
-	
-	// Initialize arrays
-	for (int i = 0; i < MAXSTUDIOBONES; i++)
-	{
-		posIdleAnim[i].Init();
-		qIdleAnim[i].Init(0, 0, 0, 1);
-	}
-	
-	boneSetup.InitPose(posIdleAnim, qIdleAnim);
-	boneSetup.AccumulatePose(posIdleAnim, qIdleAnim, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
-	
-	// Build world-space matrices for idle animation
-	matrix3x4_t boneToWorldIdle[MAXSTUDIOBONES];
-	memset(boneToWorldIdle, 0, sizeof(boneToWorldIdle));
-	
-	for (int i = 0; i < numBones; i++)
-	{
-		matrix3x4_t boneToParent;
-		QuaternionMatrix(qIdleAnim[i], posIdleAnim[i], boneToParent);
-		
-		const mstudiobone_t *pBone = pStudioHdr->pBone(i);
-		if (!pBone)
-		{
-			SetIdentityMatrix(boneToWorldIdle[i]);
-			continue;
-		}
-			
-		if (pBone->parent == -1)
-		{
-			MatrixCopy(boneToParent, boneToWorldIdle[i]);
-		}
-		else if (pBone->parent >= 0 && pBone->parent < numBones)
-		{
-			ConcatTransforms(boneToWorldIdle[pBone->parent], boneToParent, boneToWorldIdle[i]);
-		}
-		else
-		{
-			SetIdentityMatrix(boneToWorldIdle[i]);
-		}
-	}
-	
-	// Get world-space transforms for hand bone
-	matrix3x4_t fireHandWorld = boneToWorldFire[m_iHandBone];
-	matrix3x4_t idleHandWorld = boneToWorldIdle[m_iHandBone];
-	
-	// Compute the delta: deltaTransform = fireHandWorld * inverse(idleHandWorld)
-	matrix3x4_t invIdleHandWorld;
-	MatrixInvert(idleHandWorld, invIdleHandWorld);
-	matrix3x4_t deltaTransform;
-	ConcatTransforms(fireHandWorld, invIdleHandWorld, deltaTransform);
-	
-	// Extract position and rotation from delta
-	Vector deltaPos;
-	QAngle deltaAngles;
-	MatrixGetColumn(deltaTransform, 3, deltaPos);
-	MatrixAngles(deltaTransform, deltaAngles);
-	
-	// Apply scale
-	extern ConVar tfvr_weapon_fire_anim_pos_scale;
-	extern ConVar tfvr_weapon_fire_anim_pitch_scale;
-	extern ConVar tfvr_weapon_fire_anim_yaw_scale;
-	extern ConVar tfvr_weapon_fire_anim_roll_scale;
-	extern ConVar tfvr_weapon_fire_anim_pos_rotation;
-	extern ConVar tfvr_weapon_fire_anim_angle_rotation;
-	
-	deltaPos *= flScale * tfvr_weapon_fire_anim_pos_scale.GetFloat();
-	deltaAngles.x *= flScale * tfvr_weapon_fire_anim_pitch_scale.GetFloat();
-	deltaAngles.y *= flScale * tfvr_weapon_fire_anim_yaw_scale.GetFloat();
-	deltaAngles.z *= flScale * tfvr_weapon_fire_anim_roll_scale.GetFloat();
-	
-	// IMPORTANT: Rotate the POSITION vector to transform animation space to VR hand space
-	// This rotates the direction of movement so "inward" becomes "upward" for recoil
-	float posRotation = tfvr_weapon_fire_anim_pos_rotation.GetFloat();
-	if (posRotation != 0.0f)
-	{
-		// Rotate position vector around Z axis
-		float radians = DEG2RAD(posRotation);
-		float cosAngle = cos(radians);
-		float sinAngle = sin(radians);
-		
-		Vector rotatedPos;
-		rotatedPos.x = deltaPos.x * cosAngle - deltaPos.y * sinAngle;
-		rotatedPos.y = deltaPos.x * sinAngle + deltaPos.y * cosAngle;
-		rotatedPos.z = deltaPos.z;
-		deltaPos = rotatedPos;
-	}
-	
-	// Apply coordinate space rotation correction
-	// The animation is authored in viewmodel space which is rotated relative to VR hand space
-	// We apply a conjugation: correctedOffset = R * rawOffset * R^-1
-	// This rotates both the position vector AND the rotation axes
-	float angleRotation = tfvr_weapon_fire_anim_angle_rotation.GetFloat();
-	
-	// Build the raw offset matrix first
-	matrix3x4_t rawOffset;
-	AngleMatrix(deltaAngles, deltaPos, rawOffset);
-	
-	if (angleRotation != 0.0f)
-	{
-		// Create rotation matrix (around Z axis / roll)
-		matrix3x4_t rotationMatrix;
-		QAngle rotationAngles(0, 0, angleRotation);
-		AngleMatrix(rotationAngles, vec3_origin, rotationMatrix);
-		
-		// Create inverse rotation
-		matrix3x4_t invRotationMatrix;
-		QAngle invRotationAngles(0, 0, -angleRotation);
-		AngleMatrix(invRotationAngles, vec3_origin, invRotationMatrix);
-		
-		// Apply conjugation: R * rawOffset * R^-1
-		matrix3x4_t tempOffset;
-		ConcatTransforms(rotationMatrix, rawOffset, tempOffset);
-		ConcatTransforms(tempOffset, invRotationMatrix, outOffset);
-	}
-	else
-	{
-		MatrixCopy(rawOffset, outOffset);
-	}
-	
-	extern ConVar tfvr_weapon_fire_anim_debug;
-	if (tfvr_weapon_fire_anim_debug.GetBool())
-	{
-		DevMsg("VR: Fire anim WORLD offset at cycle %.2f - pos: (%.2f, %.2f, %.2f), angles: (%.1f, %.1f, %.1f)\n", 
-			flCycle, deltaPos.x, deltaPos.y, deltaPos.z, deltaAngles.x, deltaAngles.y, deltaAngles.z);
 	}
 }
 
