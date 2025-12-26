@@ -4,6 +4,8 @@
 #include "c_tfvr_hand.h"
 #include "tf/c_tf_player.h"
 #include "tf/tf_weaponbase.h"
+#include "tf/tf_weapon_minigun.h"
+#include "tf/tf_weapon_grenadelauncher.h"
 #include "tf/tf_item_wearable.h"
 #include "econ/econ_entity.h"
 #include "econ/econ_item_schema.h"
@@ -28,9 +30,10 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false) {}
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false) {}
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
+	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
 	
 	// IHasOwner interface
 	virtual CBaseEntity *GetOwnerViaInterface(void) OVERRIDE
@@ -72,21 +75,38 @@ public:
 		if (!tfvr_weapon_fire_anim.GetBool())
 			return;
 		
+		// Try to find a fire animation on the weapon model itself
+		// Common names: "fire", "shoot", "ref"
+		int fireSeq = -1;
 		if (m_iFireSequence >= 0)
 		{
-			SetSequence(m_iFireSequence);
+			fireSeq = m_iFireSequence;
+		}
+		else
+		{
+			// Try common fire animation names for world models
+			fireSeq = LookupSequence("fire");
+			if (fireSeq < 0)
+				fireSeq = LookupSequence("shoot");
+			if (fireSeq < 0)
+				fireSeq = LookupSequence("ref"); // Reference pose animation
+		}
+		
+		if (fireSeq >= 0)
+		{
+			SetSequence(fireSeq);
 			SetCycle(0.0f);
 			SetPlaybackRate(1.0f);
 			m_bPlayingFireAnim = true;
 			
 			if (tfvr_weapon_fire_anim_debug.GetBool())
 			{
-				DevMsg("VR: Playing fire animation (sequence %d)\n", m_iFireSequence);
+				DevMsg("VR: Playing weapon fire animation (sequence %d)\n", fireSeq);
 			}
 		}
 		else if (tfvr_weapon_fire_anim_debug.GetBool())
 		{
-			DevMsg("VR: No fire animation found for this weapon\n");
+			DevMsg("VR: No fire animation found for this weapon model\n");
 		}
 	}
 	
@@ -165,8 +185,46 @@ public:
 	// Storage for attached models (copied from source weapon)
 	CUtlVector<AttachedModelData_t> m_vecAttachedModels;
 	
+	// Override StandardBlendingRules to apply weapon's procedural bone rotations
+	// The weapon itself updates these values in ItemPreFrame, we just read and apply them
+	virtual void StandardBlendingRules( CStudioHdr *hdr, Vector pos[], Quaternion q[], float currentTime, int boneMask ) OVERRIDE
+	{
+		BaseClass::StandardBlendingRules(hdr, pos, q, currentTime, boneMask);
+		
+		// Apply procedural bone rotations from the source weapon
+		// The weapon has already computed these values, we just apply them to our bones
+		C_TFWeaponBase *pWeapon = m_hSourceWeapon.Get();
+		if (pWeapon && hdr)
+		{
+			// Handle minigun barrel rotation
+			CTFMinigun *pMinigun = dynamic_cast<CTFMinigun*>(pWeapon);
+			if (pMinigun)
+			{
+				int iBarrelBone = Studio_BoneIndexByName(hdr, "barrel");
+				if (iBarrelBone >= 0)
+				{
+					// Get the already-computed barrel angle from the weapon
+					float flBarrelAngle = pMinigun->GetBarrelRotation();
+					AngleQuaternion(RadianEuler(0, 0, flBarrelAngle), q[iBarrelBone]);
+				}
+			}
+			
+			// Handle grenade launcher barrel rotation
+			CTFGrenadeLauncher *pGrenadeLauncher = dynamic_cast<CTFGrenadeLauncher*>(pWeapon);
+			if (pGrenadeLauncher)
+			{
+				// The grenade launcher uses ViewModelAttachmentBlending which is called
+				// by the weapon's StandardBlendingRules, but we need to avoid double-updating
+				// Just call ViewModelAttachmentBlending directly on our render weapon
+				pWeapon->ViewModelAttachmentBlending(hdr, pos, q, currentTime, boneMask);
+			}
+		}
+	}
+	
+	
 private:
 	CHandle<C_TFPlayer> m_hOwnerPlayer;
+	CHandle<C_TFWeaponBase> m_hSourceWeapon;
 	int m_iIdleSequence;
 	int m_iFireSequence;
 	bool m_bPlayingFireAnim;
@@ -1784,6 +1842,68 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	// This ensures the weapon snaps to position immediately without lerping
 	pRenderWeapon->ResetLatched();
 	pRenderWeapon->InvalidateBoneCache();
+	
+	// Force weapon to setup bones so we can modify them
+	pRenderWeapon->SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+	
+	// Now copy animated bone transforms from hand to weapon
+	CStudioHdr *pWeaponHdr = pRenderWeapon->GetModelPtr();
+	if (pWeaponHdr && pBoneToWorldOut)
+	{
+		extern ConVar tfvr_weapon_fire_anim_debug;
+		static int lastCopiedCount = -1;
+		int copiedCount = 0;
+		
+		// Copy all vm_weapon_bone_* bones from hand to weapon
+		for (int i = 1; i <= 10; i++)
+		{
+			char boneName[64];
+			Q_snprintf(boneName, sizeof(boneName), "vm_weapon_bone_%d", i);
+			
+			int handBoneIndex = LookupBone(boneName);
+			int weaponBoneIndex = pRenderWeapon->LookupBone(boneName);
+			
+			if (handBoneIndex >= 0 && weaponBoneIndex >= 0 && handBoneIndex < nMaxBones)
+			{
+				// Get the bone transform from the hand (already in world space from pBoneToWorldOut)
+				matrix3x4_t handBoneMatrix;
+				MatrixCopy(pBoneToWorldOut[handBoneIndex], handBoneMatrix);
+				
+				// Set it directly on the weapon
+				matrix3x4_t &weaponBone = pRenderWeapon->GetBoneForWrite(weaponBoneIndex);
+				MatrixCopy(handBoneMatrix, weaponBone);
+				copiedCount++;
+			}
+		}
+		
+		// Also copy weapon_bone_1, weapon_bone_2, etc. (but NOT weapon_bone which is used for positioning)
+		for (int i = 1; i <= 10; i++)
+		{
+			char boneName[64];
+			Q_snprintf(boneName, sizeof(boneName), "weapon_bone_%d", i);
+			
+			int handBoneIndex = LookupBone(boneName);
+			int weaponBoneIndex = pRenderWeapon->LookupBone(boneName);
+			
+			if (handBoneIndex >= 0 && weaponBoneIndex >= 0 && handBoneIndex < nMaxBones)
+			{
+				// Get the bone transform from the hand (already in world space from pBoneToWorldOut)
+				matrix3x4_t handBoneMatrix;
+				MatrixCopy(pBoneToWorldOut[handBoneIndex], handBoneMatrix);
+				
+				// Set it directly on the weapon
+				matrix3x4_t &weaponBone = pRenderWeapon->GetBoneForWrite(weaponBoneIndex);
+				MatrixCopy(handBoneMatrix, weaponBone);
+				copiedCount++;
+			}
+		}
+		
+		if (tfvr_weapon_fire_anim_debug.GetBool() && copiedCount != lastCopiedCount)
+		{
+			DevMsg("VR Weapon: Copied %d animated bone transforms from hand to weapon\n", copiedCount);
+			lastCopiedCount = copiedCount;
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -2427,7 +2547,15 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// This way the player's actual weapon can remain in the viewmodel system
 	// and we have full control over a separate worldmodel entity for rendering
 	
+	// Use world model for VR (c_models in TF2 are the world models)
 	const char *worldModel = pWeapon->GetWorldModel();
+	const char *viewModel = pWeapon->GetViewModel();
+	
+	DevMsg("VR Hand: Equipping weapon '%s'\n", pWeapon->GetClassname());
+	DevMsg("  ViewModel: %s\n", viewModel ? viewModel : "NULL");
+	DevMsg("  WorldModel: %s\n", worldModel ? worldModel : "NULL");
+	DevMsg("  Using world model\n");
+	
 	if (!worldModel || !worldModel[0])
 		return;
 	
@@ -2449,6 +2577,12 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Set owner for material proxies (crit glow, etc.)
 	pRenderWeapon->SetOwnerPlayer(pOwner);
+	
+	// Set source weapon so we can call its ViewModelAttachmentBlending
+	pRenderWeapon->SetSourceWeapon(pWeapon);
+	
+	// Make weapon think every frame so animations can advance
+	pRenderWeapon->SetNextClientThink(CLIENT_THINK_ALWAYS);
 	
 	// Store the render weapon
 	m_hRenderWeapon = pRenderWeapon;
