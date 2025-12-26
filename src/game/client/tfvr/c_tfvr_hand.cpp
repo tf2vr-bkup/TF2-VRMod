@@ -2592,6 +2592,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	pRenderWeapon->SetRenderMode(kRenderNormal);
 	pRenderWeapon->SetRenderColor(255, 255, 255, 255);
 	pRenderWeapon->RemoveEffects(EF_NODRAW);
+	pRenderWeapon->RemoveEffects(EF_NOSHADOW); // Ensure shadows are enabled
+	pRenderWeapon->AddToLeafSystem(RENDER_GROUP_OPAQUE_ENTITY); // Add to render system for shadows
+	pRenderWeapon->CreateShadow(); // Create shadow handle for dynamic shadows
 	
 	// Determine the correct fire animation for this weapon and hand
 	// NOTE: We look it up on the HAND model, not the weapon model
