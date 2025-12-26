@@ -431,6 +431,9 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	void			ApplyItemRegen( void );
 
 	kill_eater_event_t GetKillEaterKillEventType() const;
+	
+	// VR: Override sound emission origin to use VR hand position
+	virtual Vector GetSoundEmissionOrigin() const OVERRIDE;
 #endif
 
 	// Utility.

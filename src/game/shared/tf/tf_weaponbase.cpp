@@ -4598,6 +4598,25 @@ CTFPlayer *CTFWeaponBase::GetTFPlayerOwner() const
 	return dynamic_cast<CTFPlayer*>( GetOwner() );
 }
 
+#ifdef GAME_DLL
+// -----------------------------------------------------------------------------
+// Purpose: Override sound emission origin to use VR hand position when in VR
+// -----------------------------------------------------------------------------
+Vector CTFWeaponBase::GetSoundEmissionOrigin() const
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( pPlayer && pPlayer->IsInVRMode() )
+	{
+		// Use the networked controller position that's used for weapon firing
+		// This ensures sounds come from the weapon's actual position in VR
+		return pPlayer->Weapon_ShootPosition();
+	}
+	
+	// Fall back to default behavior (WorldSpaceCenter)
+	return BaseClass::GetSoundEmissionOrigin();
+}
+#endif
+
 #ifdef CLIENT_DLL
 // -----------------------------------------------------------------------------
 // Purpose:
