@@ -63,6 +63,7 @@ public:
 	virtual ShadowType_t ShadowCastType() override;  // Always cast shadows
 	virtual bool ShouldReceiveProjectedTextures(int flags) override;  // Always receive shadows
 	virtual bool IsTransparent() override { return false; }  // Force opaque for shadows
+	virtual bool GetShadowCastDistance(float *pDist, ShadowType_t shadowType) const override;
 	
 	// Override to ensure hands are always in PVS
 	virtual void GetRenderBounds(Vector& mins, Vector& maxs) override;
@@ -102,6 +103,12 @@ public:
 	
 	// Fire animation - trigger weapon fire animation
 	void PlayWeaponFireAnimation();
+	
+	// Two-handed weapon support
+	bool GetOffHandGripTarget(Vector &outPos, QAngle &outAngles);  // Get off-hand grip position from animation
+	float GetTwoHandBlendAmount() const { return m_flTwoHandBlend; }
+	void SetTwoHandBlendAmount(float blend) { m_flTwoHandBlend = blend; }
+	bool IsTwoHanding() const { return m_flTwoHandBlend > 0.01f; }
 
 private:
 	// Which hand this entity represents
@@ -150,6 +157,10 @@ private:
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose
 	bool m_bHandBoneOffsetValid;             // Whether the offset has been calculated
+	
+	// Two-handed weapon support
+	float m_flTwoHandBlend;  // 0.0 = free hand, 1.0 = fully gripping weapon
+	int m_iOffHandBone;      // Bone index for the off-hand grip point on weapon hand's model
 };
 
 // Global functions
