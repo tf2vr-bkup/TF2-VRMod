@@ -457,6 +457,11 @@ C_TFVRHand::C_TFVRHand()
 	m_angIdleMuzzleAngles = vec3_angle;
 	m_bIdleMuzzleOffsetValid = false;
 	m_iCachedMuzzleWeaponID = -1;
+	
+	// Melee swing cycling
+	m_iMeleeSwingIndex = 0;
+	m_szMeleeSwingBase[0] = '\0';
+	m_iMeleeSwingCount = 0;
 
 	// Initialize bone mapping to invalid
 	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
@@ -1312,8 +1317,9 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		int currentSeq = GetSequence();
 		float currentCycle = GetCycle();
 		
-		// If fire animation is playing, use fire sequence, otherwise use idle
-		int seqToSample = m_bPlayingFireAnim && m_iFireSequence >= 0 ? m_iFireSequence : m_iIdleSequence;
+		// If fire animation is playing, use the actual current sequence (which may be a swing variant)
+		// Otherwise use idle sequence for the weapon pose
+		int seqToSample = m_bPlayingFireAnim ? currentSeq : m_iIdleSequence;
 		float cycleToSample = m_bPlayingFireAnim ? currentCycle : 0.0f;
 		
 		if (seqToSample < 0)
@@ -2569,18 +2575,26 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 	switch (playerClass)
 	{
 		case TF_CLASS_SCOUT:
-			// Scout: sg_idle, p_idle, b_idle, wb_idle, ss_idle (shortstop), db_idle (?), ed_idle (drinks/milk), throw_idle (guillotine), bm_idle
+			// Scout: sg_idle, p_idle, b_idle, wb_idle, ss_idle (shortstop), db_idle (double-barrel), ed_idle (drinks/milk), cleave_idle (guillotine), bm_idle
+			if (V_stristr(weaponClass, "soda_popper")) return "db_idle"; // Soda Popper (double-barrel)
 			if (V_stristr(weaponClass, "pep_brawler_blaster")) return "sg_idle"; // Baby Face's Blaster
-			if (V_stristr(weaponClass, "soda_popper")) return "sg_idle"; // Soda Popper
+			// Check item def index for Force-A-Nature (item def 45) - double-barrel scattergun variant
+			if (V_stristr(weaponClass, "scattergun") && pWeapon)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 45)
+					return "db_idle"; // Force-A-Nature (double-barrel)
+			}
 			if (V_stristr(weaponClass, "scattergun")) return "sg_idle";
 			if (V_stristr(weaponClass, "handgun_scout")) return "ss_idle"; // Shortstop
 			if (V_stristr(weaponClass, "pistol")) return "p_idle";
 			if (V_stristr(weaponClass, "wrap")) return "wb_idle"; // Wrap Assassin (melee with ball)
 			if (V_stristr(weaponClass, "bat")) return "b_idle";
 			if (V_stristr(weaponClass, "lunchbox_drink")) return "ed_idle"; // Bonk/Crit-a-Cola
-			if (V_stristr(weaponClass, "jar_milk")) return "ed_idle"; // Mad Milk
-			if (V_stristr(weaponClass, "cleaver")) return "throw_idle"; // Flying Guillotine
-			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Other jars/throwables
+			// Use weapon ID to distinguish throwables - cleaver vs jars
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_CLEAVER) return "cleave_idle"; // Flying Guillotine
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK) return "ed_idle"; // Mad Milk
+			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Jarate and other jars
 			if (V_stristr(weaponClass, "throwable")) return "throw_idle"; // Generic throwables
 			if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
 			break;
@@ -2694,6 +2708,144 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Get the melee swing animation BASE name (without a/b/c suffix)
+//         Returns NULL if not a melee weapon with swing cycling, or the base name if it is
+//         e.g., returns "b_swing_" for bat, which will have "b_swing_a", "b_swing_b", "b_swing_c"
+//         Also returns the number of swing variants (usually 3 for a/b/c)
+//-----------------------------------------------------------------------------
+const char* GetMeleeSwingBaseName(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon, int &outSwingCount)
+{
+	outSwingCount = 0;
+	
+	// Check if this is an all-class melee weapon
+	if (pWeapon)
+	{
+		const char *worldModel = pWeapon->GetWorldModel();
+		if (worldModel)
+		{
+			if (V_stristr(worldModel, "frying_pan") ||
+				V_stristr(worldModel, "saxxy") ||
+				V_stristr(worldModel, "golden_wrench") ||
+				V_stristr(worldModel, "necro_smasher") ||
+				V_stristr(worldModel, "crossing_guard") ||
+				V_stristr(worldModel, "freedom_staff") ||
+				V_stristr(worldModel, "ham_shank") ||
+				V_stristr(worldModel, "memory_maker") ||
+				V_stristr(worldModel, "prinny_machete") ||
+				V_stristr(worldModel, "conscientious"))
+			{
+				// All-class melee uses a single animation, no cycling
+				return NULL;
+			}
+		}
+	}
+	
+	// Per-class melee swing bases
+	switch (playerClass)
+	{
+		case TF_CLASS_SCOUT:
+			if (V_stristr(weaponClass, "bat"))
+			{
+				outSwingCount = 3;
+				return "b_swing_";
+			}
+			break;
+			
+		case TF_CLASS_SOLDIER:
+			if (V_stristr(weaponClass, "katana") ||
+				V_stristr(weaponClass, "sword") ||
+				V_stristr(weaponClass, "shovel") ||
+				V_stristr(weaponClass, "pickaxe"))
+			{
+				outSwingCount = 3;
+				return "s_swing_";
+			}
+			break;
+			
+		case TF_CLASS_PYRO:
+			if (V_stristr(weaponClass, "fireaxe") ||
+				V_stristr(weaponClass, "slap"))
+			{
+				outSwingCount = 3;
+				return "fa_swing_";
+			}
+			break;
+			
+		case TF_CLASS_DEMOMAN:
+			if (V_stristr(weaponClass, "bottle"))
+			{
+				outSwingCount = 3;
+				return "b_swing_";
+			}
+			if (V_stristr(weaponClass, "sword") ||
+				V_stristr(weaponClass, "katana"))
+			{
+				outSwingCount = 3;
+				return "cm_swing_";
+			}
+			break;
+			
+		case TF_CLASS_HEAVYWEAPONS:
+			if (V_stristr(weaponClass, "fists"))
+			{
+				outSwingCount = 3;
+				return "f_swing_";
+			}
+			if (V_stristr(weaponClass, "gloves"))
+			{
+				outSwingCount = 3;
+				return "bg_swing_";
+			}
+			break;
+			
+		case TF_CLASS_ENGINEER:
+			if (V_stristr(weaponClass, "wrench"))
+			{
+				outSwingCount = 3;
+				return "pdq_swing_";
+			}
+			if (V_stristr(weaponClass, "robot_arm"))
+			{
+				outSwingCount = 3;
+				return "gun_swing_";
+			}
+			if (V_stristr(weaponClass, "mechanical_arm"))
+			{
+				outSwingCount = 3;
+				return "spk_swing_";
+			}
+			break;
+			
+		case TF_CLASS_MEDIC:
+			if (V_stristr(weaponClass, "bonesaw"))
+			{
+				outSwingCount = 3;
+				return "bs_swing_";
+			}
+			break;
+			
+		case TF_CLASS_SNIPER:
+			if (V_stristr(weaponClass, "club") ||
+				V_stristr(weaponClass, "sword"))
+			{
+				outSwingCount = 3;
+				return "m_swing_";
+			}
+			break;
+			
+		case TF_CLASS_SPY:
+			if (V_stristr(weaponClass, "knife"))
+			{
+				outSwingCount = 3;
+				return "knife_stab_";
+			}
+			break;
+	}
+	
+	return NULL;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Get the appropriate fire animation name for a weapon
 //-----------------------------------------------------------------------------
 const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
@@ -2733,16 +2885,24 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 	switch (playerClass)
 	{
 		case TF_CLASS_SCOUT:
-			// Scout fire animations: sg_fire, SS_fire, p_fire, b_swing_*, wb_fire, db_fire, throw_fire, spell_fire, bm_fire
+			// Scout fire animations: sg_fire, SS_fire, p_fire, b_swing_*, wb_fire, db_fire, cleave_throw, spell_fire, bm_fire
+			if (V_stristr(weaponClass, "soda_popper")) return "db_fire"; // Soda Popper (double-barrel)
 			if (V_stristr(weaponClass, "pep_brawler_blaster")) return "sg_fire"; // Baby Face's Blaster
-			if (V_stristr(weaponClass, "soda_popper")) return "sg_fire"; // Soda Popper
+			// Check item def index for Force-A-Nature (item def 45) - double-barrel scattergun variant
+			if (V_stristr(weaponClass, "scattergun") && pWeapon)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 45)
+					return "db_fire"; // Force-A-Nature (double-barrel)
+			}
 			if (V_stristr(weaponClass, "scattergun")) return "sg_fire";
 			if (V_stristr(weaponClass, "handgun_scout")) return "SS_fire"; // Shortstop
 			if (V_stristr(weaponClass, "pistol")) return "p_fire";
 			if (V_stristr(weaponClass, "wrap")) return "wb_fire"; // Wrap Assassin
 			if (V_stristr(weaponClass, "bat")) return "b_swing_a"; // Could cycle through a/b/c
-			if (V_stristr(weaponClass, "cleaver")) return "throw_fire"; // Flying Guillotine
-			if (V_stristr(weaponClass, "jar")) return "throw_fire"; // Throwables
+			// Use weapon ID to distinguish throwables - cleaver vs jars
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_CLEAVER) return "cleave_throw"; // Flying Guillotine
+			if (V_stristr(weaponClass, "jar")) return "throw_fire"; // Jarate, Mad Milk, other jars
 			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
 			if (V_stristr(weaponClass, "spellbook")) return "spell_fire";
 			break;
@@ -2818,11 +2978,11 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			break;
 			
 		case TF_CLASS_SNIPER:
-			// Sniper: sr_fire, smg_fire, j_swing_*, cs_fire, ss_fire, throw_fire
+			// Sniper: sr_fire, smg_fire, m_swing_*, cs_fire, ss_fire, throw_fire
 			if (V_stristr(weaponClass, "sniperrifle")) return "sr_fire";
 			if (V_stristr(weaponClass, "smg")) return "smg_fire";
-			if (V_stristr(weaponClass, "club")) return "j_swing_a";
-			if (V_stristr(weaponClass, "sword")) return "j_swing_a"; // Bushwacka
+			if (V_stristr(weaponClass, "club")) return "m_swing_a";
+			if (V_stristr(weaponClass, "sword")) return "m_swing_a"; // Bushwacka
 			if (V_stristr(weaponClass, "crossbow")) return "cs_fire"; // Huntsman
 			if (V_stristr(weaponClass, "compound_bow")) return "cs_fire";
 			if (V_stristr(weaponClass, "shotgun")) return "ss_fire";
@@ -3193,16 +3353,45 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		m_iFireSequence = -1;
 		m_iIdleSequence = -1;
 		
-		if (fireAnimName && fireAnimName[0])
+		// Check if this is a melee weapon with swing cycling
+		int swingCount = 0;
+		const char *swingBase = GetMeleeSwingBaseName(playerClass, weaponClass, pWeapon, swingCount);
+		if (swingBase && swingCount > 0)
 		{
+			// Store melee swing info for cycling during attacks
+			V_strncpy(m_szMeleeSwingBase, swingBase, sizeof(m_szMeleeSwingBase));
+			m_iMeleeSwingCount = swingCount;
+			m_iMeleeSwingIndex = 0; // Reset swing index on weapon equip
+			
+			// Look up the first swing animation as the default fire sequence
+			char firstSwing[128];
+			V_snprintf(firstSwing, sizeof(firstSwing), "%sa", swingBase);
+			m_iFireSequence = LookupSequence(firstSwing);
+			
 			extern ConVar tfvr_weapon_fire_anim_debug;
-			
-			m_iFireSequence = LookupSequence(fireAnimName);
-			
 			if (tfvr_weapon_fire_anim_debug.GetBool())
 			{
-				DevMsg("VR: Hand fire animation lookup - name: '%s', sequence: %d\n", 
-					fireAnimName, m_iFireSequence);
+				DevMsg("VR: Melee swing cycling setup - base: '%s', count: %d, first swing: '%s' (seq %d)\n", 
+					swingBase, swingCount, firstSwing, m_iFireSequence);
+			}
+		}
+		else
+		{
+			// Not a melee with swing cycling, use normal fire animation lookup
+			m_szMeleeSwingBase[0] = '\0';
+			m_iMeleeSwingCount = 0;
+			
+			if (fireAnimName && fireAnimName[0])
+			{
+				extern ConVar tfvr_weapon_fire_anim_debug;
+				
+				m_iFireSequence = LookupSequence(fireAnimName);
+				
+				if (tfvr_weapon_fire_anim_debug.GetBool())
+				{
+					DevMsg("VR: Hand fire animation lookup - name: '%s', sequence: %d\n", 
+						fireAnimName, m_iFireSequence);
+				}
 			}
 		}
 		
@@ -3507,7 +3696,67 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	if (!tfvr_weapon_fire_anim.GetBool())
 		return;
 	
-	if (m_iFireSequence < 0)
+	int sequenceToPlay = m_iFireSequence;
+	
+	// Check if this is a melee weapon with swing cycling
+	if (m_iMeleeSwingCount > 0 && m_szMeleeSwingBase[0] != '\0')
+	{
+		// Build the animation name with the current swing variant
+		static const char *swingVariants[] = { "a", "b", "c" };
+		char animName[128];
+		
+		// Check if this attack is a crit
+		C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+		bool bIsCrit = pWeapon && pWeapon->IsCurrentAttackACrit();
+		
+		// Build animation name: base + variant (+ crit suffix if applicable)
+		// e.g., "b_swing_a" or "b_swing_a_crit" (if crit animations exist)
+		int swingVariant = m_iMeleeSwingIndex % m_iMeleeSwingCount;
+		V_snprintf(animName, sizeof(animName), "%s%s", m_szMeleeSwingBase, swingVariants[swingVariant]);
+		
+		// Look up the sequence
+		int swingSequence = LookupSequence(animName);
+		
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: Melee swing - base: '%s', variant: %d, anim: '%s', seq: %d, crit: %d\n", 
+				m_szMeleeSwingBase, swingVariant, animName, swingSequence, bIsCrit);
+		}
+		
+		// If this is a crit, try to find a crit variant
+		if (bIsCrit)
+		{
+			char critAnimName[128];
+			V_snprintf(critAnimName, sizeof(critAnimName), "%s%s_crit", m_szMeleeSwingBase, swingVariants[swingVariant]);
+			int critSequence = LookupSequence(critAnimName);
+			if (critSequence >= 0)
+			{
+				swingSequence = critSequence;
+				if (tfvr_weapon_fire_anim_debug.GetBool())
+				{
+					DevMsg("VR: Using crit swing animation '%s' (seq %d)\n", critAnimName, critSequence);
+				}
+			}
+			else if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR: Crit swing animation '%s' not found, using normal swing\n", critAnimName);
+			}
+		}
+		
+		if (swingSequence >= 0)
+		{
+			sequenceToPlay = swingSequence;
+		}
+		else if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: Melee swing animation '%s' not found, using default fire sequence %d\n", animName, m_iFireSequence);
+		}
+		
+		// Cycle to next swing variant for next attack
+		m_iMeleeSwingIndex = (m_iMeleeSwingIndex + 1) % m_iMeleeSwingCount;
+	}
+	
+	if (sequenceToPlay < 0)
 	{
 		if (tfvr_weapon_fire_anim_debug.GetBool())
 		{
@@ -3517,7 +3766,7 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	}
 	
 	// Play the fire animation on the HAND model
-	SetSequence(m_iFireSequence);
+	SetSequence(sequenceToPlay);
 	SetCycle(0.0f);
 	SetPlaybackRate(1.0f);
 	m_bPlayingFireAnim = true;
@@ -3529,7 +3778,7 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	if (tfvr_weapon_fire_anim_debug.GetBool())
 	{
 		DevMsg("VR: Playing fire animation on hand (sequence %d) at time %.2f\n", 
-			m_iFireSequence, gpGlobals->curtime);
+			sequenceToPlay, gpGlobals->curtime);
 	}
 	
 	// Also trigger animation on the render weapon (if it has one)

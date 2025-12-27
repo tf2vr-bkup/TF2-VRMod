@@ -154,6 +154,11 @@ private:
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
 	
+	// Melee swing animation cycling (a -> b -> c -> a...)
+	int m_iMeleeSwingIndex;        // Current swing variant (0=a, 1=b, 2=c)
+	char m_szMeleeSwingBase[64];   // Base swing animation name (e.g., "b_swing_")
+	int m_iMeleeSwingCount;        // Number of swing variants available (usually 3)
+	
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose
 	bool m_bHandBoneOffsetValid;             // Whether the offset has been calculated
