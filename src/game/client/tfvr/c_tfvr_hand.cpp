@@ -4,6 +4,7 @@
 #include "c_tfvr_hand.h"
 #include "tf/c_tf_player.h"
 #include "tf/tf_weaponbase.h"
+#include "tf/tf_shareddefs.h"
 #include "tf/tf_weapon_minigun.h"
 #include "tf/tf_weapon_grenadelauncher.h"
 #include "tf/tf_item_wearable.h"
@@ -450,6 +451,12 @@ C_TFVRHand::C_TFVRHand()
 	m_iHandBone = -1;
 	m_flTwoHandBlend = 0.0f;
 	m_iOffHandBone = -1;
+	
+	// Idle muzzle caching for pistols
+	m_vIdleMuzzleOffset = vec3_origin;
+	m_angIdleMuzzleAngles = vec3_angle;
+	m_bIdleMuzzleOffsetValid = false;
+	m_iCachedMuzzleWeaponID = -1;
 
 	// Initialize bone mapping to invalid
 	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
@@ -2342,6 +2349,7 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 {
 	// Use the RENDER weapon for position calculations
 	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+	C_TFWeaponBase *pTFWeapon = m_hHeldWeapon.Get();
 	if (!pRenderWeapon)
 		return false;
 	
@@ -2349,8 +2357,124 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 	// This ensures we have the most up-to-date hand position
 	UpdateHandTransform();
 	
-	// CRITICAL: Update the render weapon position RIGHT NOW before getting muzzle
-	// This ensures we have the latest position based on fresh tracking data
+	// Check weapon type for special handling
+	int weaponType = -1;
+	if (pTFWeapon)
+	{
+		weaponType = pTFWeapon->GetTFWpnData().m_iWeaponType;
+	}
+	
+	// MELEE WEAPONS: Use controller aim point for both position and direction
+	// This prevents the swing animation from moving the aim point
+	if (weaponType == TF_WPN_TYPE_MELEE || weaponType == TF_WPN_TYPE_MELEE_ALLCLASS)
+	{
+		// Use the controller's pose directly (aim pose)
+		if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+		{
+			VMatrix controllerPose;
+			if (g_pOpenXRManager->GetRightControllerPose(controllerPose))
+			{
+				outPos = controllerPose.GetTranslation();
+				MatrixAngles(controllerPose.As3x4(), outAngles);
+				return true;
+			}
+		}
+		// Fallback to cached hand position
+		outPos = m_vecLastValidPosition;
+		outAngles = m_angLastValidAngles;
+		return true;
+	}
+	
+	// PISTOL (Scout/Engineer): Use cached idle muzzle to prevent fire anim from moving aim
+	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+	if (pOwner && pTFWeapon)
+	{
+		int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
+		int weaponID = pTFWeapon->GetWeaponID();
+		
+		// Check if this is a pistol for Scout or Engineer
+		// Includes: stock pistol, scout pistol, Pretty Boy's Pocket Pistol, Winger
+		bool bIsPistol = (weaponID == TF_WEAPON_PISTOL || 
+		                  weaponID == TF_WEAPON_PISTOL_SCOUT || 
+		                  weaponID == TF_WEAPON_HANDGUN_SCOUT_SECONDARY);
+		bool bIsScoutOrEngineer = (playerClass == TF_CLASS_SCOUT || playerClass == TF_CLASS_ENGINEER);
+		
+		if (bIsPistol && bIsScoutOrEngineer)
+		{
+			// Invalidate cache if weapon changed
+			if (m_iCachedMuzzleWeaponID != weaponID)
+			{
+				m_bIdleMuzzleOffsetValid = false;
+				m_iCachedMuzzleWeaponID = weaponID;
+			}
+			
+			// Cache idle muzzle when NOT playing fire animation
+			if (!m_bIdleMuzzleOffsetValid && !m_bPlayingFireAnim)
+			{
+				// Update bones to get idle pose transforms
+				matrix3x4_t boneArray[MAXSTUDIOBONES];
+				SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+				pRenderWeapon->SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+				
+				int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
+				if (iMuzzle > 0)
+				{
+					Vector muzzlePos;
+					QAngle muzzleAngles;
+					pRenderWeapon->GetAttachment(iMuzzle, muzzlePos, muzzleAngles);
+					
+					// Cache muzzle position relative to the VR HAND entity (not weapon)
+					// The hand entity position is stable (from controller tracking)
+					matrix3x4_t handTransform;
+					AngleMatrix(GetAbsAngles(), GetAbsOrigin(), handTransform);
+					
+					matrix3x4_t invHandTransform;
+					MatrixInvert(handTransform, invHandTransform);
+					
+					// Store muzzle offset in hand-local space
+					VectorTransform(muzzlePos, invHandTransform, m_vIdleMuzzleOffset);
+					
+					// Store FULL muzzle orientation in hand-local space (preserves roll)
+					// Convert muzzle angles to matrix, then transform to hand-local space
+					matrix3x4_t muzzleWorldMatrix;
+					AngleMatrix(muzzleAngles, muzzlePos, muzzleWorldMatrix);
+					
+					matrix3x4_t muzzleLocalMatrix;
+					ConcatTransforms(invHandTransform, muzzleWorldMatrix, muzzleLocalMatrix);
+					
+					// Extract the local angles (includes roll)
+					MatrixAngles(muzzleLocalMatrix, m_angIdleMuzzleAngles);
+					
+					m_bIdleMuzzleOffsetValid = true;
+				}
+			}
+			
+			// Use cached idle muzzle (always, once cached)
+			if (m_bIdleMuzzleOffsetValid)
+			{
+				// Get current hand transform (this is stable, doesn't change with fire anim)
+				matrix3x4_t handTransform;
+				AngleMatrix(GetAbsAngles(), GetAbsOrigin(), handTransform);
+				
+				// Apply cached offset to get stable muzzle position
+				VectorTransform(m_vIdleMuzzleOffset, handTransform, outPos);
+				
+				// Apply cached orientation (includes roll) relative to hand
+				matrix3x4_t localMuzzleMatrix;
+				AngleMatrix(m_angIdleMuzzleAngles, vec3_origin, localMuzzleMatrix);
+				
+				matrix3x4_t worldMuzzleMatrix;
+				ConcatTransforms(handTransform, localMuzzleMatrix, worldMuzzleMatrix);
+				
+				// Extract world angles (preserves roll)
+				MatrixAngles(worldMuzzleMatrix, outAngles);
+				
+				return true;
+			}
+		}
+	}
+	
+	// STANDARD WEAPONS: Update bones and get muzzle attachment
 	matrix3x4_t boneArray[MAXSTUDIOBONES];
 	SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
 	// SetupBones calls PositionWeaponFromBones which updates render weapon position
@@ -2364,7 +2488,6 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 	{
 		// Apply per-class aim direction corrections
 		// The weapon visual position is correct, but the muzzle attachment's orientation needs adjustment
-		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
 		if (pOwner)
 		{
 			int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
@@ -3242,6 +3365,10 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UnequipWeapon()
 {
+	// Invalidate cached idle muzzle offset
+	m_bIdleMuzzleOffsetValid = false;
+	m_iCachedMuzzleWeaponID = -1;
+	
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
 	
 	// VR: Reattach extra wearables back to the original weapon before cleaning up

@@ -161,6 +161,12 @@ private:
 	// Two-handed weapon support
 	float m_flTwoHandBlend;  // 0.0 = free hand, 1.0 = fully gripping weapon
 	int m_iOffHandBone;      // Bone index for the off-hand grip point on weapon hand's model
+	
+	// Cached idle muzzle offset for pistols (to keep aim stable during fire anim)
+	Vector m_vIdleMuzzleOffset;        // Muzzle offset relative to weapon_bone in idle pose
+	QAngle m_angIdleMuzzleAngles;      // Muzzle angles relative to weapon_bone in idle pose
+	bool m_bIdleMuzzleOffsetValid;     // Whether the offset has been calculated
+	int m_iCachedMuzzleWeaponID;       // Weapon ID this was cached for (invalidate on weapon change)
 };
 
 // Global functions
