@@ -91,12 +91,16 @@ public:
 	C_BaseAnimating* GetRenderWeapon() const { return m_hRenderWeapon.Get(); }
 	void UpdateWeaponTransform();
 	void UpdateSkins();  // Sync skins for team colors, crit effects, etc.
+	void UpdateCritBoostEffect();  // Update crit electricity effect
 	
 	// Position weapon using already-computed bone matrices (called from SetupBones)
 	void PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
 	
 	// Get the weapon's muzzle position and angles in world space
 	bool GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAngles);
+	
+	// Get cached weapon bone world transform (for overlays to avoid bone cache issues)
+	bool GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const;
 	
 	// Weapon pose override
 	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
@@ -172,6 +176,15 @@ private:
 	QAngle m_angIdleMuzzleAngles;      // Muzzle angles relative to weapon_bone in idle pose
 	bool m_bIdleMuzzleOffsetValid;     // Whether the offset has been calculated
 	int m_iCachedMuzzleWeaponID;       // Weapon ID this was cached for (invalidate on weapon change)
+	
+	// Crit boost effect - attached to hand for proper timing
+	CSmartPtr<CNewParticleEffect> m_pCritBoostEffect;
+	bool m_bCritBoostActive;
+	
+	// Cached weapon bone world transform - set during PositionWeaponFromBones
+	// This is used by overlays to avoid stale bone cache issues
+	matrix3x4_t m_matWeaponBoneWorld;
+	bool m_bWeaponBoneWorldValid;
 };
 
 // Global functions

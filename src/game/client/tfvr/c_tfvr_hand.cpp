@@ -11,6 +11,7 @@
 #include "econ/econ_entity.h"
 #include "econ/econ_item_schema.h"
 #include "model_types.h"
+#include "particles_new.h"
 #include "tfvr/openxr_manager.h"
 #include "tfvr/openxr_hand_tracking.h"
 #include "tfvr/tfvr_weapon_base.h"
@@ -31,7 +32,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false) {}
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false) {}
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
@@ -111,7 +112,31 @@ public:
 		}
 	}
 	
-	// Override to return to idle after fire animation completes
+	// ClientThink - called every frame when SetNextClientThink(CLIENT_THINK_ALWAYS) is set
+	virtual void ClientThink() OVERRIDE
+	{
+		BaseClass::ClientThink();
+		
+		// Advance animations
+		StudioFrameAdvance();
+		
+		// Check if fire animation has completed
+		if (m_bPlayingFireAnim && GetCycle() >= 1.0f)
+		{
+			// Return to idle
+			if (m_iIdleSequence >= 0)
+			{
+				SetSequence(m_iIdleSequence);
+				SetCycle(0.0f);
+			}
+			m_bPlayingFireAnim = false;
+		}
+		
+		// Update crit boost effect each frame
+		UpdateCritBoostEffect();
+	}
+	
+	// Override to return to idle after fire animation completes (backup for when FrameAdvance is called directly)
 	virtual float FrameAdvance(float flInterval = 0.0f) OVERRIDE
 	{
 		float flReturn = BaseClass::FrameAdvance(flInterval);
@@ -147,6 +172,91 @@ public:
 			m_vecAttachedModels.AddToTail(pSourceWeapon->m_vecAttachedModels[i]);
 		}
 	}
+	
+	// Sync particle effects from the source weapon to this VR render weapon
+	void SyncParticleEffects()
+	{
+		C_TFWeaponBase *pSourceWeapon = m_hSourceWeapon.Get();
+		if (!pSourceWeapon)
+			return;
+		
+		// Get the particle systems from the source weapon
+		CUtlVector<const attachedparticlesystem_t *> vecParticleSystems;
+		pSourceWeapon->GetEconParticleSystems(&vecParticleSystems);
+		
+		if (vecParticleSystems.Count() == 0)
+			return;
+		
+		// We can't have fastcull on if we want particles attached to us
+		RemoveEffects(EF_BONEMERGE_FASTCULL);
+		
+		FOR_EACH_VEC(vecParticleSystems, i)
+		{
+			const attachedparticlesystem_t *pSystem = vecParticleSystems[i];
+			if (!pSystem || !pSystem->pszSystemName || !pSystem->pszSystemName[0])
+				continue;
+			
+			// Skip custom type particles (weapons handle them in custom ways)
+			if (pSystem->iCustomType)
+				continue;
+			
+			// Check if this particle system exists
+			if (g_pParticleSystemMgr->FindParticleSystem(pSystem->pszSystemName) == NULL)
+				continue;
+			
+			// Get attachment point
+			const char *pszAttachmentName = pSystem->pszControlPoints[0];
+			int iAttachment = INVALID_PARTICLE_ATTACHMENT;
+			if (pszAttachmentName && pszAttachmentName[0])
+			{
+				iAttachment = LookupAttachment(pszAttachmentName);
+			}
+			
+			// Create the particle effect
+			CNewParticleEffect *pEffect = NULL;
+			if (iAttachment != INVALID_PARTICLE_ATTACHMENT)
+			{
+				pEffect = ParticleProp()->Create(pSystem->pszSystemName, PATTACH_POINT_FOLLOW, pszAttachmentName);
+			}
+			else if (pSystem->bFollowRootBone)
+			{
+				pEffect = ParticleProp()->Create(pSystem->pszSystemName, PATTACH_ROOTBONE_FOLLOW);
+			}
+			else
+			{
+				pEffect = ParticleProp()->Create(pSystem->pszSystemName, PATTACH_ABSORIGIN_FOLLOW);
+			}
+			
+			if (pEffect)
+			{
+				// Add additional control points if defined
+				for (int j = 1; j < ARRAYSIZE(pSystem->pszControlPoints); ++j)
+				{
+					const char *pszControlPointName = pSystem->pszControlPoints[j];
+					if (pszControlPointName && pszControlPointName[0] != '\0')
+					{
+						ParticleProp()->AddControlPoint(pEffect, j, this, PATTACH_POINT_FOLLOW, pszControlPointName);
+					}
+				}
+			}
+		}
+	}
+	
+	// Stop all particle effects on this render weapon
+	void StopParticleEffects()
+	{
+		ParticleProp()->StopEmission();
+		
+		// Also clean up crit boost effect
+		if (m_pCritBoostEffect.IsValid())
+		{
+			m_pCritBoostEffect->StopEmission();
+			m_pCritBoostEffect = NULL;
+		}
+	}
+	
+	// Crit boost is now handled by the hand entity for proper timing
+	void UpdateCritBoostEffect() {}
 	
 	// Override to draw attached models (festivizers, etc.)
 	virtual bool OnInternalDrawModel(ClientModelRenderInfo_t *pInfo) OVERRIDE
@@ -229,6 +339,8 @@ private:
 	int m_iIdleSequence;
 	int m_iFireSequence;
 	bool m_bPlayingFireAnim;
+	CSmartPtr<CNewParticleEffect> m_pCritBoostEffect;
+	bool m_bCritBoostActive;
 };
 
 // ConVars for debugging and control
@@ -457,6 +569,14 @@ C_TFVRHand::C_TFVRHand()
 	m_angIdleMuzzleAngles = vec3_angle;
 	m_bIdleMuzzleOffsetValid = false;
 	m_iCachedMuzzleWeaponID = -1;
+	
+	// Crit boost effect
+	m_pCritBoostEffect = NULL;
+	m_bCritBoostActive = false;
+	
+	// Cached weapon bone world transform
+	SetIdentityMatrix(m_matWeaponBoneWorld);
+	m_bWeaponBoneWorldValid = false;
 	
 	// Melee swing cycling
 	m_iMeleeSwingIndex = 0;
@@ -977,6 +1097,12 @@ void C_TFVRHand::Update()
 	
 	// Sync skins for hands and weapons (team colors, crit effects, etc.)
 	UpdateSkins();
+	
+	// Update crit boost effect on right hand
+	if (IsRightHand())
+	{
+		UpdateCritBoostEffect();
+	}
 
 	// Debug visualization
 	if (tfvr_hands_debug.GetBool() && debugoverlay)
@@ -2128,6 +2254,10 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		matrix3x4_t handWeaponBoneMatrix;
 		MatrixCopy(pBoneToWorldOut[handWeaponBone], handWeaponBoneMatrix);
 		
+		// Cache this transform for overlays to use (avoids bone cache timing issues)
+		MatrixCopy(handWeaponBoneMatrix, m_matWeaponBoneWorld);
+		m_bWeaponBoneWorldValid = true;
+		
 		// Extract position and angles
 		Vector bonePos;
 		QAngle boneAng;
@@ -2279,6 +2409,9 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	pRenderWeapon->SetAbsOrigin(weaponPos);
 	pRenderWeapon->SetAbsAngles(weaponAng);
 	
+	// Also set network origin so interpolation/particle systems see the same position
+	pRenderWeapon->SetNetworkOrigin(weaponPos);
+	
 	// CRITICAL: Reset interpolation to prevent lag between hand and weapon
 	// This ensures the weapon snaps to position immediately without lerping
 	pRenderWeapon->ResetLatched();
@@ -2345,6 +2478,28 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			lastCopiedCount = copiedCount;
 		}
 	}
+	
+	// Manually override crit boost particle position to use our cached transform
+	// This overrides whatever position the particle system sampled earlier
+	if (m_pCritBoostEffect.IsValid() && m_bWeaponBoneWorldValid)
+	{
+		Vector pos;
+		MatrixGetColumn(m_matWeaponBoneWorld, 3, pos);
+		m_pCritBoostEffect->SetControlPoint(0, pos);
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Get cached weapon bone world transform (for overlays to avoid bone cache issues)
+//          This is set during PositionWeaponFromBones and reflects the current frame's position
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const
+{
+	if (!m_bWeaponBoneWorldValid)
+		return false;
+	
+	MatrixCopy(m_matWeaponBoneWorld, outTransform);
+	return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -3337,6 +3492,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	pRenderWeapon->SetRenderColor(255, 255, 255, 255);
 	pRenderWeapon->RemoveEffects(EF_NODRAW);
 	pRenderWeapon->RemoveEffects(EF_NOSHADOW); // Ensure shadows are enabled
+	pRenderWeapon->AddEffects(EF_NOINTERP); // Disable interpolation - VR positions are set directly each frame
 	pRenderWeapon->AddToLeafSystem(RENDER_GROUP_OPAQUE_ENTITY); // Add to render system for shadows
 	pRenderWeapon->CreateShadow(); // Create shadow handle for dynamic shadows
 	
@@ -3409,6 +3565,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Copy attached models (festivizers, bot-killers, etc.) from the source weapon
 	pRenderWeapon->CopyAttachedModels(pWeapon);
+	
+	// Sync particle effects (unusual effects, pipe smoke, etc.) from the source weapon
+	pRenderWeapon->SyncParticleEffects();
 	
 	// CRITICAL: Disable interpolation so weapon follows hand without lag
 	pRenderWeapon->SetPredictionEligible(false);
@@ -3578,9 +3737,23 @@ void C_TFVRHand::UnequipWeapon()
 		}
 	}
 	
+	// Clean up crit boost effect on the hand
+	if (m_pCritBoostEffect.IsValid())
+	{
+		m_pCritBoostEffect->StopEmission();
+		m_pCritBoostEffect = NULL;
+	}
+	m_bCritBoostActive = false;
+	
 	// Clean up render weapon
 	if (m_hRenderWeapon.Get())
 	{
+		// Stop any particle effects on the render weapon before releasing it
+		C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+		if (pRenderWeapon)
+		{
+			pRenderWeapon->StopParticleEffects();
+		}
 		m_hRenderWeapon->Release();
 		m_hRenderWeapon = NULL;
 	}
@@ -3681,6 +3854,84 @@ void C_TFVRHand::UpdateSkins()
 		if (pRenderWeapon->m_nSkin != nWeaponSkin)
 		{
 			pRenderWeapon->m_nSkin = nWeaponSkin;
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update crit boost effect on the hand/weapon
+//          This is attached to the HAND for proper update timing (no frame lag)
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateCritBoostEffect()
+{
+	C_TFPlayer *pPlayer = m_hOwnerPlayer.Get();
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	
+	if (!pPlayer || !pWeapon)
+	{
+		// No player or weapon, remove effect if present
+		if (m_pCritBoostEffect.IsValid())
+		{
+			m_pCritBoostEffect->StopEmission();
+			m_pCritBoostEffect = NULL;
+			m_bCritBoostActive = false;
+		}
+		return;
+	}
+	
+	// Check if we should display crit boost effect
+	bool bShouldDisplay = pPlayer->m_Shared.IsCritBoosted()
+		|| pPlayer->m_Shared.InCond(TF_COND_ENERGY_BUFF)
+		|| pPlayer->m_Shared.InCond(TF_COND_SNIPERCHARGE_RAGE_BUFF);
+	
+	// Check if weapon can be crit boosted
+	bShouldDisplay &= pWeapon->CanBeCritBoosted();
+	
+	// Never show crit boost effects when stealthed
+	bShouldDisplay &= !pPlayer->m_Shared.IsStealthed();
+	
+	// If effect exists and should stay, nothing to do here
+	// Position is corrected in PositionWeaponFromBones via SetControlPoint
+	if (bShouldDisplay && m_bCritBoostActive && m_pCritBoostEffect.IsValid())
+	{
+		return;
+	}
+	
+	// Only do create/destroy work if state changed
+	if (bShouldDisplay == m_bCritBoostActive)
+		return;
+	
+	m_bCritBoostActive = bShouldDisplay;
+	
+	// Remove effect if we shouldn't display it
+	if (!bShouldDisplay)
+	{
+		if (m_pCritBoostEffect.IsValid())
+		{
+			m_pCritBoostEffect->StopEmission();
+			m_pCritBoostEffect = NULL;
+		}
+		return;
+	}
+	
+	const char *pEffectName = (pPlayer->GetTeamNumber() == TF_TEAM_RED) 
+		? "critgun_weaponmodel_red" 
+		: "critgun_weaponmodel_blu";
+	
+	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+	if (pRenderWeapon)
+	{
+		// Attach to render weapon - the particle will use the weapon's model geometry
+		// We manually override the control point position in PositionWeaponFromBones
+		m_pCritBoostEffect = pRenderWeapon->ParticleProp()->Create(pEffectName, PATTACH_ABSORIGIN_FOLLOW);
+	}
+	else
+	{
+		// Fallback - custom origin on hand
+		m_pCritBoostEffect = ParticleProp()->Create(pEffectName, PATTACH_CUSTOMORIGIN);
+		if (m_pCritBoostEffect.IsValid())
+		{
+			m_pCritBoostEffect->SetControlPoint(0, m_vecLastValidPosition);
 		}
 	}
 }

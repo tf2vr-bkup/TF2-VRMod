@@ -496,33 +496,44 @@ bool CVRAmmoOverlay::CalculateWeaponBoneTransform(VMatrix& quadTransform)
 		return false;
 	}
 	
-	// Get the render weapon
-	C_BaseAnimating *pRenderWeapon = pHand->GetRenderWeapon();
-	if (!pRenderWeapon)
+	// Use cached weapon bone transform from the hand
+	// This avoids bone cache timing issues that cause lag
+	matrix3x4_t cachedBoneMatrix;
+	if (pHand->GetCachedWeaponBoneTransform(cachedBoneMatrix))
 	{
-		return false;
-	}
-	
-	// Look up the weapon_bone
-	int weaponBone = pRenderWeapon->LookupBone("weapon_bone");
-	if (weaponBone < 0)
-	{
-		// No weapon_bone, fallback to weapon origin
-		Vector weaponPos = pRenderWeapon->GetAbsOrigin();
-		QAngle weaponAngles = pRenderWeapon->GetAbsAngles();
-		
-		matrix3x4_t weaponMatrix;
-		AngleMatrix(weaponAngles, weaponPos, weaponMatrix);
-		quadTransform.CopyFrom3x4(weaponMatrix);
+		// Use the cached transform - set during PositionWeaponFromBones
+		quadTransform.CopyFrom3x4(cachedBoneMatrix);
 	}
 	else
 	{
-		// Get the weapon_bone world transform
-		matrix3x4_t boneMatrix;
-		pRenderWeapon->GetBoneTransform(weaponBone, boneMatrix);
+		// Fallback to render weapon if cache isn't valid
+		C_BaseAnimating *pRenderWeapon = pHand->GetRenderWeapon();
+		if (!pRenderWeapon)
+		{
+			return false;
+		}
 		
-		// Convert to VMatrix
-		quadTransform.CopyFrom3x4(boneMatrix);
+		// Look up the weapon_bone
+		int weaponBone = pRenderWeapon->LookupBone("weapon_bone");
+		if (weaponBone < 0)
+		{
+			// No weapon_bone, fallback to weapon origin
+			Vector weaponPos = pRenderWeapon->GetAbsOrigin();
+			QAngle weaponAngles = pRenderWeapon->GetAbsAngles();
+			
+			matrix3x4_t weaponMatrix;
+			AngleMatrix(weaponAngles, weaponPos, weaponMatrix);
+			quadTransform.CopyFrom3x4(weaponMatrix);
+		}
+		else
+		{
+			// Get the weapon_bone world transform (may cause lag if cache is stale)
+			matrix3x4_t boneMatrix;
+			pRenderWeapon->GetBoneTransform(weaponBone, boneMatrix);
+			
+			// Convert to VMatrix
+			quadTransform.CopyFrom3x4(boneMatrix);
+		}
 	}
 	
 	// Apply user offsets in weapon space
