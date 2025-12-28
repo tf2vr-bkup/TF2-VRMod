@@ -153,6 +153,10 @@ bool COpenXRInputManager::CreateActions()
     if (weaponSwitch.handle == XR_NULL_HANDLE) return false;
     m_actions["weapon_switch"] = weaponSwitch;
 
+    // Add left grip button action for two-handed weapon gripping
+    XrInputAction leftGrip = CreateFloatAction("left_grip", "Left Grip");
+    if (leftGrip.handle == XR_NULL_HANDLE) return false;
+    m_actions["left_grip"] = leftGrip;
 
     return true;
 }
@@ -363,6 +367,19 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
 
+        }
+    }
+
+    // Left grip button binding (for two-handed weapon gripping) - Index uses squeeze
+    if (m_actions.find("left_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
         }
     }
 
@@ -598,6 +615,19 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
 
+        }
+    }
+
+    // Left grip button binding (for two-handed weapon gripping) - Quest uses squeeze
+    if (m_actions.find("left_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
         }
     }
 

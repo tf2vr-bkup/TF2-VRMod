@@ -83,6 +83,7 @@ public:
 	VRHandSide GetHandSide() const { return m_handSide; }
 	bool IsLeftHand() const { return m_handSide == VR_HAND_LEFT; }
 	bool IsRightHand() const { return m_handSide == VR_HAND_RIGHT; }
+	COpenXRHandTracker* GetHandTracker() const { return m_pHandTracker; }
 	
 	// Weapon management
 	void EquipWeapon(C_TFWeaponBase *pWeapon);
@@ -113,6 +114,11 @@ public:
 	float GetTwoHandBlendAmount() const { return m_flTwoHandBlend; }
 	void SetTwoHandBlendAmount(float blend) { m_flTwoHandBlend = blend; }
 	bool IsTwoHanding() const { return m_flTwoHandBlend > 0.01f; }
+	
+	// Offhand grip - when grip button is held and within range
+	bool IsOffhandGripActive() const { return m_bOffhandGripActive; }
+	const Vector& GetOffhandGripForward() const { return m_vecOffhandGripForward; }
+	const Vector& GetOffhandGripUp() const { return m_vecOffhandGripUp; }
 
 private:
 	// Which hand this entity represents
@@ -170,6 +176,13 @@ private:
 	// Two-handed weapon support
 	float m_flTwoHandBlend;  // 0.0 = free hand, 1.0 = fully gripping weapon
 	int m_iOffHandBone;      // Bone index for the off-hand grip point on weapon hand's model
+	
+	// Offhand grip state - active when grip button held + within range
+	bool m_bOffhandGripActive;         // Is the offhand currently gripping the weapon
+	Vector m_vecOffhandGripForward;    // Desired forward direction (toward offhand)
+	Vector m_vecOffhandGripUp;         // Up reference from weapon hand controller
+	Vector m_vecCachedGripDelta;       // Cached initial pivot axis from grip start
+	Vector m_vecCachedGripYAxis;       // Cached initial weapon Y-axis from grip start
 	
 	// Cached idle muzzle offset for pistols (to keep aim stable during fire anim)
 	Vector m_vIdleMuzzleOffset;        // Muzzle offset relative to weapon_bone in idle pose
