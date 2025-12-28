@@ -380,7 +380,7 @@ ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-hand
 ConVar tfvr_offhand_grip_enabled("tfvr_offhand_grip_enabled", "1", FCVAR_ARCHIVE, "Enable offhand grip for two-handed weapon aiming");
 ConVar tfvr_offhand_grip_range("tfvr_offhand_grip_range", "20", FCVAR_ARCHIVE, "Distance (cm) at which offhand grip can activate");
 ConVar tfvr_offhand_grip_threshold("tfvr_offhand_grip_threshold", "0.5", FCVAR_ARCHIVE, "Grip button threshold (0-1) to activate offhand grip");
-ConVar tfvr_offhand_grip_no_anchor("tfvr_offhand_grip_no_anchor", "1", FCVAR_CHEAT, "DEBUG: Disable anchor offset when gripping (use controller directly)");
+ConVar tfvr_offhand_grip_no_anchor("tfvr_offhand_grip_no_anchor", "0", FCVAR_CHEAT, "DEBUG: Disable anchor offset when gripping (use controller directly)");
 ConVar tfvr_hands_left_offset_roll("tfvr_hands_left_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for left VR hand (degrees)");
 
 // Rotation offset convars - right hand
@@ -414,6 +414,77 @@ ConVar tfvr_weapon_fire_anim_angle_rotation("tfvr_weapon_fire_anim_angle_rotatio
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
 static C_TFVRHand *g_pLocalPlayerRightHand = NULL;
+
+//-----------------------------------------------------------------------------
+// Purpose: Apply two-hand grip rotation to a transform matrix
+//          Uses minimal rotation (quaternion swing) to point Y axis toward desiredY
+//          This preserves the controller's roll perfectly - only pitch/yaw changes
+//-----------------------------------------------------------------------------
+static void ApplyTwoHandGripRotation(matrix3x4_t &transform, const Vector &desiredY)
+{
+	// Preserve position
+	Vector pos(transform[0][3], transform[1][3], transform[2][3]);
+	
+	// Get the current Y axis (where weapon currently points)
+	Vector currentY;
+	MatrixGetColumn(transform, 1, currentY);
+	
+	// Calculate the rotation needed to go from currentY to desiredY
+	// This is the "minimal rotation" - only changes direction, not roll
+	float dotProduct = DotProduct(currentY, desiredY);
+	
+	// Clamp dot product to avoid numerical issues with acos
+	dotProduct = clamp(dotProduct, -1.0f, 1.0f);
+	
+	// If already pointing the right way (or very close), no rotation needed
+	if (dotProduct > 0.9999f)
+	{
+		// Just update position in case it changed
+		transform[0][3] = pos.x; transform[1][3] = pos.y; transform[2][3] = pos.z;
+		return;
+	}
+	
+	// If pointing exactly opposite, pick an arbitrary perpendicular axis
+	Vector rotationAxis;
+	if (dotProduct < -0.9999f)
+	{
+		// Find any perpendicular vector
+		Vector controllerUp;
+		MatrixGetColumn(transform, 2, controllerUp);
+		rotationAxis = controllerUp;
+	}
+	else
+	{
+		// Normal case: rotation axis is perpendicular to both vectors
+		rotationAxis = CrossProduct(currentY, desiredY);
+		rotationAxis.NormalizeInPlace();
+	}
+	
+	// Calculate rotation angle
+	float angle = acosf(dotProduct);
+	
+	// Build rotation quaternion from axis-angle
+	float halfAngle = angle * 0.5f;
+	float sinHalf = sinf(halfAngle);
+	float cosHalf = cosf(halfAngle);
+	
+	Quaternion rotQuat;
+	rotQuat.x = rotationAxis.x * sinHalf;
+	rotQuat.y = rotationAxis.y * sinHalf;
+	rotQuat.z = rotationAxis.z * sinHalf;
+	rotQuat.w = cosHalf;
+	
+	// Get original rotation as quaternion
+	Quaternion origQuat;
+	MatrixQuaternion(transform, origQuat);
+	
+	// Apply the swing rotation: newQuat = rotQuat * origQuat
+	Quaternion newQuat;
+	QuaternionMult(rotQuat, origQuat, newQuat);
+	
+	// Convert back to matrix
+	QuaternionMatrix(newQuat, pos, transform);
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: Get the hand model path for a specific class
@@ -1672,43 +1743,12 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
 			if (pLeftHand && pLeftHand->IsOffhandGripActive())
 			{
-				// Get desired direction (toward offhand) - this should go in the Y axis
 				Vector desiredY = pLeftHand->GetOffhandGripForward();
-				
-				// Preserve position
-				Vector pos(controllerTransform[0][3], controllerTransform[1][3], controllerTransform[2][3]);
-				
-				// Get the weapon hand controller's up vector for roll reference
-				// This is from the CURRENT controllerTransform before we modify it
-				Vector controllerUp;
-				MatrixGetColumn(controllerTransform, 2, controllerUp);
-				
-				// Build basis with desired direction in Y axis
-				// X = perpendicular to Y and controller's up (this preserves roll from controller)
-				// Z = perpendicular to X and Y
-				Vector newX = CrossProduct(desiredY, controllerUp);
-				if (newX.LengthSqr() < 0.001f)
-				{
-					// Fallback if desiredY is parallel to controllerUp
-					Vector fallback(0, 0, 1);
-					if (fabsf(DotProduct(desiredY, fallback)) > 0.99f)
-						fallback = Vector(1, 0, 0);
-					newX = CrossProduct(desiredY, fallback);
-				}
-				newX.NormalizeInPlace();
-				
-				Vector newZ = CrossProduct(newX, desiredY);
-				newZ.NormalizeInPlace();
-				
-				// Set matrix columns directly
-				// Column 0 = X, Column 1 = Y (our aim), Column 2 = Z, Column 3 = position
-				controllerTransform[0][0] = newX.x; controllerTransform[1][0] = newX.y; controllerTransform[2][0] = newX.z;
-				controllerTransform[0][1] = desiredY.x; controllerTransform[1][1] = desiredY.y; controllerTransform[2][1] = desiredY.z;
-				controllerTransform[0][2] = newZ.x; controllerTransform[1][2] = newZ.y; controllerTransform[2][2] = newZ.z;
-				controllerTransform[0][3] = pos.x; controllerTransform[1][3] = pos.y; controllerTransform[2][3] = pos.z;
+				ApplyTwoHandGripRotation(controllerTransform, desiredY);
 				
 				if (tfvr_twohand_debug.GetBool())
 				{
+					Vector pos(controllerTransform[0][3], controllerTransform[1][3], controllerTransform[2][3]);
 					static float lastDebugTime = 0;
 					if (gpGlobals->curtime - lastDebugTime > 0.3f)
 					{
@@ -2411,35 +2451,8 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
 	if (pLeftHand && pLeftHand->IsOffhandGripActive() && tfvr_offhand_grip_enabled.GetBool())
 	{
-		// Get desired direction (toward offhand) - goes in Y axis
 		Vector desiredY = pLeftHand->GetOffhandGripForward();
-		
-		// Preserve position
-		Vector pos(controllerTransform[0][3], controllerTransform[1][3], controllerTransform[2][3]);
-		
-		// Get controller's up for roll reference
-		Vector controllerUp;
-		MatrixGetColumn(controllerTransform, 2, controllerUp);
-		
-		// Build basis with desired direction in Y axis
-		Vector newX = CrossProduct(desiredY, controllerUp);
-		if (newX.LengthSqr() < 0.001f)
-		{
-			Vector fallback(0, 0, 1);
-			if (fabsf(DotProduct(desiredY, fallback)) > 0.99f)
-				fallback = Vector(1, 0, 0);
-			newX = CrossProduct(desiredY, fallback);
-		}
-		newX.NormalizeInPlace();
-		
-		Vector newZ = CrossProduct(newX, desiredY);
-		newZ.NormalizeInPlace();
-		
-		// Set matrix columns
-		controllerTransform[0][0] = newX.x; controllerTransform[1][0] = newX.y; controllerTransform[2][0] = newX.z;
-		controllerTransform[0][1] = desiredY.x; controllerTransform[1][1] = desiredY.y; controllerTransform[2][1] = desiredY.z;
-		controllerTransform[0][2] = newZ.x; controllerTransform[1][2] = newZ.y; controllerTransform[2][2] = newZ.z;
-		controllerTransform[0][3] = pos.x; controllerTransform[1][3] = pos.y; controllerTransform[2][3] = pos.z;
+		ApplyTwoHandGripRotation(controllerTransform, desiredY);
 	}
 	
 	// Calculate anchor delta = controller * inverse(handBone)
