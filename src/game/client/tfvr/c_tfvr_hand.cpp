@@ -2328,6 +2328,8 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles)
 	CStudioHdr *pStudioHdr = GetModelPtr();
 	if (!pStudioHdr)
 		return false;
+		
+	UpdateHandTransform();
 	
 	// Look up the off-hand bone (left hand on right hand's model)
 	if (m_iOffHandBone < 0)
