@@ -1645,55 +1645,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		matrix3x4_t controllerTransform;
 		AngleMatrix(m_angLastValidAngles, m_vecLastValidPosition, controllerTransform);
 		
-		// Two-handed weapon blending for left hand
-		if (IsLeftHand() && m_flTwoHandBlend > 0.01f && tfvr_twohand_enabled.GetBool())
-		{
-			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
-			if (pRightHand && pRightHand->GetHeldWeapon())
-			{
-				Vector gripTargetPos;
-				QAngle gripTargetAngles;
-				
-				if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
-				{
-					// Create target transform from grip position
-					matrix3x4_t gripTargetTransform;
-					AngleMatrix(gripTargetAngles, gripTargetPos, gripTargetTransform);
-					
-					// Interpolate between tracked position and grip target
-					Vector trackedPos, targetPos, blendedPos;
-					QAngle trackedAng, targetAng, blendedAng;
-					
-					MatrixAngles(controllerTransform, trackedAng, trackedPos);
-					MatrixAngles(gripTargetTransform, targetAng, targetPos);
-					
-					// Lerp position
-					VectorLerp(trackedPos, targetPos, m_flTwoHandBlend, blendedPos);
-					
-					// Lerp angles using quaternions for smooth interpolation
-					Quaternion qTracked, qTarget, qBlended;
-					AngleQuaternion(trackedAng, qTracked);
-					AngleQuaternion(targetAng, qTarget);
-					QuaternionSlerp(qTracked, qTarget, m_flTwoHandBlend, qBlended);
-					QuaternionAngles(qBlended, blendedAng);
-					
-					// Rebuild controller transform with blended values
-					AngleMatrix(blendedAng, blendedPos, controllerTransform);
-					
-					if (tfvr_twohand_debug.GetBool())
-					{
-						static float lastDebugTime = 0;
-						if (gpGlobals->curtime - lastDebugTime > 0.3f)
-						{
-							DevMsg("TwoHand SetupBones: Blend=%.2f, TrackedPos=(%.1f,%.1f,%.1f), TargetPos=(%.1f,%.1f,%.1f)\n",
-								m_flTwoHandBlend, trackedPos.x, trackedPos.y, trackedPos.z,
-								targetPos.x, targetPos.y, targetPos.z);
-							lastDebugTime = gpGlobals->curtime;
-						}
-					}
-				}
-			}
-		}
+		// NOTE: Two-handed weapon blending for left hand is handled LATER in SetupBones
+		// (around line 1830+) where the full skeleton is blended toward the grip pose.
+		// We don't pre-blend the controllerTransform here to avoid double-blending
+		// which causes micro-stuttering during movement.
 		
 		// Apply hand rotation offsets if any
 		ConVar *pOffsetPitch = IsLeftHand() ? &tfvr_hands_left_offset_pitch : &tfvr_hands_right_offset_pitch;
@@ -1843,17 +1798,18 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				Vector gripTargetPos;
 				QAngle gripTargetAngles;
 				
-				if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
+				// Pass true to get the animated grip position (follows fire animation recoil)
+				// This is for visual positioning - weapon rotation uses separate call with false
+				if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true))
 				{
 					bUsedGripPose = true;
 					
-					
-					// Sample the same animation that's playing on the right hand
-					// but on the LEFT hand model (which has its own finger bones)
+					// Sample the right hand's CURRENT animation for the left hand finger pose
+					// This ensures the left hand always matches the right hand's animation state
 					int rightSeq = pRightHand->GetSequence();
 					float rightCycle = pRightHand->GetCycle();
 					
-					// Sample this animation on our (left hand) model
+					// Sample animation on our (left hand) model using the right hand's state
 					float poseParams[MAXSTUDIOPOSEPARAM];
 					memset(poseParams, 0, sizeof(poseParams));
 					
@@ -1868,13 +1824,9 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					}
 					gripBoneSetup.InitPose(gripPosAnim, gripQAnim);
 					
-					// Try to find the same sequence name on our model
-					const char *rightSeqName = pRightHand->GetSequenceName(rightSeq);
-					int leftSeq = LookupSequence(rightSeqName);
-					if (leftSeq < 0)
-						leftSeq = m_iIdleSequence >= 0 ? m_iIdleSequence : 0;
-					
-					gripBoneSetup.AccumulatePose(gripPosAnim, gripQAnim, leftSeq, rightCycle, 1.0f, gpGlobals->curtime, NULL);
+					// Always use the right hand's current animation - the left hand model has
+					// the same animations, so this keeps both hands perfectly in sync
+					gripBoneSetup.AccumulatePose(gripPosAnim, gripQAnim, rightSeq, rightCycle, 1.0f, gpGlobals->curtime, NULL);
 					
 					// Build grip pose skeleton in model space
 					matrix3x4_t gripSampledBones[MAXSTUDIOBONES];
@@ -1943,8 +1895,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 							static float lastDebugTime = 0;
 							if (gpGlobals->curtime - lastDebugTime > 0.5f)
 							{
-								DevMsg("TwoHand: Using left hand anim '%s' seq=%d, blend=%.2f\n", 
-									rightSeqName ? rightSeqName : "unknown", leftSeq, m_flTwoHandBlend);
+								DevMsg("TwoHand: Using left hand pose seq=%d cycle=%.2f, blend=%.2f\n", 
+									rightSeq, rightCycle, m_flTwoHandBlend);
 								lastDebugTime = gpGlobals->curtime;
 							}
 						}
@@ -2313,9 +2265,10 @@ void C_TFVRHand::HideOppositeHand(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C
 // Purpose: Get the off-hand grip target position from the weapon hand's animation
 //          This returns the position where the left hand should go when two-handing
 //          Only valid on the RIGHT hand (which holds the weapon)
-//          We sample the idle animation to get the proper off-hand position
+//          bUseCurrentAnimation: false = sample idle (for stable weapon rotation)
+//                                true = sample current animation (for visual positioning)
 //-----------------------------------------------------------------------------
-bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles)
+bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation)
 {
 	// Only the right hand (weapon hand) can provide grip targets
 	if (!IsRightHand())
@@ -2386,10 +2339,25 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles)
 	}
 	boneSetup.InitPose(posAnim, qAnim);
 	
-	// Use current sequence and cycle to follow animations
-	int currentSeq = GetSequence();
-	float currentCycle = GetCycle();
-	boneSetup.AccumulatePose(posAnim, qAnim, currentSeq, currentCycle, 1.0f, gpGlobals->curtime, NULL);
+	// Choose which animation to sample based on parameter:
+	// - bUseCurrentAnimation=false: Use IDLE for stable weapon rotation (pivot axis calculation)
+	// - bUseCurrentAnimation=true: Use current animation for visual positioning (follows recoil)
+	int seqToSample;
+	float cycleToSample;
+	
+	if (bUseCurrentAnimation && m_bPlayingFireAnim)
+	{
+		// Sample current fire animation - grip target will move with recoil
+		seqToSample = GetSequence();
+		cycleToSample = GetCycle();
+	}
+	else
+	{
+		// Sample idle animation - grip target stays stable
+		seqToSample = m_iIdleSequence >= 0 ? m_iIdleSequence : GetSequence();
+		cycleToSample = 0.0f;
+	}
+	boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
 	
 	// Build bone transforms from sampled animation (local to parent)
 	matrix3x4_t sampledBones[MAXSTUDIOBONES];

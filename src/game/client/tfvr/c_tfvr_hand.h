@@ -110,7 +110,8 @@ public:
 	void PlayWeaponFireAnimation();
 	
 	// Two-handed weapon support
-	bool GetOffHandGripTarget(Vector &outPos, QAngle &outAngles);  // Get off-hand grip position from animation
+	// bUseCurrentAnimation: false = use idle (for stable weapon rotation), true = use current (for visual positioning)
+	bool GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation = false);
 	float GetTwoHandBlendAmount() const { return m_flTwoHandBlend; }
 	void SetTwoHandBlendAmount(float blend) { m_flTwoHandBlend = blend; }
 	bool IsTwoHanding() const { return m_flTwoHandBlend > 0.01f; }
