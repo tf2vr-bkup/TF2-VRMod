@@ -513,9 +513,9 @@ bool CBaseObject::CalculatePlacementPos( void )
 	if ( !pPlayer )
 		return false;
 
-	// Calculate build angles
+	// Calculate build angles - use weapon aim direction for VR support
 	QAngle vecAngles = vec3_angle;
-	vecAngles.y = pPlayer->EyeAngles().y;
+	vecAngles.y = pPlayer->Weapon_ShootAngles().y;
 
 	QAngle objAngles = vecAngles;
 
@@ -701,7 +701,8 @@ bool CBaseObject::IsPlacementPosValid( void )
 		return false;
 
 	// Make sure we can see the final position (using a small hull to catch being able to build through seams in the map)
-	UTIL_TraceHull( pPlayer->EyePosition(), m_vecBuildOrigin + Vector( 0, 0, m_vecBuildMaxs[2] * 0.5 ), Vector( -2, -2, -2 ), Vector( 2, 2, 2 ), MASK_PLAYERSOLID_BRUSHONLY, pPlayer, COLLISION_GROUP_NONE, &tr );
+	// Use weapon shoot position for VR support (traces from controller instead of head)
+	UTIL_TraceHull( pPlayer->Weapon_ShootPosition(), m_vecBuildOrigin + Vector( 0, 0, m_vecBuildMaxs[2] * 0.5 ), Vector( -2, -2, -2 ), Vector( 2, 2, 2 ), MASK_PLAYERSOLID_BRUSHONLY, pPlayer, COLLISION_GROUP_NONE, &tr );
 	if ( tr.fraction < 1.0 )
 	{
 		return false;
