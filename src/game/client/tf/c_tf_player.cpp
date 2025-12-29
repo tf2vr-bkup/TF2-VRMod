@@ -9841,7 +9841,88 @@ void C_TFPlayer::ComputeFxBlend( void )
 void C_TFPlayer::CalcView( Vector &eyeOrigin, QAngle &eyeAngles, float &zNear, float &zFar, float &fov )
 {
 	HandleTaunting();
+	
+	// VR Death Camera: Keep player fixed in place when dead instead of following ragdoll
+	if ( UseVR() && IsLocalPlayer() && g_pOpenXRManager )
+	{
+		int currentObsMode = m_iObserverMode;
+		bool bIsInDeathMode = (currentObsMode == OBS_MODE_DEATHCAM || currentObsMode == OBS_MODE_FREEZECAM);
+		
+		// Clear death state when respawning
+		if ( !bIsInDeathMode && m_bHasVRDeathPosition )
+		{
+			m_bHasVRDeathPosition = false;
+		}
+		
+		// Use stored death position with VR head tracking
+		if ( m_bHasVRDeathPosition && bIsInDeathMode )
+		{
+			Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
+			QAngle hmdAngles;
+			MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), hmdAngles);
+			
+			// Calculate head movement since death
+			Vector hmdOffset = currentHmdPos - m_calibratedHmdXYPosition;
+			Vector worldOffset;
+			VectorRotate(Vector(hmdOffset.x, hmdOffset.y, 0), QAngle(0, -m_calibratedHmdYaw, 0), worldOffset);
+			worldOffset.z = hmdOffset.z;
+			
+			eyeOrigin = m_vecVRDeathPosition + worldOffset;
+			eyeAngles = hmdAngles;
+			eyeAngles.y -= m_calibratedHmdYaw;
+			zNear = VIEW_NEARZ;
+			zFar = MAX_TRACE_LENGTH;
+			fov = GetFOV();
+			return;
+		}
+		
+		// Transition to death mode - lock position using last alive frame's view
+		if ( bIsInDeathMode && !m_bHasVRDeathPosition )
+		{
+			m_bHasVRDeathPosition = true;
+			m_calibratedHmdXYPosition = m_vecVRDeathHmdCalibration;
+			m_calibratedHmdYaw = m_flVRDeathHmdYaw - m_angVRDeathAngles.y;
+			while (m_calibratedHmdYaw > 180.0f) m_calibratedHmdYaw -= 360.0f;
+			while (m_calibratedHmdYaw < -180.0f) m_calibratedHmdYaw += 360.0f;
+			m_localRoomscaleOffset = vec3_origin;
+			m_headInPlayerO = vec3_origin;
+			
+			eyeOrigin = m_vecVRDeathPosition;
+			eyeAngles = m_angVRDeathAngles;
+			zNear = VIEW_NEARZ;
+			zFar = MAX_TRACE_LENGTH;
+			fov = GetFOV();
+			return;
+		}
+	}
+	
 	BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
+	
+	// Store view state while alive for use when death occurs
+	if ( UseVR() && IsLocalPlayer() && g_pOpenXRManager && IsAlive() && m_iObserverMode == OBS_MODE_NONE )
+	{
+		m_vecVRDeathPosition = eyeOrigin;
+		m_angVRDeathAngles = eyeAngles;
+		m_vecVRDeathHmdCalibration = g_pOpenXRManager->GetMideyePose().GetTranslation();
+		QAngle hmdAngles;
+		MatrixAngles(g_pOpenXRManager->GetMideyePose().As3x4(), hmdAngles);
+		m_flVRDeathHmdYaw = hmdAngles.y;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Returns the correct view position for VR, using death position if in death mode
+//-----------------------------------------------------------------------------
+Vector C_TFPlayer::GetVRViewPosition()
+{
+	// If we're using VR death position, return that instead of EyePosition()
+	// This is needed because EyePosition() uses dead view height when dead
+	if ( UseVR() && m_bHasVRDeathPosition )
+	{
+		return m_vecVRDeathPosition;
+	}
+	
+	return EyePosition();
 }
 
 void SelectDisguise( int iClass, int iTeam );

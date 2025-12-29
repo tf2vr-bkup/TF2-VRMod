@@ -233,7 +233,8 @@ void CVRMenuManager::Update()
     if (m_pLocalPlayer)
     {
         // Save the current view origin for menu input
-        m_savedPlayerViewOrigin = m_pLocalPlayer->EyePosition();
+        // Use GetVRViewPosition() which returns the death position if in VR death mode
+        m_savedPlayerViewOrigin = m_pLocalPlayer->GetVRViewPosition();
     }
     
     // Update VR Health Overlay
@@ -456,7 +457,7 @@ void CVRMenuManager::HandleMenuInput()
     // Check if player has moved significantly (e.g., changed maps)
     if (m_pLocalPlayer && m_bMenuPositionFixed)
     {
-        Vector currentPos = m_pLocalPlayer->EyePosition();
+        Vector currentPos = m_pLocalPlayer->GetVRViewPosition();
         float distanceMoved = (currentPos - m_fixedMenuPosition).Length();
         
         // If player moved more than 1000 units, they probably changed maps
@@ -517,7 +518,7 @@ void CVRMenuManager::HandleMenuInput()
              static Vector lastValidPosition = Vector(0, 0, 0);
              static QAngle lastValidRotation = QAngle(0, 0, 0);
              static float flRotationStableTime = 0.0f;
-             Vector currentPlayerPos = m_pLocalPlayer->EyePosition();
+             Vector currentPlayerPos = m_pLocalPlayer->GetVRViewPosition();
              
              // If this is the first time or player moved significantly from last valid position
              if (bFirstPositioning || (lastValidPosition != Vector(0, 0, 0) && 
@@ -585,7 +586,7 @@ void CVRMenuManager::HandleMenuInput()
                 Vector lr = menuPlaneCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
                 
                 // Set the custom HUD bounds in the VR system
-                Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+                Vector currentHeadWorldPos = m_pLocalPlayer->GetVRViewPosition();
                 g_ClientVirtualReality.SetCustomHUDBounds(currentHeadWorldPos, ul, ur, ll, lr);
                 
                 // Trigger compositor HUD update for non-playspace-anchored menus too
@@ -1077,7 +1078,7 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
             AngleVectors(currentViewAngles, &rayDir);
             VectorNormalize(rayDir);
             
-            Vector currentEyePos = m_pLocalPlayer->EyePosition();
+            Vector currentEyePos = m_pLocalPlayer->GetVRViewPosition();
             rayStart = currentEyePos;
             VectorMA(currentEyePos, 1000.0f, rayDir, rayEnd);
         }
@@ -1338,7 +1339,7 @@ Vector CVRMenuManager::CalculateCurrentPlayspaceOriginWorldPos()
     
     // Fallback: If WorldFromMidEye is not available, fall back to player entity data
     DevMsg("VR Menu: WorldFromMidEye not available, using fallback player position (BAD - this causes lag!)\n");
-    Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+    Vector currentHeadWorldPos = m_pLocalPlayer->GetVRViewPosition();
     QAngle currentHeadWorldAngles = m_pLocalPlayer->EyeAngles();
     
     VMatrix fallbackHeadWorldMatrix;
@@ -1369,7 +1370,7 @@ void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
     static float lastDebugTime = 0.0f;
     if (gpGlobals && gpGlobals->realtime - lastDebugTime > 0.5f) // Debug every 0.5 seconds
     {
-        Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+        Vector currentHeadWorldPos = m_pLocalPlayer->GetVRViewPosition();
         VMatrix headRelativeToPlayspace = m_pVRManager->GetMideyePose();
         Vector headPlayspacePos = headRelativeToPlayspace.GetTranslation();
     }
@@ -1397,7 +1398,7 @@ void CVRMenuManager::UpdatePlayspaceAnchoredPosition()
     Vector lr = newMenuWorldPos + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
     
     // Get current head position for viewer reference
-    Vector currentHeadWorldPos = m_pLocalPlayer->EyePosition();
+    Vector currentHeadWorldPos = m_pLocalPlayer->GetVRViewPosition();
     
     // Update HUD bounds and cached position for cursor calculations
     g_ClientVirtualReality.SetCustomHUDBounds(currentHeadWorldPos, ul, ur, ll, lr);

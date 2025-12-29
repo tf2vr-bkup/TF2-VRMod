@@ -617,7 +617,16 @@ public:
 	bool				m_bWasVRRotationEnabled = false; // Store original VR rotation state
 	float				m_flSpawnTime = 0.0f; // Time when player spawned
 
+	// VR death camera - keeps player fixed in place when dead instead of following ragdoll
+	Vector				m_vecVRDeathPosition;       // Last alive eye position
+	QAngle				m_angVRDeathAngles;         // Last alive eye angles
+	Vector				m_vecVRDeathHmdCalibration; // HMD position at death (for relative tracking)
+	float				m_flVRDeathHmdYaw = 0.0f;   // HMD yaw at death
+	bool				m_bHasVRDeathPosition = false;
+
 	float               VRHeightOffset();
+	Vector              GetVRViewPosition(); // Returns death position if dead, else EyePosition()
+	bool                IsUsingVRDeathPosition() const { return m_bHasVRDeathPosition; }
 
 private:
 
