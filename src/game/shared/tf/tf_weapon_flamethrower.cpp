@@ -2117,8 +2117,26 @@ Vector CTFFlameThrower::GetMuzzlePosHelper( bool bVisualPos )
 	if ( pOwner ) 
 	{
 		Vector vecForward, vecRight, vecUp;
-		// Use weapon shoot angles for VR support (controller angles if in VR)
-		QAngle angAiming = pOwner->Weapon_ShootAngles();
+		QAngle angAiming;
+		
+#ifdef CLIENT_DLL
+		// For non-local players (bots), use networked eye angles
+		// Weapon_ShootAngles uses EyeAngles which uses pl.v_angle - NOT networked to clients
+		// GetNetworkEyeAngles returns the networked m_angEyeAngles that the server sends
+		if ( pOwner != C_BasePlayer::GetLocalPlayer() )
+		{
+			angAiming = pOwner->GetNetworkEyeAngles();
+		}
+		else
+		{
+			// Local player: Use weapon shoot angles for VR support (controller angles if in VR)
+			angAiming = pOwner->Weapon_ShootAngles();
+		}
+#else
+		// Server: Use weapon shoot angles (handles VR controller data)
+		angAiming = pOwner->Weapon_ShootAngles();
+#endif
+		
 		AngleVectors( angAiming, &vecForward, &vecRight, &vecUp );
 		{
 			Vector vecOffset;
