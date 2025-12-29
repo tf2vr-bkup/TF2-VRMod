@@ -309,11 +309,22 @@ Vector CTFFlameManager::GetInitialVelocity() const
 				}
 			}
 			else
-#endif
 			{
-				// Non-VR or server: use Weapon_ShootAngles
-				angFlame = pTFPlayer->Weapon_ShootAngles();
+				// Client-side for non-VR: use networked eye angles for non-local players
+				// Weapon_ShootAngles uses EyeAngles which uses pl.v_angle (not networked)
+				if ( pTFPlayer != C_BasePlayer::GetLocalPlayer() )
+				{
+					angFlame = pTFPlayer->GetNetworkEyeAngles();
+				}
+				else
+				{
+					angFlame = pTFPlayer->Weapon_ShootAngles();
+				}
 			}
+#else
+			// Server: use Weapon_ShootAngles
+			angFlame = pTFPlayer->Weapon_ShootAngles();
+#endif
 #ifdef WATERFALL_FLAMETHROWER_TEST
 			if ( m_iWaterfallMode && m_iStreamIndex >= 0 )
 			{
@@ -954,6 +965,22 @@ void CTFFlameManager::UpdateWeaponParticleControlPoint( const flame_point_t *pNe
 		m_nMuzzleAttachment = pMuzzleWeapon->LookupAttachment( "muzzle" );
 	}
 	pMuzzleWeapon->GetAttachment( m_nMuzzleAttachment, vMuzzlePos, qMuzzleAng );
+	
+	// For non-local players (bots), use the NETWORKED eye angles (m_angEyeAngles)
+	// The attachment angles don't reflect the player's actual aim direction
+	// EyeAngles() uses pl.v_angle which isn't networked to clients
+	// GetNetworkEyeAngles() returns the networked m_angEyeAngles that the server sends
+	CTFPlayer *pPlayer = ToTFPlayer( m_hAttacker );
+	if ( pPlayer && pPlayer != C_BasePlayer::GetLocalPlayer() )
+	{
+		qMuzzleAng = pPlayer->GetNetworkEyeAngles();
+	}
+	// For local player, use the weapon's shoot angles (which handles VR controllers)
+	else if ( pPlayer )
+	{
+		qMuzzleAng = pPlayer->Weapon_ShootAngles();
+	}
+
 	if ( m_hParticleEffect )
 	{
 		Vector vMuzzleForward, vMuzzleRight, vMuzzleUp;
