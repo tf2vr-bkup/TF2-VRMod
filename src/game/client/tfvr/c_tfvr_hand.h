@@ -178,7 +178,8 @@ private:
 	
 	// Two-handed weapon support
 	float m_flTwoHandBlend;  // 0.0 = free hand, 1.0 = fully gripping weapon
-	int m_iOffHandBone;      // Bone index for the off-hand grip point on weapon hand's model
+	int m_iOffHandBone;      // Bone index for the off-hand (bip_hand_L) on weapon hand's model
+	int m_iOffHandMiddleFingerBone;  // Bone index for bip_middle_0_L (for bind pose offset calc)
 	
 	// Offhand grip state - active when grip button held + within range
 	bool m_bOffhandGripActive;         // Is the offhand currently gripping the weapon

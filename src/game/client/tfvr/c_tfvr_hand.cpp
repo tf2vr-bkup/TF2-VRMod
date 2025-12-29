@@ -689,6 +689,7 @@ C_TFVRHand::C_TFVRHand()
 	m_iHandBone = -1;
 	m_flTwoHandBlend = 0.0f;
 	m_iOffHandBone = -1;
+	m_iOffHandMiddleFingerBone = -1;
 	m_bOffhandGripActive = false;
 	m_bWasOffhandGripActive = false;
 	m_flGripRotationBlend = 0.0f;
@@ -1133,15 +1134,16 @@ void C_TFVRHand::Update()
 			
 			if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 			{
-				// Get our current hand position - use OpenXR wrist for aiming target
+				// Get our current hand position - use OpenXR middle finger base for aiming target
+				// This provides better pivot point alignment than the wrist
 				Vector leftHandPos = m_vecLastValidPosition;
 				if (m_pHandTracker)
 				{
-					Vector wristPos;
-					QAngle wristAngles;
-					if (m_pHandTracker->GetHandJoint(true, XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
+					Vector fingerBasePos;
+					QAngle fingerBaseAngles;
+					if (m_pHandTracker->GetHandJoint(true, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fingerBasePos, fingerBaseAngles))
 					{
-						leftHandPos = wristPos;
+						leftHandPos = fingerBasePos;
 					}
 				}
 				
@@ -1195,9 +1197,9 @@ void C_TFVRHand::Update()
 				// If offhand grip is active, calculate the weapon rotation offset
 				if (m_bOffhandGripActive)
 				{
-					// Get OpenXR wrist positions for both hands
+					// Get OpenXR positions: right wrist, left middle finger base
 					Vector rightWristOpenXR = pRightHand->GetAbsOrigin(); // fallback
-					Vector leftWristOpenXR = leftHandPos; // already has left wrist from above
+					Vector leftFingerBaseOpenXR = leftHandPos; // already has left middle finger base from above
 					
 					// Get right wrist from OpenXR
 					COpenXRHandTracker* pRightHandTracker = pRightHand->GetHandTracker();
@@ -1211,16 +1213,16 @@ void C_TFVRHand::Update()
 						}
 					}
 					
-					// Target direction: right wrist to left wrist
-					Vector wristToWrist = leftWristOpenXR - rightWristOpenXR;
-					float wristDistance = wristToWrist.Length();
-					Vector wristDirection = (wristDistance > 0.1f) ? wristToWrist / wristDistance : wristToWrist;
+					// Target direction: right wrist to left middle finger base
+					Vector wristToFingerBase = leftFingerBaseOpenXR - rightWristOpenXR;
+					float aimDistance = wristToFingerBase.Length();
+					Vector aimDirection = (aimDistance > 0.1f) ? wristToFingerBase / aimDistance : wristToFingerBase;
 					
 					// Calculate weapon direction using feedback correction
-					// This ensures the grip target aligns with the left wrist
+					// This ensures the grip target aligns with the left middle finger base
 					Vector gripTargetPos;
 					QAngle gripTargetAngles;
-					Vector dirToOffhand = wristDirection;
+					Vector dirToOffhand = aimDirection;
 					
 					if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 					{
@@ -1231,12 +1233,12 @@ void C_TFVRHand::Update()
 							pivotAxis.NormalizeInPlace();
 							
 							// Error = where we want to point minus where grip target currently points
-							Vector error = wristDirection - pivotAxis;
+							Vector error = aimDirection - pivotAxis;
 							
-							// Start from last frame's direction (or wrist direction if invalid)
+							// Start from last frame's direction (or aim direction if invalid)
 							Vector currentY = m_vecOffhandGripForward;
 							if (currentY.LengthSqr() < 0.1f)
-								currentY = wristDirection;
+								currentY = aimDirection;
 							currentY.NormalizeInPlace();
 							
 							// Apply full error correction (rotation blend handles smoothing)
@@ -1272,8 +1274,8 @@ void C_TFVRHand::Update()
 					
 					if (tfvr_twohand_debug.GetBool())
 					{
-						// GREEN line = wrist to wrist (desired pivot direction)
-						debugoverlay->AddLineOverlay(rightWristOpenXR, leftWristOpenXR, 
+						// GREEN line = right wrist to left finger base (desired pivot direction)
+						debugoverlay->AddLineOverlay(rightWristOpenXR, leftFingerBaseOpenXR, 
 							0, 255, 0, true, 0.1f);
 						
 						// CYAN line = current pivot axis (wrist to grip target)
@@ -1284,8 +1286,8 @@ void C_TFVRHand::Update()
 						debugoverlay->AddBoxOverlay(gripTargetPos, Vector(-1,-1,-1), Vector(1,1,1), 
 							vec3_angle, 0, 128, 255, 128, 0.1f);
 						
-						// YELLOW box = OpenXR left wrist
-						debugoverlay->AddBoxOverlay(leftWristOpenXR, Vector(-1,-1,-1), Vector(1,1,1), 
+						// YELLOW box = OpenXR left middle finger base
+						debugoverlay->AddBoxOverlay(leftFingerBaseOpenXR, Vector(-1,-1,-1), Vector(1,1,1), 
 							vec3_angle, 255, 255, 0, 128, 0.1f);
 						
 						// WHITE box = OpenXR right wrist
@@ -2462,13 +2464,13 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		
 	UpdateHandTransform();
 	
-	// Look up the off-hand bone (left hand on right hand's model)
+	// Look up the off-hand bones (left hand on right hand's model)
+	// Due to skeleton issues, children of bip_hand_L may be broken in animation data.
+	// We use bip_hand_L (which works) and calculate middle finger base from bind pose.
 	if (m_iOffHandBone < 0)
 	{
-		// Try middle finger base first (better palm position), then fall back to hand bone
-		m_iOffHandBone = LookupBone("bip_middle_0_L");
-		if (m_iOffHandBone < 0)
-			m_iOffHandBone = LookupBone("bip_hand_L");
+		// Find the left hand bone (this one is correct in animation)
+		m_iOffHandBone = LookupBone("bip_hand_L");
 		if (m_iOffHandBone < 0)
 			m_iOffHandBone = LookupBone("ValveBiped.Bip01_L_Hand");
 		if (m_iOffHandBone < 0)
@@ -2489,6 +2491,9 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 			}
 			return false;
 		}
+		
+		// Also look up middle finger base for bind pose offset calculation
+		m_iOffHandMiddleFingerBone = LookupBone("bip_middle_0_L");
 	}
 	
 	// We need to calculate the off-hand position using the same transform logic
@@ -2644,9 +2649,91 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		ConcatTransforms(controllerTransform, invSampledHandBone, anchorDelta);
 	}
 	
-	// Transform the sampled off-hand bone to world space using the anchor delta
+	// Transform the sampled off-hand bone (bip_hand_L) to world space using the anchor delta
+	// This bone position is correct even though its children are broken in animation data
 	matrix3x4_t offHandWorld;
 	ConcatTransforms(anchorDelta, sampledBones[m_iOffHandBone], offHandWorld);
+	
+	// Only apply middle finger offset for PIVOT calculation (bUseCurrentAnimation = false)
+	// For VISUAL hand positioning (bUseCurrentAnimation = true), use bip_hand_L directly
+	// so the hand wrist attaches to the correct point on the weapon
+	bool bAppliedFingerOffset = false;
+	if (!bUseCurrentAnimation && pLeftHand)
+	{
+		// Calculate where middle finger base SHOULD be using bind pose from the LEFT hand model
+		// The right hand model's skeleton may have broken bind pose data for left hand bones,
+		// so we sample the offset from the left hand model which has correct left hand skeleton
+		CStudioHdr *pLeftStudioHdr = pLeftHand->GetModelPtr();
+		if (pLeftStudioHdr)
+		{
+			// Look up the equivalent bones on the left hand model
+			// Left hand uses _L bones as its primary bones
+			int leftHandBone = pLeftHand->LookupBone("bip_hand_L");
+			int leftMiddleFingerBone = pLeftHand->LookupBone("bip_middle_0_L");
+			
+			if (leftHandBone >= 0 && leftMiddleFingerBone >= 0 && 
+				leftMiddleFingerBone < pLeftStudioHdr->numbones())
+			{
+				const mstudiobone_t *pMiddleFingerBone = pLeftStudioHdr->pBone(leftMiddleFingerBone);
+				if (pMiddleFingerBone)
+				{
+					// Build the full local transform from bip_hand_L to bip_middle_0_L
+					// by walking up the bone hierarchy and accumulating transforms
+					matrix3x4_t bindPoseLocal;
+					SetIdentityMatrix(bindPoseLocal);
+					
+					int currentBone = leftMiddleFingerBone;
+					int maxIterations = 10; // Safety limit
+					
+					while (currentBone != leftHandBone && currentBone >= 0 && maxIterations-- > 0)
+					{
+						const mstudiobone_t *pCurrentBone = pLeftStudioHdr->pBone(currentBone);
+						if (!pCurrentBone)
+							break;
+						
+						// Get this bone's local transform
+						matrix3x4_t boneLocal;
+						QuaternionMatrix(pCurrentBone->quat, pCurrentBone->pos, boneLocal);
+						
+						// Prepend to accumulated transform (child * accumulated = new accumulated)
+						matrix3x4_t temp;
+						ConcatTransforms(boneLocal, bindPoseLocal, temp);
+						MatrixCopy(temp, bindPoseLocal);
+						
+						currentBone = pCurrentBone->parent;
+					}
+					
+					// Only apply if we successfully traced back to the hand bone
+					if (currentBone == leftHandBone)
+					{
+						ConcatTransforms(offHandWorld, bindPoseLocal, offHandWorld);
+						bAppliedFingerOffset = true;
+						
+						if (tfvr_twohand_debug.GetBool())
+						{
+							static float lastBoneDebugTime = 0;
+							if (gpGlobals->curtime - lastBoneDebugTime > 2.0f)
+							{
+								DevMsg("TwoHand: Applied finger offset (hand=%d -> middle=%d)\n", 
+									leftHandBone, leftMiddleFingerBone);
+								lastBoneDebugTime = gpGlobals->curtime;
+							}
+						}
+					}
+					else if (tfvr_twohand_debug.GetBool())
+					{
+						static float lastWarnTime = 0;
+						if (gpGlobals->curtime - lastWarnTime > 2.0f)
+						{
+							DevMsg("TwoHand: WARN - Could not trace middle finger (%d) back to hand (%d), stopped at %d\n", 
+								leftMiddleFingerBone, leftHandBone, currentBone);
+							lastWarnTime = gpGlobals->curtime;
+						}
+					}
+				}
+			}
+		}
+	}
 	
 	// Extract position and angles
 	MatrixGetColumn(offHandWorld, 3, outPos);
@@ -2657,11 +2744,14 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		static float lastDebugTime = 0;
 		if (gpGlobals->curtime - lastDebugTime > 0.5f)
 		{
-			DevMsg("TwoHand: Off-hand grip target at (%.1f, %.1f, %.1f)\n", outPos.x, outPos.y, outPos.z);
+			const char *mode = bUseCurrentAnimation ? "hand bone (visual)" : 
+				(bAppliedFingerOffset ? "MIDDLE FINGER (pivot)" : "hand bone (pivot FALLBACK)");
+			DevMsg("TwoHand: Off-hand grip target at (%.1f, %.1f, %.1f) [%s]\n", 
+				outPos.x, outPos.y, outPos.z, mode);
 			lastDebugTime = gpGlobals->curtime;
 		}
 		
-		// Draw debug box at grip target
+		// Draw debug box at grip target (GREEN = middle finger base target)
 		Vector boxMins(-2, -2, -2);
 		Vector boxMaxs(2, 2, 2);
 		debugoverlay->AddBoxOverlay(outPos, boxMins, boxMaxs, vec3_angle, 0, 255, 0, 128, 0.1f);
@@ -4199,6 +4289,7 @@ void C_TFVRHand::UnequipWeapon()
 	
 	// Reset off-hand bone lookup for next weapon
 	m_iOffHandBone = -1;
+	m_iOffHandMiddleFingerBone = -1;
 	
 	if (!pWeapon)
 		return;
