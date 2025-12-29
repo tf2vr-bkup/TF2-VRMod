@@ -379,7 +379,11 @@ ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-hand
 // Offhand grip convars - grip button must be held to activate
 ConVar tfvr_offhand_grip_enabled("tfvr_offhand_grip_enabled", "1", FCVAR_ARCHIVE, "Enable offhand grip for two-handed weapon aiming");
 ConVar tfvr_offhand_grip_range("tfvr_offhand_grip_range", "20", FCVAR_ARCHIVE, "Distance (cm) at which offhand grip can activate");
+ConVar tfvr_offhand_grip_release_mult("tfvr_offhand_grip_release_mult", "1.5", FCVAR_ARCHIVE, "Multiplier for release distance (hysteresis to prevent accidental ungrip)");
 ConVar tfvr_offhand_grip_threshold("tfvr_offhand_grip_threshold", "0.5", FCVAR_ARCHIVE, "Grip button threshold (0-1) to activate offhand grip");
+ConVar tfvr_offhand_grip_blend_speed("tfvr_offhand_grip_blend_speed", "15", FCVAR_ARCHIVE, "Speed of hand position grip/ungrip transition (higher = faster)");
+ConVar tfvr_offhand_grip_rotation_blend_speed("tfvr_offhand_grip_rotation_blend_speed", "8", FCVAR_ARCHIVE, "Speed of weapon rotation grip/ungrip transition (higher = faster)");
+ConVar tfvr_offhand_grip_ease_power("tfvr_offhand_grip_ease_power", "2.5", FCVAR_ARCHIVE, "Easing power for grip transitions (1=linear, 2+=ease-out, higher=sharper)");
 ConVar tfvr_offhand_grip_no_anchor("tfvr_offhand_grip_no_anchor", "0", FCVAR_CHEAT, "DEBUG: Disable anchor offset when gripping (use controller directly)");
 ConVar tfvr_hands_left_offset_roll("tfvr_hands_left_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for left VR hand (degrees)");
 
@@ -414,6 +418,51 @@ ConVar tfvr_weapon_fire_anim_angle_rotation("tfvr_weapon_fire_anim_angle_rotatio
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
 static C_TFVRHand *g_pLocalPlayerRightHand = NULL;
+
+//-----------------------------------------------------------------------------
+// Purpose: Eased approach - moves current toward target with ease-out curve
+//          Fast at start of motion, slow at end (no abrupt stops)
+//-----------------------------------------------------------------------------
+static float EasedApproach(float target, float current, float speed, float frametime, float easePower = 2.5f)
+{
+	float delta = target - current;
+	if (fabsf(delta) < 0.0001f)
+		return target;
+	
+	// Convert speed to per-frame blend factor
+	float blendRate = clamp(speed * frametime, 0.0f, 1.0f);
+	
+	// Apply ease-out curve: fast start, slow end
+	float easedBlend = 1.0f - powf(1.0f - blendRate, easePower);
+	
+	return current + delta * easedBlend;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Apply ease-out curve to a 0-1 blend value (symmetric for both directions)
+//-----------------------------------------------------------------------------
+static float ApplyEaseOutToBlend(float t, float easePower, bool bBlendingUp)
+{
+	t = clamp(t, 0.0f, 1.0f);
+	
+	if (bBlendingUp)
+		return 1.0f - powf(1.0f - t, easePower);  // Ease-out going up
+	else
+		return powf(t, easePower);  // Ease-out going down
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Slerp that always takes shortest path (avoids quaternion hemisphere issues)
+//-----------------------------------------------------------------------------
+static void SafeQuaternionSlerp(const Quaternion &from, const Quaternion &to, float t, Quaternion &result)
+{
+	t = clamp(t, 0.0f, 1.0f);
+	
+	Quaternion alignedTo;
+	QuaternionAlign(from, to, alignedTo);
+	QuaternionSlerp(from, alignedTo, t, result);
+	QuaternionNormalize(result);
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: Apply two-hand grip rotation to a transform matrix
@@ -641,6 +690,8 @@ C_TFVRHand::C_TFVRHand()
 	m_flTwoHandBlend = 0.0f;
 	m_iOffHandBone = -1;
 	m_bOffhandGripActive = false;
+	m_bWasOffhandGripActive = false;
+	m_flGripRotationBlend = 0.0f;
 	m_vecOffhandGripForward = Vector(1, 0, 0);
 	m_vecOffhandGripUp = Vector(0, 0, 1);
 	m_vecCachedGripDelta = vec3_origin;
@@ -1109,11 +1160,37 @@ void C_TFVRHand::Update()
 				
 				bool bGripButtonPressed = gripValue >= tfvr_offhand_grip_threshold.GetFloat();
 				float gripRange = tfvr_offhand_grip_range.GetFloat() * 0.393701f; // cm to inches (Source units)
-				bool bWithinGripRange = distance <= gripRange;
+				
+				// Hysteresis: use larger range to release than to grab (prevents accidental ungrip)
+				bool bWasGripActive = m_bOffhandGripActive;
+				float effectiveRange = bWasGripActive 
+					? gripRange * tfvr_offhand_grip_release_mult.GetFloat()  // Larger range to release
+					: gripRange;                                              // Normal range to grab
+				bool bWithinGripRange = distance <= effectiveRange;
 				
 				// Offhand grip is active when grip button is held AND within range
-				bool bWasGripActive = m_bOffhandGripActive;
+				bool bGripJustActivated = !m_bOffhandGripActive && bGripButtonPressed && bWithinGripRange;
 				m_bOffhandGripActive = bGripButtonPressed && bWithinGripRange;
+				
+				// Track if grip was ever active (for blend-out tracking)
+				if (m_bOffhandGripActive)
+					m_bWasOffhandGripActive = true;
+				
+				// When grip just activates, clear stale direction but DON'T reset blend value
+				// If we're mid-blend-out, we want to continue from current rotation, not jump
+				if (bGripJustActivated)
+				{
+					// Clear the cached direction so it gets recalculated fresh this frame
+					m_vecOffhandGripForward = vec3_origin;
+					
+					// Only reset rotation blend if we weren't already blending
+					// (i.e., this is a fresh grip, not a re-grip during blend-out)
+					if (!m_bWasOffhandGripActive)
+					{
+						m_flGripRotationBlend = 0.0f;
+					}
+					// Otherwise, keep current blend value - we'll blend UP from here
+				}
 				
 				// If offhand grip is active, calculate the weapon rotation offset
 				if (m_bOffhandGripActive)
@@ -1134,49 +1211,39 @@ void C_TFVRHand::Update()
 						}
 					}
 					
-					// Direction from right wrist to left wrist (OpenXR) - this is the "pointing" direction
+					// Target direction: right wrist to left wrist
 					Vector wristToWrist = leftWristOpenXR - rightWristOpenXR;
 					float wristDistance = wristToWrist.Length();
-					Vector wristDirection = wristToWrist;
-					if (wristDistance > 0.1f)
-						wristDirection /= wristDistance;
+					Vector wristDirection = (wristDistance > 0.1f) ? wristToWrist / wristDistance : wristToWrist;
 					
-					// The pivot axis is the direction from weapon grip to offhand grip target
-					// This axis should point toward the left wrist
-					// Roll is around this axis
-					
-					// Get the current grip target position from the right hand
+					// Calculate weapon direction using feedback correction
+					// This ensures the grip target aligns with the left wrist
 					Vector gripTargetPos;
 					QAngle gripTargetAngles;
-					Vector pivotAxis = wristDirection; // Default
+					Vector dirToOffhand = wristDirection;
 					
 					if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 					{
-						// Calculate the pivot axis (from right wrist to grip target)
 						Vector toGrip = gripTargetPos - rightWristOpenXR;
 						if (toGrip.LengthSqr() > 0.1f)
 						{
-							pivotAxis = toGrip;
+							Vector pivotAxis = toGrip;
 							pivotAxis.NormalizeInPlace();
+							
+							// Error = where we want to point minus where grip target currently points
+							Vector error = wristDirection - pivotAxis;
+							
+							// Start from last frame's direction (or wrist direction if invalid)
+							Vector currentY = m_vecOffhandGripForward;
+							if (currentY.LengthSqr() < 0.1f)
+								currentY = wristDirection;
+							currentY.NormalizeInPlace();
+							
+							// Apply full error correction (rotation blend handles smoothing)
+							dirToOffhand = currentY + error;
+							dirToOffhand.NormalizeInPlace();
 						}
 					}
-					
-					// Simple per-frame correction:
-					// We want pivotAxis to match wristDirection
-					// The delta between them tells us how much to adjust
-					
-					// Current weapon Y-axis (what we set last frame)
-					Vector currentY = m_vecOffhandGripForward;
-					if (currentY.LengthSqr() < 0.1f)
-						currentY = wristDirection;
-					currentY.NormalizeInPlace();
-					
-					// Delta between where pivot is and where it should be
-					Vector delta = wristDirection - pivotAxis;
-					
-					// Apply half the delta to avoid overshooting (damping)
-					Vector dirToOffhand = currentY + delta * 0.5f;
-					dirToOffhand.NormalizeInPlace();
 					
 					// Get the right wrist's up direction for roll control
 					Vector rightWristUp(0, 0, 1); // fallback to world up
@@ -1194,8 +1261,14 @@ void C_TFVRHand::Update()
 					m_vecOffhandGripForward = dirToOffhand;
 					m_vecOffhandGripUp = rightWristUp;
 					
-					// Snap to grip target immediately when grip is active
-					m_flTwoHandBlend = 1.0f;
+					// Smoothly blend toward full grip (hand position) with easing
+					float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+					m_flTwoHandBlend = EasedApproach(1.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+					
+					// Smoothly blend weapon rotation (separate speed) with easing
+					float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
+					m_flGripRotationBlend = EasedApproach(1.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
 					
 					if (tfvr_twohand_debug.GetBool())
 					{
@@ -1229,51 +1302,90 @@ void C_TFVRHand::Update()
 						m_vecCachedGripYAxis = Vector(0, 1, 0);
 					}
 					
-					// Calculate blend amount based on distance (passive two-handing)
-					float targetBlend = 0.0f;
-					if (distance <= snapDist)
+					// If we WERE actively gripping but now released, blend out to 0
+					// This ensures smooth ungrip transition
+					if (m_bWasOffhandGripActive)
 					{
-						// Full grip when within snap distance
-						targetBlend = 1.0f;
-					}
-					else if (distance <= blendDist)
-					{
-						// Interpolate between snap and blend distance
-						targetBlend = 1.0f - ((distance - snapDist) / (blendDist - snapDist));
-					}
-					
-					// Smoothly interpolate towards target blend (avoid snapping)
-					float blendSpeed = 10.0f; // How fast to blend
-					m_flTwoHandBlend = Approach(targetBlend, m_flTwoHandBlend, blendSpeed * gpGlobals->frametime);
-					
-					if (tfvr_twohand_debug.GetBool())
-					{
-						static float lastDebugTime = 0;
-						if (gpGlobals->curtime - lastDebugTime > 0.2f)
+						float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+						float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+						m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+						
+						// Blend out weapon rotation (separate speed) with easing
+						float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
+						m_flGripRotationBlend = EasedApproach(0.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
+						
+						// Clear when BOTH blends are done
+						if (m_flTwoHandBlend < 0.001f && m_flGripRotationBlend < 0.001f)
+							m_bWasOffhandGripActive = false;
+						
+						if (tfvr_twohand_debug.GetBool())
 						{
-							DevMsg("TwoHand: Distance=%.1f, TargetBlend=%.2f, CurrentBlend=%.2f, GripValue=%.2f\n", 
-								distance, targetBlend, m_flTwoHandBlend, gripValue);
-							lastDebugTime = gpGlobals->curtime;
+							static float lastDebugTime = 0;
+							if (gpGlobals->curtime - lastDebugTime > 0.2f)
+							{
+								DevMsg("TwoHand: Blending out from grip, HandBlend=%.2f, RotBlend=%.2f\n", 
+									m_flTwoHandBlend, m_flGripRotationBlend);
+								lastDebugTime = gpGlobals->curtime;
+							}
+						}
+					}
+					else
+					{
+						// Passive two-handing: Calculate blend amount based on distance
+						float targetBlend = 0.0f;
+						if (distance <= snapDist)
+						{
+							// Full grip when within snap distance
+							targetBlend = 1.0f;
+						}
+						else if (distance <= blendDist)
+						{
+							// Interpolate between snap and blend distance
+							targetBlend = 1.0f - ((distance - snapDist) / (blendDist - snapDist));
 						}
 						
-						// Draw yellow line for passive mode
-						debugoverlay->AddLineOverlay(leftHandPos, gripTargetPos, 
-							255, 255, 0, true, 0.1f);
+						// Smoothly interpolate towards target blend with easing
+						float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+						float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+						m_flTwoHandBlend = EasedApproach(targetBlend, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+						
+						if (tfvr_twohand_debug.GetBool())
+						{
+							static float lastDebugTime = 0;
+							if (gpGlobals->curtime - lastDebugTime > 0.2f)
+							{
+								DevMsg("TwoHand: Distance=%.1f, TargetBlend=%.2f, CurrentBlend=%.2f, GripValue=%.2f\n", 
+									distance, targetBlend, m_flTwoHandBlend, gripValue);
+								lastDebugTime = gpGlobals->curtime;
+							}
+							
+							// Draw yellow line for passive mode
+							debugoverlay->AddLineOverlay(leftHandPos, gripTargetPos, 
+								255, 255, 0, true, 0.1f);
+						}
 					}
 				}
 			}
 			else
 			{
 				// No valid grip target, blend back to free hand
-				m_flTwoHandBlend = Approach(0.0f, m_flTwoHandBlend, 10.0f * gpGlobals->frametime);
+				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+				m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
 				m_bOffhandGripActive = false;
+				if (m_flTwoHandBlend < 0.001f)
+					m_bWasOffhandGripActive = false;  // Clear when fully blended out
 			}
 		}
 		else
 		{
 			// No weapon in right hand, blend back to free hand
-			m_flTwoHandBlend = Approach(0.0f, m_flTwoHandBlend, 10.0f * gpGlobals->frametime);
+			float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+			float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+			m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
 			m_bOffhandGripActive = false;
+			if (m_flTwoHandBlend < 0.001f)
+				m_bWasOffhandGripActive = false;  // Clear when fully blended out
 		}
 	}
 	
@@ -1738,28 +1850,54 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		}
 		
 		// Apply offhand grip rotation to weapon hand (right hand)
+		// Only applies during active grip (button held), not passive two-handing
+		// Uses separate m_flGripRotationBlend for smooth rotation transitions
 		if (IsRightHand() && tfvr_offhand_grip_enabled.GetBool())
 		{
 			C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
-			if (pLeftHand && pLeftHand->IsOffhandGripActive())
+			float rotationBlend = pLeftHand ? pLeftHand->GetGripRotationBlend() : 0.0f;
+			bool bWasGripActive = pLeftHand && pLeftHand->WasOffhandGripActive();
+			bool bIsGripActive = pLeftHand && pLeftHand->IsOffhandGripActive();
+			
+			// Apply rotation when grip was active (includes blend-out after release)
+			// Uses separate rotation blend that starts fresh each time grip activates
+			if (rotationBlend > 0.001f && bWasGripActive)
 			{
 				Vector desiredY = pLeftHand->GetOffhandGripForward();
-				ApplyTwoHandGripRotation(controllerTransform, desiredY);
 				
-				if (tfvr_twohand_debug.GetBool())
+				// Skip if we don't have a valid direction yet (just activated, will be set next frame)
+				if (desiredY.LengthSqr() < 0.1f)
 				{
-					Vector pos(controllerTransform[0][3], controllerTransform[1][3], controllerTransform[2][3]);
-					static float lastDebugTime = 0;
-					if (gpGlobals->curtime - lastDebugTime > 0.3f)
-					{
-						DevMsg("OffhandGrip: DesiredY=(%.2f,%.2f,%.2f)\n",
-							desiredY.x, desiredY.y, desiredY.z);
-						lastDebugTime = gpGlobals->curtime;
-					}
+					// No valid direction - skip rotation this frame
+				}
+				else
+				{
+					// Capture pre-rotation state
+					Quaternion preGripQuat;
+					Vector preGripPos;
+					MatrixAngles(controllerTransform, preGripQuat, preGripPos);
 					
-					// CYAN line = our desired Y direction (where weapon should point)
-					debugoverlay->AddLineOverlay(pos, pos + desiredY * 45.0f, 
-						0, 255, 255, true, 0.1f);
+					// Apply full grip rotation
+					ApplyTwoHandGripRotation(controllerTransform, desiredY);
+					
+					// Capture post-rotation state
+					Quaternion gripQuat;
+					Vector gripPos;
+					MatrixAngles(controllerTransform, gripQuat, gripPos);
+					
+					// Blend between pre and post rotation with easing
+					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+					float easedRotBlend = ApplyEaseOutToBlend(rotationBlend, easePower, bIsGripActive);
+					
+					Quaternion blendedQuat;
+					SafeQuaternionSlerp(preGripQuat, gripQuat, easedRotBlend, blendedQuat);
+					QuaternionMatrix(blendedQuat, preGripPos, controllerTransform);
+					
+					if (tfvr_twohand_debug.GetBool())
+					{
+						Vector pos(controllerTransform[0][3], controllerTransform[1][3], controllerTransform[2][3]);
+						debugoverlay->AddLineOverlay(pos, pos + desiredY * 45.0f, 0, 255, 255, true, 0.1f);
+					}
 				}
 			}
 		}
@@ -1925,7 +2063,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 							MatrixAngles(pBoneToWorldOut[i], currentQuat, currentPos);
 							
 							VectorLerp(currentPos, gripPos, m_flTwoHandBlend, blendedPos);
-							QuaternionSlerp(currentQuat, gripQuat, m_flTwoHandBlend, blendedQuat);
+							SafeQuaternionSlerp(currentQuat, gripQuat, m_flTwoHandBlend, blendedQuat);
 							
 							QuaternionMatrix(blendedQuat, blendedPos, pBoneToWorldOut[i]);
 						}
@@ -2445,14 +2583,37 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		MatrixCopy(temp, controllerTransform);
 	}
 	
-	// Apply offhand grip rotation if active (same as in SetupBones)
-	// This ensures the grip target follows the rotated weapon position
+	// Apply offhand grip rotation (must match SetupBones for consistency)
 	extern ConVar tfvr_offhand_grip_enabled;
 	C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
-	if (pLeftHand && pLeftHand->IsOffhandGripActive() && tfvr_offhand_grip_enabled.GetBool())
+	float rotationBlend = pLeftHand ? pLeftHand->GetGripRotationBlend() : 0.0f;
+	bool bWasGripActive = pLeftHand && pLeftHand->WasOffhandGripActive();
+	bool bIsGripActive = pLeftHand && pLeftHand->IsOffhandGripActive();
+	
+	if (rotationBlend > 0.001f && bWasGripActive && tfvr_offhand_grip_enabled.GetBool())
 	{
 		Vector desiredY = pLeftHand->GetOffhandGripForward();
-		ApplyTwoHandGripRotation(controllerTransform, desiredY);
+		
+		if (desiredY.LengthSqr() >= 0.1f)
+		{
+			Quaternion preGripQuat;
+			Vector preGripPos;
+			MatrixAngles(controllerTransform, preGripQuat, preGripPos);
+			
+			ApplyTwoHandGripRotation(controllerTransform, desiredY);
+			
+			Quaternion gripQuat;
+			Vector gripPos;
+			MatrixAngles(controllerTransform, gripQuat, gripPos);
+			
+			extern ConVar tfvr_offhand_grip_ease_power;
+			float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+			float easedRotBlend = ApplyEaseOutToBlend(rotationBlend, easePower, bIsGripActive);
+			
+			Quaternion blendedQuat;
+			SafeQuaternionSlerp(preGripQuat, gripQuat, easedRotBlend, blendedQuat);
+			QuaternionMatrix(blendedQuat, preGripPos, controllerTransform);
+		}
 	}
 	
 	// Calculate anchor delta = controller * inverse(handBone)

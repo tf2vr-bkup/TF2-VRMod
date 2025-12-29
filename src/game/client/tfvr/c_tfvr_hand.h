@@ -118,6 +118,8 @@ public:
 	
 	// Offhand grip - when grip button is held and within range
 	bool IsOffhandGripActive() const { return m_bOffhandGripActive; }
+	bool WasOffhandGripActive() const { return m_bWasOffhandGripActive; }  // For blend-out tracking
+	float GetGripRotationBlend() const { return m_flGripRotationBlend; }   // Separate blend for weapon rotation
 	const Vector& GetOffhandGripForward() const { return m_vecOffhandGripForward; }
 	const Vector& GetOffhandGripUp() const { return m_vecOffhandGripUp; }
 
@@ -180,6 +182,8 @@ private:
 	
 	// Offhand grip state - active when grip button held + within range
 	bool m_bOffhandGripActive;         // Is the offhand currently gripping the weapon
+	bool m_bWasOffhandGripActive;      // Was grip active last frame (for blend-out tracking)
+	float m_flGripRotationBlend;       // Separate blend for weapon rotation (0=no rotation, 1=full grip rotation)
 	Vector m_vecOffhandGripForward;    // Desired forward direction (toward offhand)
 	Vector m_vecOffhandGripUp;         // Up reference from weapon hand controller
 	Vector m_vecCachedGripDelta;       // Cached initial pivot axis from grip start
