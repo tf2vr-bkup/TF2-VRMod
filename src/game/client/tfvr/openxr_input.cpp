@@ -304,7 +304,7 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         }
     }
 
-    // Menu (left B button)
+    // Menu (left Y button)
     if (m_actions.find("menu") != m_actions.end())
     {
         XrPath bindingPath;
@@ -535,11 +535,11 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         }
     }
 
-    // Menu (left menu button - Quest controllers have a dedicated menu button)
+    // Menu (left Y button)
     if (m_actions.find("menu") != m_actions.end())
     {
         XrPath bindingPath;
-        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &bindingPath)))
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/y/click", &bindingPath)))
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["menu"].handle;
@@ -799,18 +799,6 @@ bool COpenXRInputManager::CreateGenericControllerProfile()
         }
     }
     
-    if (m_actions.find("menu") != m_actions.end())
-    {
-        XrPath bindingPath;
-        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &bindingPath)))
-        {
-            XrActionSuggestedBinding binding;
-            binding.action = m_actions["menu"].handle;
-            binding.binding = bindingPath;
-            suggestedBindings.push_back(binding);
-        }
-    }
-
     // Pose bindings
     if (m_actions.find("left_hand_pose") != m_actions.end())
     {
