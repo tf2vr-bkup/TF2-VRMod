@@ -354,15 +354,15 @@ ConVar tfvr_hands_animate_thumb_metacarpal("tfvr_hands_animate_thumb_metacarpal"
 // Finger rotation offset convars (to align OpenXR joint orientation with model bone orientation)
 // Separate offsets for left and right hands since they're mirrored
 ConVar tfvr_hands_finger_offset_pitch_L("tfvr_hands_finger_offset_pitch_L", "0", FCVAR_ARCHIVE, "Pitch offset for LEFT hand finger bones (degrees)");
-ConVar tfvr_hands_finger_offset_yaw_L("tfvr_hands_finger_offset_yaw_L", "0", FCVAR_ARCHIVE, "Yaw offset for LEFT hand finger bones (degrees)");
-ConVar tfvr_hands_finger_offset_roll_L("tfvr_hands_finger_offset_roll_L", "-90", FCVAR_ARCHIVE, "Roll offset for LEFT hand finger bones (degrees)");
-ConVar tfvr_hands_finger_offset_pitch_R("tfvr_hands_finger_offset_pitch_R", "0", FCVAR_ARCHIVE, "Pitch offset for RIGHT hand finger bones (degrees)");
-ConVar tfvr_hands_finger_offset_yaw_R("tfvr_hands_finger_offset_yaw_R", "0", FCVAR_ARCHIVE, "Yaw offset for RIGHT hand finger bones (degrees)");
-ConVar tfvr_hands_finger_offset_roll_R("tfvr_hands_finger_offset_roll_R", "-90", FCVAR_ARCHIVE, "Roll offset for RIGHT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_yaw_L("tfvr_hands_finger_offset_yaw_L", "90", FCVAR_ARCHIVE, "Yaw offset for LEFT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_roll_L("tfvr_hands_finger_offset_roll_L", "0", FCVAR_ARCHIVE, "Roll offset for LEFT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_pitch_R("tfvr_hands_finger_offset_pitch_R", "180", FCVAR_ARCHIVE, "Pitch offset for RIGHT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_yaw_R("tfvr_hands_finger_offset_yaw_R", "-90", FCVAR_ARCHIVE, "Yaw offset for RIGHT hand finger bones (degrees)");
+ConVar tfvr_hands_finger_offset_roll_R("tfvr_hands_finger_offset_roll_R", "0", FCVAR_ARCHIVE, "Roll offset for RIGHT hand finger bones (degrees)");
 
 // Rotation offset convars - left hand
-ConVar tfvr_hands_left_offset_pitch("tfvr_hands_left_offset_pitch", "0", FCVAR_ARCHIVE, "Pitch offset for left VR hand (degrees)");
-ConVar tfvr_hands_left_offset_yaw("tfvr_hands_left_offset_yaw", "0", FCVAR_ARCHIVE, "Yaw offset for left VR hand (degrees)");
+ConVar tfvr_hands_left_offset_pitch("tfvr_hands_left_offset_pitch", "-75", FCVAR_ARCHIVE, "Pitch offset for left VR hand (degrees)");
+ConVar tfvr_hands_left_offset_yaw("tfvr_hands_left_offset_yaw", "125", FCVAR_ARCHIVE, "Yaw offset for left VR hand (degrees)");
 
 // Shadow convars for debugging
 ConVar tfvr_hands_shadow_bounds("tfvr_hands_shadow_bounds", "10000", FCVAR_CHEAT, "Render bounds size for VR hands (affects shadow culling)");
@@ -373,24 +373,24 @@ ConVar tfvr_hands_shadow_debug("tfvr_hands_shadow_debug", "0", FCVAR_CHEAT, "Sho
 // Two-handed weapon convars
 ConVar tfvr_twohand_enabled("tfvr_twohand_enabled", "1", FCVAR_ARCHIVE, "Enable two-handed weapon gripping");
 ConVar tfvr_twohand_snap_distance("tfvr_twohand_snap_distance", "8", FCVAR_ARCHIVE, "Distance (inches) at which off-hand snaps to weapon grip");
-ConVar tfvr_twohand_blend_distance("tfvr_twohand_blend_distance", "16", FCVAR_ARCHIVE, "Distance (inches) at which off-hand starts blending towards weapon grip");
+ConVar tfvr_twohand_blend_distance("tfvr_twohand_blend_distance", "1", FCVAR_ARCHIVE, "Distance (inches) at which off-hand starts blending towards weapon grip");
 ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-handed grip debug info");
 
 // Offhand grip convars - grip button must be held to activate
 ConVar tfvr_offhand_grip_enabled("tfvr_offhand_grip_enabled", "1", FCVAR_ARCHIVE, "Enable offhand grip for two-handed weapon aiming");
-ConVar tfvr_offhand_grip_range("tfvr_offhand_grip_range", "20", FCVAR_ARCHIVE, "Distance (cm) at which offhand grip can activate");
-ConVar tfvr_offhand_grip_release_mult("tfvr_offhand_grip_release_mult", "1.5", FCVAR_ARCHIVE, "Multiplier for release distance (hysteresis to prevent accidental ungrip)");
+ConVar tfvr_offhand_grip_range("tfvr_offhand_grip_range", "25", FCVAR_ARCHIVE, "Distance (cm) at which offhand grip can activate");
+ConVar tfvr_offhand_grip_release_mult("tfvr_offhand_grip_release_mult", "2", FCVAR_ARCHIVE, "Multiplier for release distance (hysteresis to prevent accidental ungrip)");
 ConVar tfvr_offhand_grip_threshold("tfvr_offhand_grip_threshold", "0.5", FCVAR_ARCHIVE, "Grip button threshold (0-1) to activate offhand grip");
 ConVar tfvr_offhand_grip_blend_speed("tfvr_offhand_grip_blend_speed", "15", FCVAR_ARCHIVE, "Speed of hand position grip/ungrip transition (higher = faster)");
 ConVar tfvr_offhand_grip_rotation_blend_speed("tfvr_offhand_grip_rotation_blend_speed", "8", FCVAR_ARCHIVE, "Speed of weapon rotation grip/ungrip transition (higher = faster)");
-ConVar tfvr_offhand_grip_ease_power("tfvr_offhand_grip_ease_power", "2.5", FCVAR_ARCHIVE, "Easing power for grip transitions (1=linear, 2+=ease-out, higher=sharper)");
+ConVar tfvr_offhand_grip_ease_power("tfvr_offhand_grip_ease_power", "1.1", FCVAR_ARCHIVE, "Easing power for grip transitions (1=linear, 2+=ease-out, higher=sharper)");
 ConVar tfvr_offhand_grip_no_anchor("tfvr_offhand_grip_no_anchor", "0", FCVAR_CHEAT, "DEBUG: Disable anchor offset when gripping (use controller directly)");
 ConVar tfvr_hands_left_offset_roll("tfvr_hands_left_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for left VR hand (degrees)");
 
 // Rotation offset convars - right hand
-ConVar tfvr_hands_right_offset_pitch("tfvr_hands_right_offset_pitch", "0", FCVAR_ARCHIVE, "Pitch offset for right VR hand (degrees)");
-ConVar tfvr_hands_right_offset_yaw("tfvr_hands_right_offset_yaw", "0", FCVAR_ARCHIVE, "Yaw offset for right VR hand (degrees)");
-ConVar tfvr_hands_right_offset_roll("tfvr_hands_right_offset_roll", "180", FCVAR_ARCHIVE, "Roll offset for right VR hand (degrees)");
+ConVar tfvr_hands_right_offset_pitch("tfvr_hands_right_offset_pitch", "110", FCVAR_ARCHIVE, "Pitch offset for right VR hand (degrees)");
+ConVar tfvr_hands_right_offset_yaw("tfvr_hands_right_offset_yaw", "-125", FCVAR_ARCHIVE, "Yaw offset for right VR hand (degrees)");
+ConVar tfvr_hands_right_offset_roll("tfvr_hands_right_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for right VR hand (degrees)");
 
 // Debug convars
 ConVar tfvr_debug_weapon_attachment("tfvr_debug_weapon_attachment", "0", FCVAR_NONE, "Draw debug lines showing weapon attachment");
@@ -400,9 +400,9 @@ ConVar tfvr_debug_weapon_position("tfvr_debug_weapon_position", "0", FCVAR_NONE,
 ConVar tfvr_weapon_grip_offset_x("tfvr_weapon_grip_offset_x", "0", FCVAR_ARCHIVE, "Default weapon grip offset X (forward)");
 ConVar tfvr_weapon_grip_offset_y("tfvr_weapon_grip_offset_y", "0", FCVAR_ARCHIVE, "Default weapon grip offset Y (right)");
 ConVar tfvr_weapon_grip_offset_z("tfvr_weapon_grip_offset_z", "0", FCVAR_ARCHIVE, "Default weapon grip offset Z (up)");
-ConVar tfvr_weapon_grip_angle_pitch("tfvr_weapon_grip_angle_pitch", "0", FCVAR_ARCHIVE, "Default weapon grip angle pitch");
+ConVar tfvr_weapon_grip_angle_pitch("tfvr_weapon_grip_angle_pitch", "-90", FCVAR_ARCHIVE, "Default weapon grip angle pitch");
 ConVar tfvr_weapon_grip_angle_yaw("tfvr_weapon_grip_angle_yaw", "0", FCVAR_ARCHIVE, "Default weapon grip angle yaw");
-ConVar tfvr_weapon_grip_angle_roll("tfvr_weapon_grip_angle_roll", "0", FCVAR_ARCHIVE, "Default weapon grip angle roll");
+ConVar tfvr_weapon_grip_angle_roll("tfvr_weapon_grip_angle_roll", "-90", FCVAR_ARCHIVE, "Default weapon grip angle roll");
 
 // Weapon fire animation convars
 ConVar tfvr_weapon_fire_anim("tfvr_weapon_fire_anim", "1", FCVAR_ARCHIVE, "Enable fire animations on VR-held weapons");
@@ -412,8 +412,8 @@ ConVar tfvr_weapon_fire_anim_pos_scale("tfvr_weapon_fire_anim_pos_scale", "1.0",
 ConVar tfvr_weapon_fire_anim_pitch_scale("tfvr_weapon_fire_anim_pitch_scale", "1.0", FCVAR_ARCHIVE, "Scale/invert pitch rotation (negative to flip)");
 ConVar tfvr_weapon_fire_anim_yaw_scale("tfvr_weapon_fire_anim_yaw_scale", "1.0", FCVAR_ARCHIVE, "Scale/invert yaw rotation (negative to flip)");
 ConVar tfvr_weapon_fire_anim_roll_scale("tfvr_weapon_fire_anim_roll_scale", "1.0", FCVAR_ARCHIVE, "Scale/invert roll rotation (negative to flip)");
-ConVar tfvr_weapon_fire_anim_pos_rotation("tfvr_weapon_fire_anim_pos_rotation", "0", FCVAR_ARCHIVE, "Rotation correction for position vector (degrees around Z axis)");
-ConVar tfvr_weapon_fire_anim_angle_rotation("tfvr_weapon_fire_anim_angle_rotation", "90", FCVAR_ARCHIVE, "Coordinate space rotation for fire animation (degrees around Z axis)");
+ConVar tfvr_weapon_fire_anim_pos_rotation("tfvr_weapon_fire_anim_pos_rotation", "90", FCVAR_ARCHIVE, "Rotation correction for position vector (degrees around Z axis)");
+ConVar tfvr_weapon_fire_anim_angle_rotation("tfvr_weapon_fire_anim_angle_rotation", "180", FCVAR_ARCHIVE, "Coordinate space rotation for fire animation (degrees around Z axis)");
 
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;

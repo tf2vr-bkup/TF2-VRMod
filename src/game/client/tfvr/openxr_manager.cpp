@@ -25,16 +25,16 @@ extern class CVRMenuManager* g_pVRMenuManager;
 ConVar tfvr_worldscale("tfvr_worldscale", "48", FCVAR_ARCHIVE | FCVAR_REPLICATED, "This scales everything.");
 #define METERS_TO_GAME_UNITS tfvr_worldscale.GetFloat()
 
-ConVar tfvr_controller_debug_draw("tfvr_controller_debug_draw", "1", FCVAR_ARCHIVE, "Draw debug visualization for controller positions and orientations");
-ConVar tfvr_debug_aim_poses("tfvr_debug_aim_poses", "1", FCVAR_ARCHIVE, "Show debug visualization for aim poses (red/green cubes)");
-ConVar tfvr_debug_grip_poses("tfvr_debug_grip_poses", "1", FCVAR_ARCHIVE, "Show debug visualization for grip poses (blue/yellow cubes)");
-ConVar tfvr_debug_pose_size("tfvr_debug_pose_size", "2.0", FCVAR_ARCHIVE, "Size of debug pose visualization cubes");
+ConVar tfvr_controller_debug_draw("tfvr_controller_debug_draw", "0", FCVAR_ARCHIVE, "Draw debug visualization for controller positions and orientations");
+ConVar tfvr_debug_aim_poses("tfvr_debug_aim_poses", "0", FCVAR_ARCHIVE, "Show debug visualization for aim poses (red/green cubes)");
+ConVar tfvr_debug_grip_poses("tfvr_debug_grip_poses", "0", FCVAR_ARCHIVE, "Show debug visualization for grip poses (blue/yellow cubes)");
+ConVar tfvr_debug_pose_size("tfvr_debug_pose_size", "0.4", FCVAR_ARCHIVE, "Size of debug pose visualization cubes");
 ConVar tfvr_use_floor_aligned_poses("tfvr_use_floor_aligned_poses", "1", FCVAR_ARCHIVE, "Use floor-aligned coordinate conversion for controller poses (1=new method, 0=old method)");
 ConVar tfvr_debug_raw_poses("tfvr_debug_raw_poses", "0", FCVAR_ARCHIVE, "Show raw OpenXR poses before any transformation");
 ConVar tfvr_pose_offset_x("tfvr_pose_offset_x", "0.0", FCVAR_ARCHIVE, "Manual X offset for controller poses (testing)");
 ConVar tfvr_pose_offset_y("tfvr_pose_offset_y", "0.0", FCVAR_ARCHIVE, "Manual Y offset for controller poses (testing)");
 ConVar tfvr_pose_offset_z("tfvr_pose_offset_z", "0.0", FCVAR_ARCHIVE, "Manual Z offset for controller poses (testing)");
-ConVar tfvr_fix_head_relative_transform("tfvr_fix_head_relative_transform", "1", FCVAR_ARCHIVE, "Use improved head-relative transformation method");
+ConVar tfvr_fix_head_relative_transform("tfvr_fix_head_relative_transform", "0", FCVAR_ARCHIVE, "Use improved head-relative transformation method");
 ConVar tfvr_aim_pose_y_correction("tfvr_aim_pose_y_correction", "1.5", FCVAR_ARCHIVE, "Permanent Y-axis correction for aim poses");
 ConVar tfvr_crosshair_offset_x("tfvr_crosshair_offset_x", "0.0", FCVAR_ARCHIVE, "Crosshair X-axis offset for fine-tuning aim");
 ConVar tfvr_crosshair_offset_y("tfvr_crosshair_offset_y", "0.0", FCVAR_ARCHIVE, "Crosshair Y-axis offset for fine-tuning aim");
@@ -43,7 +43,7 @@ ConVar tfvr_crosshair_follow_controller_roll("tfvr_crosshair_follow_controller_r
 ConVar tfvr_msaa("tfvr_msaa", "4", FCVAR_ARCHIVE, "Controls multi-sampling anti-aliasing levels in TFVR. Set to the number of samples to use.");
 ConVar tfvr_dynamic_worldscale("tfvr_dynamic_worldscale", "1", FCVAR_ARCHIVE, "Enable dynamic world scaling based on merc height and crouch state");
 ConVar tfvr_forcemaxlod("tfvr_forcemaxlod", "1", FCVAR_ARCHIVE);
-ConVar tfvr_hud_forward("tfvr_hud_forward", "400", FCVAR_ARCHIVE, "Apparent distance of the HUD in inches");
+ConVar tfvr_hud_forward("tfvr_hud_forward", "500", FCVAR_ARCHIVE, "Apparent distance of the HUD in inches");
 ConVar tfvr_hud_scale("tfvr_hud_scale", "0.5", FCVAR_ARCHIVE);
 ConVar tfvr_hud_axis_lock_to_world("tfvr_hud_axis_lock_to_world", "5", FCVAR_ARCHIVE, "Bitfield - locks HUD axes to the world - 1=pitch, 2=yaw, 4=roll");
 ConVar tfvr_hud_height_adjust("tfvr_hud_height_adjust", "0", FCVAR_ARCHIVE);
@@ -56,7 +56,7 @@ ConVar tfvr_seated_height_offset("tfvr_seated_height_offset", "24", FCVAR_ARCHIV
 ConVar tfvr_calibration_debug("tfvr_calibration_debug", "0", FCVAR_ARCHIVE, "Show debug output for height calibration and seated mode");
 
 
-ConVar tfvr_menu_scale("tfvr_menu_scale", "0.7", FCVAR_ARCHIVE);
+ConVar tfvr_menu_scale("tfvr_menu_scale", "0.5", FCVAR_ARCHIVE);
 
 ConVar tfvr_r_show_both_eyes("tfvr_r_show_both_eyes", "0", FCVAR_ARCHIVE, "Show both eyes on the game window.");
 

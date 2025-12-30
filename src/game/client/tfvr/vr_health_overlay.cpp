@@ -29,18 +29,18 @@
 ConVar tfvr_health_overlay_enabled("tfvr_health_overlay_enabled", "1", FCVAR_ARCHIVE, "Enable VR health overlay on hand");
 ConVar tfvr_health_overlay_hand("tfvr_health_overlay_hand", "0", FCVAR_ARCHIVE, "Hand to attach health overlay to: 0=left, 1=right");
 ConVar tfvr_health_overlay_use_hand_tracking("tfvr_health_overlay_use_hand_tracking", "1", FCVAR_ARCHIVE, "Use hand tracking instead of controller pose: 0=controller, 1=hand tracking");
-ConVar tfvr_health_overlay_offset_x("tfvr_health_overlay_offset_x", "0", FCVAR_ARCHIVE, "X offset from hand position");
-ConVar tfvr_health_overlay_offset_y("tfvr_health_overlay_offset_y", "10", FCVAR_ARCHIVE, "Y offset from hand position (up)");
-ConVar tfvr_health_overlay_offset_z("tfvr_health_overlay_offset_z", "5", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
-ConVar tfvr_health_overlay_scale("tfvr_health_overlay_scale", "1.0", FCVAR_ARCHIVE, "Scale of health overlay");
-ConVar tfvr_health_overlay_panel_x("tfvr_health_overlay_panel_x", "100", FCVAR_ARCHIVE, "Panel X position within capture area");
-ConVar tfvr_health_overlay_panel_y("tfvr_health_overlay_panel_y", "100", FCVAR_ARCHIVE, "Panel Y position within capture area");
+ConVar tfvr_health_overlay_offset_x("tfvr_health_overlay_offset_x", "-18.5", FCVAR_ARCHIVE, "X offset from hand position");
+ConVar tfvr_health_overlay_offset_y("tfvr_health_overlay_offset_y", "0", FCVAR_ARCHIVE, "Y offset from hand position (up)");
+ConVar tfvr_health_overlay_offset_z("tfvr_health_overlay_offset_z", "0", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
+ConVar tfvr_health_overlay_scale("tfvr_health_overlay_scale", "20", FCVAR_ARCHIVE, "Scale of health overlay");
+ConVar tfvr_health_overlay_panel_x("tfvr_health_overlay_panel_x", "0", FCVAR_ARCHIVE, "Panel X position within capture area");
+ConVar tfvr_health_overlay_panel_y("tfvr_health_overlay_panel_y", "0", FCVAR_ARCHIVE, "Panel Y position within capture area");
 ConVar tfvr_health_overlay_debug_bg("tfvr_health_overlay_debug_bg", "0", FCVAR_ARCHIVE, "Show debug background to see quad boundaries");
 ConVar tfvr_health_overlay_simple_transform("tfvr_health_overlay_simple_transform", "0", FCVAR_ARCHIVE, "Use simple identity transform for debugging");
-ConVar tfvr_health_overlay_no_rotation("tfvr_health_overlay_no_rotation", "0", FCVAR_ARCHIVE, "Skip final 180-degree rotation for debugging");
+ConVar tfvr_health_overlay_no_rotation("tfvr_health_overlay_no_rotation", "1", FCVAR_ARCHIVE, "Skip final 180-degree rotation for debugging");
 ConVar tfvr_health_overlay_world_width("tfvr_health_overlay_world_width", "0", FCVAR_ARCHIVE, "Override world width (0=auto)");
-ConVar tfvr_health_overlay_panel_width("tfvr_health_overlay_panel_width", "1024", FCVAR_ARCHIVE, "Panel capture width in pixels");
-ConVar tfvr_health_overlay_panel_height("tfvr_health_overlay_panel_height", "1024", FCVAR_ARCHIVE, "Panel capture height in pixels");
+ConVar tfvr_health_overlay_panel_width("tfvr_health_overlay_panel_width", "220", FCVAR_ARCHIVE, "Panel capture width in pixels");
+ConVar tfvr_health_overlay_panel_height("tfvr_health_overlay_panel_height", "800", FCVAR_ARCHIVE, "Panel capture height in pixels");
 
 // Global instance
 CVRHealthOverlay* g_pVRHealthOverlay = nullptr;

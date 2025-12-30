@@ -40,10 +40,10 @@ extern IClientMode* g_pClientMode;
 
 // ConVars for VR menu control
 ConVar tfvr_primary_hand("tfvr_primary_hand", "1", FCVAR_ARCHIVE, "Primary hand for VR input: 0=left, 1=right");
-ConVar tfvr_menu_distance("tfvr_menu_distance", "100", FCVAR_ARCHIVE, "Distance from player to VR menu plane");
+ConVar tfvr_menu_distance("tfvr_menu_distance", "70", FCVAR_ARCHIVE, "Distance from player to VR menu plane");
 extern ConVar tfvr_menu_scale;
 ConVar tfvr_cursor_threshold("tfvr_cursor_threshold", "0.05", FCVAR_ARCHIVE, "Minimum VR controller movement required to override mouse (in world units)");
-ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "1.0", FCVAR_ARCHIVE, "Minimum VR head movement required to override mouse (in world units)");
+ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "0.1", FCVAR_ARCHIVE, "Minimum VR head movement required to override mouse (in world units)");
 ConVar tfvr_cursor_debug("tfvr_cursor_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR cursor threshold");
 ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
 ConVar tfvr_playspace_anchoring("tfvr_playspace_anchoring", "1", FCVAR_ARCHIVE, "Anchor menu to playspace origin instead of player");

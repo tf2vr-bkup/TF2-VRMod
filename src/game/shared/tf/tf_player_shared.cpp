@@ -121,7 +121,7 @@ ConVar tf_spy_invis_unstealth_time( "tf_spy_invis_unstealth_time", "2.0", FCVAR_
 ConVar tfvr_tracer_offset_forward( "tfvr_tracer_offset_forward", "0", FCVAR_ARCHIVE, "VR tracer offset along forward axis" );
 ConVar tfvr_tracer_offset_right( "tfvr_tracer_offset_right", "0", FCVAR_ARCHIVE, "VR tracer offset along right axis" );
 ConVar tfvr_tracer_offset_up( "tfvr_tracer_offset_up", "-4", FCVAR_ARCHIVE, "VR tracer offset along up axis" );
-ConVar tfvr_tracer_velocity_compensation( "tfvr_tracer_velocity_compensation", "0.033", FCVAR_ARCHIVE, "VR tracer velocity compensation factor (seconds)" );
+ConVar tfvr_tracer_velocity_compensation( "tfvr_tracer_velocity_compensation", "0.001", FCVAR_ARCHIVE, "VR tracer velocity compensation factor (seconds)" );
 
 ConVar tf_spy_max_cloaked_speed( "tf_spy_max_cloaked_speed", "999", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );	// no cap
 ConVar tf_whip_speed_increase( "tf_whip_speed_increase", "105", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );

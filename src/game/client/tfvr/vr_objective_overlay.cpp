@@ -55,12 +55,12 @@
 ConVar tfvr_objective_overlay_enabled("tfvr_objective_overlay_enabled", "1", FCVAR_ARCHIVE, "Enable VR objective overlay on hand");
 ConVar tfvr_objective_overlay_hand("tfvr_objective_overlay_hand", "0", FCVAR_ARCHIVE, "Hand to attach objective overlay to: 0=left, 1=right (should match health overlay)");
 ConVar tfvr_objective_overlay_use_hand_tracking("tfvr_objective_overlay_use_hand_tracking", "1", FCVAR_ARCHIVE, "Use hand tracking instead of controller pose: 0=controller, 1=hand tracking");
-ConVar tfvr_objective_overlay_offset_x("tfvr_objective_overlay_offset_x", "0", FCVAR_ARCHIVE, "X offset from hand position");
-ConVar tfvr_objective_overlay_offset_y("tfvr_objective_overlay_offset_y", "5", FCVAR_ARCHIVE, "Y offset from hand position (below health overlay)");
-ConVar tfvr_objective_overlay_offset_z("tfvr_objective_overlay_offset_z", "5", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
-ConVar tfvr_objective_overlay_scale("tfvr_objective_overlay_scale", "0.6", FCVAR_ARCHIVE, "Scale of objective overlay");
+ConVar tfvr_objective_overlay_offset_x("tfvr_objective_overlay_offset_x", "-3.2", FCVAR_ARCHIVE, "X offset from hand position");
+ConVar tfvr_objective_overlay_offset_y("tfvr_objective_overlay_offset_y", "3", FCVAR_ARCHIVE, "Y offset from hand position (below health overlay)");
+ConVar tfvr_objective_overlay_offset_z("tfvr_objective_overlay_offset_z", "-1.2", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
+ConVar tfvr_objective_overlay_scale("tfvr_objective_overlay_scale", "6", FCVAR_ARCHIVE, "Scale of objective overlay");
 ConVar tfvr_objective_overlay_debug_bg("tfvr_objective_overlay_debug_bg", "0", FCVAR_ARCHIVE, "Show debug background to see quad boundaries");
-ConVar tfvr_objective_overlay_center_content("tfvr_objective_overlay_center_content", "1", FCVAR_ARCHIVE, "Automatically center objective content in capture area");
+ConVar tfvr_objective_overlay_center_content("tfvr_objective_overlay_center_content", "0", FCVAR_ARCHIVE, "Automatically center objective content in capture area");
 ConVar tfvr_objective_overlay_force_flag_updates("tfvr_objective_overlay_force_flag_updates", "1", FCVAR_ARCHIVE, "Force flag panel updates for CTF arrow indicators");
 ConVar tfvr_objective_overlay_no_main_hud("tfvr_objective_overlay_no_main_hud", "1", FCVAR_ARCHIVE, "Prevent VR objective overlay from appearing on main HUD");
 ConVar tfvr_objective_overlay_restore_state("tfvr_objective_overlay_restore_state", "1", FCVAR_ARCHIVE, "Restore panel state after VR rendering to avoid interfering with main HUD");
@@ -69,9 +69,9 @@ ConVar tfvr_objective_overlay_content_center_x("tfvr_objective_overlay_content_c
 ConVar tfvr_objective_overlay_content_center_y("tfvr_objective_overlay_content_center_y", "540", FCVAR_ARCHIVE, "Y coordinate of content center in original HUD layout");
 ConVar tfvr_objective_overlay_simple_transform("tfvr_objective_overlay_simple_transform", "0", FCVAR_ARCHIVE, "Use simple identity transform for debugging");
 ConVar tfvr_objective_overlay_no_rotation("tfvr_objective_overlay_no_rotation", "0", FCVAR_ARCHIVE, "Skip final 180-degree rotation for debugging");
-ConVar tfvr_objective_overlay_world_width("tfvr_objective_overlay_world_width", "0", FCVAR_ARCHIVE, "Override world width (0=auto)");
-ConVar tfvr_objective_overlay_panel_width("tfvr_objective_overlay_panel_width", "600", FCVAR_ARCHIVE, "Panel capture width in pixels");
-ConVar tfvr_objective_overlay_panel_height("tfvr_objective_overlay_panel_height", "200", FCVAR_ARCHIVE, "Panel capture height in pixels");
+ConVar tfvr_objective_overlay_world_width("tfvr_objective_overlay_world_width", "-1", FCVAR_ARCHIVE, "Override world width (0=auto)");
+ConVar tfvr_objective_overlay_panel_width("tfvr_objective_overlay_panel_width", "500", FCVAR_ARCHIVE, "Panel capture width in pixels");
+ConVar tfvr_objective_overlay_panel_height("tfvr_objective_overlay_panel_height", "700", FCVAR_ARCHIVE, "Panel capture height in pixels");
 ConVar tfvr_objective_overlay_panel_x("tfvr_objective_overlay_panel_x", "0", FCVAR_ARCHIVE, "Panel X position within capture area");
 ConVar tfvr_objective_overlay_panel_y("tfvr_objective_overlay_panel_y", "0", FCVAR_ARCHIVE, "Panel Y position within capture area");
 ConVar tfvr_objective_overlay_wrist_back("tfvr_objective_overlay_wrist_back", "1.5", FCVAR_ARCHIVE, "Distance behind wrist (toward forearm)");
@@ -79,9 +79,9 @@ ConVar tfvr_objective_overlay_wrist_up("tfvr_objective_overlay_wrist_up", "-2.0"
 ConVar tfvr_objective_overlay_wrist_side("tfvr_objective_overlay_wrist_side", "0.2", FCVAR_ARCHIVE, "Distance toward thumb side");
 ConVar tfvr_objective_overlay_pitch("tfvr_objective_overlay_pitch", "-90", FCVAR_ARCHIVE, "Pitch rotation (up/down tilt) in degrees");
 ConVar tfvr_objective_overlay_yaw("tfvr_objective_overlay_yaw", "-90", FCVAR_ARCHIVE, "Yaw rotation (left/right turn) in degrees");
-ConVar tfvr_objective_overlay_roll("tfvr_objective_overlay_roll", "90", FCVAR_ARCHIVE, "Roll rotation (twist) in degrees");
-ConVar tfvr_objective_overlay_rotation_x("tfvr_objective_overlay_rotation_x", "0", FCVAR_ARCHIVE, "Additional X rotation (pitch)");
-ConVar tfvr_objective_overlay_rotation_y("tfvr_objective_overlay_rotation_y", "0", FCVAR_ARCHIVE, "Additional Y rotation (yaw)");
+ConVar tfvr_objective_overlay_roll("tfvr_objective_overlay_roll", "0", FCVAR_ARCHIVE, "Roll rotation (twist) in degrees");
+ConVar tfvr_objective_overlay_rotation_x("tfvr_objective_overlay_rotation_x", "90", FCVAR_ARCHIVE, "Additional X rotation (pitch)");
+ConVar tfvr_objective_overlay_rotation_y("tfvr_objective_overlay_rotation_y", "90", FCVAR_ARCHIVE, "Additional Y rotation (yaw)");
 ConVar tfvr_objective_overlay_rotation_z("tfvr_objective_overlay_rotation_z", "0", FCVAR_ARCHIVE, "Additional Z rotation (roll)");
 
 // Global instance

@@ -26,8 +26,8 @@ ConVar tfvr_controller_tracking_debug("tfvr_controller_tracking_debug", "0", FCV
 
 // VR Turning ConVars
 ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap" );
-ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "90", FCVAR_ARCHIVE, "Smooth turning rate in degrees per second" );
-ConVar tfvr_snap_turn_angle( "tfvr_snap_turn_angle", "30", FCVAR_ARCHIVE, "Snap turning angle in degrees" );
+ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "120", FCVAR_ARCHIVE, "Smooth turning rate in degrees per second" );
+ConVar tfvr_snap_turn_angle( "tfvr_snap_turn_angle", "45", FCVAR_ARCHIVE, "Snap turning angle in degrees" );
 ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.3", FCVAR_ARCHIVE, "Deadzone for turning input (0.0-1.0)" );
 ConVar tfvr_snap_turn_delay( "tfvr_snap_turn_delay", "0.25", FCVAR_ARCHIVE, "Delay between snap turns in seconds" );
 

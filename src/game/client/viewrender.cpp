@@ -6653,7 +6653,7 @@ void CViewRender::RenderHUD(const CViewSetup &view)
 //	
 //-----------------------------------------------------------------------------
 ConVar tfvr_hud_on_mirror("tfvr_hud_on_mirror", "1", FCVAR_ARCHIVE, "If enabled, displays the HUD on the desktop mirror window.");
-ConVar tfvr_menu_on_mirror("tfvr_menu_on_mirror", "0", FCVAR_ARCHIVE, "If enabled, displays the HUD on the desktop mirror window.");
+ConVar tfvr_menu_on_mirror("tfvr_menu_on_mirror", "1", FCVAR_ARCHIVE, "If enabled, displays the HUD on the desktop mirror window.");
 void CViewRender::RenderMenuTextureToScreen(const CViewSetup &view, bool isCinema)
 {
 	// Early exit if menu mirror is disabled and any menu type is visible
