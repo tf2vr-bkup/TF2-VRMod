@@ -1,5 +1,7 @@
 # Files to ignore when considering what GIT should commit.
 
+DO_NOT_PUSH/
+
 # Visual Studio 
 *.suo
 *.user
@@ -502,5 +504,3 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
-
-DO_NOT_PUSH/
