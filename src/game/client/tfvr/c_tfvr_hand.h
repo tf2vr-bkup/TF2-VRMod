@@ -51,8 +51,9 @@ public:
 	void UpdateHandTransform();
 	void UpdateHandBones();
 	
-	// Helper to get wrist transform as matrix
+	// Helper to get hand joint transforms as matrix
 	bool GetWristTransform(VMatrix& outTransform);
+	bool GetPalmTransform(VMatrix& outTransform);  // Palm joint - canonical reference for consistent offsets
 
 	// Bone setup override to position hand bones
 	virtual bool SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int boneMask, float currentTime) override;

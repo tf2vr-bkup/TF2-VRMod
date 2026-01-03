@@ -387,10 +387,418 @@ ConVar tfvr_offhand_grip_ease_power("tfvr_offhand_grip_ease_power", "1.1", FCVAR
 ConVar tfvr_offhand_grip_no_anchor("tfvr_offhand_grip_no_anchor", "0", FCVAR_CHEAT, "DEBUG: Disable anchor offset when gripping (use controller directly)");
 ConVar tfvr_hands_left_offset_roll("tfvr_hands_left_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for left VR hand (degrees)");
 
-// Rotation offset convars - right hand
+// Rotation offset convars - right hand (DEFAULT/GLOBAL offsets)
 ConVar tfvr_hands_right_offset_pitch("tfvr_hands_right_offset_pitch", "110", FCVAR_ARCHIVE, "Pitch offset for right VR hand (degrees)");
 ConVar tfvr_hands_right_offset_yaw("tfvr_hands_right_offset_yaw", "-125", FCVAR_ARCHIVE, "Yaw offset for right VR hand (degrees)");
 ConVar tfvr_hands_right_offset_roll("tfvr_hands_right_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for right VR hand (degrees)");
+
+// Per-class offset enable - when enabled, class-specific offsets override global offsets
+ConVar tfvr_hands_perclass_offsets("tfvr_hands_perclass_offsets", "0", FCVAR_ARCHIVE, "Enable per-class hand offsets (0=use global, 1=use per-class)");
+
+// Per-class offset convars - LEFT hand
+// Scout
+ConVar tfvr_hands_scout_left_pitch("tfvr_hands_scout_left_pitch", "-75", FCVAR_ARCHIVE, "Scout: left hand pitch offset");
+ConVar tfvr_hands_scout_left_yaw("tfvr_hands_scout_left_yaw", "125", FCVAR_ARCHIVE, "Scout: left hand yaw offset");
+ConVar tfvr_hands_scout_left_roll("tfvr_hands_scout_left_roll", "0", FCVAR_ARCHIVE, "Scout: left hand roll offset");
+// Soldier
+ConVar tfvr_hands_soldier_left_pitch("tfvr_hands_soldier_left_pitch", "-75", FCVAR_ARCHIVE, "Soldier: left hand pitch offset");
+ConVar tfvr_hands_soldier_left_yaw("tfvr_hands_soldier_left_yaw", "125", FCVAR_ARCHIVE, "Soldier: left hand yaw offset");
+ConVar tfvr_hands_soldier_left_roll("tfvr_hands_soldier_left_roll", "0", FCVAR_ARCHIVE, "Soldier: left hand roll offset");
+// Pyro
+ConVar tfvr_hands_pyro_left_pitch("tfvr_hands_pyro_left_pitch", "-75", FCVAR_ARCHIVE, "Pyro: left hand pitch offset");
+ConVar tfvr_hands_pyro_left_yaw("tfvr_hands_pyro_left_yaw", "125", FCVAR_ARCHIVE, "Pyro: left hand yaw offset");
+ConVar tfvr_hands_pyro_left_roll("tfvr_hands_pyro_left_roll", "0", FCVAR_ARCHIVE, "Pyro: left hand roll offset");
+// Demoman
+ConVar tfvr_hands_demo_left_pitch("tfvr_hands_demo_left_pitch", "-75", FCVAR_ARCHIVE, "Demo: left hand pitch offset");
+ConVar tfvr_hands_demo_left_yaw("tfvr_hands_demo_left_yaw", "125", FCVAR_ARCHIVE, "Demo: left hand yaw offset");
+ConVar tfvr_hands_demo_left_roll("tfvr_hands_demo_left_roll", "0", FCVAR_ARCHIVE, "Demo: left hand roll offset");
+// Heavy
+ConVar tfvr_hands_heavy_left_pitch("tfvr_hands_heavy_left_pitch", "-75", FCVAR_ARCHIVE, "Heavy: left hand pitch offset");
+ConVar tfvr_hands_heavy_left_yaw("tfvr_hands_heavy_left_yaw", "125", FCVAR_ARCHIVE, "Heavy: left hand yaw offset");
+ConVar tfvr_hands_heavy_left_roll("tfvr_hands_heavy_left_roll", "0", FCVAR_ARCHIVE, "Heavy: left hand roll offset");
+// Engineer
+ConVar tfvr_hands_engi_left_pitch("tfvr_hands_engi_left_pitch", "-75", FCVAR_ARCHIVE, "Engineer: left hand pitch offset");
+ConVar tfvr_hands_engi_left_yaw("tfvr_hands_engi_left_yaw", "125", FCVAR_ARCHIVE, "Engineer: left hand yaw offset");
+ConVar tfvr_hands_engi_left_roll("tfvr_hands_engi_left_roll", "0", FCVAR_ARCHIVE, "Engineer: left hand roll offset");
+// Medic
+ConVar tfvr_hands_medic_left_pitch("tfvr_hands_medic_left_pitch", "-75", FCVAR_ARCHIVE, "Medic: left hand pitch offset");
+ConVar tfvr_hands_medic_left_yaw("tfvr_hands_medic_left_yaw", "125", FCVAR_ARCHIVE, "Medic: left hand yaw offset");
+ConVar tfvr_hands_medic_left_roll("tfvr_hands_medic_left_roll", "0", FCVAR_ARCHIVE, "Medic: left hand roll offset");
+// Sniper
+ConVar tfvr_hands_sniper_left_pitch("tfvr_hands_sniper_left_pitch", "-75", FCVAR_ARCHIVE, "Sniper: left hand pitch offset");
+ConVar tfvr_hands_sniper_left_yaw("tfvr_hands_sniper_left_yaw", "125", FCVAR_ARCHIVE, "Sniper: left hand yaw offset");
+ConVar tfvr_hands_sniper_left_roll("tfvr_hands_sniper_left_roll", "0", FCVAR_ARCHIVE, "Sniper: left hand roll offset");
+// Spy
+ConVar tfvr_hands_spy_left_pitch("tfvr_hands_spy_left_pitch", "-75", FCVAR_ARCHIVE, "Spy: left hand pitch offset");
+ConVar tfvr_hands_spy_left_yaw("tfvr_hands_spy_left_yaw", "125", FCVAR_ARCHIVE, "Spy: left hand yaw offset");
+ConVar tfvr_hands_spy_left_roll("tfvr_hands_spy_left_roll", "0", FCVAR_ARCHIVE, "Spy: left hand roll offset");
+
+// Per-class offset convars - RIGHT hand
+// Scout
+ConVar tfvr_hands_scout_right_pitch("tfvr_hands_scout_right_pitch", "110", FCVAR_ARCHIVE, "Scout: right hand pitch offset");
+ConVar tfvr_hands_scout_right_yaw("tfvr_hands_scout_right_yaw", "-125", FCVAR_ARCHIVE, "Scout: right hand yaw offset");
+ConVar tfvr_hands_scout_right_roll("tfvr_hands_scout_right_roll", "0", FCVAR_ARCHIVE, "Scout: right hand roll offset");
+// Soldier
+ConVar tfvr_hands_soldier_right_pitch("tfvr_hands_soldier_right_pitch", "110", FCVAR_ARCHIVE, "Soldier: right hand pitch offset");
+ConVar tfvr_hands_soldier_right_yaw("tfvr_hands_soldier_right_yaw", "-125", FCVAR_ARCHIVE, "Soldier: right hand yaw offset");
+ConVar tfvr_hands_soldier_right_roll("tfvr_hands_soldier_right_roll", "0", FCVAR_ARCHIVE, "Soldier: right hand roll offset");
+// Pyro
+ConVar tfvr_hands_pyro_right_pitch("tfvr_hands_pyro_right_pitch", "110", FCVAR_ARCHIVE, "Pyro: right hand pitch offset");
+ConVar tfvr_hands_pyro_right_yaw("tfvr_hands_pyro_right_yaw", "-125", FCVAR_ARCHIVE, "Pyro: right hand yaw offset");
+ConVar tfvr_hands_pyro_right_roll("tfvr_hands_pyro_right_roll", "0", FCVAR_ARCHIVE, "Pyro: right hand roll offset");
+// Demoman
+ConVar tfvr_hands_demo_right_pitch("tfvr_hands_demo_right_pitch", "110", FCVAR_ARCHIVE, "Demo: right hand pitch offset");
+ConVar tfvr_hands_demo_right_yaw("tfvr_hands_demo_right_yaw", "-125", FCVAR_ARCHIVE, "Demo: right hand yaw offset");
+ConVar tfvr_hands_demo_right_roll("tfvr_hands_demo_right_roll", "0", FCVAR_ARCHIVE, "Demo: right hand roll offset");
+// Heavy
+ConVar tfvr_hands_heavy_right_pitch("tfvr_hands_heavy_right_pitch", "110", FCVAR_ARCHIVE, "Heavy: right hand pitch offset");
+ConVar tfvr_hands_heavy_right_yaw("tfvr_hands_heavy_right_yaw", "-125", FCVAR_ARCHIVE, "Heavy: right hand yaw offset");
+ConVar tfvr_hands_heavy_right_roll("tfvr_hands_heavy_right_roll", "0", FCVAR_ARCHIVE, "Heavy: right hand roll offset");
+// Engineer
+ConVar tfvr_hands_engi_right_pitch("tfvr_hands_engi_right_pitch", "110", FCVAR_ARCHIVE, "Engineer: right hand pitch offset");
+ConVar tfvr_hands_engi_right_yaw("tfvr_hands_engi_right_yaw", "-125", FCVAR_ARCHIVE, "Engineer: right hand yaw offset");
+ConVar tfvr_hands_engi_right_roll("tfvr_hands_engi_right_roll", "0", FCVAR_ARCHIVE, "Engineer: right hand roll offset");
+// Medic
+ConVar tfvr_hands_medic_right_pitch("tfvr_hands_medic_right_pitch", "110", FCVAR_ARCHIVE, "Medic: right hand pitch offset");
+ConVar tfvr_hands_medic_right_yaw("tfvr_hands_medic_right_yaw", "-125", FCVAR_ARCHIVE, "Medic: right hand yaw offset");
+ConVar tfvr_hands_medic_right_roll("tfvr_hands_medic_right_roll", "0", FCVAR_ARCHIVE, "Medic: right hand roll offset");
+// Sniper
+ConVar tfvr_hands_sniper_right_pitch("tfvr_hands_sniper_right_pitch", "110", FCVAR_ARCHIVE, "Sniper: right hand pitch offset");
+ConVar tfvr_hands_sniper_right_yaw("tfvr_hands_sniper_right_yaw", "-125", FCVAR_ARCHIVE, "Sniper: right hand yaw offset");
+ConVar tfvr_hands_sniper_right_roll("tfvr_hands_sniper_right_roll", "0", FCVAR_ARCHIVE, "Sniper: right hand roll offset");
+// Spy
+ConVar tfvr_hands_spy_right_pitch("tfvr_hands_spy_right_pitch", "110", FCVAR_ARCHIVE, "Spy: right hand pitch offset");
+ConVar tfvr_hands_spy_right_yaw("tfvr_hands_spy_right_yaw", "-125", FCVAR_ARCHIVE, "Spy: right hand yaw offset");
+ConVar tfvr_hands_spy_right_roll("tfvr_hands_spy_right_roll", "0", FCVAR_ARCHIVE, "Spy: right hand roll offset");
+
+// Global positional offset convars (palm-relative: X=toward fingers, Y=out of palm, Z=toward thumb)
+ConVar tfvr_hands_left_offset_x("tfvr_hands_left_offset_x", "0", FCVAR_ARCHIVE, "Left hand position offset X (toward fingers)");
+ConVar tfvr_hands_left_offset_y("tfvr_hands_left_offset_y", "0", FCVAR_ARCHIVE, "Left hand position offset Y (out of palm)");
+ConVar tfvr_hands_left_offset_z("tfvr_hands_left_offset_z", "0", FCVAR_ARCHIVE, "Left hand position offset Z (toward thumb)");
+ConVar tfvr_hands_right_offset_x("tfvr_hands_right_offset_x", "0", FCVAR_ARCHIVE, "Right hand position offset X (toward fingers)");
+ConVar tfvr_hands_right_offset_y("tfvr_hands_right_offset_y", "0", FCVAR_ARCHIVE, "Right hand position offset Y (out of palm)");
+ConVar tfvr_hands_right_offset_z("tfvr_hands_right_offset_z", "0", FCVAR_ARCHIVE, "Right hand position offset Z (toward thumb)");
+
+// Per-class positional offset convars - LEFT hand (X=toward fingers, Y=out of palm, Z=toward thumb)
+ConVar tfvr_hands_scout_left_x("tfvr_hands_scout_left_x", "0", FCVAR_ARCHIVE, "Scout: left hand position X");
+ConVar tfvr_hands_scout_left_y("tfvr_hands_scout_left_y", "0", FCVAR_ARCHIVE, "Scout: left hand position Y");
+ConVar tfvr_hands_scout_left_z("tfvr_hands_scout_left_z", "0", FCVAR_ARCHIVE, "Scout: left hand position Z");
+ConVar tfvr_hands_soldier_left_x("tfvr_hands_soldier_left_x", "0", FCVAR_ARCHIVE, "Soldier: left hand position X");
+ConVar tfvr_hands_soldier_left_y("tfvr_hands_soldier_left_y", "0", FCVAR_ARCHIVE, "Soldier: left hand position Y");
+ConVar tfvr_hands_soldier_left_z("tfvr_hands_soldier_left_z", "0", FCVAR_ARCHIVE, "Soldier: left hand position Z");
+ConVar tfvr_hands_pyro_left_x("tfvr_hands_pyro_left_x", "0", FCVAR_ARCHIVE, "Pyro: left hand position X");
+ConVar tfvr_hands_pyro_left_y("tfvr_hands_pyro_left_y", "0", FCVAR_ARCHIVE, "Pyro: left hand position Y");
+ConVar tfvr_hands_pyro_left_z("tfvr_hands_pyro_left_z", "0", FCVAR_ARCHIVE, "Pyro: left hand position Z");
+ConVar tfvr_hands_demo_left_x("tfvr_hands_demo_left_x", "0", FCVAR_ARCHIVE, "Demo: left hand position X");
+ConVar tfvr_hands_demo_left_y("tfvr_hands_demo_left_y", "0", FCVAR_ARCHIVE, "Demo: left hand position Y");
+ConVar tfvr_hands_demo_left_z("tfvr_hands_demo_left_z", "0", FCVAR_ARCHIVE, "Demo: left hand position Z");
+ConVar tfvr_hands_heavy_left_x("tfvr_hands_heavy_left_x", "0", FCVAR_ARCHIVE, "Heavy: left hand position X");
+ConVar tfvr_hands_heavy_left_y("tfvr_hands_heavy_left_y", "0", FCVAR_ARCHIVE, "Heavy: left hand position Y");
+ConVar tfvr_hands_heavy_left_z("tfvr_hands_heavy_left_z", "0", FCVAR_ARCHIVE, "Heavy: left hand position Z");
+ConVar tfvr_hands_engi_left_x("tfvr_hands_engi_left_x", "0", FCVAR_ARCHIVE, "Engineer: left hand position X");
+ConVar tfvr_hands_engi_left_y("tfvr_hands_engi_left_y", "0", FCVAR_ARCHIVE, "Engineer: left hand position Y");
+ConVar tfvr_hands_engi_left_z("tfvr_hands_engi_left_z", "0", FCVAR_ARCHIVE, "Engineer: left hand position Z");
+ConVar tfvr_hands_medic_left_x("tfvr_hands_medic_left_x", "0", FCVAR_ARCHIVE, "Medic: left hand position X");
+ConVar tfvr_hands_medic_left_y("tfvr_hands_medic_left_y", "0", FCVAR_ARCHIVE, "Medic: left hand position Y");
+ConVar tfvr_hands_medic_left_z("tfvr_hands_medic_left_z", "0", FCVAR_ARCHIVE, "Medic: left hand position Z");
+ConVar tfvr_hands_sniper_left_x("tfvr_hands_sniper_left_x", "0", FCVAR_ARCHIVE, "Sniper: left hand position X");
+ConVar tfvr_hands_sniper_left_y("tfvr_hands_sniper_left_y", "0", FCVAR_ARCHIVE, "Sniper: left hand position Y");
+ConVar tfvr_hands_sniper_left_z("tfvr_hands_sniper_left_z", "0", FCVAR_ARCHIVE, "Sniper: left hand position Z");
+ConVar tfvr_hands_spy_left_x("tfvr_hands_spy_left_x", "0", FCVAR_ARCHIVE, "Spy: left hand position X");
+ConVar tfvr_hands_spy_left_y("tfvr_hands_spy_left_y", "0", FCVAR_ARCHIVE, "Spy: left hand position Y");
+ConVar tfvr_hands_spy_left_z("tfvr_hands_spy_left_z", "0", FCVAR_ARCHIVE, "Spy: left hand position Z");
+
+// Per-class positional offset convars - RIGHT hand
+ConVar tfvr_hands_scout_right_x("tfvr_hands_scout_right_x", "0", FCVAR_ARCHIVE, "Scout: right hand position X");
+ConVar tfvr_hands_scout_right_y("tfvr_hands_scout_right_y", "0", FCVAR_ARCHIVE, "Scout: right hand position Y");
+ConVar tfvr_hands_scout_right_z("tfvr_hands_scout_right_z", "0", FCVAR_ARCHIVE, "Scout: right hand position Z");
+ConVar tfvr_hands_soldier_right_x("tfvr_hands_soldier_right_x", "0", FCVAR_ARCHIVE, "Soldier: right hand position X");
+ConVar tfvr_hands_soldier_right_y("tfvr_hands_soldier_right_y", "0", FCVAR_ARCHIVE, "Soldier: right hand position Y");
+ConVar tfvr_hands_soldier_right_z("tfvr_hands_soldier_right_z", "0", FCVAR_ARCHIVE, "Soldier: right hand position Z");
+ConVar tfvr_hands_pyro_right_x("tfvr_hands_pyro_right_x", "0", FCVAR_ARCHIVE, "Pyro: right hand position X");
+ConVar tfvr_hands_pyro_right_y("tfvr_hands_pyro_right_y", "0", FCVAR_ARCHIVE, "Pyro: right hand position Y");
+ConVar tfvr_hands_pyro_right_z("tfvr_hands_pyro_right_z", "0", FCVAR_ARCHIVE, "Pyro: right hand position Z");
+ConVar tfvr_hands_demo_right_x("tfvr_hands_demo_right_x", "0", FCVAR_ARCHIVE, "Demo: right hand position X");
+ConVar tfvr_hands_demo_right_y("tfvr_hands_demo_right_y", "0", FCVAR_ARCHIVE, "Demo: right hand position Y");
+ConVar tfvr_hands_demo_right_z("tfvr_hands_demo_right_z", "0", FCVAR_ARCHIVE, "Demo: right hand position Z");
+ConVar tfvr_hands_heavy_right_x("tfvr_hands_heavy_right_x", "0", FCVAR_ARCHIVE, "Heavy: right hand position X");
+ConVar tfvr_hands_heavy_right_y("tfvr_hands_heavy_right_y", "0", FCVAR_ARCHIVE, "Heavy: right hand position Y");
+ConVar tfvr_hands_heavy_right_z("tfvr_hands_heavy_right_z", "0", FCVAR_ARCHIVE, "Heavy: right hand position Z");
+ConVar tfvr_hands_engi_right_x("tfvr_hands_engi_right_x", "0", FCVAR_ARCHIVE, "Engineer: right hand position X");
+ConVar tfvr_hands_engi_right_y("tfvr_hands_engi_right_y", "0", FCVAR_ARCHIVE, "Engineer: right hand position Y");
+ConVar tfvr_hands_engi_right_z("tfvr_hands_engi_right_z", "0", FCVAR_ARCHIVE, "Engineer: right hand position Z");
+ConVar tfvr_hands_medic_right_x("tfvr_hands_medic_right_x", "0", FCVAR_ARCHIVE, "Medic: right hand position X");
+ConVar tfvr_hands_medic_right_y("tfvr_hands_medic_right_y", "0", FCVAR_ARCHIVE, "Medic: right hand position Y");
+ConVar tfvr_hands_medic_right_z("tfvr_hands_medic_right_z", "0", FCVAR_ARCHIVE, "Medic: right hand position Z");
+ConVar tfvr_hands_sniper_right_x("tfvr_hands_sniper_right_x", "0", FCVAR_ARCHIVE, "Sniper: right hand position X");
+ConVar tfvr_hands_sniper_right_y("tfvr_hands_sniper_right_y", "0", FCVAR_ARCHIVE, "Sniper: right hand position Y");
+ConVar tfvr_hands_sniper_right_z("tfvr_hands_sniper_right_z", "0", FCVAR_ARCHIVE, "Sniper: right hand position Z");
+ConVar tfvr_hands_spy_right_x("tfvr_hands_spy_right_x", "0", FCVAR_ARCHIVE, "Spy: right hand position X");
+ConVar tfvr_hands_spy_right_y("tfvr_hands_spy_right_y", "0", FCVAR_ARCHIVE, "Spy: right hand position Y");
+ConVar tfvr_hands_spy_right_z("tfvr_hands_spy_right_z", "0", FCVAR_ARCHIVE, "Spy: right hand position Z");
+
+//-----------------------------------------------------------------------------
+// Purpose: Get hand offset angles for a specific class and hand side
+//          Returns true if per-class offsets are enabled and valid
+//-----------------------------------------------------------------------------
+static bool GetPerClassHandOffset(int playerClass, bool bLeftHand, QAngle &outOffset)
+{
+	if (!tfvr_hands_perclass_offsets.GetBool())
+		return false;
+	
+	ConVar *pPitch = NULL;
+	ConVar *pYaw = NULL;
+	ConVar *pRoll = NULL;
+	
+	if (bLeftHand)
+	{
+		switch (playerClass)
+		{
+			case TF_CLASS_SCOUT:
+				pPitch = &tfvr_hands_scout_left_pitch;
+				pYaw = &tfvr_hands_scout_left_yaw;
+				pRoll = &tfvr_hands_scout_left_roll;
+				break;
+			case TF_CLASS_SOLDIER:
+				pPitch = &tfvr_hands_soldier_left_pitch;
+				pYaw = &tfvr_hands_soldier_left_yaw;
+				pRoll = &tfvr_hands_soldier_left_roll;
+				break;
+			case TF_CLASS_PYRO:
+				pPitch = &tfvr_hands_pyro_left_pitch;
+				pYaw = &tfvr_hands_pyro_left_yaw;
+				pRoll = &tfvr_hands_pyro_left_roll;
+				break;
+			case TF_CLASS_DEMOMAN:
+				pPitch = &tfvr_hands_demo_left_pitch;
+				pYaw = &tfvr_hands_demo_left_yaw;
+				pRoll = &tfvr_hands_demo_left_roll;
+				break;
+			case TF_CLASS_HEAVYWEAPONS:
+				pPitch = &tfvr_hands_heavy_left_pitch;
+				pYaw = &tfvr_hands_heavy_left_yaw;
+				pRoll = &tfvr_hands_heavy_left_roll;
+				break;
+			case TF_CLASS_ENGINEER:
+				pPitch = &tfvr_hands_engi_left_pitch;
+				pYaw = &tfvr_hands_engi_left_yaw;
+				pRoll = &tfvr_hands_engi_left_roll;
+				break;
+			case TF_CLASS_MEDIC:
+				pPitch = &tfvr_hands_medic_left_pitch;
+				pYaw = &tfvr_hands_medic_left_yaw;
+				pRoll = &tfvr_hands_medic_left_roll;
+				break;
+			case TF_CLASS_SNIPER:
+				pPitch = &tfvr_hands_sniper_left_pitch;
+				pYaw = &tfvr_hands_sniper_left_yaw;
+				pRoll = &tfvr_hands_sniper_left_roll;
+				break;
+			case TF_CLASS_SPY:
+				pPitch = &tfvr_hands_spy_left_pitch;
+				pYaw = &tfvr_hands_spy_left_yaw;
+				pRoll = &tfvr_hands_spy_left_roll;
+				break;
+			default:
+				return false;
+		}
+	}
+	else
+	{
+		switch (playerClass)
+		{
+			case TF_CLASS_SCOUT:
+				pPitch = &tfvr_hands_scout_right_pitch;
+				pYaw = &tfvr_hands_scout_right_yaw;
+				pRoll = &tfvr_hands_scout_right_roll;
+				break;
+			case TF_CLASS_SOLDIER:
+				pPitch = &tfvr_hands_soldier_right_pitch;
+				pYaw = &tfvr_hands_soldier_right_yaw;
+				pRoll = &tfvr_hands_soldier_right_roll;
+				break;
+			case TF_CLASS_PYRO:
+				pPitch = &tfvr_hands_pyro_right_pitch;
+				pYaw = &tfvr_hands_pyro_right_yaw;
+				pRoll = &tfvr_hands_pyro_right_roll;
+				break;
+			case TF_CLASS_DEMOMAN:
+				pPitch = &tfvr_hands_demo_right_pitch;
+				pYaw = &tfvr_hands_demo_right_yaw;
+				pRoll = &tfvr_hands_demo_right_roll;
+				break;
+			case TF_CLASS_HEAVYWEAPONS:
+				pPitch = &tfvr_hands_heavy_right_pitch;
+				pYaw = &tfvr_hands_heavy_right_yaw;
+				pRoll = &tfvr_hands_heavy_right_roll;
+				break;
+			case TF_CLASS_ENGINEER:
+				pPitch = &tfvr_hands_engi_right_pitch;
+				pYaw = &tfvr_hands_engi_right_yaw;
+				pRoll = &tfvr_hands_engi_right_roll;
+				break;
+			case TF_CLASS_MEDIC:
+				pPitch = &tfvr_hands_medic_right_pitch;
+				pYaw = &tfvr_hands_medic_right_yaw;
+				pRoll = &tfvr_hands_medic_right_roll;
+				break;
+			case TF_CLASS_SNIPER:
+				pPitch = &tfvr_hands_sniper_right_pitch;
+				pYaw = &tfvr_hands_sniper_right_yaw;
+				pRoll = &tfvr_hands_sniper_right_roll;
+				break;
+			case TF_CLASS_SPY:
+				pPitch = &tfvr_hands_spy_right_pitch;
+				pYaw = &tfvr_hands_spy_right_yaw;
+				pRoll = &tfvr_hands_spy_right_roll;
+				break;
+			default:
+				return false;
+		}
+	}
+	
+	if (pPitch && pYaw && pRoll)
+	{
+		outOffset.x = pPitch->GetFloat();
+		outOffset.y = pYaw->GetFloat();
+		outOffset.z = pRoll->GetFloat();
+		return true;
+	}
+	
+	return false;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Get hand position offset for a specific class and hand side
+//          Returns true if per-class offsets are enabled and valid
+//          Position is in palm-relative space: X=toward fingers, Y=out of palm, Z=toward thumb
+//-----------------------------------------------------------------------------
+static bool GetPerClassHandPositionOffset(int playerClass, bool bLeftHand, Vector &outOffset)
+{
+	if (!tfvr_hands_perclass_offsets.GetBool())
+		return false;
+	
+	ConVar *pX = NULL;
+	ConVar *pY = NULL;
+	ConVar *pZ = NULL;
+	
+	if (bLeftHand)
+	{
+		switch (playerClass)
+		{
+			case TF_CLASS_SCOUT:
+				pX = &tfvr_hands_scout_left_x;
+				pY = &tfvr_hands_scout_left_y;
+				pZ = &tfvr_hands_scout_left_z;
+				break;
+			case TF_CLASS_SOLDIER:
+				pX = &tfvr_hands_soldier_left_x;
+				pY = &tfvr_hands_soldier_left_y;
+				pZ = &tfvr_hands_soldier_left_z;
+				break;
+			case TF_CLASS_PYRO:
+				pX = &tfvr_hands_pyro_left_x;
+				pY = &tfvr_hands_pyro_left_y;
+				pZ = &tfvr_hands_pyro_left_z;
+				break;
+			case TF_CLASS_DEMOMAN:
+				pX = &tfvr_hands_demo_left_x;
+				pY = &tfvr_hands_demo_left_y;
+				pZ = &tfvr_hands_demo_left_z;
+				break;
+			case TF_CLASS_HEAVYWEAPONS:
+				pX = &tfvr_hands_heavy_left_x;
+				pY = &tfvr_hands_heavy_left_y;
+				pZ = &tfvr_hands_heavy_left_z;
+				break;
+			case TF_CLASS_ENGINEER:
+				pX = &tfvr_hands_engi_left_x;
+				pY = &tfvr_hands_engi_left_y;
+				pZ = &tfvr_hands_engi_left_z;
+				break;
+			case TF_CLASS_MEDIC:
+				pX = &tfvr_hands_medic_left_x;
+				pY = &tfvr_hands_medic_left_y;
+				pZ = &tfvr_hands_medic_left_z;
+				break;
+			case TF_CLASS_SNIPER:
+				pX = &tfvr_hands_sniper_left_x;
+				pY = &tfvr_hands_sniper_left_y;
+				pZ = &tfvr_hands_sniper_left_z;
+				break;
+			case TF_CLASS_SPY:
+				pX = &tfvr_hands_spy_left_x;
+				pY = &tfvr_hands_spy_left_y;
+				pZ = &tfvr_hands_spy_left_z;
+				break;
+			default:
+				return false;
+		}
+	}
+	else
+	{
+		switch (playerClass)
+		{
+			case TF_CLASS_SCOUT:
+				pX = &tfvr_hands_scout_right_x;
+				pY = &tfvr_hands_scout_right_y;
+				pZ = &tfvr_hands_scout_right_z;
+				break;
+			case TF_CLASS_SOLDIER:
+				pX = &tfvr_hands_soldier_right_x;
+				pY = &tfvr_hands_soldier_right_y;
+				pZ = &tfvr_hands_soldier_right_z;
+				break;
+			case TF_CLASS_PYRO:
+				pX = &tfvr_hands_pyro_right_x;
+				pY = &tfvr_hands_pyro_right_y;
+				pZ = &tfvr_hands_pyro_right_z;
+				break;
+			case TF_CLASS_DEMOMAN:
+				pX = &tfvr_hands_demo_right_x;
+				pY = &tfvr_hands_demo_right_y;
+				pZ = &tfvr_hands_demo_right_z;
+				break;
+			case TF_CLASS_HEAVYWEAPONS:
+				pX = &tfvr_hands_heavy_right_x;
+				pY = &tfvr_hands_heavy_right_y;
+				pZ = &tfvr_hands_heavy_right_z;
+				break;
+			case TF_CLASS_ENGINEER:
+				pX = &tfvr_hands_engi_right_x;
+				pY = &tfvr_hands_engi_right_y;
+				pZ = &tfvr_hands_engi_right_z;
+				break;
+			case TF_CLASS_MEDIC:
+				pX = &tfvr_hands_medic_right_x;
+				pY = &tfvr_hands_medic_right_y;
+				pZ = &tfvr_hands_medic_right_z;
+				break;
+			case TF_CLASS_SNIPER:
+				pX = &tfvr_hands_sniper_right_x;
+				pY = &tfvr_hands_sniper_right_y;
+				pZ = &tfvr_hands_sniper_right_z;
+				break;
+			case TF_CLASS_SPY:
+				pX = &tfvr_hands_spy_right_x;
+				pY = &tfvr_hands_spy_right_y;
+				pZ = &tfvr_hands_spy_right_z;
+				break;
+			default:
+				return false;
+		}
+	}
+	
+	if (pX && pY && pZ)
+	{
+		outOffset.x = pX->GetFloat();
+		outOffset.y = pY->GetFloat();
+		outOffset.z = pZ->GetFloat();
+		return true;
+	}
+	
+	return false;
+}
 
 // Debug convars
 ConVar tfvr_debug_weapon_attachment("tfvr_debug_weapon_attachment", "0", FCVAR_NONE, "Draw debug lines showing weapon attachment");
@@ -1597,8 +2005,38 @@ bool C_TFVRHand::GetWristTransform(VMatrix& outTransform)
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Update this hand's position from hand tracking wrist position
-//          We'll position the hand bones via SetupBones override later
+// Purpose: Get palm transform as a matrix - CANONICAL reference for offsets
+//          The OpenXR palm joint has standardized orientation:
+//          +X points along metacarpals (toward fingers)
+//          +Y points out of palm (palm normal)
+//          +Z points toward thumb side
+//          This is consistent across runtimes and input types.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetPalmTransform(VMatrix& outTransform)
+{
+	if (!m_pHandTracker)
+		return false;
+	
+	// Get palm position and angles
+	Vector palmPos;
+	QAngle palmAngles;
+	
+	if (!m_pHandTracker->GetHandJoint(IsLeftHand(), XR_HAND_JOINT_PALM_EXT, palmPos, palmAngles))
+		return false;
+	
+	// Convert to matrix
+	matrix3x4_t temp;
+	AngleMatrix(palmAngles, palmPos, temp);
+	outTransform.CopyFrom3x4(temp);
+	
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update this hand's position from hand tracking palm position
+//          Uses PALM joint as canonical reference for consistent offsets
+//          across different controllers and OpenXR runtimes.
+//          We'll position the hand bones via SetupBones override later.
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UpdateHandTransform()
 {
@@ -1608,35 +2046,48 @@ void C_TFVRHand::UpdateHandTransform()
 	if (!g_pOpenXRManager || !m_pHandTracker)
 		return;
 
-	// Try to get wrist position using matrix (avoids gimbal lock)
-	VMatrix wristMatrix;
+	// Try to get PALM position using matrix (canonical reference)
+	// Palm joint has standardized orientation per OpenXR spec:
+	// +X toward fingers, +Y out of palm, +Z toward thumb
+	VMatrix palmMatrix;
 	
-	bool handValid = GetWristTransform(wristMatrix);
+	bool handValid = GetPalmTransform(palmMatrix);
 	
-	// Update this hand if valid, fallback to controller
+	// Update this hand if valid, fallback to wrist, then controller
 	if (handValid)
 	{
-		m_vecLastValidPosition = wristMatrix.GetTranslation();
-		MatrixAngles(wristMatrix.As3x4(), m_angLastValidAngles);
+		m_vecLastValidPosition = palmMatrix.GetTranslation();
+		MatrixAngles(palmMatrix.As3x4(), m_angLastValidAngles);
 		m_bControllerTracked = true;
 	}
 	else
 	{
-		// Fallback to controller pose
-		VMatrix controllerPose;
-		if (IsLeftHand())
-			m_bControllerTracked = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
-		else
-			m_bControllerTracked = g_pOpenXRManager->GetRightControllerPose(controllerPose);
-		
-		if (m_bControllerTracked)
+		// Try wrist as secondary fallback
+		VMatrix wristMatrix;
+		if (GetWristTransform(wristMatrix))
 		{
-			m_vecLastValidPosition = controllerPose.GetTranslation();
-			MatrixAngles(controllerPose.As3x4(), m_angLastValidAngles);
+			m_vecLastValidPosition = wristMatrix.GetTranslation();
+			MatrixAngles(wristMatrix.As3x4(), m_angLastValidAngles);
+			m_bControllerTracked = true;
+		}
+		else
+		{
+			// Final fallback to controller pose
+			VMatrix controllerPose;
+			if (IsLeftHand())
+				m_bControllerTracked = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
+			else
+				m_bControllerTracked = g_pOpenXRManager->GetRightControllerPose(controllerPose);
+			
+			if (m_bControllerTracked)
+			{
+				m_vecLastValidPosition = controllerPose.GetTranslation();
+				MatrixAngles(controllerPose.As3x4(), m_angLastValidAngles);
+			}
 		}
 	}
 
-	// Position the entity at the VR controller position
+	// Position the entity at the palm position
 	// The animation bones will be positioned relative to this
 	SetAbsOrigin(m_vecLastValidPosition);
 	SetAbsAngles(m_angLastValidAngles);
@@ -1835,20 +2286,71 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// We don't pre-blend the controllerTransform here to avoid double-blending
 		// which causes micro-stuttering during movement.
 		
-		// Apply hand rotation offsets if any
-		ConVar *pOffsetPitch = IsLeftHand() ? &tfvr_hands_left_offset_pitch : &tfvr_hands_right_offset_pitch;
-		ConVar *pOffsetYaw = IsLeftHand() ? &tfvr_hands_left_offset_yaw : &tfvr_hands_right_offset_yaw;
-		ConVar *pOffsetRoll = IsLeftHand() ? &tfvr_hands_left_offset_roll : &tfvr_hands_right_offset_roll;
+		// Apply hand rotation offsets - supports per-class or global offsets
+		// These offsets are now relative to the PALM joint which has standardized OpenXR orientation
+		QAngle offsetAngles(0, 0, 0);
 		
-		if (pOffsetPitch->GetFloat() != 0 || pOffsetYaw->GetFloat() != 0 || pOffsetRoll->GetFloat() != 0)
+		// Try per-class offsets first
+		C_TFPlayer *pOffsetOwner = m_hOwnerPlayer.Get();
+		int playerClass = pOffsetOwner ? pOffsetOwner->GetPlayerClass()->GetClassIndex() : TF_CLASS_UNDEFINED;
+		
+		if (!GetPerClassHandOffset(playerClass, IsLeftHand(), offsetAngles))
+		{
+			// Fall back to global offsets
+			ConVar *pOffsetPitch = IsLeftHand() ? &tfvr_hands_left_offset_pitch : &tfvr_hands_right_offset_pitch;
+			ConVar *pOffsetYaw = IsLeftHand() ? &tfvr_hands_left_offset_yaw : &tfvr_hands_right_offset_yaw;
+			ConVar *pOffsetRoll = IsLeftHand() ? &tfvr_hands_left_offset_roll : &tfvr_hands_right_offset_roll;
+			
+			offsetAngles.x = pOffsetPitch->GetFloat();
+			offsetAngles.y = pOffsetYaw->GetFloat();
+			offsetAngles.z = pOffsetRoll->GetFloat();
+		}
+		
+		if (offsetAngles.x != 0 || offsetAngles.y != 0 || offsetAngles.z != 0)
 		{
 			matrix3x4_t offsetMatrix;
-			QAngle offsetAngles(pOffsetPitch->GetFloat(), pOffsetYaw->GetFloat(), pOffsetRoll->GetFloat());
 			AngleMatrix(offsetAngles, vec3_origin, offsetMatrix);
 			
 			matrix3x4_t temp;
 			ConcatTransforms(controllerTransform, offsetMatrix, temp);
 			MatrixCopy(temp, controllerTransform);
+		}
+		
+		// Apply position offset to controllerTransform BEFORE grip calculations
+		// This ensures all bones and weapon are at the offset position naturally.
+		// For left hand when gripping: the offset is applied here, and GetOffHandGripTarget
+		// also includes offset, so we need to subtract left offset when gripping (handled below).
+		Vector posOffset(0, 0, 0);
+		if (!GetPerClassHandPositionOffset(playerClass, IsLeftHand(), posOffset))
+		{
+			if (IsLeftHand())
+			{
+				posOffset.x = tfvr_hands_left_offset_x.GetFloat();
+				posOffset.y = tfvr_hands_left_offset_y.GetFloat();
+				posOffset.z = tfvr_hands_left_offset_z.GetFloat();
+			}
+			else
+			{
+				posOffset.x = tfvr_hands_right_offset_x.GetFloat();
+				posOffset.y = tfvr_hands_right_offset_y.GetFloat();
+				posOffset.z = tfvr_hands_right_offset_z.GetFloat();
+			}
+		}
+		
+		Vector worldPosOffset(0, 0, 0);
+		if (posOffset.x != 0 || posOffset.y != 0 || posOffset.z != 0)
+		{
+			Vector palmX, palmY, palmZ;
+			MatrixGetColumn(controllerTransform, 0, palmX);
+			MatrixGetColumn(controllerTransform, 1, palmY);
+			MatrixGetColumn(controllerTransform, 2, palmZ);
+			worldPosOffset = palmX * posOffset.x + palmY * posOffset.y + palmZ * posOffset.z;
+			
+			// Apply to controllerTransform position
+			Vector ctrlPos;
+			MatrixGetColumn(controllerTransform, 3, ctrlPos);
+			ctrlPos += worldPosOffset;
+			MatrixSetColumn(ctrlPos, 3, controllerTransform);
 		}
 		
 		// Apply offhand grip rotation to weapon hand (right hand)
@@ -1933,6 +2435,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			ConcatTransforms(anchorDelta, sampledBones[i], pBoneToWorldOut[i]);
 		}
 		
+		// Calculate position offset for this hand (will be applied at different times for left vs right)
+		// Position is palm-relative: X=toward fingers, Y=out of palm, Z=toward thumb
 		// DEBUG: Show all three axes of the hand bone
 		if (IsRightHand() && tfvr_twohand_debug.GetBool() && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
 		{
@@ -1959,7 +2463,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			// Override finger tracking with weapon grip pose
 			ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
 			
-			// IMPORTANT: Position weapon immediately after pose is applied
+			// Position weapon from current bones (position offset applied later)
 			PositionWeaponFromBones(pBoneToWorldOut, nMaxBones);
 		}
 		else if (IsLeftHand() && m_flTwoHandBlend > 0.01f)
@@ -2095,6 +2599,9 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			// Use normal finger tracking
 			ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 		}
+		
+		// Position offset was already applied to controllerTransform at the beginning,
+		// so all bones and weapon are naturally at the offset position.
 	}
 
 	return true;
@@ -2568,28 +3075,54 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	matrix3x4_t controllerTransform;
 	AngleMatrix(m_angLastValidAngles, m_vecLastValidPosition, controllerTransform);
 	
-	// Apply hand rotation offsets (same as in SetupBones)
-	extern ConVar tfvr_hands_right_offset_pitch;
-	extern ConVar tfvr_hands_right_offset_yaw;
-	extern ConVar tfvr_hands_right_offset_roll;
+	// Apply hand rotation offsets (must match SetupBones logic exactly)
+	// Uses per-class offsets when enabled, falls back to global offsets
+	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+	int ownerClass = pOwner ? pOwner->GetPlayerClass()->GetClassIndex() : TF_CLASS_UNDEFINED;
 	
-	if (tfvr_hands_right_offset_pitch.GetFloat() != 0 || 
-		tfvr_hands_right_offset_yaw.GetFloat() != 0 || 
-		tfvr_hands_right_offset_roll.GetFloat() != 0)
+	QAngle rotOffset(0, 0, 0);
+	if (!GetPerClassHandOffset(ownerClass, false, rotOffset))  // false = right hand
+	{
+		rotOffset.x = tfvr_hands_right_offset_pitch.GetFloat();
+		rotOffset.y = tfvr_hands_right_offset_yaw.GetFloat();
+		rotOffset.z = tfvr_hands_right_offset_roll.GetFloat();
+	}
+	
+	if (rotOffset.x != 0 || rotOffset.y != 0 || rotOffset.z != 0)
 	{
 		matrix3x4_t offsetMatrix;
-		QAngle offsetAngles(tfvr_hands_right_offset_pitch.GetFloat(), 
-							tfvr_hands_right_offset_yaw.GetFloat(), 
-							tfvr_hands_right_offset_roll.GetFloat());
-		AngleMatrix(offsetAngles, vec3_origin, offsetMatrix);
+		AngleMatrix(rotOffset, vec3_origin, offsetMatrix);
 		
 		matrix3x4_t temp;
 		ConcatTransforms(controllerTransform, offsetMatrix, temp);
 		MatrixCopy(temp, controllerTransform);
 	}
 	
+	// Apply hand position offsets (same as in SetupBones)
+	Vector posOffset(0, 0, 0);
+	if (!GetPerClassHandPositionOffset(ownerClass, false, posOffset))  // false = right hand
+	{
+		posOffset.x = tfvr_hands_right_offset_x.GetFloat();
+		posOffset.y = tfvr_hands_right_offset_y.GetFloat();
+		posOffset.z = tfvr_hands_right_offset_z.GetFloat();
+	}
+	
+	if (posOffset.x != 0 || posOffset.y != 0 || posOffset.z != 0)
+	{
+		Vector palmX, palmY, palmZ;
+		MatrixGetColumn(controllerTransform, 0, palmX);
+		MatrixGetColumn(controllerTransform, 1, palmY);
+		MatrixGetColumn(controllerTransform, 2, palmZ);
+		
+		Vector worldOffset = palmX * posOffset.x + palmY * posOffset.y + palmZ * posOffset.z;
+		
+		Vector ctrlPos;
+		MatrixGetColumn(controllerTransform, 3, ctrlPos);
+		ctrlPos += worldOffset;
+		MatrixSetColumn(ctrlPos, 3, controllerTransform);
+	}
+	
 	// Apply offhand grip rotation (must match SetupBones for consistency)
-	extern ConVar tfvr_offhand_grip_enabled;
 	C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
 	float rotationBlend = pLeftHand ? pLeftHand->GetGripRotationBlend() : 0.0f;
 	bool bWasGripActive = pLeftHand && pLeftHand->WasOffhandGripActive();
@@ -2611,7 +3144,6 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 			Vector gripPos;
 			MatrixAngles(controllerTransform, gripQuat, gripPos);
 			
-			extern ConVar tfvr_offhand_grip_ease_power;
 			float easePower = tfvr_offhand_grip_ease_power.GetFloat();
 			float easedRotBlend = ApplyEaseOutToBlend(rotationBlend, easePower, bIsGripActive);
 			
@@ -2626,7 +3158,6 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	matrix3x4_t anchorDelta;
 	
 	// Match the logic in SetupBones
-	extern ConVar tfvr_offhand_grip_no_anchor;
 	bool bOffhandGripActive = pLeftHand && pLeftHand->IsOffhandGripActive() && tfvr_offhand_grip_enabled.GetBool();
 	
 	if (bOffhandGripActive && tfvr_offhand_grip_no_anchor.GetBool())
@@ -2738,6 +3269,9 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	// Extract position and angles
 	MatrixGetColumn(offHandWorld, 3, outPos);
 	MatrixAngles(offHandWorld, outAngles);
+	
+	// Position offset is now applied to controllerTransform early (same as SetupBones),
+	// so the grip target automatically includes the offset. No extra adjustment needed here.
 	
 	if (tfvr_twohand_debug.GetBool())
 	{
