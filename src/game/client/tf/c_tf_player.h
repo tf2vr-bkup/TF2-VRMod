@@ -170,6 +170,9 @@ public:
 	// VR-specific weapon shooting angles override
 	virtual QAngle		Weapon_ShootAngles( void );
 	
+	// VR-specific: Returns VR render weapon when in VR mode (for particle effects like medigun beam)
+	virtual C_BaseAnimating*	GetRenderedWeaponModel() OVERRIDE;
+	
 	// VR-specific autoaim override to use controller angles instead of headset
 	virtual Vector		GetAutoaimVector( float flScale );
 

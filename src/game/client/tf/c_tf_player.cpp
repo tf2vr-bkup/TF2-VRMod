@@ -4238,6 +4238,30 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Returns the weapon model for particle effect attachment
+//          In VR mode, returns the VR render weapon for proper beam origin
+//-----------------------------------------------------------------------------
+C_BaseAnimating* C_TFPlayer::GetRenderedWeaponModel()
+{
+	// Check if VR is active and we have a VR render weapon
+	if (IsInVRMode() && IsLocalPlayer())
+	{
+		C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+		if (pRightHand)
+		{
+			C_BaseAnimating* pRenderWeapon = pRightHand->GetRenderWeapon();
+			if (pRenderWeapon)
+			{
+				return pRenderWeapon;
+			}
+		}
+	}
+	
+	// Fall back to base implementation
+	return BaseClass::GetRenderedWeaponModel();
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: VR-specific autoaim override to use controller angles instead of headset
 //-----------------------------------------------------------------------------
 Vector C_TFPlayer::GetAutoaimVector( float flScale )
