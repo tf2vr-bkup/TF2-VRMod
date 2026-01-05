@@ -1727,19 +1727,29 @@ ConVar tf_teammate_max_invis( "tf_teammate_max_invis", "0.95", FCVAR_CHEAT | FCV
 //-----------------------------------------------------------------------------
 // Purpose: 
 // Input  :
-//-----------------------------------------------------------------------------
 void CSpyInvisProxy::OnBind( C_BaseEntity *pBaseEntity )
 {
 	if( !m_pPercentInvisible || !m_pCloakColorTint )
 		return;
 
 	float fInvis = 0.0f;
+	float r = 1.0f, g = 1.0f, b = 1.0f;
 
 	C_TFPlayer *pPlayer = ToTFPlayer( pBaseEntity );
 
 	if ( !pPlayer )
 	{
 		C_TFPlayer *pOwningPlayer = ToTFPlayer( pBaseEntity->GetOwnerEntity() );
+		
+		// Also try IHasOwner interface (for VR hands, etc.)
+		if ( !pOwningPlayer )
+		{
+			IHasOwner *pOwnerInterface = dynamic_cast<IHasOwner*>( pBaseEntity );
+			if ( pOwnerInterface )
+			{
+				pOwningPlayer = ToTFPlayer( pOwnerInterface->GetOwnerViaInterface() );
+			}
+		}
 
 		C_TFRagdoll *pRagdoll = dynamic_cast< C_TFRagdoll* >( pBaseEntity );
 		if ( pRagdoll && pRagdoll->IsCloaked() )
@@ -1748,13 +1758,25 @@ void CSpyInvisProxy::OnBind( C_BaseEntity *pBaseEntity )
 		}
 		else if ( pOwningPlayer )
 		{
-			// mimic the owner's invisibility
+			// Mimic the owner's invisibility
 			fInvis = pOwningPlayer->GetEffectiveInvisibilityLevel();
+			
+			// Set the color tint based on owner's team
+			switch( pOwningPlayer->GetTeamNumber() )
+			{
+			case TF_TEAM_RED:
+				r = 1.0; g = 0.5; b = 0.4;
+				break;
+
+			case TF_TEAM_BLUE:
+			default:
+				r = 0.4; g = 0.5; b = 1.0;
+				break;
+			}
 		}
 	}
 	else
 	{
-		float r = 1.0f, g = 1.0f, b = 1.0f;
 		fInvis = pPlayer->GetEffectiveInvisibilityLevel();
 
 		switch( pPlayer->GetTeamNumber() )
@@ -1768,10 +1790,9 @@ void CSpyInvisProxy::OnBind( C_BaseEntity *pBaseEntity )
 			r = 0.4; g = 0.5; b = 1.0;
 			break;
 		}
-
-		m_pCloakColorTint->SetVecValue( r, g, b );
 	}
 
+	m_pCloakColorTint->SetVecValue( r, g, b );
 	m_pPercentInvisible->SetFloatValue( fInvis );
 }
 

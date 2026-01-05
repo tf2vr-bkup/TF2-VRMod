@@ -17,6 +17,7 @@
 #include "materialsystem/imaterial.h"
 #include "materialsystem/imaterialvar.h"
 #include "prediction.h"
+#include "econ/ihasowner.h"
 
 #endif
 
@@ -468,8 +469,30 @@ void CViewModelInvisProxy::OnBind( C_BaseEntity *pEnt )
 			bIsViewModel = true;
 		}
 	}
+	
+	// Check GetOwnerEntity (for VR hands, etc.)
+	// Treat VR hands like viewmodels for local player visibility
+	bool bIsVRHand = false;
+	if ( !pPlayer )
+	{
+		pPlayer = ToTFPlayer( pEnt->GetOwnerEntity() );
+		if ( pPlayer )
+			bIsVRHand = true;
+	}
+	
+	// Check IHasOwner interface (for VR hands, etc.)
+	if ( !pPlayer )
+	{
+		IHasOwner *pOwnerInterface = dynamic_cast<IHasOwner*>( pEnt );
+		if ( pOwnerInterface )
+		{
+			pPlayer = ToTFPlayer( pOwnerInterface->GetOwnerViaInterface() );
+			if ( pPlayer )
+				bIsVRHand = true;
+		}
+	}
 
-	// do we have a player from viewmodel?
+	// do we have a player?
 	if ( !pPlayer )
 	{
 		m_pPercentInvisible->SetFloatValue( 0.0f );
@@ -479,7 +502,10 @@ void CViewModelInvisProxy::OnBind( C_BaseEntity *pEnt )
 	float flPercentInvisible = pPlayer->GetPercentInvisible();
 	float flWeaponInvis = flPercentInvisible;
 
-	if ( bIsViewModel == true )
+	// For viewmodels and VR hands owned by local player, keep them partially visible
+	bool bApplyViewmodelClamp = bIsViewModel || (bIsVRHand && pPlayer->IsLocalPlayer());
+	
+	if ( bApplyViewmodelClamp )
 	{
 		// remap from 0.22 to 0.5
 		// but drop to 0.0 if we're not invis at all
@@ -536,7 +562,7 @@ void CInvisProxy::OnBind( C_BaseEntity *pC_BaseEntity )
 		pPlayer = ToTFPlayer( pMoveParent );
 	}
 
-	// If it's not a player then check for viewmodel.
+	// If it's not a player then check for viewmodel
 	if ( !pPlayer )
 	{
 		CBaseEntity *pEntParent = pMoveParent ? pMoveParent : pEnt;
@@ -548,6 +574,7 @@ void CInvisProxy::OnBind( C_BaseEntity *pC_BaseEntity )
 		}
 	}
 	
+	// Check if entity is a player, or has an owner via IHasOwner (for VR hands, etc.)
 	if ( !pPlayer )
 	{
 		if ( pEnt->IsPlayer() )
@@ -574,10 +601,11 @@ void CInvisProxy::OnBind( C_BaseEntity *pC_BaseEntity )
 		return;
 	}
 
+	float flPercentInvisible = pPlayer->GetPercentInvisible();
+
 	// If we're the local player, use the old "vm_invis" code. Otherwise, use the "weapon_invis".
 	if ( pPlayer->IsLocalPlayer() )
 	{
-		float flPercentInvisible = pPlayer->GetPercentInvisible();
 		float flWeaponInvis = flPercentInvisible;
 
 		// remap from 0.22 to 0.5

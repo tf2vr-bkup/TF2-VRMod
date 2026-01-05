@@ -258,6 +258,44 @@ public:
 	// Crit boost is now handled by the hand entity for proper timing
 	void UpdateCritBoostEffect() {}
 	
+	// Returns true when owner is cloaking (for transparency rendering)
+	virtual bool IsTransparent() OVERRIDE
+	{
+		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+		if (pOwner)
+		{
+			return pOwner->GetPercentInvisible() > 0.0f;
+		}
+		return false;
+	}
+	
+	// Override DrawModel to apply ubercharge effect
+	virtual int DrawModel(int flags) OVERRIDE
+	{
+		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+		if (!pOwner)
+			return 0;
+		
+		int ret = 0;
+		bool bInvuln = pOwner->m_Shared.IsInvulnerable();
+		
+		// Apply ubercharge material override
+		if (bInvuln && (flags & STUDIO_RENDER))
+		{
+			modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+		}
+		
+		ret = BaseClass::DrawModel(flags);
+		
+		// Reset material override
+		if (bInvuln && (flags & STUDIO_RENDER))
+		{
+			modelrender->ForcedMaterialOverride(NULL);
+		}
+		
+		return ret;
+	}
+	
 	// Override to draw attached models (festivizers, etc.)
 	virtual bool OnInternalDrawModel(ClientModelRenderInfo_t *pInfo) OVERRIDE
 	{
@@ -1144,6 +1182,14 @@ C_TFVRHand::~C_TFVRHand()
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: IHasOwner interface - allows material proxies to find owner for cloak effects
+//-----------------------------------------------------------------------------
+CBaseEntity *C_TFVRHand::GetOwnerViaInterface(void)
+{
+	return m_hOwnerPlayer.Get();
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Initialize the hand entity (single hand)
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
@@ -1160,6 +1206,9 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_hOwnerPlayer = pOwner;
 	m_handSide = handSide;
 	
+	// Set owner entity so material proxies (like spy_invis for cloak) can find the owner player
+	SetOwnerEntity(pOwner);
+	
 	// Record current player class
 	m_iLastPlayerClass = pOwner->GetPlayerClass()->GetClassIndex();
 
@@ -1175,35 +1224,48 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 		return false;
 	}
 
-	// Get class-specific hand model path
+	// Get class-specific hand model path (may return NULL to force fallback)
 	const char *handModelPath = GetHandModelForClass(m_iLastPlayerClass, IsLeftHand());
-	
-	Q_strncpy(m_szModelName, handModelPath, sizeof(m_szModelName));
-	
-	Msg("VR Hand: Attempting to load model: %s\n", handModelPath);
-	
-	// Precache the model on client side
-	int modelIndex = modelinfo->GetModelIndex(handModelPath);
-	if (modelIndex == -1)
-	{
-		// Model not precached, try to precache it now
-		Warning("VR Hand: Model not precached, attempting to precache: %s\n", handModelPath);
-		CBaseEntity::PrecacheModel(handModelPath);
-		modelIndex = modelinfo->GetModelIndex(handModelPath);
-	}
 	
 	// Set a valid origin first (entities need to be in the world)
 	SetAbsOrigin(pOwner->EyePosition());
 	SetAbsAngles(vec3_angle);
 	
-	// Try using SetModel directly
-	bool bCustomModelWorked = (modelIndex != -1) && SetModel(m_szModelName);
+	bool bCustomModelWorked = false;
 	
+	// If we have a custom hand model path, try to load it
+	if (handModelPath != NULL)
+	{
+		Q_strncpy(m_szModelName, handModelPath, sizeof(m_szModelName));
+		
+		Msg("VR Hand: Attempting to load model: %s\n", handModelPath);
+		
+		// Precache the model on client side
+		int modelIndex = modelinfo->GetModelIndex(handModelPath);
+		if (modelIndex == -1)
+		{
+			// Model not precached, try to precache it now
+			Warning("VR Hand: Model not precached, attempting to precache: %s\n", handModelPath);
+			CBaseEntity::PrecacheModel(handModelPath);
+			modelIndex = modelinfo->GetModelIndex(handModelPath);
+		}
+		
+		// Try using SetModel directly
+		bCustomModelWorked = (modelIndex != -1) && SetModel(m_szModelName);
+		
+		if (bCustomModelWorked)
+		{
+			Msg("VR Hand (%s): Successfully loaded separate hand model: %s\n", IsLeftHand() ? "LEFT" : "RIGHT", handModelPath);
+		}
+		else
+		{
+			Warning("VR Hand: Failed to load %s (model index: %d), trying fallback\n", handModelPath, modelIndex);
+		}
+	}
+	
+	// Use fallback to combined arms model if custom model failed or wasn't specified
 	if (!bCustomModelWorked)
 	{
-		Warning("VR Hand: Failed to load %s (model index: %d), trying fallback\n", handModelPath, modelIndex);
-		
-		// Use fallback to combined arms model for this class
 		const char *fallbackModel = GetFallbackModelForClass(m_iLastPlayerClass);
 		Q_strncpy(m_szModelName, fallbackModel, sizeof(m_szModelName));
 		if (!SetModel(m_szModelName))
@@ -1213,10 +1275,6 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 		}
 		
 		Msg("VR Hand (%s): Using fallback combined arms model: %s\n", IsLeftHand() ? "LEFT" : "RIGHT", fallbackModel);
-	}
-	else
-	{
-		Msg("VR Hand (%s): Successfully loaded separate hand model: %s\n", IsLeftHand() ? "LEFT" : "RIGHT", handModelPath);
 	}
 	
 	// Verify model pointer is valid
@@ -4412,7 +4470,8 @@ void C_TFVRHand::GetRenderBounds(Vector& mins, Vector& maxs)
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Draw the hand model
+// Purpose: Draw the hand model with ubercharge effect support
+// Note: Cloak is handled by the vm_invis material proxy in the hand materials
 //-----------------------------------------------------------------------------
 int C_TFVRHand::DrawModel(int flags)
 {
@@ -4437,7 +4496,24 @@ int C_TFVRHand::DrawModel(int flags)
 	if (!pStudioHdr || !pStudioHdr->IsValid())
 		return 0;
 	
-	return BaseClass::DrawModel(flags);
+	int ret = 0;
+	bool bInvuln = pOwner->m_Shared.IsInvulnerable();
+	
+	// Apply ubercharge material override
+	if (bInvuln && (flags & STUDIO_RENDER))
+	{
+		modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+	}
+	
+	ret = BaseClass::DrawModel(flags);
+	
+	// Reset material override
+	if (bInvuln && (flags & STUDIO_RENDER))
+	{
+		modelrender->ForcedMaterialOverride(NULL);
+	}
+	
+	return ret;
 }
 
 //-----------------------------------------------------------------------------
@@ -4480,6 +4556,19 @@ bool C_TFVRHand::ShouldReceiveProjectedTextures(int flags)
 {
 	// Always receive shadows
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Returns true when the owner is cloaking (for transparency rendering)
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::IsTransparent()
+{
+	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+	if (pOwner)
+	{
+		return pOwner->GetPercentInvisible() > 0.0f;
+	}
+	return false;
 }
 
 //-----------------------------------------------------------------------------
@@ -4537,8 +4626,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		return;
 	}
 	
-	// Set owner for material proxies (crit glow, etc.)
+	// Set owner for material proxies (crit glow, uber, cloak, etc.)
 	pRenderWeapon->SetOwnerPlayer(pOwner);
+	pRenderWeapon->SetOwnerEntity(pOwner);
 	
 	// Set source weapon so we can call its ViewModelAttachmentBlending
 	pRenderWeapon->SetSourceWeapon(pWeapon);

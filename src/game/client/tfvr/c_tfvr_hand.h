@@ -9,6 +9,7 @@
 #include "cbase.h"
 #include "c_baseanimating.h"
 #include "openxr/openxr.h"
+#include "econ/ihasowner.h"
 
 class C_TFPlayer;
 class COpenXRHandTracker;
@@ -25,8 +26,9 @@ enum VRHandSide
 // Purpose: Client-side VR hand entity that renders a single animated hand
 //          driven by OpenXR hand tracking data
 //          NOTE: This now represents a SINGLE hand (left OR right)
+//          Implements IHasOwner so material proxies (cloak, etc.) can find owner
 //-----------------------------------------------------------------------------
-class C_TFVRHand : public C_BaseAnimating
+class C_TFVRHand : public C_BaseAnimating, public IHasOwner
 {
 	DECLARE_CLASS(C_TFVRHand, C_BaseAnimating);
 	DECLARE_CLIENTCLASS();
@@ -34,6 +36,9 @@ class C_TFVRHand : public C_BaseAnimating
 public:
 	C_TFVRHand();
 	virtual ~C_TFVRHand();
+
+	// IHasOwner interface - allows material proxies to find owner for cloak effects
+	virtual CBaseEntity *GetOwnerViaInterface(void) OVERRIDE;
 
 	// Spawning and lifecycle (spawns two separate hand entities)
 	static void SpawnVRHands(C_TFPlayer *pPlayer);
@@ -63,7 +68,7 @@ public:
 	virtual int DrawModel(int flags) override;
 	virtual ShadowType_t ShadowCastType() override;  // Always cast shadows
 	virtual bool ShouldReceiveProjectedTextures(int flags) override;  // Always receive shadows
-	virtual bool IsTransparent() override { return false; }  // Force opaque for shadows
+	virtual bool IsTransparent() override;  // Returns true when owner is cloaking
 	virtual bool GetShadowCastDistance(float *pDist, ShadowType_t shadowType) const override;
 	
 	// Override to ensure hands are always in PVS
