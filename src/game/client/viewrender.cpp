@@ -56,9 +56,7 @@
 #include "tfvr/vr_integration.h"
 #include "tfvr/openxr_manager.h"
 #include "tfvr/vr_laser_pointer.h"
-#include "tfvr/vr_health_overlay.h"
-#include "tfvr/vr_ammo_overlay.h"
-#include "tfvr/vr_objective_overlay.h"
+#include "tfvr/vr_hand_hud_compositor.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2531,22 +2529,16 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 					}
 				}
 				
-				// Render VR health overlay
-				if (g_pVRHealthOverlay)
+				// Render VR Status HUD (left hand: health, objectives)
+				if (g_pVRStatusHUDManager)
 				{
-					g_pVRHealthOverlay->RenderHealthQuad();
+					g_pVRStatusHUDManager->Render();
 				}
 				
-				// Render VR ammo overlay
-				if (g_pVRAmmoOverlay)
+				// Render VR Weapon HUD (right hand: ammo, meters, charges)
+				if (g_pVRWeaponHUDManager)
 				{
-					g_pVRAmmoOverlay->RenderAmmoQuad();
-				}
-				
-				// Render VR objective overlay
-				if (g_pVRObjectiveOverlay)
-				{
-					g_pVRObjectiveOverlay->RenderObjectiveQuad();
+					g_pVRWeaponHUDManager->Render();
 				}
 				
 				// Render VR laser pointer on top of HUD/menus

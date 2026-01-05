@@ -11,10 +11,8 @@
 // Forward declarations
 class C_TFPlayer;
 class COpenXRManager;
-class CVRHealthOverlay;
-class CVRAmmoOverlay;
-class CVRObjectiveOverlay;
-class CVRUnifiedHud;
+class CVRStatusHUDManager;
+class CVRWeaponHUDManager;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -125,17 +123,11 @@ private:
     // VR tracking update optimization
     int m_nLastVRTrackingUpdateFrame;
     
-    // VR Health Overlay
-    CVRHealthOverlay* m_pVRHealthOverlay;
+    // VR Status HUD (left hand: health, objectives)
+    CVRStatusHUDManager* m_pVRStatusHUDManager;
     
-    // VR Ammo Overlay
-    CVRAmmoOverlay* m_pVRAmmoOverlay;
-    
-    // VR Objective Overlay
-    CVRObjectiveOverlay* m_pVRObjectiveOverlay;
-    
-    // VR Unified HUD (combines health, ammo, and objectives)
-    CVRUnifiedHud* m_pVRUnifiedHud;
+    // VR Weapon HUD (right hand: ammo, meters, charges)
+    CVRWeaponHUDManager* m_pVRWeaponHUDManager;
 };
 
 // Global instance

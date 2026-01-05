@@ -23,9 +23,7 @@
 #include "econ/econ_ui.h"
 #include "tf/vgui/class_loadout_panel.h"
 #include "tf/vgui/character_info_panel.h"
-#include "vr_health_overlay.h"
-#include "vr_ammo_overlay.h"
-#include "vr_objective_overlay.h"
+#include "vr_hand_hud_compositor.h"
 
 #include <algorithm>
 
@@ -76,10 +74,8 @@ CVRMenuManager::CVRMenuManager()
     , m_flLastClassMenuTime(0.0f)
     , m_bVRFrameStarted(false)
     , m_nLastVRTrackingUpdateFrame(-1)
-    , m_pVRHealthOverlay(nullptr)
-    , m_pVRAmmoOverlay(nullptr)
-    , m_pVRObjectiveOverlay(nullptr)
-    , m_pVRUnifiedHud(nullptr)
+    , m_pVRStatusHUDManager(nullptr)
+    , m_pVRWeaponHUDManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -97,54 +93,37 @@ void CVRMenuManager::Initialize()
         m_nMenuHand = m_pConVarPrimaryHand->GetInt();
     }
     
-    // Initialize VR Health Overlay
-    if (!m_pVRHealthOverlay)
+    // Initialize VR Status HUD Manager (left hand: health, objectives)
+    if (!m_pVRStatusHUDManager)
     {
-        m_pVRHealthOverlay = new CVRHealthOverlay();
-        if (m_pVRHealthOverlay->Initialize())
+        m_pVRStatusHUDManager = new CVRStatusHUDManager();
+        if (m_pVRStatusHUDManager->Initialize())
         {
-            g_pVRHealthOverlay = m_pVRHealthOverlay;
-            DevMsg("VR Menu Manager: Health overlay initialized\n");
+            g_pVRStatusHUDManager = m_pVRStatusHUDManager;
+            DevMsg("VR Menu Manager: Status HUD Manager initialized\n");
         }
         else
         {
-            delete m_pVRHealthOverlay;
-            m_pVRHealthOverlay = nullptr;
-            Warning("VR Menu Manager: Failed to initialize health overlay\n");
+            delete m_pVRStatusHUDManager;
+            m_pVRStatusHUDManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Status HUD Manager\n");
         }
     }
     
-    // Initialize VR Ammo Overlay
-    if (!m_pVRAmmoOverlay)
+    // Initialize VR Weapon HUD Manager (right hand: ammo, meters, charges)
+    if (!m_pVRWeaponHUDManager)
     {
-        m_pVRAmmoOverlay = new CVRAmmoOverlay();
-        if (m_pVRAmmoOverlay->Initialize())
+        m_pVRWeaponHUDManager = new CVRWeaponHUDManager();
+        if (m_pVRWeaponHUDManager->Initialize())
         {
-            g_pVRAmmoOverlay = m_pVRAmmoOverlay;
-            DevMsg("VR Menu Manager: Ammo overlay initialized\n");
+            g_pVRWeaponHUDManager = m_pVRWeaponHUDManager;
+            DevMsg("VR Menu Manager: Weapon HUD Manager initialized\n");
         }
         else
         {
-            delete m_pVRAmmoOverlay;
-            m_pVRAmmoOverlay = nullptr;
-            Warning("VR Menu Manager: Failed to initialize ammo overlay\n");
-        }
-    }
-    
-    // Initialize VR Objective Overlay
-    if (!m_pVRObjectiveOverlay)
-    {
-        m_pVRObjectiveOverlay = new CVRObjectiveOverlay();
-        if (m_pVRObjectiveOverlay->Initialize())
-        {
-            g_pVRObjectiveOverlay = m_pVRObjectiveOverlay;
-            DevMsg("VR Menu Manager: Objective overlay initialized\n");
-        }
-        else
-        {
-            delete m_pVRObjectiveOverlay;
-            m_pVRObjectiveOverlay = nullptr;
-            Warning("VR Menu Manager: Failed to initialize objective overlay\n");
+            delete m_pVRWeaponHUDManager;
+            m_pVRWeaponHUDManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Weapon HUD Manager\n");
         }
     }
     
@@ -158,31 +137,22 @@ void CVRMenuManager::Initialize()
 
 void CVRMenuManager::Shutdown()
 {
-    // Shutdown VR Health Overlay
-    if (m_pVRHealthOverlay)
+    // Shutdown VR Status HUD Manager
+    if (m_pVRStatusHUDManager)
     {
-        m_pVRHealthOverlay->Shutdown();
-        delete m_pVRHealthOverlay;
-        m_pVRHealthOverlay = nullptr;
-        g_pVRHealthOverlay = nullptr;
+        m_pVRStatusHUDManager->Shutdown();
+        delete m_pVRStatusHUDManager;
+        m_pVRStatusHUDManager = nullptr;
+        g_pVRStatusHUDManager = nullptr;
     }
     
-    // Shutdown VR Ammo Overlay
-    if (m_pVRAmmoOverlay)
+    // Shutdown VR Weapon HUD Manager
+    if (m_pVRWeaponHUDManager)
     {
-        m_pVRAmmoOverlay->Shutdown();
-        delete m_pVRAmmoOverlay;
-        m_pVRAmmoOverlay = nullptr;
-        g_pVRAmmoOverlay = nullptr;
-    }
-    
-    // Shutdown VR Objective Overlay
-    if (m_pVRObjectiveOverlay)
-    {
-        m_pVRObjectiveOverlay->Shutdown();
-        delete m_pVRObjectiveOverlay;
-        m_pVRObjectiveOverlay = nullptr;
-        g_pVRObjectiveOverlay = nullptr;
+        m_pVRWeaponHUDManager->Shutdown();
+        delete m_pVRWeaponHUDManager;
+        m_pVRWeaponHUDManager = nullptr;
+        g_pVRWeaponHUDManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -237,22 +207,16 @@ void CVRMenuManager::Update()
         m_savedPlayerViewOrigin = m_pLocalPlayer->GetVRViewPosition();
     }
     
-    // Update VR Health Overlay
-    if (m_pVRHealthOverlay)
+    // Update VR Status HUD Manager
+    if (m_pVRStatusHUDManager)
     {
-        m_pVRHealthOverlay->Update();
+        m_pVRStatusHUDManager->Update();
     }
     
-    // Update VR Ammo Overlay
-    if (m_pVRAmmoOverlay)
+    // Update VR Weapon HUD Manager
+    if (m_pVRWeaponHUDManager)
     {
-        m_pVRAmmoOverlay->Update();
-    }
-    
-    // Update VR Objective Overlay
-    if (m_pVRObjectiveOverlay)
-    {
-        m_pVRObjectiveOverlay->Update();
+        m_pVRWeaponHUDManager->Update();
     }
     
     // Update VR Hands
@@ -483,18 +447,14 @@ void CVRMenuManager::HandleMenuInput()
             // Clear the old HUD bounds
             g_ClientVirtualReality.ClearCustomHUDBounds();
             
-            // IMPORTANT: Reset VR HUD overlays to clear stuck class/ammo data from previous map
-            if (m_pVRHealthOverlay)
+            // IMPORTANT: Reset VR HUD managers to clear stuck data from previous map
+            if (m_pVRStatusHUDManager)
             {
-                m_pVRHealthOverlay->ResetOverlayState();
+                m_pVRStatusHUDManager->ResetState();
             }
-            if (m_pVRAmmoOverlay)
+            if (m_pVRWeaponHUDManager)
             {
-                m_pVRAmmoOverlay->ResetOverlayState();
-            }
-            if (m_pVRObjectiveOverlay)
-            {
-                m_pVRObjectiveOverlay->ResetOverlayState();
+                m_pVRWeaponHUDManager->ResetState();
             }
         }
     }
@@ -2036,11 +1996,9 @@ void CVRMenuManager::RenderMenuQuadIn3D()
     meshBuilder.End();
     pMesh->Draw();
     
-    // Render VR Health Overlay if enabled
-    if (m_pVRHealthOverlay)
-    {
-        m_pVRHealthOverlay->RenderHealthQuad();
-    }
+    // NOTE: VR HUD rendering has been moved to viewrender.cpp
+    // g_pVRStatusHUDManager->Render() and g_pVRWeaponHUDManager->Render()
+    // are called from CViewRender::RenderView()
 
     // Clean up 3D view
     render->PopView(NULL);
