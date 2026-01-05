@@ -174,11 +174,23 @@ ConVar tfvr_weapon_hud_debug_bg("tfvr_weapon_hud_debug_bg", "0", FCVAR_ARCHIVE,
     "Show debug background for weapon HUD");
 
 //=============================================================================
-// VRHudElementSlot_t Implementation
+// Helper Functions
 //=============================================================================
 
 //-----------------------------------------------------------------------------
-// Helper to check if an item effect meter pointer is still valid
+// Check if a panel is facing away from the camera (backface culling)
+//-----------------------------------------------------------------------------
+static bool IsPanelBackfacing(const VMatrix& panelToWorld)
+{
+    // Panel normal is the Z-axis of the transform
+    Vector panelNormal(panelToWorld[0][2], panelToWorld[1][2], panelToWorld[2][2]);
+    Vector panelPos = panelToWorld.GetTranslation();
+    Vector toCamera = MainViewOrigin() - panelPos;
+    return DotProduct(panelNormal, toCamera) < 0;
+}
+
+//-----------------------------------------------------------------------------
+// Check if an item effect meter pointer is still valid
 //-----------------------------------------------------------------------------
 static bool IsItemEffectMeterValid(CHudElement* pElement)
 {
@@ -1114,11 +1126,8 @@ void CVRStatusHUDManager::Render()
         ApplyCenteringOffset(panelToWorld, worldWidth, worldHeight);
     }
     
-    // Backface culling - don't render if panel is facing away from camera
-    Vector panelNormal(panelToWorld[0][2], panelToWorld[1][2], panelToWorld[2][2]);
-    Vector panelPos = panelToWorld.GetTranslation();
-    Vector toCamera = MainViewOrigin() - panelPos;
-    if (DotProduct(panelNormal, toCamera) < 0)
+    // Skip if panel is facing away from camera
+    if (IsPanelBackfacing(panelToWorld))
         return;
     
     m_pCompositor->SetVisible(true);
@@ -1429,11 +1438,8 @@ void CVRWeaponHUDManager::Render()
         ApplyCenteringOffset(panelToWorld, worldWidth, worldHeight);
     }
     
-    // Backface culling - don't render if panel is facing away from camera
-    Vector panelNormal(panelToWorld[0][2], panelToWorld[1][2], panelToWorld[2][2]);
-    Vector panelPos = panelToWorld.GetTranslation();
-    Vector toCamera = MainViewOrigin() - panelPos;
-    if (DotProduct(panelNormal, toCamera) < 0)
+    // Skip if panel is facing away from camera
+    if (IsPanelBackfacing(panelToWorld))
         return;
     
     m_pCompositor->SetVisible(true);

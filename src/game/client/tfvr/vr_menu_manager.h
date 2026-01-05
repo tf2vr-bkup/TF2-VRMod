@@ -13,6 +13,7 @@ class C_TFPlayer;
 class COpenXRManager;
 class CVRStatusHUDManager;
 class CVRWeaponHUDManager;
+class CVRSpringHUDManager;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -128,6 +129,9 @@ private:
     
     // VR Weapon HUD (right hand: ammo, meters, charges)
     CVRWeaponHUDManager* m_pVRWeaponHUDManager;
+    
+    // VR Spring HUD (head-relative: kill feed with spring-arm behavior)
+    CVRSpringHUDManager* m_pVRSpringHUDManager;
 };
 
 // Global instance

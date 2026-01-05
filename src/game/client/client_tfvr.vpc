@@ -999,6 +999,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_objective_overlay.cpp"
 			$File   "tfvr\vr_hand_hud_compositor.h"
 			$File   "tfvr\vr_hand_hud_compositor.cpp"
+			$File   "tfvr\vr_spring_hud.h"
+			$File   "tfvr\vr_spring_hud.cpp"
 			
 			$Folder "VR Weapons"
 			{

@@ -24,6 +24,7 @@
 #include "tf/vgui/class_loadout_panel.h"
 #include "tf/vgui/character_info_panel.h"
 #include "vr_hand_hud_compositor.h"
+#include "vr_spring_hud.h"
 
 #include <algorithm>
 
@@ -76,6 +77,7 @@ CVRMenuManager::CVRMenuManager()
     , m_nLastVRTrackingUpdateFrame(-1)
     , m_pVRStatusHUDManager(nullptr)
     , m_pVRWeaponHUDManager(nullptr)
+    , m_pVRSpringHUDManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -127,6 +129,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Spring HUD Manager (head-relative: kill feed)
+    if (!m_pVRSpringHUDManager)
+    {
+        m_pVRSpringHUDManager = new CVRSpringHUDManager();
+        if (m_pVRSpringHUDManager->Initialize())
+        {
+            g_pVRSpringHUDManager = m_pVRSpringHUDManager;
+            DevMsg("VR Menu Manager: Spring HUD Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRSpringHUDManager;
+            m_pVRSpringHUDManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Spring HUD Manager\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -153,6 +172,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRWeaponHUDManager;
         m_pVRWeaponHUDManager = nullptr;
         g_pVRWeaponHUDManager = nullptr;
+    }
+    
+    // Shutdown VR Spring HUD Manager
+    if (m_pVRSpringHUDManager)
+    {
+        m_pVRSpringHUDManager->Shutdown();
+        delete m_pVRSpringHUDManager;
+        m_pVRSpringHUDManager = nullptr;
+        g_pVRSpringHUDManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -217,6 +245,12 @@ void CVRMenuManager::Update()
     if (m_pVRWeaponHUDManager)
     {
         m_pVRWeaponHUDManager->Update();
+    }
+    
+    // Update VR Spring HUD Manager (kill feed)
+    if (m_pVRSpringHUDManager)
+    {
+        m_pVRSpringHUDManager->Update(gpGlobals->frametime);
     }
     
     // Update VR Hands
@@ -455,6 +489,10 @@ void CVRMenuManager::HandleMenuInput()
             if (m_pVRWeaponHUDManager)
             {
                 m_pVRWeaponHUDManager->ResetState();
+            }
+            if (m_pVRSpringHUDManager)
+            {
+                m_pVRSpringHUDManager->ResetState();
             }
         }
     }

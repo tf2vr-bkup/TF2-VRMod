@@ -57,6 +57,7 @@
 #include "tfvr/openxr_manager.h"
 #include "tfvr/vr_laser_pointer.h"
 #include "tfvr/vr_hand_hud_compositor.h"
+#include "tfvr/vr_spring_hud.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2539,6 +2540,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRWeaponHUDManager)
 				{
 					g_pVRWeaponHUDManager->Render();
+				}
+				
+				// Render VR Spring HUD (head-relative: kill feed)
+				if (g_pVRSpringHUDManager)
+				{
+					g_pVRSpringHUDManager->Render();
 				}
 				
 				// Render VR laser pointer on top of HUD/menus
