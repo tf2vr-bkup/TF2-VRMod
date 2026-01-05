@@ -210,6 +210,36 @@ private:
 	// This is used by overlays to avoid stale bone cache issues
 	matrix3x4_t m_matWeaponBoneWorld;
 	bool m_bWeaponBoneWorldValid;
+	
+	// =========================================================================
+	// LEFT HAND WEARABLES - spy watches, scout balls, etc.
+	// These are attached to the LEFT hand when the RIGHT hand equips certain weapons
+	// =========================================================================
+	
+	// Spy watch (ExtraWearableViewModel from cloak weapons)
+	// Attached when right hand has knife/revolver and spy has cloak equipped
+	CHandle<C_BaseAnimating> m_hLeftHandWatch;
+	
+	// Scout ball (Sandman baseball, Wrap Assassin ornament)
+	// Conditionally shown based on ammo availability
+	// Ball position is updated directly in SetupBones() to avoid lag
+	CHandle<C_BaseAnimating> m_hLeftHandBall;
+	int m_iLastBallAmmo;  // Track ammo changes to update ball visibility
+	
+	// NOTE: attach_to_hands weapons (boxing gloves, etc.) contain BOTH hands
+	// in a single model mesh, so they don't need special left-hand handling.
+	
+public:
+	// Left hand wearable management (called from right hand's EquipWeapon)
+	void AttachWatchToLeftHand(C_BaseAnimating *pWatch);  // Use existing networked wearable
+	void CreateWatchModel(const char *pszWatchModel);     // Create our own watch model
+	void RemoveLeftHandWatch();
+	void AttachBallToLeftHand(const char *pszBallModel);
+	void RemoveLeftHandBall();
+	void UpdateLeftHandBall();  // Called each frame to check ammo
+	
+private:
+	bool m_bOwnWatchModel;  // True if we created the watch model ourselves (need to delete it)
 };
 
 // Global functions

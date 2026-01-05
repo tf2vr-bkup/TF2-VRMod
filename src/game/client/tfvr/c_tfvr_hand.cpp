@@ -7,6 +7,7 @@
 #include "tf/tf_shareddefs.h"
 #include "tf/tf_weapon_minigun.h"
 #include "tf/tf_weapon_grenadelauncher.h"
+#include "tf/tf_weapon_bat.h"
 #include "tf/tf_item_wearable.h"
 #include "econ/econ_entity.h"
 #include "econ/econ_item_schema.h"
@@ -1162,6 +1163,12 @@ C_TFVRHand::C_TFVRHand()
 	m_iMeleeSwingIndex = 0;
 	m_szMeleeSwingBase[0] = '\0';
 	m_iMeleeSwingCount = 0;
+	
+	// Left hand wearables
+	m_hLeftHandWatch = NULL;
+	m_bOwnWatchModel = false;
+	m_hLeftHandBall = NULL;
+	m_iLastBallAmmo = -1;
 
 	// Initialize bone mapping to invalid
 	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
@@ -1340,6 +1347,13 @@ void C_TFVRHand::Shutdown()
 	
 	// Unequip any held weapon
 	UnequipWeapon();
+	
+	// Clean up left hand wearables if this is the left hand
+	if (IsLeftHand())
+	{
+		RemoveLeftHandWatch();
+		RemoveLeftHandBall();
+	}
 	
 	// Reset bone mapping so it gets recalculated on reinit
 	m_bBoneMappingSetup = false;
@@ -1593,7 +1607,36 @@ void C_TFVRHand::Update()
 	{
 		// Get the right hand to check for grip target
 		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
-		if (pRightHand && pRightHand->GetHeldWeapon())
+		
+		// Check if we should skip two-handing for this weapon
+		// Some weapons don't have proper off-hand grip points
+		bool bSkipTwoHand = false;
+		if (pRightHand)
+		{
+			C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
+			if (pWeapon)
+			{
+				int iWeaponID = pWeapon->GetWeaponID();
+				// Scout melee weapons - no off-hand grip
+				if (iWeaponID == TF_WEAPON_BAT ||
+					iWeaponID == TF_WEAPON_BAT_WOOD ||      // Sandman
+					iWeaponID == TF_WEAPON_BAT_GIFTWRAP ||  // Wrap Assassin
+					iWeaponID == TF_WEAPON_BAT_FISH)        // Holy Mackerel, etc.
+				{
+					bSkipTwoHand = true;
+				}
+			}
+		}
+		
+		if (bSkipTwoHand)
+		{
+			// Reset two-hand state for weapons without off-hand grip
+			m_flTwoHandBlend = 0.0f;
+			m_bOffhandGripActive = false;
+			m_bWasOffhandGripActive = false;
+			m_flGripRotationBlend = 0.0f;
+		}
+		else if (pRightHand && pRightHand->GetHeldWeapon())
 		{
 			Vector gripTargetPos;
 			QAngle gripTargetAngles;
@@ -2033,6 +2076,30 @@ void C_TFVRHand::Update()
 					{
 						debugoverlay->AddLineOverlay(parentPos, bonePos, r, g, b, true, 0.0f);
 					}
+				}
+			}
+		}
+	}
+	
+	// Update left hand wearables (scout ball visibility based on ammo, watch position)
+	if (IsLeftHand())
+	{
+		UpdateLeftHandBall();
+		
+		// Update watch position if we have one
+		C_BaseAnimating *pWatch = m_hLeftHandWatch.Get();
+		if (pWatch)
+		{
+			// Get the weapon_bone_L attachment position for watch
+			int iAttachment = LookupAttachment("weapon_bone_L");
+			if (iAttachment > 0)
+			{
+				Vector attachPos;
+				QAngle attachAng;
+				if (GetAttachment(iAttachment, attachPos, attachAng))
+				{
+					pWatch->SetAbsOrigin(attachPos);
+					pWatch->SetAbsAngles(attachAng);
 				}
 			}
 		}
@@ -2649,6 +2716,91 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			// If we didn't get a grip pose, use finger tracking
 			if (!bUsedGripPose)
 			{
+				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+			}
+		}
+		else if (IsLeftHand() && m_hLeftHandBall.Get() && m_iLastBallAmmo > 0)
+		{
+			// Left hand is holding a ball - apply wb_idle pose
+			// Sample the animation and build the full skeleton like we do for the base pose,
+			// but using the wb_idle animation instead of the reference pose
+			int iGripSeq = LookupSequence("wb_idle");
+			if (iGripSeq >= 0)
+			{
+				// Sample the grip animation
+				float poseParams[MAXSTUDIOPOSEPARAM];
+				memset(poseParams, 0, sizeof(poseParams));
+				
+				IBoneSetup gripBoneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParams);
+				
+				Vector gripPos[MAXSTUDIOBONES];
+				Quaternion gripQ[MAXSTUDIOBONES];
+				for (int i = 0; i < MAXSTUDIOBONES; i++)
+				{
+					gripPos[i].Init();
+					gripQ[i].Init(0, 0, 0, 1);
+				}
+				gripBoneSetup.InitPose(gripPos, gripQ);
+				gripBoneSetup.AccumulatePose(gripPos, gripQ, iGripSeq, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+				
+				// Build the grip pose skeleton in model space (same as we do for sampledBones earlier)
+				matrix3x4_t gripBones[MAXSTUDIOBONES];
+				for (int i = 0; i < numBones; i++)
+				{
+					matrix3x4_t boneToParent;
+					QuaternionMatrix(gripQ[i], gripPos[i], boneToParent);
+					
+					const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+					if (!pBone)
+					{
+						SetIdentityMatrix(gripBones[i]);
+						continue;
+					}
+					
+					if (pBone->parent == -1)
+						MatrixCopy(boneToParent, gripBones[i]);
+					else if (pBone->parent >= 0 && pBone->parent < numBones)
+						ConcatTransforms(gripBones[pBone->parent], boneToParent, gripBones[i]);
+					else
+						SetIdentityMatrix(gripBones[i]);
+				}
+				
+				// Calculate anchor delta for this grip pose
+				// Same as we do for the base pose: anchorDelta = controller * inverse(handBone)
+				if (m_iHandBone >= 0 && m_iHandBone < numBones)
+				{
+					matrix3x4_t invGripHandBone;
+					MatrixInvert(gripBones[m_iHandBone], invGripHandBone);
+					
+					matrix3x4_t gripAnchorDelta;
+					ConcatTransforms(controllerTransform, invGripHandBone, gripAnchorDelta);
+					
+					// Transform grip skeleton to world space
+					for (int i = 0; i < numBones && i < nMaxBones; i++)
+					{
+						ConcatTransforms(gripAnchorDelta, gripBones[i], pBoneToWorldOut[i]);
+					}
+					
+					// Position the ball directly from the weapon_bone_L bone
+					// Do it here in SetupBones to avoid lag from Update() timing
+					C_BaseAnimating *pBall = m_hLeftHandBall.Get();
+					if (pBall && m_iLastBallAmmo > 0)
+					{
+						int iWeaponBoneL = LookupBone("weapon_bone_L");
+						if (iWeaponBoneL >= 0 && iWeaponBoneL < nMaxBones)
+						{
+							Vector ballPos;
+							QAngle ballAng;
+							MatrixAngles(pBoneToWorldOut[iWeaponBoneL], ballAng, ballPos);
+							pBall->SetAbsOrigin(ballPos);
+							pBall->SetAbsAngles(ballAng);
+						}
+					}
+				}
+			}
+			else
+			{
+				// Fallback to finger tracking
 				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 			}
 		}
@@ -4739,12 +4891,80 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		pExtraWearable->CreateShadow();
 	}
 	
+	// Handle ExtraWearableViewModel for the current weapon (non-watch items)
 	C_TFWearable *pExtraWearableVM = pWeapon->m_hExtraWearableViewModel.Get();
 	if (pExtraWearableVM)
 	{
+		// Attach to weapon as normal (these are usually weapon attachments, not watches)
 		pExtraWearableVM->FollowEntity(pRenderWeapon, true);
 		pExtraWearableVM->UpdateVisibility();
+		DevMsg("VR: ExtraWearableViewModel found on weapon, attaching to render weapon\n");
 	}
+	
+	// Spy watch handling - the watch is on the INVIS weapon, not the knife/revolver
+	// We need to find the spy's invis watch weapon and get its wearable (or create one)
+	if (pOwner && pOwner->IsPlayerClass(TF_CLASS_SPY))
+	{
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		if (pLeftHand)
+		{
+			// Look for the invis watch weapon
+			C_BaseCombatWeapon *pInvisWeapon = pOwner->Weapon_OwnsThisID(TF_WEAPON_INVIS);
+			
+			if (pInvisWeapon)
+			{
+				C_TFWeaponBase *pTFInvisWeapon = dynamic_cast<C_TFWeaponBase*>(pInvisWeapon);
+				
+				if (pTFInvisWeapon)
+				{
+					// First try to use the networked wearable
+					C_TFWearable *pWatchWearable = pTFInvisWeapon->m_hExtraWearableViewModel.Get();
+					
+					if (pWatchWearable)
+					{
+						pLeftHand->AttachWatchToLeftHand(pWatchWearable);
+					}
+					else
+					{
+						// Networked wearable not available - try to get model from item schema
+						CEconItemView *pItem = pTFInvisWeapon->GetAttributeContainer()->GetItem();
+						const char *pszWatchModel = NULL;
+						
+						if (pItem && pItem->IsValid())
+						{
+							pszWatchModel = pItem->GetExtraWearableViewModel();
+						}
+						
+						// Use default spy watch model if item doesn't define one
+						if (!pszWatchModel || !pszWatchModel[0])
+						{
+							pszWatchModel = "models/weapons/c_models/c_spy_watch/c_spy_watch.mdl";
+						}
+						
+						// Create our own watch model on the left hand
+						pLeftHand->CreateWatchModel(pszWatchModel);
+					}
+				}
+			}
+		}
+	}
+	
+	// Handle Scout ball weapons (Sandman, Wrap Assassin)
+	// The ball model is shown on the LEFT hand when ammo is available
+	int iWeaponID = pWeapon->GetWeaponID();
+	if (iWeaponID == TF_WEAPON_BAT_WOOD || iWeaponID == TF_WEAPON_BAT_GIFTWRAP)
+	{
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		if (pLeftHand)
+		{
+			// Initialize ball tracking - actual ball creation happens in UpdateLeftHandBall
+			pLeftHand->m_iLastBallAmmo = -1;  // Force update on next frame
+		}
+	}
+	
+	// NOTE: attach_to_hands weapons (Heavy boxing gloves, etc.) contain BOTH hands
+	// in a single model mesh. They bone-merge with the hand model, so we don't
+	// need to create a duplicate - the single render weapon shows both gloves.
 	
 	// Re-parent stat-trak addons to VR render weapon if they exist
 	if (pWeapon->m_viewmodelStatTrakAddon.Get())
@@ -4869,6 +5089,17 @@ void C_TFVRHand::UnequipWeapon()
 	// Invalidate cached idle muzzle offset
 	m_bIdleMuzzleOffsetValid = false;
 	m_iCachedMuzzleWeaponID = -1;
+	
+	// Clean up left hand wearables when right hand unequips weapon
+	if (IsRightHand())
+	{
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		if (pLeftHand)
+		{
+			pLeftHand->RemoveLeftHandWatch();
+			pLeftHand->RemoveLeftHandBall();
+		}
+	}
 	
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
 	
@@ -5444,3 +5675,241 @@ CON_COMMAND(tfvr_weapon_info, "Display info about the currently held weapon")
 		Msg("Right hand: NOT FOUND\n");
 	}
 }
+
+//=============================================================================
+// LEFT HAND WEARABLES - Spy watches, Scout balls, etc.
+//=============================================================================
+
+//-----------------------------------------------------------------------------
+// Purpose: Attach a spy watch wearable to the left hand
+//          Called from right hand's EquipWeapon when spy has cloak weapon
+//-----------------------------------------------------------------------------
+void C_TFVRHand::AttachWatchToLeftHand(C_BaseAnimating *pWatch)
+{
+	if (!IsLeftHand() || !pWatch)
+		return;
+	
+	// Remove any existing watch
+	RemoveLeftHandWatch();
+	
+	// Check if watch has weapon_bone_L for bone merging
+	int iWatchBone = pWatch->LookupBone("weapon_bone_L");
+	int iHandBone = LookupBone("weapon_bone_L");
+	
+	if (iWatchBone >= 0 && iHandBone >= 0)
+	{
+		// Watch has matching bone - use bone merge
+		pWatch->FollowEntity(this, true);
+		pWatch->AddEffects(EF_BONEMERGE);
+	}
+	else
+	{
+		// No matching bone - try to parent to attachment or use fallback
+		int iAttach = LookupAttachment("weapon_bone_L");
+		if (iAttach > 0)
+		{
+			pWatch->SetParent(this, iAttach);
+		}
+		else
+		{
+			// Fall back to bone merge
+			pWatch->FollowEntity(this, true);
+			pWatch->AddEffects(EF_BONEMERGE);
+		}
+	}
+	
+	pWatch->RemoveEffects(EF_NODRAW);
+	pWatch->UpdateVisibility();
+	
+	m_hLeftHandWatch = pWatch;
+	m_bOwnWatchModel = false;  // We don't own this - the weapon system does
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Remove the spy watch from the left hand
+//-----------------------------------------------------------------------------
+void C_TFVRHand::RemoveLeftHandWatch()
+{
+	if (m_hLeftHandWatch.Get())
+	{
+		if (m_bOwnWatchModel)
+		{
+			// We created this model - delete it
+			m_hLeftHandWatch->Release();
+		}
+		// else: The weapon system owns this wearable, don't delete
+		
+		m_hLeftHandWatch = NULL;
+		m_bOwnWatchModel = false;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Create our own watch model (when networked wearable isn't available)
+//-----------------------------------------------------------------------------
+void C_TFVRHand::CreateWatchModel(const char *pszWatchModel)
+{
+	if (!IsLeftHand() || !pszWatchModel || !pszWatchModel[0])
+		return;
+	
+	// Remove any existing watch
+	RemoveLeftHandWatch();
+	
+	// Create new watch entity - use C_BaseAnimating (NOT CTFViewModel which is hidden in VR)
+	C_BaseAnimating *pWatch = new C_BaseAnimating();
+	if (!pWatch)
+		return;
+	
+	if (!pWatch->InitializeAsClientEntity(pszWatchModel, RENDER_GROUP_OPAQUE_ENTITY))
+	{
+		pWatch->Release();
+		return;
+	}
+	
+	// Set owner for material proxies (cloak, etc.)
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (pOwner)
+	{
+		pWatch->m_nSkin = (pOwner->GetTeamNumber() == TF_TEAM_RED) ? 0 : 1;
+		pWatch->SetOwnerEntity(pOwner);
+	}
+	
+	// Use FollowEntity with bone merge
+	pWatch->FollowEntity(this, true);
+	pWatch->AddEffects(EF_BONEMERGE | EF_BONEMERGE_FASTCULL);
+	pWatch->SetMoveType(MOVETYPE_NONE);
+	pWatch->AddSolidFlags(FSOLID_NOT_SOLID);
+	
+	m_hLeftHandWatch = pWatch;
+	m_bOwnWatchModel = true;  // We own this, need to delete on cleanup
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Create and attach a ball model to the left hand (Sandman/Wrap Assassin)
+//-----------------------------------------------------------------------------
+void C_TFVRHand::AttachBallToLeftHand(const char *pszBallModel)
+{
+	if (!IsLeftHand() || !pszBallModel || !pszBallModel[0])
+		return;
+	
+	// Remove any existing ball
+	RemoveLeftHandBall();
+	
+	// Create the ball entity - use C_BaseAnimating (NOT CTFViewModel which is hidden in VR)
+	C_BaseAnimating *pBall = new C_BaseAnimating();
+	if (!pBall)
+		return;
+	
+	if (!pBall->InitializeAsClientEntity(pszBallModel, RENDER_GROUP_OPAQUE_ENTITY))
+	{
+		pBall->Release();
+		return;
+	}
+	
+	// Set skin based on team
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (pOwner)
+	{
+		pBall->m_nSkin = (pOwner->GetTeamNumber() == TF_TEAM_BLUE) ? 1 : 0;
+		pBall->SetOwnerEntity(pOwner);
+	}
+	
+	// Use FollowEntity with bone merge
+	pBall->FollowEntity(this, true);
+	pBall->AddEffects(EF_BONEMERGE | EF_BONEMERGE_FASTCULL);
+	pBall->SetMoveType(MOVETYPE_NONE);
+	pBall->AddSolidFlags(FSOLID_NOT_SOLID);
+	
+	m_hLeftHandBall = pBall;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Remove the ball model from the left hand
+//-----------------------------------------------------------------------------
+void C_TFVRHand::RemoveLeftHandBall()
+{
+	if (m_hLeftHandBall.Get())
+	{
+		m_hLeftHandBall->Release();
+		m_hLeftHandBall = NULL;
+	}
+	m_iLastBallAmmo = -1;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update left hand ball visibility and position based on ammo
+//          Called each frame for scout with Sandman/Wrap Assassin
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateLeftHandBall()
+{
+	if (!IsLeftHand())
+		return;
+	
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (!pOwner)
+		return;
+	
+	// Get the right hand to check what weapon is equipped
+	C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+	if (!pRightHand)
+		return;
+	
+	C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
+	if (!pWeapon)
+	{
+		if (m_hLeftHandBall.Get())
+			RemoveLeftHandBall();
+		return;
+	}
+	
+	// Check if weapon is Sandman or Wrap Assassin
+	int iWeaponID = pWeapon->GetWeaponID();
+	bool bIsBallWeapon = (iWeaponID == TF_WEAPON_BAT_WOOD || iWeaponID == TF_WEAPON_BAT_GIFTWRAP);
+	
+	if (!bIsBallWeapon)
+	{
+		if (m_hLeftHandBall.Get())
+			RemoveLeftHandBall();
+		return;
+	}
+	
+	// Check ammo (TF_AMMO_GRENADES1 is used for the ball)
+	int iBallAmmo = pOwner->GetAmmoCount(TF_AMMO_GRENADES1);
+	
+	// Only update if ammo changed
+	if (iBallAmmo == m_iLastBallAmmo)
+		return;
+	
+	m_iLastBallAmmo = iBallAmmo;
+	
+	if (iBallAmmo > 0)
+	{
+		// Has ball - make sure it's visible
+		if (!m_hLeftHandBall.Get())
+		{
+			// Create the ball from weapon's model
+			CTFBat_Wood *pBat = dynamic_cast<CTFBat_Wood*>(pWeapon);
+			if (pBat)
+			{
+				const char *pszBallModel = pBat->GetBallViewModelName();
+				if (pszBallModel && pszBallModel[0])
+				{
+					AttachBallToLeftHand(pszBallModel);
+				}
+			}
+		}
+		else
+		{
+			m_hLeftHandBall->RemoveEffects(EF_NODRAW);
+		}
+	}
+	else
+	{
+		// No ball - hide it
+		if (m_hLeftHandBall.Get())
+		{
+			m_hLeftHandBall->AddEffects(EF_NODRAW);
+		}
+	}
+}
+
