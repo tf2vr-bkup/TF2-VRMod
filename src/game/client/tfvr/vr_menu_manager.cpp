@@ -25,6 +25,7 @@
 #include "tf/vgui/character_info_panel.h"
 #include "vr_hand_hud_compositor.h"
 #include "vr_spring_hud.h"
+#include "vr_damage_indicator.h"
 
 #include <algorithm>
 
@@ -78,6 +79,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRStatusHUDManager(nullptr)
     , m_pVRWeaponHUDManager(nullptr)
     , m_pVRSpringHUDManager(nullptr)
+    , m_pVRDamageIndicatorManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -146,6 +148,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Damage Indicator Manager (head-relative: damage direction)
+    if (!m_pVRDamageIndicatorManager)
+    {
+        m_pVRDamageIndicatorManager = new CVRDamageIndicatorManager();
+        if (m_pVRDamageIndicatorManager->Initialize())
+        {
+            g_pVRDamageIndicatorManager = m_pVRDamageIndicatorManager;
+            DevMsg("VR Menu Manager: Damage Indicator Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRDamageIndicatorManager;
+            m_pVRDamageIndicatorManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Damage Indicator Manager\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -181,6 +200,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRSpringHUDManager;
         m_pVRSpringHUDManager = nullptr;
         g_pVRSpringHUDManager = nullptr;
+    }
+    
+    // Shutdown VR Damage Indicator Manager
+    if (m_pVRDamageIndicatorManager)
+    {
+        m_pVRDamageIndicatorManager->Shutdown();
+        delete m_pVRDamageIndicatorManager;
+        m_pVRDamageIndicatorManager = nullptr;
+        g_pVRDamageIndicatorManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -251,6 +279,12 @@ void CVRMenuManager::Update()
     if (m_pVRSpringHUDManager)
     {
         m_pVRSpringHUDManager->Update(gpGlobals->frametime);
+    }
+    
+    // Update VR Damage Indicator Manager (damage direction)
+    if (m_pVRDamageIndicatorManager)
+    {
+        m_pVRDamageIndicatorManager->Update(gpGlobals->frametime);
     }
     
     // Update VR Hands
