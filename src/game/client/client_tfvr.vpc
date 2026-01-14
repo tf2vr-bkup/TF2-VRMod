@@ -1003,6 +1003,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_spring_hud.cpp"
 			$File   "tfvr\vr_damage_indicator.h"
 			$File   "tfvr\vr_damage_indicator.cpp"
+			$File   "tfvr\vr_weapon_select.h"
+			$File   "tfvr\vr_weapon_select.cpp"
 			
 			$Folder "VR Weapons"
 			{

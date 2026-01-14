@@ -26,6 +26,7 @@
 #include "vr_hand_hud_compositor.h"
 #include "vr_spring_hud.h"
 #include "vr_damage_indicator.h"
+#include "vr_weapon_select.h"
 
 #include <algorithm>
 
@@ -80,6 +81,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRWeaponHUDManager(nullptr)
     , m_pVRSpringHUDManager(nullptr)
     , m_pVRDamageIndicatorManager(nullptr)
+    , m_pVRWeaponSelectManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -165,6 +167,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Weapon Select Manager (radial weapon selection)
+    if (!m_pVRWeaponSelectManager)
+    {
+        m_pVRWeaponSelectManager = new CVRWeaponSelectManager();
+        if (m_pVRWeaponSelectManager->Initialize())
+        {
+            g_pVRWeaponSelectManager = m_pVRWeaponSelectManager;
+            DevMsg("VR Menu Manager: Weapon Select Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRWeaponSelectManager;
+            m_pVRWeaponSelectManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Weapon Select Manager\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -209,6 +228,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRDamageIndicatorManager;
         m_pVRDamageIndicatorManager = nullptr;
         g_pVRDamageIndicatorManager = nullptr;
+    }
+    
+    // Shutdown VR Weapon Select Manager
+    if (m_pVRWeaponSelectManager)
+    {
+        m_pVRWeaponSelectManager->Shutdown();
+        delete m_pVRWeaponSelectManager;
+        m_pVRWeaponSelectManager = nullptr;
+        g_pVRWeaponSelectManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -285,6 +313,12 @@ void CVRMenuManager::Update()
     if (m_pVRDamageIndicatorManager)
     {
         m_pVRDamageIndicatorManager->Update(gpGlobals->frametime);
+    }
+    
+    // Update VR Weapon Select Manager (radial weapon selection)
+    if (m_pVRWeaponSelectManager)
+    {
+        m_pVRWeaponSelectManager->Update(gpGlobals->frametime);
     }
     
     // Update VR Hands

@@ -59,6 +59,7 @@
 #include "tfvr/vr_hand_hud_compositor.h"
 #include "tfvr/vr_spring_hud.h"
 #include "tfvr/vr_damage_indicator.h"
+#include "tfvr/vr_weapon_select.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2553,6 +2554,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRDamageIndicatorManager)
 				{
 					g_pVRDamageIndicatorManager->Render();
+				}
+				
+				// Render VR Weapon Select Menu (radial weapon selection)
+				if (g_pVRWeaponSelectManager)
+				{
+					g_pVRWeaponSelectManager->Render();
 				}
 				
 				// Render VR laser pointer on top of HUD/menus

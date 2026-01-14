@@ -158,6 +158,11 @@ bool COpenXRInputManager::CreateActions()
     if (leftGrip.handle == XR_NULL_HANDLE) return false;
     m_actions["left_grip"] = leftGrip;
 
+    // Add weapon select hold action (for radial weapon selection menu)
+    XrInputAction weaponSelectHold = CreateBooleanAction("weapon_select_hold", "Weapon Select Hold");
+    if (weaponSelectHold.handle == XR_NULL_HANDLE) return false;
+    m_actions["weapon_select_hold"] = weaponSelectHold;
+
     return true;
 }
 
@@ -378,6 +383,19 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Weapon select hold binding (right trackpad click for Index)
+    if (m_actions.find("weapon_select_hold") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_select_hold"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -626,6 +644,19 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Weapon select hold binding (right thumbstick click for Quest)
+    if (m_actions.find("weapon_select_hold") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_select_hold"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }

@@ -29,6 +29,7 @@
 
 #include "tfvr/openxr_manager.h"
 #include "tfvr/vr_menu_manager.h"
+#include "tfvr/vr_weapon_select.h"
 
 #ifdef SIXENSE
 #include "sixense/in_sixense.h"
@@ -1029,6 +1030,12 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
     if (bMenuVisible)
     {
         // Don't process turning when menu is open
+        return;
+    }
+    
+    // Check if weapon select is open - if so, disable turning to prevent accidental rotation
+    if (g_pVRWeaponSelectManager && g_pVRWeaponSelectManager->IsMenuOpen())
+    {
         return;
     }
 

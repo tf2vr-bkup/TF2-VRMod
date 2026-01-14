@@ -15,6 +15,7 @@ class CVRStatusHUDManager;
 class CVRWeaponHUDManager;
 class CVRSpringHUDManager;
 class CVRDamageIndicatorManager;
+class CVRWeaponSelectManager;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -136,6 +137,9 @@ private:
     
     // VR Damage Indicator (head-relative: damage direction with spring-arm behavior)
     CVRDamageIndicatorManager* m_pVRDamageIndicatorManager;
+    
+    // VR Weapon Select (radial weapon selection menu)
+    CVRWeaponSelectManager* m_pVRWeaponSelectManager;
 };
 
 // Global instance
