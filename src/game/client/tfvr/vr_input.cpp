@@ -32,6 +32,7 @@ ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.3", FCVAR_ARCHIVE, "Deadzone
 ConVar tfvr_snap_turn_delay( "tfvr_snap_turn_delay", "0.25", FCVAR_ARCHIVE, "Delay between snap turns in seconds" );
 
 // Weapon switching ConVars
+ConVar tfvr_weapon_switch_stick_enabled( "tfvr_weapon_switch_stick_enabled", "0", FCVAR_ARCHIVE, "Enable right stick up/down weapon switching (0=disabled, 1=enabled). Disabled by default since radial weapon select menu is available." );
 ConVar tfvr_weapon_switch_tilt_threshold( "tfvr_weapon_switch_tilt_threshold", "0.7", FCVAR_ARCHIVE, "Tilt threshold for weapon switching (0.0-1.0)" );
 ConVar tfvr_weapon_switch_debug( "tfvr_weapon_switch_debug", "0", FCVAR_ARCHIVE, "Show debug output for weapon switching actions" );
 
@@ -263,39 +264,43 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     bool bNextWeaponPressed = bNextWeaponActive && !bLastNextWeaponState;
     bool bPrevWeaponPressed = bPrevWeaponActive && !bLastPrevWeaponState;
     
-    // Check if weapon switching is allowed before executing commands
-    C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
-    bool bCanSwitchWeapons = pLocalPlayer && pLocalPlayer->IsAllowedToSwitchWeapons();
-    
-    if (bNextWeaponPressed && bCanSwitchWeapons)
+    // Check if stick weapon switching is enabled (disabled by default, use radial menu instead)
+    if (tfvr_weapon_switch_stick_enabled.GetBool())
     {
-        engine->ExecuteClientCmd("invnext");
-        if (tfvr_weapon_switch_debug.GetBool())
+        // Check if weapon switching is allowed before executing commands
+        C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+        bool bCanSwitchWeapons = pLocalPlayer && pLocalPlayer->IsAllowedToSwitchWeapons();
+        
+        if (bNextWeaponPressed && bCanSwitchWeapons)
         {
-            DevMsg("VR: Next weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
+            engine->ExecuteClientCmd("invnext");
+            if (tfvr_weapon_switch_debug.GetBool())
+            {
+                DevMsg("VR: Next weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
+            }
         }
-    }
-    else if (bNextWeaponPressed && !bCanSwitchWeapons)
-    {
-        if (tfvr_weapon_switch_debug.GetBool())
+        else if (bNextWeaponPressed && !bCanSwitchWeapons)
         {
-            DevMsg("VR: Next weapon blocked - weapon switching not allowed\n");
+            if (tfvr_weapon_switch_debug.GetBool())
+            {
+                DevMsg("VR: Next weapon blocked - weapon switching not allowed\n");
+            }
         }
-    }
-    
-    if (bPrevWeaponPressed && bCanSwitchWeapons)
-    {
-        engine->ExecuteClientCmd("invprev");
-        if (tfvr_weapon_switch_debug.GetBool())
+        
+        if (bPrevWeaponPressed && bCanSwitchWeapons)
         {
-            DevMsg("VR: Previous weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
+            engine->ExecuteClientCmd("invprev");
+            if (tfvr_weapon_switch_debug.GetBool())
+            {
+                DevMsg("VR: Previous weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
+            }
         }
-    }
-    else if (bPrevWeaponPressed && !bCanSwitchWeapons)
-    {
-        if (tfvr_weapon_switch_debug.GetBool())
+        else if (bPrevWeaponPressed && !bCanSwitchWeapons)
         {
-            DevMsg("VR: Previous weapon blocked - weapon switching not allowed\n");
+            if (tfvr_weapon_switch_debug.GetBool())
+            {
+                DevMsg("VR: Previous weapon blocked - weapon switching not allowed\n");
+            }
         }
     }
     
