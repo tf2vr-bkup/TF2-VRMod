@@ -4107,8 +4107,8 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 			
 		case TF_CLASS_SNIPER:
 			// Sniper: bw_idle, smg_idle, m_idle, pj_idle, idle, throw_idle, bm_idle, rifolver_idle
-			if (V_stristr(weaponClass, "sniperrifle")) return "bw_idle";
-			if (V_stristr(weaponClass, "compound_bow")) return "bw_idle"; // Huntsman
+			if (V_stristr(weaponClass, "sniperrifle")) return "idle"; // Sniper rifles use generic rifle idle
+			if (V_stristr(weaponClass, "compound_bow")) return "bw_idle"; // Huntsman uses bow idle
 			if (V_stristr(weaponClass, "smg")) return "smg_idle";
 			if (V_stristr(weaponClass, "club")) return "m_idle"; // Kukri, Bushwacka, Shahanshah, etc.
 			if (V_stristr(weaponClass, "sword")) return "m_idle";
@@ -4407,7 +4407,7 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			
 		case TF_CLASS_SNIPER:
 			// Sniper: sr_fire, smg_fire, m_swing_*, cs_fire, ss_fire, throw_fire
-			if (V_stristr(weaponClass, "sniperrifle")) return "sr_fire";
+			if (V_stristr(weaponClass, "sniperrifle")) return "fire"; // Sniper rifles use generic fire
 			if (V_stristr(weaponClass, "smg")) return "smg_fire";
 			if (V_stristr(weaponClass, "club")) return "m_swing_a";
 			if (V_stristr(weaponClass, "sword")) return "m_swing_a"; // Bushwacka
