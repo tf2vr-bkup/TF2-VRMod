@@ -171,6 +171,13 @@ void CVRAmmoOverlay::RenderAmmoQuad()
         return;
     }
     
+    // VR: Don't show ammo overlay if no weapon is equipped (e.g., during loser/stalemate)
+    C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+    if (!pRightHand || !pRightHand->GetHeldWeapon())
+    {
+        return;
+    }
+    
     // SIMPLE APPROACH: Just render the main panel directly with minimal changes
     // This avoids all the custom panel creation complexity
     

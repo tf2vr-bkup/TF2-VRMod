@@ -1422,6 +1422,11 @@ void CVRWeaponHUDManager::Render()
     if (!pPlayer || pPlayer->IsObserver() || !pPlayer->IsAlive())
         return;
     
+    // VR: Don't show weapon HUD if no weapon is equipped (e.g., during loser/stalemate)
+    C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+    if (!pRightHand || !pRightHand->GetHeldWeapon())
+        return;
+    
     VMatrix panelToWorld;
     if (!CalculateWeaponBoneTransform(panelToWorld))
         return;

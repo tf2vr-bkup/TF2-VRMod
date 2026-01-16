@@ -6286,14 +6286,47 @@ void C_TFPlayer::ClientThink()
 //-----------------------------------------------------------------------------
 void C_TFPlayer::UpdateVRWeapons()
 {
-	// Get the active weapon from TF2's weapon slot system
-	CTFWeaponBase *pActiveWeapon = GetActiveTFWeapon();
-	if ( !pActiveWeapon )
-		return;
-
 	// Get the dominant hand (right hand for now - could be made configurable)
 	C_TFVRHand *pDominantHand = GetLocalPlayerRightHand();
 	if ( !pDominantHand )
+		return;
+
+	// VR: Check if we should unequip weapons due to round loss or stalemate
+	// This matches vanilla TF2 behavior where players lose their weapons on failure
+	bool bShouldUnequipForRoundEnd = false;
+	if ( m_Shared.IsLoser() )
+	{
+		bShouldUnequipForRoundEnd = true;
+	}
+	else if ( TFGameRules() )
+	{
+		if ( TFGameRules()->InStalemate() )
+		{
+			bShouldUnequipForRoundEnd = true;
+		}
+		else if ( TFGameRules()->RoundHasBeenWon() )
+		{
+			int iWinningTeam = TFGameRules()->GetWinningTeam();
+			if ( GetTeamNumber() != iWinningTeam )
+			{
+				bShouldUnequipForRoundEnd = true;
+			}
+		}
+	}
+
+	// If player should not have weapons (loser/stalemate), unequip and don't re-equip
+	if ( bShouldUnequipForRoundEnd )
+	{
+		if ( pDominantHand->GetHeldWeapon() )
+		{
+			pDominantHand->UnequipWeapon();
+		}
+		return;
+	}
+
+	// Get the active weapon from TF2's weapon slot system
+	CTFWeaponBase *pActiveWeapon = GetActiveTFWeapon();
+	if ( !pActiveWeapon )
 		return;
 
 	// If the hand is already holding the active weapon, just update its transform
@@ -6304,7 +6337,6 @@ void C_TFPlayer::UpdateVRWeapons()
 	}
 
 	// Otherwise, equip the active weapon to the hand
-	DevMsg("TF2VR: Equipping weapon '%s' to right hand\n", pActiveWeapon->GetClassname());
 	pDominantHand->EquipWeapon( pActiveWeapon );
 }
 

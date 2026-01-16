@@ -5,6 +5,7 @@
 #include "tf/c_tf_player.h"
 #include "tf/tf_weaponbase.h"
 #include "tf/tf_shareddefs.h"
+#include "tf/tf_gamerules.h"
 #include "tf/tf_weapon_minigun.h"
 #include "tf/tf_weapon_grenadelauncher.h"
 #include "tf/tf_weapon_bat.h"
@@ -1903,31 +1904,68 @@ void C_TFVRHand::Update()
 	// Check if the player's active weapon has changed (for right hand only)
 	if (IsRightHand())
 	{
-		C_TFWeaponBase *pActiveWeapon = pOwner->GetActiveTFWeapon();
-		C_TFWeaponBase *pCurrentHeld = m_hHeldWeapon.Get();
+		// VR: Unequip weapons on round loss or stalemate (matches vanilla TF2 behavior)
+		bool bShouldUnequipForRoundEnd = false;
 		
-		// Detect weapon change: either different weapon, or current held weapon is now invalid
-		bool bNeedsWeaponUpdate = false;
-		
-		if (pActiveWeapon != pCurrentHeld)
+		if (pOwner->m_Shared.IsLoser())
 		{
-			bNeedsWeaponUpdate = true;
+			bShouldUnequipForRoundEnd = true;
 		}
-		else if (pCurrentHeld && !pCurrentHeld->GetOwner())
+		else if (TFGameRules())
 		{
-			// Held weapon is orphaned (regenerated/respawned), need to refresh
-			bNeedsWeaponUpdate = true;
-		}
-		
-		if (bNeedsWeaponUpdate)
-		{
-			if (pActiveWeapon)
+			// Stalemate - everyone loses their weapons
+			if (TFGameRules()->InStalemate())
 			{
-				EquipWeapon(pActiveWeapon);
+				bShouldUnequipForRoundEnd = true;
 			}
-			else
+			// Backup check: round has been won and we're not on the winning team
+			else if (TFGameRules()->RoundHasBeenWon())
+			{
+				int iWinningTeam = TFGameRules()->GetWinningTeam();
+				if (pOwner->GetTeamNumber() != iWinningTeam)
+				{
+					bShouldUnequipForRoundEnd = true;
+				}
+			}
+		}
+		
+		// If we should unequip due to round end, do so and skip normal weapon logic
+		if (bShouldUnequipForRoundEnd)
+		{
+			if (m_hHeldWeapon.Get() || m_hRenderWeapon.Get())
 			{
 				UnequipWeapon();
+			}
+		}
+		else
+		{
+			// Normal weapon update logic
+			C_TFWeaponBase *pActiveWeapon = pOwner->GetActiveTFWeapon();
+			C_TFWeaponBase *pCurrentHeld = m_hHeldWeapon.Get();
+			
+			// Detect weapon change: either different weapon, or current held weapon is now invalid
+			bool bNeedsWeaponUpdate = false;
+			
+			if (pActiveWeapon != pCurrentHeld)
+			{
+				bNeedsWeaponUpdate = true;
+			}
+			else if (pCurrentHeld && !pCurrentHeld->GetOwner())
+			{
+				// Held weapon is orphaned (regenerated/respawned), need to refresh
+				bNeedsWeaponUpdate = true;
+			}
+			
+			if (bNeedsWeaponUpdate)
+			{
+				if (pActiveWeapon)
+				{
+					EquipWeapon(pActiveWeapon);
+				}
+				else
+				{
+					UnequipWeapon();
+				}
 			}
 		}
 	}
@@ -4752,12 +4790,6 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Use world model for VR (c_models in TF2 are the world models)
 	const char *worldModel = pWeapon->GetWorldModel();
-	const char *viewModel = pWeapon->GetViewModel();
-	
-	DevMsg("VR Hand: Equipping weapon '%s'\n", pWeapon->GetClassname());
-	DevMsg("  ViewModel: %s\n", viewModel ? viewModel : "NULL");
-	DevMsg("  WorldModel: %s\n", worldModel ? worldModel : "NULL");
-	DevMsg("  Using world model\n");
 	
 	if (!worldModel || !worldModel[0])
 		return;
