@@ -1005,6 +1005,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_damage_indicator.cpp"
 			$File   "tfvr\vr_weapon_select.h"
 			$File   "tfvr\vr_weapon_select.cpp"
+			$File   "tfvr\vr_popup_hud.h"
+			$File   "tfvr\vr_popup_hud.cpp"
 			
 			$Folder "VR Weapons"
 			{

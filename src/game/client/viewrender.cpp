@@ -60,6 +60,7 @@
 #include "tfvr/vr_spring_hud.h"
 #include "tfvr/vr_damage_indicator.h"
 #include "tfvr/vr_weapon_select.h"
+#include "tfvr/vr_popup_hud.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2554,6 +2555,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRDamageIndicatorManager)
 				{
 					g_pVRDamageIndicatorManager->Render();
+				}
+				
+				// Render VR Popup HUD (head-relative: win/loss panels, scoreboard)
+				if (g_pVRPopupHUDManager)
+				{
+					g_pVRPopupHUDManager->Render();
 				}
 				
 				// Render VR Weapon Select Menu (radial weapon selection)

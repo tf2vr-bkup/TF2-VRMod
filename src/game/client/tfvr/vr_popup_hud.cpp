@@ -1,0 +1,710 @@
+//=============================================================================
+// TF2VR - VR Popup HUD Manager
+// Renders win/loss panels and scoreboard in VR with spring-follow positioning
+//=============================================================================
+
+#include "cbase.h"
+#include "vr_popup_hud.h"
+#include "c_tf_player.h"
+#include "hudelement.h"
+#include "hud.h"
+#include "view.h"
+#include "vgui/ISurface.h"
+#include "vgui/IVGui.h"
+#include "VGuiMatSurface/IMatSystemSurface.h"
+#include "iclientmode.h"
+#include "ienginevgui.h"
+#include "tier0/vprof.h"
+#include "client_virtualreality.h"
+#include "openxr_manager.h"
+#include "engine/ivdebugoverlay.h"
+
+// memdbgon must be the last include file in a .cpp file!!!
+#include "tier0/memdbgon.h"
+
+// Global instance
+CVRPopupHUDManager* g_pVRPopupHUDManager = nullptr;
+
+//=============================================================================
+// ConVars
+//=============================================================================
+
+ConVar tfvr_popup_hud_enabled("tfvr_popup_hud_enabled", "1", FCVAR_ARCHIVE, 
+    "Enable VR popup HUD for win/loss screens and scoreboard");
+ConVar tfvr_popup_hud_distance("tfvr_popup_hud_distance", "120", FCVAR_ARCHIVE, 
+    "Distance of popup HUD from head in units");
+ConVar tfvr_popup_hud_scale("tfvr_popup_hud_scale", "80", FCVAR_ARCHIVE, 
+    "Scale of the popup HUD panel in world units");
+ConVar tfvr_popup_hud_vertical_offset("tfvr_popup_hud_vertical_offset", "0", FCVAR_ARCHIVE, 
+    "Vertical offset of popup HUD (positive = up)");
+
+ConVar tfvr_popup_hud_follow_speed("tfvr_popup_hud_follow_speed", "4.0", FCVAR_ARCHIVE, 
+    "How fast the popup HUD follows head rotation (higher = faster)");
+ConVar tfvr_popup_hud_deadzone("tfvr_popup_hud_deadzone", "15.0", FCVAR_ARCHIVE, 
+    "Angle deadzone where popup HUD stays locked to view (degrees)");
+ConVar tfvr_popup_hud_max_lag("tfvr_popup_hud_max_lag", "45", FCVAR_ARCHIVE, 
+    "Maximum angle the popup HUD can lag behind view before clamping");
+
+ConVar tfvr_popup_hud_debug("tfvr_popup_hud_debug", "0", FCVAR_ARCHIVE, 
+    "Show debug info for popup HUD");
+
+ConVar tfvr_popup_hud_offset_x("tfvr_popup_hud_offset_x", "0", FCVAR_ARCHIVE, 
+    "Horizontal offset adjustment for popup HUD (positive = right)");
+ConVar tfvr_popup_hud_offset_y("tfvr_popup_hud_offset_y", "0", FCVAR_ARCHIVE, 
+    "Vertical offset adjustment for popup HUD (positive = up)");
+
+// Per-panel offset adjustments (added to global offset)
+ConVar tfvr_popup_hud_scoreboard_offset_x("tfvr_popup_hud_scoreboard_offset_x", "0", FCVAR_ARCHIVE, 
+    "Additional horizontal offset for scoreboard (positive = right)");
+ConVar tfvr_popup_hud_scoreboard_offset_y("tfvr_popup_hud_scoreboard_offset_y", "0", FCVAR_ARCHIVE, 
+    "Additional vertical offset for scoreboard (positive = up)");
+ConVar tfvr_popup_hud_winpanel_offset_x("tfvr_popup_hud_winpanel_offset_x", "0", FCVAR_ARCHIVE, 
+    "Additional horizontal offset for win panel (positive = right)");
+ConVar tfvr_popup_hud_winpanel_offset_y("tfvr_popup_hud_winpanel_offset_y", "0", FCVAR_ARCHIVE, 
+    "Additional vertical offset for win panel (positive = up)");
+ConVar tfvr_popup_hud_matchstatus_offset_x("tfvr_popup_hud_matchstatus_offset_x", "0", FCVAR_ARCHIVE, 
+    "Additional horizontal offset for match status (positive = right)");
+ConVar tfvr_popup_hud_matchstatus_offset_y("tfvr_popup_hud_matchstatus_offset_y", "-10", FCVAR_ARCHIVE, 
+    "Additional vertical offset for match status (positive = up)");
+ConVar tfvr_popup_hud_matchstatus_scale("tfvr_popup_hud_matchstatus_scale", "0.25", FCVAR_ARCHIVE, 
+    "Scale multiplier for match status panel (smaller = shows more of the panel)");
+ConVar tfvr_popup_hud_matchstatus_crop_bottom("tfvr_popup_hud_matchstatus_crop_bottom", "0.75", FCVAR_ARCHIVE, 
+    "Fraction of the bottom to crop off match status (0.75 = show top 25%)");
+ConVar tfvr_popup_hud_matchstatus_content_y("tfvr_popup_hud_matchstatus_content_y", "0", FCVAR_ARCHIVE, 
+    "Y content offset for match status (positive = shift content down in capture area)");
+
+//=============================================================================
+// CVRPanelWrapper Implementation
+//=============================================================================
+
+DECLARE_BUILD_FACTORY(CVRPanelWrapper);
+
+CVRPanelWrapper::CVRPanelWrapper(vgui::Panel* parent, const char* name)
+    : BaseClass(parent, name)
+{
+    m_pTargetPanel = nullptr;
+    m_nContentOffsetX = 0;
+    m_nContentOffsetY = 0;
+    SetPaintBackgroundEnabled(false);
+}
+
+void CVRPanelWrapper::Paint()
+{
+    if (!m_pTargetPanel)
+        return;
+    
+    // Get the target panel's screen position
+    int panelScreenX = 0, panelScreenY = 0;
+    m_pTargetPanel->LocalToScreen(panelScreenX, panelScreenY);
+    
+    // Calculate offset to move panel to content offset position in our render target
+    int targetX = m_nContentOffsetX;
+    int targetY = m_nContentOffsetY;
+    int offsetX = targetX - panelScreenX;
+    int offsetY = targetY - panelScreenY;
+    
+    // Temporarily make the target panel visible
+    bool bWasVisible = m_pTargetPanel->IsVisible();
+    m_pTargetPanel->SetVisible(true);
+    
+    // Disable clipping completely
+    g_pMatSystemSurface->DisableClipping(true);
+    
+    // Also set a very large clip rect to override any internal clipping
+    g_pMatSystemSurface->SetClippingRect(-4096, -4096, 4096, 4096);
+    
+    // Apply the offset and paint the target panel
+    vgui::surface()->ForceScreenPosOffset(true, offsetX, offsetY);
+    vgui::surface()->PaintTraverse(m_pTargetPanel->GetVPanel());
+    vgui::surface()->ForceScreenPosOffset(false, 0, 0);
+    
+    // Restore clipping
+    g_pMatSystemSurface->DisableClipping(false);
+    
+    // Restore visibility
+    m_pTargetPanel->SetVisible(bWasVisible);
+}
+
+//=============================================================================
+// CVRPopupHUDManager Implementation
+//=============================================================================
+
+CVRPopupHUDManager::CVRPopupHUDManager()
+{
+    m_bInitialized = false;
+    m_bEnabled = true;
+    
+    m_pScoreboardPanel = nullptr;
+    m_pWinPanel = nullptr;
+    m_pArenaWinPanel = nullptr;
+    m_pMatchSummaryPanel = nullptr;
+    m_pMatchStatusWrapper = nullptr;
+    m_pActivePanel = nullptr;
+    
+    m_flCurrentYaw = 0.0f;
+    m_flTargetYaw = 0.0f;
+    
+    m_flDistance = 120.0f;
+    m_flFollowSpeed = 4.0f;
+    m_flDeadzone = 15.0f;
+    m_flMaxLagAngle = 45.0f;
+    m_flScale = 80.0f;
+    m_flVerticalOffset = 0.0f;
+}
+
+CVRPopupHUDManager::~CVRPopupHUDManager()
+{
+    Shutdown();
+}
+
+bool CVRPopupHUDManager::Initialize()
+{
+    if (m_bInitialized)
+        return true;
+    
+    // Try to acquire panels (may not be available yet)
+    AcquirePanels();
+    
+    // Create wrapper panel for match status (hidden, used only for rendering)
+    if (!m_pMatchStatusWrapper)
+    {
+        // Parent to the viewport so it gets proper context
+        vgui::Panel* pViewport = g_pClientMode ? g_pClientMode->GetViewport() : nullptr;
+        m_pMatchStatusWrapper = new CVRPanelWrapper(pViewport, "VRMatchStatusWrapper");
+        m_pMatchStatusWrapper->SetVisible(false);
+        m_pMatchStatusWrapper->SetSize(1280, 720);  // Full screen size for capture
+    }
+    
+    // Initialize yaw to current view
+    m_flCurrentYaw = GetCurrentViewYaw();
+    m_flTargetYaw = m_flCurrentYaw;
+    
+    m_bInitialized = true;
+    DevMsg("VR Popup HUD Manager: Initialized\n");
+    
+    return true;
+}
+
+void CVRPopupHUDManager::Shutdown()
+{
+    if (m_pMatchStatusWrapper)
+    {
+        m_pMatchStatusWrapper->MarkForDeletion();
+        m_pMatchStatusWrapper = nullptr;
+    }
+    
+    m_pScoreboardPanel = nullptr;
+    m_pWinPanel = nullptr;
+    m_pArenaWinPanel = nullptr;
+    m_pMatchSummaryPanel = nullptr;
+    m_pActivePanel = nullptr;
+    m_bInitialized = false;
+}
+
+void CVRPopupHUDManager::AcquirePanels()
+{
+    static bool bFirstAcquire = true;
+    
+    // Get the viewport panel first
+    vgui::Panel* pViewport = g_pClientMode ? g_pClientMode->GetViewport() : nullptr;
+    
+    // Try to find scoreboard - it's a child of the viewport named "scores" or similar
+    if (!m_pScoreboardPanel && pViewport)
+    {
+        // Try finding by the registered panel name first
+        m_pScoreboardPanel = pViewport->FindChildByName("scores", true);
+        
+        // If not found, try alternate names
+        if (!m_pScoreboardPanel)
+        {
+            m_pScoreboardPanel = pViewport->FindChildByName("scoreboard", true);
+        }
+        if (!m_pScoreboardPanel)
+        {
+            m_pScoreboardPanel = pViewport->FindChildByName("CTFClientScoreBoardDialog", true);
+        }
+        
+        if (m_pScoreboardPanel)
+        {
+            DevMsg("VR Popup HUD: Found scoreboard panel '%s'\n", m_pScoreboardPanel->GetName());
+        }
+    }
+    
+    // Try to find win panel via HUD element (CTFWinPanel)
+    if (!m_pWinPanel)
+    {
+        CHudElement* pElement = gHUD.FindElement("CTFWinPanel");
+        if (pElement)
+        {
+            m_pWinPanel = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pWinPanel)
+            {
+                DevMsg("VR Popup HUD: Found win panel '%s'\n", m_pWinPanel->GetName());
+            }
+        }
+    }
+    
+    // Arena win panel is a child of the viewport
+    if (!m_pArenaWinPanel && pViewport)
+    {
+        m_pArenaWinPanel = pViewport->FindChildByName("ArenaWinPanel", true);
+        if (m_pArenaWinPanel)
+        {
+            DevMsg("VR Popup HUD: Found arena win panel\n");
+        }
+    }
+    
+    // Match summary panel (CTFHudMatchStatus) - this is a HUD element
+    if (!m_pMatchSummaryPanel)
+    {
+        CHudElement* pElement = gHUD.FindElement("CTFHudMatchStatus");
+        if (pElement)
+        {
+            m_pMatchSummaryPanel = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pMatchSummaryPanel)
+            {
+                DevMsg("VR Popup HUD: Found match summary panel\n");
+            }
+        }
+    }
+    
+    if (bFirstAcquire && (m_pScoreboardPanel || m_pWinPanel))
+    {
+        DevMsg("VR Popup HUD: Acquired panels - Scoreboard=%p, WinPanel=%p, ArenaWin=%p, MatchSummary=%p\n",
+            m_pScoreboardPanel, m_pWinPanel, m_pArenaWinPanel, m_pMatchSummaryPanel);
+        bFirstAcquire = false;
+    }
+    
+    if (tfvr_popup_hud_debug.GetBool())
+    {
+        static float lastDebugTime = 0;
+        if (gpGlobals->curtime - lastDebugTime > 5.0f)
+        {
+            DevMsg("VR Popup HUD Panels: Scoreboard=%p (vis=%d), WinPanel=%p (vis=%d)\n",
+                m_pScoreboardPanel, m_pScoreboardPanel ? m_pScoreboardPanel->IsVisible() : 0,
+                m_pWinPanel, m_pWinPanel ? m_pWinPanel->IsVisible() : 0);
+            lastDebugTime = gpGlobals->curtime;
+        }
+    }
+}
+
+vgui::Panel* CVRPopupHUDManager::DetermineActivePanel()
+{
+    // Priority order: Scoreboard > Win panels > Match summary
+    // This matches vanilla behavior where scoreboard overrides win panel
+    
+    // Check scoreboard first (highest priority - TAB overrides everything)
+    if (m_pScoreboardPanel && m_pScoreboardPanel->IsVisible())
+    {
+        return m_pScoreboardPanel;
+    }
+    
+    // Check win panel
+    if (m_pWinPanel && m_pWinPanel->IsVisible())
+    {
+        return m_pWinPanel;
+    }
+    
+    // Check arena win panel
+    if (m_pArenaWinPanel && m_pArenaWinPanel->IsVisible())
+    {
+        return m_pArenaWinPanel;
+    }
+    
+    // Check match summary
+    if (m_pMatchSummaryPanel && m_pMatchSummaryPanel->IsVisible())
+    {
+        // Only use match summary if it's actually showing the summary (not just existing)
+        // The match summary panel has specific visibility states
+        return m_pMatchSummaryPanel;
+    }
+    
+    return nullptr;
+}
+
+float CVRPopupHUDManager::GetCurrentViewYaw() const
+{
+    // Get the player's current view yaw from the VR headset
+    if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
+    {
+        VMatrix mideyePose = g_pOpenXRManager->GetMideyePose();
+        QAngle angles;
+        MatrixAngles(mideyePose.As3x4(), angles);
+        
+        // Add world rotation from VR system
+        VMatrix worldFromMideye = g_ClientVirtualReality.GetWorldFromMidEye();
+        QAngle worldAngles;
+        MatrixAngles(worldFromMideye.As3x4(), worldAngles);
+        
+        return worldAngles[YAW];
+    }
+    
+    // Fallback to engine view
+    C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+    if (pPlayer)
+    {
+        return pPlayer->EyeAngles()[YAW];
+    }
+    
+    return 0.0f;
+}
+
+void CVRPopupHUDManager::UpdateSpringYaw(float deltaTime)
+{
+    m_flTargetYaw = GetCurrentViewYaw();
+    
+    // Calculate angular difference (handle wrap-around)
+    float diff = AngleDiff(m_flTargetYaw, m_flCurrentYaw);
+    
+    // Apply deadzone - if within deadzone, don't move
+    if (fabsf(diff) <= m_flDeadzone)
+    {
+        // Stay put
+        return;
+    }
+    
+    // Outside deadzone - move toward target
+    float adjustedDiff = diff;
+    if (diff > 0)
+        adjustedDiff = diff - m_flDeadzone;
+    else
+        adjustedDiff = diff + m_flDeadzone;
+    
+    // Smooth follow
+    float moveAmount = adjustedDiff * m_flFollowSpeed * deltaTime;
+    
+    // Clamp to max lag angle
+    float newYaw = m_flCurrentYaw + moveAmount;
+    float newDiff = AngleDiff(m_flTargetYaw, newYaw);
+    
+    if (fabsf(newDiff) > m_flMaxLagAngle)
+    {
+        // Clamp to max lag
+        if (newDiff > 0)
+            newYaw = m_flTargetYaw - m_flMaxLagAngle;
+        else
+            newYaw = m_flTargetYaw + m_flMaxLagAngle;
+    }
+    
+    m_flCurrentYaw = AngleNormalize(newYaw);
+}
+
+void CVRPopupHUDManager::Update(float deltaTime)
+{
+    if (!m_bInitialized)
+        return;
+    
+    // Update settings from ConVars
+    m_bEnabled = tfvr_popup_hud_enabled.GetBool();
+    m_flDistance = tfvr_popup_hud_distance.GetFloat();
+    m_flScale = tfvr_popup_hud_scale.GetFloat();
+    m_flVerticalOffset = tfvr_popup_hud_vertical_offset.GetFloat();
+    m_flFollowSpeed = tfvr_popup_hud_follow_speed.GetFloat();
+    m_flDeadzone = tfvr_popup_hud_deadzone.GetFloat();
+    m_flMaxLagAngle = tfvr_popup_hud_max_lag.GetFloat();
+    
+    // Try to acquire panels if we don't have them yet
+    if (!m_pScoreboardPanel && !m_pWinPanel)
+    {
+        AcquirePanels();
+    }
+    
+    // Update spring position
+    UpdateSpringYaw(deltaTime);
+    
+    // Determine which panel to show
+    m_pActivePanel = DetermineActivePanel();
+    
+    if (tfvr_popup_hud_debug.GetBool() && m_pActivePanel)
+    {
+        static float lastDebugTime = 0;
+        if (gpGlobals->curtime - lastDebugTime > 1.0f)
+        {
+            DevMsg("VR Popup HUD: Active panel visible, yaw=%.1f\n", m_flCurrentYaw);
+            lastDebugTime = gpGlobals->curtime;
+        }
+    }
+}
+
+bool CVRPopupHUDManager::CalculateSpringTransform(VMatrix& transform)
+{
+    C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+    if (!pPlayer)
+        return false;
+    
+    // Get head position
+    Vector headPos;
+    if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
+    {
+        VMatrix worldFromMideye = g_ClientVirtualReality.GetWorldFromMidEye();
+        headPos = worldFromMideye.GetTranslation();
+    }
+    else
+    {
+        headPos = pPlayer->EyePosition();
+    }
+    
+    // Calculate panel position using spring yaw
+    Vector forward, right, up;
+    AngleVectors(QAngle(0, m_flCurrentYaw, 0), &forward, &right, &up);
+    
+    // Position panel in front of player at spring yaw
+    Vector panelPos = headPos + forward * m_flDistance;
+    panelPos.z += m_flVerticalOffset;
+    
+    // Panel faces back toward the player (opposite of forward)
+    Vector panelForward = -forward;
+    Vector panelRight = right;
+    Vector panelUp = Vector(0, 0, 1); // Keep panel upright
+    
+    // Recalculate right to be perpendicular
+    panelRight = CrossProduct(panelUp, panelForward);
+    panelRight.NormalizeInPlace();
+    
+    // Build transform matrix
+    transform.Identity();
+    
+    // The panel is drawn from top-left corner, so we need to offset to center it
+    // We'll handle this in the render function
+    
+    transform[0][0] = panelRight.x;  transform[0][1] = panelUp.x;  transform[0][2] = panelForward.x;
+    transform[1][0] = panelRight.y;  transform[1][1] = panelUp.y;  transform[1][2] = panelForward.y;
+    transform[2][0] = panelRight.z;  transform[2][1] = panelUp.z;  transform[2][2] = panelForward.z;
+    transform.SetTranslation(panelPos);
+    
+    return true;
+}
+
+void CVRPopupHUDManager::Render()
+{
+    VPROF("VRPopupHUDManager_Render");
+    
+    if (!m_bInitialized || !m_bEnabled)
+        return;
+    
+    // Check if we have an active panel to render
+    if (!m_pActivePanel || !m_pActivePanel->IsVisible())
+        return;
+    
+    // Safety check
+    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    if (!pPlayer)
+        return;
+    
+    // Don't render if player is dead (unless it's the scoreboard)
+    if (!pPlayer->IsAlive() && m_pActivePanel != m_pScoreboardPanel)
+        return;
+    
+    // Don't render if main menu/game UI is open
+    if (enginevgui && enginevgui->IsGameUIVisible())
+        return;
+    
+    // Don't render if class menu is open
+    ConVar* pClassMenuOpen = g_pCVar->FindVar("_cl_classmenuopen");
+    if (pClassMenuOpen && pClassMenuOpen->GetBool())
+        return;
+    
+    // Calculate spring transform
+    VMatrix panelToWorld;
+    if (!CalculateSpringTransform(panelToWorld))
+        return;
+    
+    // Get the panel's actual size and screen position
+    int panelWidth, panelHeight;
+    m_pActivePanel->GetSize(panelWidth, panelHeight);
+    
+    int origX, origY;
+    m_pActivePanel->GetPos(origX, origY);
+    
+    // Get screen size to calculate relative position
+    int screenWidth, screenHeight;
+    vgui::surface()->GetScreenSize(screenWidth, screenHeight);
+    
+    // Debug: Log panel info
+    if (tfvr_popup_hud_debug.GetBool())
+    {
+        static vgui::Panel* lastDebugPanel = nullptr;
+        if (lastDebugPanel != m_pActivePanel)
+        {
+            // Calculate panel center vs screen center for debug
+            float panelCenterX = origX + panelWidth * 0.5f;
+            float panelCenterY = origY + panelHeight * 0.5f;
+            float screenCenterX = screenWidth * 0.5f;
+            float screenCenterY = screenHeight * 0.5f;
+            
+            DevMsg("VR Popup HUD: Rendering '%s' - Size: %dx%d, Pos: %d,%d, Screen: %dx%d\n",
+                m_pActivePanel->GetName(), panelWidth, panelHeight, origX, origY, screenWidth, screenHeight);
+            DevMsg("  Panel center: (%.0f, %.0f), Screen center: (%.0f, %.0f), Delta: (%.0f, %.0f)\n",
+                panelCenterX, panelCenterY, screenCenterX, screenCenterY,
+                panelCenterX - screenCenterX, panelCenterY - screenCenterY);
+            lastDebugPanel = m_pActivePanel;
+        }
+    }
+    
+    // Sanity check dimensions
+    if (panelWidth <= 0 || panelWidth > 4096) panelWidth = 1024;
+    if (panelHeight <= 0 || panelHeight > 4096) panelHeight = 768;
+    
+    // Capture dimensions - use panel size
+    int captureWidth = panelWidth;
+    int captureHeight = panelHeight;
+    
+    // Calculate world size maintaining the aspect ratio
+    float aspectRatio = (float)captureWidth / (float)captureHeight;
+    float worldHeight = m_flScale;
+    float worldWidth = worldHeight * aspectRatio;
+    
+    // For match status, apply special scaling to show just the top portion
+    bool bMatchStatusSpecialHandling = (m_pActivePanel == m_pMatchSummaryPanel);
+    float matchStatusScale = 1.0f;
+    float cropBottom = 0.0f;
+    
+    if (bMatchStatusSpecialHandling)
+    {
+        matchStatusScale = tfvr_popup_hud_matchstatus_scale.GetFloat();
+        cropBottom = tfvr_popup_hud_matchstatus_crop_bottom.GetFloat();
+        
+        // Apply scale to world dimensions
+        worldWidth *= matchStatusScale;
+        worldHeight *= matchStatusScale;
+    }
+    
+    // Get basis vectors from transform
+    Vector panelPos = panelToWorld.GetTranslation();
+    Vector panelRight(panelToWorld[0][0], panelToWorld[1][0], panelToWorld[2][0]);
+    Vector panelUp(panelToWorld[0][1], panelToWorld[1][1], panelToWorld[2][1]);
+    
+    // Calculate how far the panel center is from screen center
+    // For match status, we relocate to (0,0), so the center is just half the capture size
+    float panelCenterX, panelCenterY;
+    if (bMatchStatusSpecialHandling)
+    {
+        // We'll relocate the panel to (0,0), so center is based on capture dimensions
+        panelCenterX = captureWidth * 0.5f;
+        panelCenterY = captureHeight * 0.5f;
+    }
+    else
+    {
+        panelCenterX = origX + captureWidth * 0.5f;
+        panelCenterY = origY + captureHeight * 0.5f;
+    }
+    
+    // Screen center
+    float screenCenterX = screenWidth * 0.5f;
+    float screenCenterY = screenHeight * 0.5f;
+    
+    // Offset from screen center (positive = panel is right/below center)
+    float deltaX = panelCenterX - screenCenterX;
+    float deltaY = panelCenterY - screenCenterY;
+    
+    // Convert to normalized (-0.5 to 0.5 range relative to screen)
+    float normalizedDeltaX = deltaX / (float)screenWidth;
+    float normalizedDeltaY = deltaY / (float)screenHeight;
+    
+    // Scale by world size (using screen aspect for proper mapping)
+    float screenAspect = (float)screenWidth / (float)screenHeight;
+    float worldScreenWidth = worldHeight * screenAspect;
+    
+    // World offset to shift the panel to center
+    float worldOffsetX = normalizedDeltaX * worldScreenWidth;
+    float worldOffsetY = normalizedDeltaY * worldHeight;
+    
+    // Apply user configurable offset (global + per-panel)
+    float userOffsetX = tfvr_popup_hud_offset_x.GetFloat();
+    float userOffsetY = tfvr_popup_hud_offset_y.GetFloat();
+    
+    // Add per-panel offsets
+    if (m_pActivePanel == m_pScoreboardPanel)
+    {
+        userOffsetX += tfvr_popup_hud_scoreboard_offset_x.GetFloat();
+        userOffsetY += tfvr_popup_hud_scoreboard_offset_y.GetFloat();
+    }
+    else if (m_pActivePanel == m_pWinPanel || m_pActivePanel == m_pArenaWinPanel)
+    {
+        userOffsetX += tfvr_popup_hud_winpanel_offset_x.GetFloat();
+        userOffsetY += tfvr_popup_hud_winpanel_offset_y.GetFloat();
+    }
+    else if (m_pActivePanel == m_pMatchSummaryPanel)
+    {
+        userOffsetX += tfvr_popup_hud_matchstatus_offset_x.GetFloat();
+        userOffsetY += tfvr_popup_hud_matchstatus_offset_y.GetFloat();
+    }
+    
+    // Center the panel - DrawPanelIn3DSpace draws from top-left, so offset to center
+    // Then shift by the calculated offset to compensate for panel's screen position
+    Vector topLeft = panelPos 
+        - panelRight * (worldWidth * 0.5f)   // Center horizontally (panel's own width)
+        + panelUp * (worldHeight * 0.5f)     // Center vertically (panel's own height)
+        - panelRight * worldOffsetX          // Shift to compensate for panel being off-center
+        + panelUp * worldOffsetY             // Shift to compensate for panel being off-center
+        + panelRight * userOffsetX           // User adjustment
+        + panelUp * userOffsetY;             // User adjustment
+    
+    // For match status, shift up to show only the top portion (crop the bottom)
+    if (bMatchStatusSpecialHandling && cropBottom > 0.0f)
+    {
+        // Shift the panel up by (cropBottom * worldHeight) to hide the bottom portion
+        // This effectively shows only the top (1 - cropBottom) of the panel
+        topLeft += panelUp * (cropBottom * worldHeight);
+    }
+    
+    panelToWorld.SetTranslation(topLeft);
+    
+    // Disable clipping to prevent content from being cut off
+    g_pMatSystemSurface->DisableClipping(true);
+    
+    // For match status, use the wrapper panel which applies ForceScreenPosOffset during paint
+    // This is the same technique the hand HUD compositor uses to avoid clipping
+    if (bMatchStatusSpecialHandling && m_pMatchStatusWrapper)
+    {
+        // Set the target panel for the wrapper to paint
+        m_pMatchStatusWrapper->SetTargetPanel(m_pActivePanel);
+        m_pMatchStatusWrapper->SetSize(captureWidth, captureHeight);
+        
+        // Apply content offset (to nudge content into the visible capture area)
+        int contentOffsetY = tfvr_popup_hud_matchstatus_content_y.GetInt();
+        m_pMatchStatusWrapper->SetContentOffset(0, contentOffsetY);
+        m_pMatchStatusWrapper->SetVisible(true);
+        
+        // Render the wrapper panel (which will paint the match status at 0,0)
+        g_pMatSystemSurface->DrawPanelIn3DSpace(
+            m_pMatchStatusWrapper->GetVPanel(),
+            panelToWorld,
+            captureWidth,
+            captureHeight,
+            worldWidth,
+            worldHeight
+        );
+        
+        m_pMatchStatusWrapper->SetVisible(false);
+    }
+    else
+    {
+        // Normal rendering for other panels
+        g_pMatSystemSurface->DrawPanelIn3DSpace(
+            m_pActivePanel->GetVPanel(),
+            panelToWorld,
+            captureWidth,
+            captureHeight,
+            worldWidth,
+            worldHeight
+        );
+    }
+    
+    // Restore clipping
+    g_pMatSystemSurface->DisableClipping(false);
+    
+    if (tfvr_popup_hud_debug.GetBool())
+    {
+        // Draw debug visualization at center
+        debugoverlay->AddBoxOverlay(panelPos, Vector(-5, -5, -5), Vector(5, 5, 5),
+            QAngle(0, m_flCurrentYaw, 0), 0, 255, 255, 100, 0.0f);
+    }
+}
+
+void CVRPopupHUDManager::ResetState()
+{
+    m_flCurrentYaw = GetCurrentViewYaw();
+    m_flTargetYaw = m_flCurrentYaw;
+    m_pActivePanel = nullptr;
+}

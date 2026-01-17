@@ -99,8 +99,8 @@ ConVar tfvr_status_hud_objective_scale("tfvr_status_hud_objective_scale", "1.0",
     "Scale factor for objective panel (1.0 = native size, 0.5 = half size, 2.0 = double)");
 
 // Match status panel layout (team compositions + timer)
-ConVar tfvr_status_hud_matchstatus_enabled("tfvr_status_hud_matchstatus_enabled", "1", FCVAR_ARCHIVE, 
-    "Show match status panel (team compositions + timer) in hand HUD");
+ConVar tfvr_status_hud_matchstatus_enabled("tfvr_status_hud_matchstatus_enabled", "0", FCVAR_ARCHIVE, 
+    "Show match status panel (team compositions + timer) in hand HUD (disabled by default, use VR popup HUD instead)");
 ConVar tfvr_status_hud_matchstatus_x("tfvr_status_hud_matchstatus_x", "0", FCVAR_ARCHIVE, 
     "Match status panel X offset");
 ConVar tfvr_status_hud_matchstatus_y("tfvr_status_hud_matchstatus_y", "-200", FCVAR_ARCHIVE, 

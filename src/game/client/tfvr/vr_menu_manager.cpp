@@ -27,6 +27,7 @@
 #include "vr_spring_hud.h"
 #include "vr_damage_indicator.h"
 #include "vr_weapon_select.h"
+#include "vr_popup_hud.h"
 
 #include <algorithm>
 
@@ -82,6 +83,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRSpringHUDManager(nullptr)
     , m_pVRDamageIndicatorManager(nullptr)
     , m_pVRWeaponSelectManager(nullptr)
+    , m_pVRPopupHUDManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -184,6 +186,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Popup HUD Manager (head-relative: win/loss, scoreboard)
+    if (!m_pVRPopupHUDManager)
+    {
+        m_pVRPopupHUDManager = new CVRPopupHUDManager();
+        if (m_pVRPopupHUDManager->Initialize())
+        {
+            g_pVRPopupHUDManager = m_pVRPopupHUDManager;
+            DevMsg("VR Menu Manager: Popup HUD Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRPopupHUDManager;
+            m_pVRPopupHUDManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Popup HUD Manager\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -237,6 +256,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRWeaponSelectManager;
         m_pVRWeaponSelectManager = nullptr;
         g_pVRWeaponSelectManager = nullptr;
+    }
+    
+    // Shutdown VR Popup HUD Manager
+    if (m_pVRPopupHUDManager)
+    {
+        m_pVRPopupHUDManager->Shutdown();
+        delete m_pVRPopupHUDManager;
+        m_pVRPopupHUDManager = nullptr;
+        g_pVRPopupHUDManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -319,6 +347,12 @@ void CVRMenuManager::Update()
     if (m_pVRWeaponSelectManager)
     {
         m_pVRWeaponSelectManager->Update(gpGlobals->frametime);
+    }
+    
+    // Update VR Popup HUD Manager (win/loss panels, scoreboard)
+    if (m_pVRPopupHUDManager)
+    {
+        m_pVRPopupHUDManager->Update(gpGlobals->frametime);
     }
     
     // Update VR Hands

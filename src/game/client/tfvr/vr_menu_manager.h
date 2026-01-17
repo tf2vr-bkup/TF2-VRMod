@@ -16,6 +16,7 @@ class CVRWeaponHUDManager;
 class CVRSpringHUDManager;
 class CVRDamageIndicatorManager;
 class CVRWeaponSelectManager;
+class CVRPopupHUDManager;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -140,6 +141,9 @@ private:
     
     // VR Weapon Select (radial weapon selection menu)
     CVRWeaponSelectManager* m_pVRWeaponSelectManager;
+    
+    // VR Popup HUD (head-relative: win/loss panels, scoreboard)
+    CVRPopupHUDManager* m_pVRPopupHUDManager;
 };
 
 // Global instance
