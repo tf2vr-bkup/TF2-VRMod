@@ -28,6 +28,7 @@
 #include "vr_damage_indicator.h"
 #include "vr_weapon_select.h"
 #include "vr_popup_hud.h"
+#include "vr_world_health_icon.h"
 
 #include <algorithm>
 
@@ -84,6 +85,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRDamageIndicatorManager(nullptr)
     , m_pVRWeaponSelectManager(nullptr)
     , m_pVRPopupHUDManager(nullptr)
+    , m_pVRWorldHealthIconManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -203,6 +205,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR World Health Icon Manager (world-space health icons above players)
+    if (!m_pVRWorldHealthIconManager)
+    {
+        m_pVRWorldHealthIconManager = new CVRWorldHealthIconManager();
+        if (m_pVRWorldHealthIconManager->Initialize())
+        {
+            g_pVRWorldHealthIconManager = m_pVRWorldHealthIconManager;
+            DevMsg("VR Menu Manager: World Health Icon Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRWorldHealthIconManager;
+            m_pVRWorldHealthIconManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize World Health Icon Manager\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -265,6 +284,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRPopupHUDManager;
         m_pVRPopupHUDManager = nullptr;
         g_pVRPopupHUDManager = nullptr;
+    }
+    
+    // Shutdown VR World Health Icon Manager
+    if (m_pVRWorldHealthIconManager)
+    {
+        m_pVRWorldHealthIconManager->Shutdown();
+        delete m_pVRWorldHealthIconManager;
+        m_pVRWorldHealthIconManager = nullptr;
+        g_pVRWorldHealthIconManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -353,6 +381,12 @@ void CVRMenuManager::Update()
     if (m_pVRPopupHUDManager)
     {
         m_pVRPopupHUDManager->Update(gpGlobals->frametime);
+    }
+    
+    // Update VR World Health Icon Manager
+    if (m_pVRWorldHealthIconManager)
+    {
+        m_pVRWorldHealthIconManager->Update();
     }
     
     // Update VR Hands

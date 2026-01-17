@@ -17,6 +17,7 @@ class CVRSpringHUDManager;
 class CVRDamageIndicatorManager;
 class CVRWeaponSelectManager;
 class CVRPopupHUDManager;
+class CVRWorldHealthIconManager;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -144,6 +145,9 @@ private:
     
     // VR Popup HUD (head-relative: win/loss panels, scoreboard)
     CVRPopupHUDManager* m_pVRPopupHUDManager;
+    
+    // VR World Health Icon (world-space health icons above players)
+    CVRWorldHealthIconManager* m_pVRWorldHealthIconManager;
 };
 
 // Global instance

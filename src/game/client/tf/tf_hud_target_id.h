@@ -56,6 +56,10 @@ public:
 
 	virtual	bool	DrawHealthIcon();
 	virtual	C_TFPlayer *GetTargetForSteamAvatar( C_TFPlayer *pTFPlayer );
+	
+	// VR: Public getter for the floating health icon
+	CFloatingHealthIcon* GetFloatingHealthIcon() const { return m_pFloatingHealthIcon; }
+	
 private:
 
 	bool IsValidIDTarget( int nEntIndex, float flOldTargetRetainFOV, float &flNewTargetRetainFOV );

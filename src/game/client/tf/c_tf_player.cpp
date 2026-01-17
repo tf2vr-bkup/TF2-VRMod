@@ -7358,8 +7358,22 @@ void C_TFPlayer::UpdateIDTarget()
 
 	trace_t tr;
 	Vector vecStart, vecEnd;
-	VectorMA( MainViewOrigin(), MAX_TRACE_LENGTH, MainViewForward(), vecEnd );
-	VectorMA( MainViewOrigin(), 10,   MainViewForward(), vecStart );
+	
+	// VR: Use weapon aim direction instead of head/view direction
+	if ( UseVR() )
+	{
+		Vector aimOrigin = Weapon_ShootPosition();
+		QAngle aimAngles = Weapon_ShootAngles();
+		Vector aimForward;
+		AngleVectors( aimAngles, &aimForward );
+		VectorMA( aimOrigin, MAX_TRACE_LENGTH, aimForward, vecEnd );
+		VectorMA( aimOrigin, 10, aimForward, vecStart );
+	}
+	else
+	{
+		VectorMA( MainViewOrigin(), MAX_TRACE_LENGTH, MainViewForward(), vecEnd );
+		VectorMA( MainViewOrigin(), 10,   MainViewForward(), vecStart );
+	}
 
 	// If we're in observer mode, ignore our observer target. Otherwise, ignore ourselves.
 	if ( IsObserver() )

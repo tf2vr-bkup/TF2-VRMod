@@ -31,6 +31,7 @@
 #include "tf_dropped_weapon.h"
 #include "econ/econ_item_description.h"
 #include "inputsystem/iinputsystem.h"
+#include "tfvr/vr_world_health_icon.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -1500,6 +1501,18 @@ void CFloatingHealthIcon::OnTick( void )
 ConVar tf_healthicon_height_offset( "tf_healthicon_height_offset", "10", FCVAR_ARCHIVE, "Offset of the health icon away from the top of the target." );
 void CFloatingHealthIcon::Paint( void )
 {
+	// VR: When rendering in 3D (called from DrawPanelIn3DSpace), skip 2D positioning
+	// and go directly to painting the content
+	if ( CVRWorldHealthIconManager::IsRendering3D() )
+	{
+		BaseClass::Paint();
+		return;
+	}
+	
+	// VR: Skip 2D rendering - the VR manager handles 3D world-space rendering
+	if ( CVRWorldHealthIconManager::ShouldSuppressVanillaRendering() )
+		return;
+
 	if ( !CalculatePosition() )
 		return;
 
@@ -1516,6 +1529,13 @@ bool CFloatingHealthIcon::CalculatePosition( )
 	if ( !m_hEntity || m_hEntity->IsDormant() )
 	{
 		return false;
+	}
+
+	// VR: Always position at (0,0) - the VR manager handles 3D world positioning
+	if ( CVRWorldHealthIconManager::ShouldSuppressVanillaRendering() || CVRWorldHealthIconManager::IsRendering3D() )
+	{
+		SetPos( 0, 0 );
+		return true;
 	}
 
 	Vector vecTarget = m_hEntity->GetAbsOrigin();
@@ -1536,7 +1556,11 @@ void CFloatingHealthIcon::SetVisible( bool state )
 {
 	if ( state )
 	{
-		CalculatePosition();
+		// VR: Skip 2D positioning when doing 3D rendering
+		if ( !CVRWorldHealthIconManager::IsRendering3D() )
+		{
+			CalculatePosition();
+		}
 	}
 
 	BaseClass::SetVisible( state );
