@@ -29,6 +29,7 @@
 #include "vr_weapon_select.h"
 #include "vr_popup_hud.h"
 #include "vr_world_health_icon.h"
+#include "vr_damage_numbers.h"
 
 #include <algorithm>
 
@@ -86,6 +87,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRWeaponSelectManager(nullptr)
     , m_pVRPopupHUDManager(nullptr)
     , m_pVRWorldHealthIconManager(nullptr)
+    , m_pVRDamageNumberManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -222,6 +224,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Damage Number Manager (world-space floating damage numbers)
+    if (!m_pVRDamageNumberManager)
+    {
+        m_pVRDamageNumberManager = new CVRDamageNumberManager();
+        if (m_pVRDamageNumberManager->Initialize())
+        {
+            g_pVRDamageNumberManager = m_pVRDamageNumberManager;
+            DevMsg("VR Menu Manager: Damage Number Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRDamageNumberManager;
+            m_pVRDamageNumberManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Damage Number Manager\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -293,6 +312,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRWorldHealthIconManager;
         m_pVRWorldHealthIconManager = nullptr;
         g_pVRWorldHealthIconManager = nullptr;
+    }
+    
+    // Shutdown VR Damage Number Manager
+    if (m_pVRDamageNumberManager)
+    {
+        m_pVRDamageNumberManager->Shutdown();
+        delete m_pVRDamageNumberManager;
+        m_pVRDamageNumberManager = nullptr;
+        g_pVRDamageNumberManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -387,6 +415,12 @@ void CVRMenuManager::Update()
     if (m_pVRWorldHealthIconManager)
     {
         m_pVRWorldHealthIconManager->Update();
+    }
+    
+    // Update VR Damage Number Manager (world-space damage numbers)
+    if (m_pVRDamageNumberManager)
+    {
+        m_pVRDamageNumberManager->Update(gpGlobals->frametime);
     }
     
     // Update VR Hands

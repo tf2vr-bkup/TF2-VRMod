@@ -62,6 +62,7 @@
 #include "tfvr/vr_weapon_select.h"
 #include "tfvr/vr_popup_hud.h"
 #include "tfvr/vr_world_health_icon.h"
+#include "tfvr/vr_damage_numbers.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2568,6 +2569,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRWorldHealthIconManager)
 				{
 					g_pVRWorldHealthIconManager->Render();
+				}
+				
+				// Render VR Damage Numbers (world-space floating damage/healing numbers)
+				if (g_pVRDamageNumberManager)
+				{
+					g_pVRDamageNumberManager->Render();
 				}
 				
 				// Render VR Weapon Select Menu (radial weapon selection)
