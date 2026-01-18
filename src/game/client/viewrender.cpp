@@ -63,6 +63,7 @@
 #include "tfvr/vr_popup_hud.h"
 #include "tfvr/vr_world_health_icon.h"
 #include "tfvr/vr_damage_numbers.h"
+#include "tfvr/vr_spectator_extras.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2575,6 +2576,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRDamageNumberManager)
 				{
 					g_pVRDamageNumberManager->Render();
+				}
+				
+				// Render VR Spectator Extras (world-space player names and health bars)
+				if (g_pVRSpectatorExtrasManager)
+				{
+					g_pVRSpectatorExtrasManager->Render();
 				}
 				
 				// Render VR Weapon Select Menu (radial weapon selection)

@@ -19,6 +19,7 @@ class CVRWeaponSelectManager;
 class CVRPopupHUDManager;
 class CVRWorldHealthIconManager;
 class CVRDamageNumberManager;
+class CVRSpectatorExtrasManager;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -152,6 +153,9 @@ private:
     
     // VR Damage Numbers (world-space floating damage/healing numbers)
     CVRDamageNumberManager* m_pVRDamageNumberManager;
+    
+    // VR Spectator Extras (world-space player names and health bars)
+    CVRSpectatorExtrasManager* m_pVRSpectatorExtrasManager;
 };
 
 // Global instance

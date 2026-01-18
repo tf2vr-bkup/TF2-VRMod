@@ -1011,6 +1011,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_world_health_icon.cpp"
 			$File   "tfvr\vr_damage_numbers.h"
 			$File   "tfvr\vr_damage_numbers.cpp"
+			$File   "tfvr\vr_spectator_extras.h"
+			$File   "tfvr\vr_spectator_extras.cpp"
 			
 			$Folder "VR Weapons"
 			{

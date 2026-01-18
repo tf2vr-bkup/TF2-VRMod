@@ -30,6 +30,7 @@
 #include "vr_popup_hud.h"
 #include "vr_world_health_icon.h"
 #include "vr_damage_numbers.h"
+#include "vr_spectator_extras.h"
 
 #include <algorithm>
 
@@ -88,6 +89,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRPopupHUDManager(nullptr)
     , m_pVRWorldHealthIconManager(nullptr)
     , m_pVRDamageNumberManager(nullptr)
+    , m_pVRSpectatorExtrasManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -241,6 +243,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Spectator Extras Manager (world-space player names and health bars)
+    if (!m_pVRSpectatorExtrasManager)
+    {
+        m_pVRSpectatorExtrasManager = new CVRSpectatorExtrasManager();
+        if (m_pVRSpectatorExtrasManager->Initialize())
+        {
+            g_pVRSpectatorExtrasManager = m_pVRSpectatorExtrasManager;
+            DevMsg("VR Menu Manager: Spectator Extras Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRSpectatorExtrasManager;
+            m_pVRSpectatorExtrasManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Spectator Extras Manager\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -321,6 +340,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRDamageNumberManager;
         m_pVRDamageNumberManager = nullptr;
         g_pVRDamageNumberManager = nullptr;
+    }
+    
+    // Shutdown VR Spectator Extras Manager
+    if (m_pVRSpectatorExtrasManager)
+    {
+        m_pVRSpectatorExtrasManager->Shutdown();
+        delete m_pVRSpectatorExtrasManager;
+        m_pVRSpectatorExtrasManager = nullptr;
+        g_pVRSpectatorExtrasManager = nullptr;
     }
     
     m_pVRManager = nullptr;
@@ -421,6 +449,12 @@ void CVRMenuManager::Update()
     if (m_pVRDamageNumberManager)
     {
         m_pVRDamageNumberManager->Update(gpGlobals->frametime);
+    }
+    
+    // Update VR Spectator Extras Manager (world-space player names/health)
+    if (m_pVRSpectatorExtrasManager)
+    {
+        m_pVRSpectatorExtrasManager->Update(gpGlobals->frametime);
     }
     
     // Update VR Hands
