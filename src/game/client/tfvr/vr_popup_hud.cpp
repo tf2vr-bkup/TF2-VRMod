@@ -92,6 +92,12 @@ ConVar tfvr_popup_hud_notifications_spacing("tfvr_popup_hud_notifications_spacin
 ConVar tfvr_popup_hud_notifications_debug("tfvr_popup_hud_notifications_debug", "0", FCVAR_ARCHIVE,
     "Debug output for notification panel rendering");
 
+// Healer panel specific offsets
+ConVar tfvr_popup_hud_healer_offset_x("tfvr_popup_hud_healer_offset_x", "0", FCVAR_ARCHIVE, 
+    "Horizontal offset for healer notification panel (positive = right)");
+ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "0", FCVAR_ARCHIVE, 
+    "Vertical offset for healer notification panel (positive = up)");
+
 //=============================================================================
 // CVRPanelWrapper Implementation
 //=============================================================================
@@ -158,12 +164,14 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_pArenaWinPanel = nullptr;
     m_pMatchSummaryPanel = nullptr;
     m_pMatchStatusWrapper = nullptr;
+    m_pHealerWrapper = nullptr;
     m_pActivePanel = nullptr;
     
     // Bottom-center notification panels
     m_pNotificationPanel = nullptr;
     m_pMainTargetID = nullptr;
     m_pSpectatorTargetID = nullptr;
+    m_pSecondaryTargetID = nullptr;
     m_pBuildingStatusEngineer = nullptr;
     m_pBuildingStatusSpy = nullptr;
     
@@ -204,7 +212,15 @@ bool CVRPopupHUDManager::Initialize()
         m_pMatchStatusWrapper = new CVRPanelWrapper(pViewport, "VRMatchStatusWrapper");
         m_pMatchStatusWrapper->SetVisible(false);
         m_pMatchStatusWrapper->SetSize(1280, 720);  // Full screen size for capture
-        
+    }
+    
+    // Create wrapper panel for healer notification (to center content properly)
+    if (!m_pHealerWrapper)
+    {
+        vgui::Panel* pViewport = g_pClientMode ? g_pClientMode->GetViewport() : nullptr;
+        m_pHealerWrapper = new CVRPanelWrapper(pViewport, "VRHealerWrapper");
+        m_pHealerWrapper->SetVisible(false);
+        m_pHealerWrapper->SetSize(512, 128);  // Reasonable size for healer panel
     }
     
     // Initialize yaw to current view
@@ -225,6 +241,11 @@ void CVRPopupHUDManager::Shutdown()
         m_pMatchStatusWrapper = nullptr;
     }
     
+    if (m_pHealerWrapper)
+    {
+        m_pHealerWrapper->MarkForDeletion();
+        m_pHealerWrapper = nullptr;
+    }
     
     m_pScoreboardPanel = nullptr;
     m_pWinPanel = nullptr;
@@ -236,6 +257,7 @@ void CVRPopupHUDManager::Shutdown()
     m_pNotificationPanel = nullptr;
     m_pMainTargetID = nullptr;
     m_pSpectatorTargetID = nullptr;
+    m_pSecondaryTargetID = nullptr;
     m_pBuildingStatusEngineer = nullptr;
     m_pBuildingStatusSpy = nullptr;
     
@@ -353,6 +375,20 @@ void CVRPopupHUDManager::AcquirePanels()
         }
     }
     
+    // CSecondaryTargetID - healer notification ("Healer: [name]" with UberCharge)
+    if (!m_pSecondaryTargetID)
+    {
+        CHudElement* pElement = gHUD.FindElement("CSecondaryTargetID");
+        if (pElement)
+        {
+            m_pSecondaryTargetID = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pSecondaryTargetID)
+            {
+                DevMsg("VR Popup HUD: Found secondary target ID (healer) panel\n");
+            }
+        }
+    }
+    
     // CHudBuildingStatusContainer_Engineer - engineer building status
     if (!m_pBuildingStatusEngineer)
     {
@@ -385,8 +421,8 @@ void CVRPopupHUDManager::AcquirePanels()
     {
         DevMsg("VR Popup HUD: Acquired panels - Scoreboard=%p, WinPanel=%p, ArenaWin=%p, MatchSummary=%p\n",
             m_pScoreboardPanel, m_pWinPanel, m_pArenaWinPanel, m_pMatchSummaryPanel);
-        DevMsg("VR Popup HUD: Notification panels - Notification=%p, MainTarget=%p, SpectatorTarget=%p, BuildingEngy=%p, BuildingSpy=%p\n",
-            m_pNotificationPanel, m_pMainTargetID, m_pSpectatorTargetID, m_pBuildingStatusEngineer, m_pBuildingStatusSpy);
+        DevMsg("VR Popup HUD: Notification panels - Notification=%p, MainTarget=%p, SpectatorTarget=%p, SecondaryTarget=%p, BuildingEngy=%p, BuildingSpy=%p\n",
+            m_pNotificationPanel, m_pMainTargetID, m_pSpectatorTargetID, m_pSecondaryTargetID, m_pBuildingStatusEngineer, m_pBuildingStatusSpy);
         bFirstAcquire = false;
     }
     
@@ -838,7 +874,7 @@ void CVRPopupHUDManager::Render()
     }
 }
 
-void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset)
+void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset, float horizontalOffset)
 {
     if (!pPanel || !pPanel->IsVisible())
         return;
@@ -878,7 +914,7 @@ void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMat
         - panelRight * (worldWidth * 0.5f)       // Center horizontally (offset to left edge)
         + panelUp * (worldHeight * 0.5f)         // Center vertically (offset to top edge)
         + panelUp * verticalOffset               // Apply slot vertical offset
-        + panelRight * userOffsetX               // Manual horizontal adjustment
+        + panelRight * (userOffsetX + horizontalOffset) // Manual horizontal adjustment + per-panel offset
         - panelForward * userOffsetZ;            // Manual depth adjustment
     
     VMatrix notificationTransform = baseTransform;
@@ -919,6 +955,30 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
     if (m_pSpectatorTargetID && m_pSpectatorTargetID->IsVisible())
     {
         RenderNotificationPanel(m_pSpectatorTargetID, baseTransform, baseOffset);
+    }
+    
+    // Slot 0.5: Secondary target ID (healer notification - "Healer: [name]")
+    // Shares slot with spectator target ID since they're mutually exclusive (alive vs spectating)
+    // Uses wrapper to ensure content is centered (panel has screen-relative positioning internally)
+    if (m_pSecondaryTargetID && m_pSecondaryTargetID->IsVisible() && m_pHealerWrapper)
+    {
+        float healerOffsetX = tfvr_popup_hud_healer_offset_x.GetFloat();
+        float healerOffsetY = tfvr_popup_hud_healer_offset_y.GetFloat();
+        
+        // Get the actual panel size
+        int panelWidth, panelHeight;
+        m_pSecondaryTargetID->GetSize(panelWidth, panelHeight);
+        
+        // Configure wrapper to capture just this panel's content
+        m_pHealerWrapper->SetTargetPanel(m_pSecondaryTargetID);
+        m_pHealerWrapper->SetSize(panelWidth, panelHeight);
+        m_pHealerWrapper->SetContentOffset(0, 0);  // Content at origin
+        m_pHealerWrapper->SetVisible(true);
+        
+        // Render the wrapper (which relocates content to 0,0)
+        RenderNotificationPanel(m_pHealerWrapper, baseTransform, baseOffset + healerOffsetY, healerOffsetX);
+        
+        m_pHealerWrapper->SetVisible(false);
     }
     
     // Slot 1: Notification panel (objective notifications like "Intelligence captured")
@@ -973,6 +1033,27 @@ bool CVRPopupHUDManager::ShouldSuppressNotificationPanel()
 }
 
 bool CVRPopupHUDManager::ShouldSuppressSpectatorTargetID()
+{
+    if (!g_pVRPopupHUDManager)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bEnabled)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bNotificationsEnabled)
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    return true;
+}
+
+bool CVRPopupHUDManager::ShouldSuppressSecondaryTargetID()
 {
     if (!g_pVRPopupHUDManager)
         return false;

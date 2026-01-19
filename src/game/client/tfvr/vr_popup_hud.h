@@ -63,6 +63,7 @@ public:
     // Static methods for VR suppression of vanilla 2D rendering
     static bool ShouldSuppressNotificationPanel();
     static bool ShouldSuppressSpectatorTargetID();
+    static bool ShouldSuppressSecondaryTargetID();
     static bool ShouldSuppressBuildingStatus();
 
 private:
@@ -77,8 +78,8 @@ private:
     float GetCurrentViewYaw() const;
     void UpdateSpringYaw(float deltaTime);
     
-    // Render a single notification panel at a given vertical offset
-    void RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset);
+    // Render a single notification panel at a given vertical offset and optional horizontal offset
+    void RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset, float horizontalOffset = 0.0f);
     
     // Render all notification panels (called from Render)
     void RenderNotifications(const VMatrix& baseTransform);
@@ -97,11 +98,15 @@ private:
     vgui::Panel* m_pNotificationPanel;    // CHudNotificationPanel - objective notifications
     vgui::Panel* m_pMainTargetID;         // CMainTargetID - target ID when pointing at players/buildings
     vgui::Panel* m_pSpectatorTargetID;    // CSpectatorTargetID - spectator mode target ID
+    vgui::Panel* m_pSecondaryTargetID;    // CSecondaryTargetID - healer notification
     vgui::Panel* m_pBuildingStatusEngineer; // CHudBuildingStatusContainer_Engineer
     vgui::Panel* m_pBuildingStatusSpy;    // CHudBuildingStatusContainer_Spy
     
     // Wrapper panel for rendering match status without clipping
     CVRPanelWrapper* m_pMatchStatusWrapper;
+    
+    // Wrapper panel for rendering healer notification centered
+    CVRPanelWrapper* m_pHealerWrapper;
     
     // Currently active panel (what we're rendering)
     vgui::Panel* m_pActivePanel;

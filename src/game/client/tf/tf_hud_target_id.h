@@ -137,6 +137,7 @@ public:
 	CSecondaryTargetID( const char *pElementName );
 
 	virtual bool	ShouldDraw( void );
+	virtual void	Paint( void );
 	virtual int		CalculateTargetIndex( C_TFPlayer *pLocalTFPlayer );
 	virtual wchar_t	*GetPrepend( void ) { return m_wszPrepend; }
 

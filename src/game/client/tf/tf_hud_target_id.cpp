@@ -1179,6 +1179,20 @@ bool CSecondaryTargetID::ShouldDraw( void )
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: VR: Override Paint to suppress 2D rendering when popup HUD handles it
+//-----------------------------------------------------------------------------
+void CSecondaryTargetID::Paint( void )
+{
+	// VR: Suppress 2D rendering when popup HUD is handling this in 3D
+	if ( CVRPopupHUDManager::ShouldSuppressSecondaryTargetID() )
+	{
+		return;
+	}
+
+	BaseClass::Paint();
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
 int CSecondaryTargetID::CalculateTargetIndex( C_TFPlayer *pLocalTFPlayer )
