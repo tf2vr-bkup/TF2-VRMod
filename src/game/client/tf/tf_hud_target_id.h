@@ -40,6 +40,7 @@ public:
 	void			VidInit( void );
 	virtual bool	ShouldDraw( void );
 	virtual void	PerformLayout( void );
+	virtual void	Paint( void );
 	virtual void	ApplySettings( KeyValues *inResourceData );
 	virtual void	ApplySchemeSettings( vgui::IScheme *scheme );
 

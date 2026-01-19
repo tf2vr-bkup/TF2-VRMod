@@ -18,12 +18,15 @@
 #include "client_virtualreality.h"
 #include "openxr_manager.h"
 #include "engine/ivdebugoverlay.h"
+#include "sourcevr/isourcevirtualreality.h"
+#include "tf_hud_target_id.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
 // Global instance
 CVRPopupHUDManager* g_pVRPopupHUDManager = nullptr;
+
 
 //=============================================================================
 // ConVars
@@ -72,6 +75,22 @@ ConVar tfvr_popup_hud_matchstatus_crop_bottom("tfvr_popup_hud_matchstatus_crop_b
     "Fraction of the bottom to crop off match status (0.75 = show top 25%)");
 ConVar tfvr_popup_hud_matchstatus_content_y("tfvr_popup_hud_matchstatus_content_y", "0", FCVAR_ARCHIVE, 
     "Y content offset for match status (positive = shift content down in capture area)");
+
+// Bottom-center notification area ConVars
+ConVar tfvr_popup_hud_notifications_enabled("tfvr_popup_hud_notifications_enabled", "1", FCVAR_ARCHIVE, 
+    "Enable VR rendering of bottom-center notifications (notification panel, spectator target, building status)");
+ConVar tfvr_popup_hud_notifications_offset_x("tfvr_popup_hud_notifications_offset_x", "0", FCVAR_ARCHIVE, 
+    "Horizontal offset of notification area (positive = right)");
+ConVar tfvr_popup_hud_notifications_offset_y("tfvr_popup_hud_notifications_offset_y", "-15", FCVAR_ARCHIVE, 
+    "Vertical offset of notification area below timer (negative = down)");
+ConVar tfvr_popup_hud_notifications_offset_z("tfvr_popup_hud_notifications_offset_z", "0", FCVAR_ARCHIVE, 
+    "Depth offset of notification area (positive = closer)");
+ConVar tfvr_popup_hud_notifications_scale("tfvr_popup_hud_notifications_scale", "0.5", FCVAR_ARCHIVE, 
+    "Scale multiplier for notification panels (relative to main popup scale)");
+ConVar tfvr_popup_hud_notifications_spacing("tfvr_popup_hud_notifications_spacing", "10", FCVAR_ARCHIVE, 
+    "Vertical spacing between notification panel slots");
+ConVar tfvr_popup_hud_notifications_debug("tfvr_popup_hud_notifications_debug", "0", FCVAR_ARCHIVE,
+    "Debug output for notification panel rendering");
 
 //=============================================================================
 // CVRPanelWrapper Implementation
@@ -141,6 +160,13 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_pMatchStatusWrapper = nullptr;
     m_pActivePanel = nullptr;
     
+    // Bottom-center notification panels
+    m_pNotificationPanel = nullptr;
+    m_pMainTargetID = nullptr;
+    m_pSpectatorTargetID = nullptr;
+    m_pBuildingStatusEngineer = nullptr;
+    m_pBuildingStatusSpy = nullptr;
+    
     m_flCurrentYaw = 0.0f;
     m_flTargetYaw = 0.0f;
     
@@ -150,6 +176,11 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_flMaxLagAngle = 45.0f;
     m_flScale = 80.0f;
     m_flVerticalOffset = 0.0f;
+    
+    // Notification area configuration
+    m_bNotificationsEnabled = true;
+    m_flNotificationsOffsetY = -15.0f;
+    m_flNotificationsScale = 0.5f;
 }
 
 CVRPopupHUDManager::~CVRPopupHUDManager()
@@ -173,6 +204,7 @@ bool CVRPopupHUDManager::Initialize()
         m_pMatchStatusWrapper = new CVRPanelWrapper(pViewport, "VRMatchStatusWrapper");
         m_pMatchStatusWrapper->SetVisible(false);
         m_pMatchStatusWrapper->SetSize(1280, 720);  // Full screen size for capture
+        
     }
     
     // Initialize yaw to current view
@@ -193,11 +225,20 @@ void CVRPopupHUDManager::Shutdown()
         m_pMatchStatusWrapper = nullptr;
     }
     
+    
     m_pScoreboardPanel = nullptr;
     m_pWinPanel = nullptr;
     m_pArenaWinPanel = nullptr;
     m_pMatchSummaryPanel = nullptr;
     m_pActivePanel = nullptr;
+    
+    // Clear notification panel pointers
+    m_pNotificationPanel = nullptr;
+    m_pMainTargetID = nullptr;
+    m_pSpectatorTargetID = nullptr;
+    m_pBuildingStatusEngineer = nullptr;
+    m_pBuildingStatusSpy = nullptr;
+    
     m_bInitialized = false;
 }
 
@@ -268,10 +309,84 @@ void CVRPopupHUDManager::AcquirePanels()
         }
     }
     
+    // Acquire bottom-center notification panels
+    
+    // CHudNotificationPanel - game notifications like "Intelligence captured"
+    if (!m_pNotificationPanel)
+    {
+        CHudElement* pElement = gHUD.FindElement("CHudNotificationPanel");
+        if (pElement)
+        {
+            m_pNotificationPanel = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pNotificationPanel)
+            {
+                DevMsg("VR Popup HUD: Found notification panel\n");
+            }
+        }
+    }
+    
+    // CMainTargetID - target ID when pointing at players/buildings while alive
+    if (!m_pMainTargetID)
+    {
+        CHudElement* pElement = gHUD.FindElement("CMainTargetID");
+        if (pElement)
+        {
+            m_pMainTargetID = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pMainTargetID)
+            {
+                DevMsg("VR Popup HUD: Found main target ID panel\n");
+            }
+        }
+    }
+    
+    // CSpectatorTargetID - spectator target with team-color backdrop
+    if (!m_pSpectatorTargetID)
+    {
+        CHudElement* pElement = gHUD.FindElement("CSpectatorTargetID");
+        if (pElement)
+        {
+            m_pSpectatorTargetID = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pSpectatorTargetID)
+            {
+                DevMsg("VR Popup HUD: Found spectator target ID panel\n");
+            }
+        }
+    }
+    
+    // CHudBuildingStatusContainer_Engineer - engineer building status
+    if (!m_pBuildingStatusEngineer)
+    {
+        CHudElement* pElement = gHUD.FindElement("BuildingStatus_Engineer");
+        if (pElement)
+        {
+            m_pBuildingStatusEngineer = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pBuildingStatusEngineer)
+            {
+                DevMsg("VR Popup HUD: Found engineer building status panel\n");
+            }
+        }
+    }
+    
+    // CHudBuildingStatusContainer_Spy - spy sapper status
+    if (!m_pBuildingStatusSpy)
+    {
+        CHudElement* pElement = gHUD.FindElement("BuildingStatus_Spy");
+        if (pElement)
+        {
+            m_pBuildingStatusSpy = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pBuildingStatusSpy)
+            {
+                DevMsg("VR Popup HUD: Found spy building status panel\n");
+            }
+        }
+    }
+    
     if (bFirstAcquire && (m_pScoreboardPanel || m_pWinPanel))
     {
         DevMsg("VR Popup HUD: Acquired panels - Scoreboard=%p, WinPanel=%p, ArenaWin=%p, MatchSummary=%p\n",
             m_pScoreboardPanel, m_pWinPanel, m_pArenaWinPanel, m_pMatchSummaryPanel);
+        DevMsg("VR Popup HUD: Notification panels - Notification=%p, MainTarget=%p, SpectatorTarget=%p, BuildingEngy=%p, BuildingSpy=%p\n",
+            m_pNotificationPanel, m_pMainTargetID, m_pSpectatorTargetID, m_pBuildingStatusEngineer, m_pBuildingStatusSpy);
         bFirstAcquire = false;
     }
     
@@ -403,6 +518,11 @@ void CVRPopupHUDManager::Update(float deltaTime)
     m_flDeadzone = tfvr_popup_hud_deadzone.GetFloat();
     m_flMaxLagAngle = tfvr_popup_hud_max_lag.GetFloat();
     
+    // Notification area settings
+    m_bNotificationsEnabled = tfvr_popup_hud_notifications_enabled.GetBool();
+    m_flNotificationsOffsetY = tfvr_popup_hud_notifications_offset_y.GetFloat();
+    m_flNotificationsScale = tfvr_popup_hud_notifications_scale.GetFloat();
+    
     // Try to acquire panels if we don't have them yet
     if (!m_pScoreboardPanel && !m_pWinPanel)
     {
@@ -482,17 +602,9 @@ void CVRPopupHUDManager::Render()
     if (!m_bInitialized || !m_bEnabled)
         return;
     
-    // Check if we have an active panel to render
-    if (!m_pActivePanel || !m_pActivePanel->IsVisible())
-        return;
-    
     // Safety check
     C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
     if (!pPlayer)
-        return;
-    
-    // Don't render if player is dead (unless it's the scoreboard)
-    if (!pPlayer->IsAlive() && m_pActivePanel != m_pScoreboardPanel)
         return;
     
     // Don't render if main menu/game UI is open
@@ -508,6 +620,24 @@ void CVRPopupHUDManager::Render()
     VMatrix panelToWorld;
     if (!CalculateSpringTransform(panelToWorld))
         return;
+    
+    // Determine if we have a main popup panel to render
+    bool bHasActivePanel = m_pActivePanel && m_pActivePanel->IsVisible();
+    
+    // For main popups: Don't render if player is dead (unless it's the scoreboard)
+    if (bHasActivePanel && !pPlayer->IsAlive() && m_pActivePanel != m_pScoreboardPanel)
+        bHasActivePanel = false;
+    
+    // Skip main panel rendering if none active
+    if (!bHasActivePanel)
+    {
+        // But still render notifications if they're enabled and player is alive
+        if (m_bNotificationsEnabled && pPlayer->IsAlive())
+        {
+            RenderNotifications(panelToWorld);
+        }
+        return;
+    }
     
     // Get the panel's actual size and screen position
     int panelWidth, panelHeight;
@@ -694,6 +824,12 @@ void CVRPopupHUDManager::Render()
     // Restore clipping
     g_pMatSystemSurface->DisableClipping(false);
     
+    // Render bottom-center notification panels below the main popup
+    if (m_bNotificationsEnabled && pPlayer->IsAlive())
+    {
+        RenderNotifications(panelToWorld);
+    }
+    
     if (tfvr_popup_hud_debug.GetBool())
     {
         // Draw debug visualization at center
@@ -702,9 +838,178 @@ void CVRPopupHUDManager::Render()
     }
 }
 
+void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset)
+{
+    if (!pPanel || !pPanel->IsVisible())
+        return;
+    
+    int panelWidth, panelHeight;
+    pPanel->GetSize(panelWidth, panelHeight);
+    
+    if (panelWidth <= 0 || panelHeight <= 0)
+        return;
+    
+    // Get the panel's screen position for debug
+    int panelX, panelY;
+    pPanel->GetPos(panelX, panelY);
+    
+    // Calculate world dimensions - use a fixed scale relative to notification settings
+    float notificationScale = m_flScale * m_flNotificationsScale;
+    
+    // Scale panel to world size based on a reference height (e.g., 100 pixels = notificationScale units)
+    float pixelsPerUnit = 100.0f;
+    float worldWidth = (panelWidth / pixelsPerUnit) * notificationScale;
+    float worldHeight = (panelHeight / pixelsPerUnit) * notificationScale;
+    
+    // Get basis vectors from the base transform
+    Vector basePos = baseTransform.GetTranslation();
+    Vector panelRight(baseTransform[0][0], baseTransform[1][0], baseTransform[2][0]);
+    Vector panelUp(baseTransform[0][1], baseTransform[1][1], baseTransform[2][1]);
+    Vector panelForward(baseTransform[0][2], baseTransform[1][2], baseTransform[2][2]);
+    
+    // Get manual offsets from ConVars
+    float userOffsetX = tfvr_popup_hud_notifications_offset_x.GetFloat();
+    float userOffsetZ = tfvr_popup_hud_notifications_offset_z.GetFloat();
+    
+    // Calculate top-left position for 3D rendering
+    // Simply center the panel at basePos + offsets
+    // DrawPanelIn3DSpace renders from top-left, so offset from center to top-left
+    Vector topLeft = basePos 
+        - panelRight * (worldWidth * 0.5f)       // Center horizontally (offset to left edge)
+        + panelUp * (worldHeight * 0.5f)         // Center vertically (offset to top edge)
+        + panelUp * verticalOffset               // Apply slot vertical offset
+        + panelRight * userOffsetX               // Manual horizontal adjustment
+        - panelForward * userOffsetZ;            // Manual depth adjustment
+    
+    VMatrix notificationTransform = baseTransform;
+    notificationTransform.SetTranslation(topLeft);
+    
+    if (tfvr_popup_hud_notifications_debug.GetBool())
+    {
+        DevMsg("NotificationPanel: name=%s screenPos=(%d,%d) size=(%dx%d) worldSize=(%.2fx%.2f)\n",
+            pPanel->GetName(), panelX, panelY, panelWidth, panelHeight, worldWidth, worldHeight);
+    }
+    
+    // Disable clipping and render
+    g_pMatSystemSurface->DisableClipping(true);
+    
+    g_pMatSystemSurface->DrawPanelIn3DSpace(
+        pPanel->GetVPanel(),
+        notificationTransform,
+        panelWidth,
+        panelHeight,
+        worldWidth,
+        worldHeight
+    );
+    
+    g_pMatSystemSurface->DisableClipping(false);
+}
+
+void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
+{
+    // Each panel type has a fixed offset from the base position
+    // This prevents panels from jumping around when other panels appear/disappear
+    float baseOffset = m_flNotificationsOffsetY;
+    float slotSpacing = tfvr_popup_hud_notifications_spacing.GetFloat();
+    
+    // CMainTargetID is now rendered above the target entity in world space (see RenderWorldTargetID)
+    // CSpectatorTargetID stays on the popup panel for spectating
+    
+    // Slot 0: Spectator target ID (when spectating)
+    if (m_pSpectatorTargetID && m_pSpectatorTargetID->IsVisible())
+    {
+        RenderNotificationPanel(m_pSpectatorTargetID, baseTransform, baseOffset);
+    }
+    
+    // Slot 1: Notification panel (objective notifications like "Intelligence captured")
+    float slot1Offset = baseOffset - slotSpacing;
+    if (m_pNotificationPanel && m_pNotificationPanel->IsVisible())
+    {
+        RenderNotificationPanel(m_pNotificationPanel, baseTransform, slot1Offset);
+    }
+    
+    // Slot 2: Building status (engineer or spy)
+    float slot2Offset = baseOffset - (slotSpacing * 2.0f);
+    if (m_pBuildingStatusEngineer && m_pBuildingStatusEngineer->IsVisible())
+    {
+        RenderNotificationPanel(m_pBuildingStatusEngineer, baseTransform, slot2Offset);
+    }
+    else if (m_pBuildingStatusSpy && m_pBuildingStatusSpy->IsVisible())
+    {
+        RenderNotificationPanel(m_pBuildingStatusSpy, baseTransform, slot2Offset);
+    }
+}
+
 void CVRPopupHUDManager::ResetState()
 {
     m_flCurrentYaw = GetCurrentViewYaw();
     m_flTargetYaw = m_flCurrentYaw;
     m_pActivePanel = nullptr;
+}
+
+//=============================================================================
+// Static suppression methods for vanilla 2D rendering
+//=============================================================================
+
+bool CVRPopupHUDManager::ShouldSuppressNotificationPanel()
+{
+    if (!g_pVRPopupHUDManager)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bEnabled)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bNotificationsEnabled)
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    return true;
+}
+
+bool CVRPopupHUDManager::ShouldSuppressSpectatorTargetID()
+{
+    if (!g_pVRPopupHUDManager)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bEnabled)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bNotificationsEnabled)
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    return true;
+}
+
+bool CVRPopupHUDManager::ShouldSuppressBuildingStatus()
+{
+    if (!g_pVRPopupHUDManager)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bEnabled)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bNotificationsEnabled)
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    return true;
 }

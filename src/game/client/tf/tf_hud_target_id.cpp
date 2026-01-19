@@ -27,11 +27,13 @@
 
 #include "VGuiMatSurface/IMatSystemSurface.h"
 #include "renderparm.h"
+#include "tfvr/vr_world_health_icon.h"
 
 #include "tf_dropped_weapon.h"
 #include "econ/econ_item_description.h"
 #include "inputsystem/iinputsystem.h"
 #include "tfvr/vr_world_health_icon.h"
+#include "tfvr/vr_popup_hud.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -686,16 +688,32 @@ void CTargetID::PerformLayout( void )
 
 	SetSize( iWidth, GetTall() );
 
+	// VR: When rendering in 3D world space, position at (0,0) - the VR manager handles world positioning
+	if ( CVRWorldHealthIconManager::IsRendering3D() )
+	{
+		SetPos( 0, 0 );
+		return;
+	}
+
 	int nOffset = m_bArenaPanelVisible ? YRES (120) : 0; // HACK: move the targetID up a bit so it won't overlap the panel
-	if( UseVR() )
-	{
-		SetPos( ScreenWidth() - iWidth - m_iXOffset,  m_nOriginalY - nOffset + YRES( tf_hud_target_id_offset.GetInt() ) );
-	}
-	else
-	{
-		SetPos( (ScreenWidth() - iWidth) * 0.5,  m_nOriginalY - nOffset + YRES( tf_hud_target_id_offset.GetInt() ) );
-	}
+	// Always center horizontally - VR popup system handles 3D positioning
+	SetPos( (ScreenWidth() - iWidth) * 0.5,  m_nOriginalY - nOffset + YRES( tf_hud_target_id_offset.GetInt() ) );
 };
+
+//-----------------------------------------------------------------------------
+// Purpose: VR: Skip 2D painting when VR is handling this in 3D
+//-----------------------------------------------------------------------------
+void CTargetID::Paint( void )
+{
+	// VR: When VR is active but NOT doing 3D rendering, skip the 2D paint
+	// (the VR world health icon system renders this in 3D world space instead)
+	if ( UseVR() && !CVRWorldHealthIconManager::IsRendering3D() )
+	{
+		return;
+	}
+	
+	BaseClass::Paint();
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: 

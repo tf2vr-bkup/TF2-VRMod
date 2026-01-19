@@ -40,6 +40,7 @@ private:
 // Purpose: Manages VR popup HUD elements like win/loss panels and scoreboard.
 //          Uses spring-follow positioning for comfortable viewing.
 //          Scoreboard overrides win/loss panel when TAB is held (vanilla behavior).
+//          Also renders bottom-center notifications below the match status.
 //-----------------------------------------------------------------------------
 class CVRPopupHUDManager
 {
@@ -58,6 +59,11 @@ public:
     
     // Check if any popup is currently being shown
     bool IsShowingPopup() const { return m_pActivePanel != nullptr; }
+    
+    // Static methods for VR suppression of vanilla 2D rendering
+    static bool ShouldSuppressNotificationPanel();
+    static bool ShouldSuppressSpectatorTargetID();
+    static bool ShouldSuppressBuildingStatus();
 
 private:
     // Find TF2's HUD panels
@@ -71,6 +77,12 @@ private:
     float GetCurrentViewYaw() const;
     void UpdateSpringYaw(float deltaTime);
     
+    // Render a single notification panel at a given vertical offset
+    void RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset);
+    
+    // Render all notification panels (called from Render)
+    void RenderNotifications(const VMatrix& baseTransform);
+    
 private:
     bool m_bInitialized;
     bool m_bEnabled;
@@ -80,6 +92,13 @@ private:
     vgui::Panel* m_pWinPanel;             // Win/loss panel
     vgui::Panel* m_pArenaWinPanel;        // Arena mode win panel
     vgui::Panel* m_pMatchSummaryPanel;    // Match summary
+    
+    // Bottom-center notification panels
+    vgui::Panel* m_pNotificationPanel;    // CHudNotificationPanel - objective notifications
+    vgui::Panel* m_pMainTargetID;         // CMainTargetID - target ID when pointing at players/buildings
+    vgui::Panel* m_pSpectatorTargetID;    // CSpectatorTargetID - spectator mode target ID
+    vgui::Panel* m_pBuildingStatusEngineer; // CHudBuildingStatusContainer_Engineer
+    vgui::Panel* m_pBuildingStatusSpy;    // CHudBuildingStatusContainer_Spy
     
     // Wrapper panel for rendering match status without clipping
     CVRPanelWrapper* m_pMatchStatusWrapper;
@@ -100,6 +119,11 @@ private:
     
     // Vertical offset (positive = up)
     float m_flVerticalOffset;
+    
+    // Notification area configuration
+    bool m_bNotificationsEnabled;
+    float m_flNotificationsOffsetY;     // Vertical offset below timer
+    float m_flNotificationsScale;       // Scale multiplier for notifications
 };
 
 // Global instance

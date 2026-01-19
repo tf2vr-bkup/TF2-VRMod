@@ -14,6 +14,7 @@
 // Forward declarations
 class CFloatingHealthIcon;
 class C_BaseEntity;
+class CMainTargetID;
 
 //-----------------------------------------------------------------------------
 // Purpose: Wrapper panel that renders a target panel at (0,0) regardless of
@@ -35,9 +36,10 @@ private:
 };
 
 //-----------------------------------------------------------------------------
-// Purpose: Manages rendering of floating health icons in VR world space.
+// Purpose: Manages rendering of floating health icons and target ID in VR world space.
 //          Takes over rendering from the 2D CFloatingHealthIcon when in VR.
 //          - Positions the health icon above the target entity's head
+//          - Also renders the full target ID panel (name, health bar, etc.) above that
 //          - Billboards to always face the player's view
 //          - Uses DrawPanelIn3DSpace for proper VR stereo rendering
 //-----------------------------------------------------------------------------
@@ -66,14 +68,21 @@ private:
     bool CalculateBillboardTransform(C_BaseEntity* pEntity, VMatrix& transform);
     Vector GetEntityHeadPosition(C_BaseEntity* pEntity);
     
+    // Render the target ID panel above an entity
+    void RenderTargetID(C_BaseEntity* pEntity, CMainTargetID* pTargetID, float distanceScale, bool bIsBuilding,
+                        int panelWidth, int panelHeight, float tagWorldWidth, float tagWorldHeight, float tagHeightOffset);
+    
     bool m_bInitialized;
     bool m_bEnabled;
     
     // Static flag for 3D rendering
     static bool s_bIsRendering3D;
     
-    // Wrapper panel for proper 3D rendering
+    // Wrapper panel for health icon 3D rendering
     CVRHealthIconWrapper* m_pWrapper;
+    
+    // Wrapper for target ID panel rendering
+    CVRHealthIconWrapper* m_pTargetIDWrapper;
     
     // Configuration
     float m_flScale;            // World scale of the health icon
@@ -81,6 +90,15 @@ private:
     float m_flOffsetX;          // Horizontal offset in world units
     float m_flOffsetY;          // Forward/back offset in world units
     int m_nRenderScale;         // Resolution multiplier for sharper text
+    
+    // Target ID configuration
+    float m_flTargetIDScale;        // World scale of the target ID panel
+    float m_flTargetIDOffset;       // Height offset above the health icon (for players)
+    float m_flTargetIDBuildingOffset; // Height offset for buildings
+    
+    // Track target changes to avoid first-frame flash
+    int m_nLastTargetIndex;
+    int m_nFramesSinceTargetChange;
 };
 
 // Global instance

@@ -6754,13 +6754,9 @@ void CViewRender::RenderMenuTextureToScreen(const CViewSetup &view, bool isCinem
 		}
 	}
 		
+	// If HUD on mirror is disabled, skip rendering the HUD texture
 	if (!tfvr_hud_on_mirror.GetBool())
-	{
-		if (tfvr_menu_on_mirror.GetInt() < 0)
-			return;
-		if (!tfvr_menu_on_mirror.GetBool())
-			return;
-	}
+		return;
 	ITexture* pMenuFrame = materials->FindTexture("_rt_vgui", NULL);
 
 	if (pMenuFrame == NULL)
