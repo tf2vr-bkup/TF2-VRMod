@@ -11,6 +11,8 @@
 #include "engine/ivdebugoverlay.h"
 #include "tf/c_tf_player.h"
 #include "c_tfvr_hand.h"
+#include <game/client/iviewport.h>
+#include "viewport_panel_names.h"
 
 // Engine interface for executing client commands
 extern IVEngineClient *engine;
@@ -171,6 +173,31 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     // Track button press events
     static bool bLastMenuButtonState = false;
     bool bMenuButtonPressed = bMenu && !bLastMenuButtonState;
+    
+    // Get scoreboard button state (left thumbstick click)
+    static bool bLastScoreboardButtonState = false;
+    bool bScoreboard = g_pOpenXRManager->IsButtonPressed("scoreboard");
+    bool bScoreboardButtonPressed = bScoreboard && !bLastScoreboardButtonState;
+    bool bScoreboardButtonReleased = !bScoreboard && bLastScoreboardButtonState;
+    
+    // Handle scoreboard - show while held, hide when released
+    if (bScoreboardButtonPressed)
+    {
+        // Show scoreboard when button is pressed
+        if (gViewPortInterface)
+        {
+            gViewPortInterface->ShowPanel(PANEL_SCOREBOARD, true);
+        }
+    }
+    else if (bScoreboardButtonReleased)
+    {
+        // Hide scoreboard when button is released
+        if (gViewPortInterface)
+        {
+            gViewPortInterface->ShowPanel(PANEL_SCOREBOARD, false);
+        }
+    }
+    bLastScoreboardButtonState = bScoreboard;
     
     // Check if menu is visible
     bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();

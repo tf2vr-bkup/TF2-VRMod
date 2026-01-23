@@ -163,6 +163,11 @@ bool COpenXRInputManager::CreateActions()
     if (weaponSelectHold.handle == XR_NULL_HANDLE) return false;
     m_actions["weapon_select_hold"] = weaponSelectHold;
 
+    // Add scoreboard action (left thumbstick click)
+    XrInputAction scoreboard = CreateBooleanAction("scoreboard", "Scoreboard");
+    if (scoreboard.handle == XR_NULL_HANDLE) return false;
+    m_actions["scoreboard"] = scoreboard;
+
     return true;
 }
 
@@ -396,6 +401,19 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["weapon_select_hold"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Scoreboard binding (left thumbstick click for Index)
+    if (m_actions.find("scoreboard") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["scoreboard"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -657,6 +675,19 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["weapon_select_hold"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Scoreboard binding (left thumbstick click for Quest)
+    if (m_actions.find("scoreboard") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["scoreboard"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
