@@ -124,6 +124,10 @@ private:
     char m_szLastMapName[64];
     float m_flLastClassMenuTime; // Time when changeclass was last executed
     
+    // Class/Team menu hold detection
+    float m_flClassMenuButtonPressTime;     // When button was first pressed
+    bool m_bClassMenuHoldActionExecuted;    // Whether hold action (team menu) was already triggered
+    
     // VR frame management
     bool m_bVRFrameStarted;
     

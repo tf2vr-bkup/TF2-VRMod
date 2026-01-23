@@ -52,6 +52,7 @@ ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "0.1", FCVAR_ARC
 ConVar tfvr_cursor_debug("tfvr_cursor_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR cursor threshold");
 ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
 ConVar tfvr_playspace_anchoring("tfvr_playspace_anchoring", "1", FCVAR_ARCHIVE, "Anchor menu to playspace origin instead of player");
+ConVar tfvr_class_menu_hold_threshold("tfvr_class_menu_hold_threshold", "0.25", FCVAR_ARCHIVE, "Hold time in seconds for team menu (quick release = class menu)");
 
 // Helper function to get scaled menu dimensions
 static void GetScaledMenuDimensions(float& menuWidth, float& menuHeight)
@@ -79,6 +80,8 @@ CVRMenuManager::CVRMenuManager()
     , m_pConVarPrimaryHand(nullptr)
     , m_szLastMapName("")
     , m_flLastClassMenuTime(0.0f)
+    , m_flClassMenuButtonPressTime(0.0f)
+    , m_bClassMenuHoldActionExecuted(false)
     , m_bVRFrameStarted(false)
     , m_nLastVRTrackingUpdateFrame(-1)
     , m_pVRStatusHUDManager(nullptr)
@@ -600,27 +603,68 @@ void CVRMenuManager::HandleMenuInput()
 {
     bool menuVisible = IsMenuVisible();
     
-    // Check for class menu button press (left A button)
+    // Check for class/team menu button (left A button)
+    // Quick press = class menu, long hold = team menu
     static bool bLastClassMenuButtonState = false;
     bool bCurrentClassMenuButtonState = m_pVRManager && m_pVRManager->IsButtonPressed("left_class_menu");
+    float currentTime = gpGlobals->curtime;
+    float holdThreshold = tfvr_class_menu_hold_threshold.GetFloat();
     
-    // Only execute on button press (not hold) and with cooldown
+    // Detect if time has gone backwards (map change, etc.) and reset cooldown
+    if (currentTime < m_flLastClassMenuTime)
+    {
+        DevMsg("VR Menu: Time went backwards (%.1f -> %.1f), resetting class menu cooldown\n", 
+               m_flLastClassMenuTime, currentTime);
+        m_flLastClassMenuTime = 0.0f;
+        m_flClassMenuButtonPressTime = 0.0f;
+    }
+    
+    // On button press: record timestamp
     if (bCurrentClassMenuButtonState && !bLastClassMenuButtonState)
     {
-        float currentTime = gpGlobals->curtime;
-        
-        // Detect if time has gone backwards (map change, etc.) and reset cooldown
-        if (currentTime < m_flLastClassMenuTime)
+        m_flClassMenuButtonPressTime = currentTime;
+        m_bClassMenuHoldActionExecuted = false;
+    }
+    
+    // While held: check for long hold threshold (team menu)
+    if (bCurrentClassMenuButtonState && !m_bClassMenuHoldActionExecuted)
+    {
+        float holdTime = currentTime - m_flClassMenuButtonPressTime;
+        if (holdTime >= holdThreshold)
         {
-            DevMsg("VR Menu: Time went backwards (%.1f -> %.1f), resetting class menu cooldown\n", 
-                   m_flLastClassMenuTime, currentTime);
-            m_flLastClassMenuTime = 0.0f;
+            // Long hold - open team menu
+            if (currentTime - m_flLastClassMenuTime >= 0.5f)
+            {
+                if (engine && engine->IsInGame())
+                {
+                    // Check if team menu is already open
+                    IViewPortPanel* pTeamPanel = gViewPortInterface ? gViewPortInterface->FindPanelByName(PANEL_TEAM) : nullptr;
+                    bool bTeamMenuOpen = pTeamPanel && pTeamPanel->IsVisible();
+                    
+                    if (bTeamMenuOpen)
+                    {
+                        engine->ClientCmd("escape");
+                        DevMsg("VR Menu: Team menu closed via left A button hold (escape command)\n");
+                    }
+                    else
+                    {
+                        engine->ClientCmd("changeteam");
+                        DevMsg("VR Menu: Team menu opened via left A button hold (changeteam command)\n");
+                    }
+                    
+                    m_flLastClassMenuTime = currentTime;
+                }
+            }
+            m_bClassMenuHoldActionExecuted = true;
         }
-        
-        // Prevent rapid-fire: require at least 0.5 seconds between executions
+    }
+    
+    // On button release: if hold action wasn't executed, it was a quick press (class menu)
+    if (!bCurrentClassMenuButtonState && bLastClassMenuButtonState && !m_bClassMenuHoldActionExecuted)
+    {
+        // Quick press - open class menu
         if (currentTime - m_flLastClassMenuTime >= 0.5f)
         {
-            // Toggle the class menu (open if closed, close if open)
             if (engine && engine->IsInGame())
             {
                 // Check if class menu is already open
@@ -633,15 +677,13 @@ void CVRMenuManager::HandleMenuInput()
                 
                 if (bClassMenuOpen)
                 {
-                    // Close the class menu by pressing escape
                     engine->ClientCmd("escape");
-                    DevMsg("VR Menu: Class menu closed via left A button (escape command)\n");
+                    DevMsg("VR Menu: Class menu closed via left A button quick press (escape command)\n");
                 }
                 else
                 {
-                    // Open the class menu
                     engine->ClientCmd("changeclass");
-                    DevMsg("VR Menu: Class menu opened via left A button (changeclass command)\n");
+                    DevMsg("VR Menu: Class menu opened via left A button quick press (changeclass command)\n");
                 }
                 
                 m_flLastClassMenuTime = currentTime;
@@ -649,7 +691,7 @@ void CVRMenuManager::HandleMenuInput()
         }
         else
         {
-            DevMsg("VR Menu: Class menu command blocked - too soon since last execution (%.1f seconds)\n", 
+            DevMsg("VR Menu: Class/team menu command blocked - too soon since last execution (%.1f seconds)\n", 
                    currentTime - m_flLastClassMenuTime);
         }
     }
