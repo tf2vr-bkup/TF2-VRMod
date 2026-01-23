@@ -2566,7 +2566,14 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 					g_pVRPopupHUDManager->Render();
 				}
 				
-				// Render VR World Health Icons (world-space health above players)
+				// Render VR Spectator Extras (world-space player names and health bars)
+				// Rendered before World Health Icons so targetID appears on top
+				if (g_pVRSpectatorExtrasManager)
+				{
+					g_pVRSpectatorExtrasManager->Render();
+				}
+				
+				// Render VR World Health Icons (world-space health above players, includes targetID)
 				if (g_pVRWorldHealthIconManager)
 				{
 					g_pVRWorldHealthIconManager->Render();
@@ -2576,12 +2583,6 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRDamageNumberManager)
 				{
 					g_pVRDamageNumberManager->Render();
-				}
-				
-				// Render VR Spectator Extras (world-space player names and health bars)
-				if (g_pVRSpectatorExtrasManager)
-				{
-					g_pVRSpectatorExtrasManager->Render();
 				}
 				
 				// Render VR Weapon Select Menu (radial weapon selection)
