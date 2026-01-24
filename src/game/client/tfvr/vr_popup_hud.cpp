@@ -5,6 +5,7 @@
 
 #include "cbase.h"
 #include "vr_popup_hud.h"
+#include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "hudelement.h"
 #include "hud.h"
@@ -739,6 +740,17 @@ void CVRPopupHUDManager::Render()
     if (!CalculateSpringTransform(panelToWorld))
         return;
     
+    // Head position for local calculations (global queue handles distance sorting)
+    if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
+    {
+        VMatrix worldFromMideye = g_ClientVirtualReality.GetWorldFromMidEye();
+        m_headPosForSort = worldFromMideye.GetTranslation();
+    }
+    else
+    {
+        m_headPosForSort = pPlayer->EyePosition();
+    }
+    
     // Determine if we have a main popup panel to render
     bool bHasActivePanel = m_pActivePanel && m_pActivePanel->IsVisible();
     
@@ -749,17 +761,19 @@ void CVRPopupHUDManager::Render()
     // Skip main panel rendering if none active
     if (!bHasActivePanel)
     {
-        // But still render notifications if they're enabled and player is alive
+        // But still queue notifications if they're enabled and player is alive
         if (m_bNotificationsEnabled && pPlayer->IsAlive())
         {
             RenderNotifications(panelToWorld);
         }
         
-        // And still render voice status even without a main panel
+        // And still queue voice status even without a main panel
         if (m_bVoiceStatusEnabled)
         {
             RenderVoiceStatus(panelToWorld);
         }
+        
+        // Global queue will flush all panels at end of VR UI rendering
         return;
     }
     
@@ -904,11 +918,8 @@ void CVRPopupHUDManager::Render()
     
     panelToWorld.SetTranslation(topLeft);
     
-    // Disable clipping to prevent content from being cut off
-    g_pMatSystemSurface->DisableClipping(true);
-    
+    // Queue the main panel for distance-sorted rendering
     // For match status, use the wrapper panel which applies ForceScreenPosOffset during paint
-    // This is the same technique the hand HUD compositor uses to avoid clipping
     if (bMatchStatusSpecialHandling && m_pMatchStatusWrapper)
     {
         // Set the target panel for the wrapper to paint
@@ -920,45 +931,32 @@ void CVRPopupHUDManager::Render()
         m_pMatchStatusWrapper->SetContentOffset(0, contentOffsetY);
         m_pMatchStatusWrapper->SetVisible(true);
         
-        // Render the wrapper panel (which will paint the match status at 0,0)
-        g_pMatSystemSurface->DrawPanelIn3DSpace(
-            m_pMatchStatusWrapper->GetVPanel(),
-            panelToWorld,
-            captureWidth,
-            captureHeight,
-            worldWidth,
-            worldHeight
-        );
-        
-        m_pMatchStatusWrapper->SetVisible(false);
+        // Queue the wrapper panel
+        QueuePanelForRender(m_pMatchStatusWrapper, panelToWorld, 
+                           captureWidth, captureHeight, worldWidth, worldHeight,
+                           m_headPosForSort, true, false);
     }
     else
     {
-        // Normal rendering for other panels
-        g_pMatSystemSurface->DrawPanelIn3DSpace(
-            m_pActivePanel->GetVPanel(),
-            panelToWorld,
-            captureWidth,
-            captureHeight,
-            worldWidth,
-            worldHeight
-        );
+        // Queue normal panel for rendering
+        QueuePanelForRender(m_pActivePanel, panelToWorld,
+                           captureWidth, captureHeight, worldWidth, worldHeight,
+                           m_headPosForSort);
     }
     
-    // Restore clipping
-    g_pMatSystemSurface->DisableClipping(false);
-    
-    // Render bottom-center notification panels below the main popup
+    // Queue bottom-center notification panels below the main popup
     if (m_bNotificationsEnabled && pPlayer->IsAlive())
     {
         RenderNotifications(panelToWorld);
     }
     
-    // Render voice status panels (self-icon and other players speaking)
+    // Queue voice status panels (self-icon and other players speaking)
     if (m_bVoiceStatusEnabled)
     {
         RenderVoiceStatus(panelToWorld);
     }
+    
+    // Global queue will flush all panels at end of VR UI rendering in viewrender.cpp
     
     if (tfvr_popup_hud_debug.GetBool())
     {
@@ -1020,19 +1018,9 @@ void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMat
             pPanel->GetName(), panelX, panelY, panelWidth, panelHeight, worldWidth, worldHeight);
     }
     
-    // Disable clipping and render
-    g_pMatSystemSurface->DisableClipping(true);
-    
-    g_pMatSystemSurface->DrawPanelIn3DSpace(
-        pPanel->GetVPanel(),
-        notificationTransform,
-        panelWidth,
-        panelHeight,
-        worldWidth,
-        worldHeight
-    );
-    
-    g_pMatSystemSurface->DisableClipping(false);
+    // Queue the panel for distance-sorted rendering
+    QueuePanelForRender(pPanel, notificationTransform, panelWidth, panelHeight,
+                        worldWidth, worldHeight, m_headPosForSort);
 }
 
 void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
@@ -1212,30 +1200,14 @@ void CVRPopupHUDManager::RenderVoiceStatus(const VMatrix& /*baseTransform*/)
             VMatrix voiceTransform = voiceBaseTransform;
             voiceTransform.SetTranslation(topLeft);
             
-            // Temporarily make panel visible for rendering
+            // Queue for distance-sorted rendering (needs visibility restore)
             bool bWasVisible = m_pVoiceSelfStatus->IsVisible();
-            m_pVoiceSelfStatus->SetVisible(true);
-            
-            // Disable clipping and render
-            g_pMatSystemSurface->DisableClipping(true);
-            
-            g_pMatSystemSurface->DrawPanelIn3DSpace(
-                m_pVoiceSelfStatus->GetVPanel(),
-                voiceTransform,
-                panelWidth,
-                panelHeight,
-                worldWidth,
-                worldHeight
-            );
-            
-            g_pMatSystemSurface->DisableClipping(false);
-            
-            // Restore visibility
-            m_pVoiceSelfStatus->SetVisible(bWasVisible);
+            QueuePanelForRender(m_pVoiceSelfStatus, voiceTransform, panelWidth, panelHeight,
+                               worldWidth, worldHeight, m_headPosForSort, true, bWasVisible);
             
             if (tfvr_popup_hud_voice_debug.GetBool())
             {
-                DevMsg("VR Voice UI: Rendered self-status at (%.1f, %.1f, %.1f), offset (%.1f, %.1f)\n",
+                DevMsg("VR Voice UI: Queued self-status at (%.1f, %.1f, %.1f), offset (%.1f, %.1f)\n",
                        topLeft.x, topLeft.y, topLeft.z,
                        m_flVoiceSelfOffsetX, m_flVoiceSelfOffsetY);
             }
@@ -1282,28 +1254,71 @@ void CVRPopupHUDManager::RenderVoiceStatus(const VMatrix& /*baseTransform*/)
             VMatrix voiceTransform = voiceBaseTransform;
             voiceTransform.SetTranslation(topLeft);
             
-            // Temporarily make panel visible for rendering
+            // Queue for distance-sorted rendering (needs visibility restore)
             bool bWasVisible = m_pVoiceStatus->IsVisible();
-            m_pVoiceStatus->SetVisible(true);
-            
-            // Disable clipping and render
-            g_pMatSystemSurface->DisableClipping(true);
-            
-            g_pMatSystemSurface->DrawPanelIn3DSpace(
-                m_pVoiceStatus->GetVPanel(),
-                voiceTransform,
-                panelWidth,
-                panelHeight,
-                worldWidth,
-                worldHeight
-            );
-            
-            g_pMatSystemSurface->DisableClipping(false);
-            
-            // Restore visibility
-            m_pVoiceStatus->SetVisible(bWasVisible);
+            QueuePanelForRender(m_pVoiceStatus, voiceTransform, panelWidth, panelHeight,
+                               worldWidth, worldHeight, m_headPosForSort, true, bWasVisible);
         }
     }
+}
+
+//=============================================================================
+// Distance-sorted rendering (uses global VR World UI Queue)
+//=============================================================================
+
+// Priority levels for popup HUD elements (higher = rendered later/on top)
+static const int PRIORITY_POPUP_MAIN = 100;       // Main popup panels (scoreboard, win/loss)
+static const int PRIORITY_POPUP_NOTIFICATION = 90; // Notification panels
+static const int PRIORITY_POPUP_VOICE = 80;       // Voice status panels
+
+void CVRPopupHUDManager::QueuePanelForRender(vgui::Panel* pPanel, const VMatrix& transform,
+                                              int pixelWidth, int pixelHeight,
+                                              float worldWidth, float worldHeight,
+                                              const Vector& /*headPos*/,
+                                              bool bRestoreVisibility, bool bWasVisible)
+{
+    // Use the global VR World UI Queue for distance-sorted rendering
+    if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+    {
+        g_pVRWorldUIQueue->QueuePanel(pPanel, transform, pixelWidth, pixelHeight,
+                                      worldWidth, worldHeight, PRIORITY_POPUP_MAIN,
+                                      bRestoreVisibility, bWasVisible);
+    }
+    else
+    {
+        // Fallback: render immediately if global queue not available
+        if (!pPanel || pixelWidth <= 0 || pixelHeight <= 0)
+            return;
+        
+        if (bRestoreVisibility)
+            pPanel->SetVisible(true);
+        
+        g_pMatSystemSurface->DisableClipping(true);
+        g_pMatSystemSurface->DrawPanelIn3DSpace(
+            pPanel->GetVPanel(),
+            transform,
+            pixelWidth,
+            pixelHeight,
+            worldWidth,
+            worldHeight
+        );
+        g_pMatSystemSurface->DisableClipping(false);
+        
+        if (bRestoreVisibility)
+            pPanel->SetVisible(bWasVisible);
+    }
+}
+
+void CVRPopupHUDManager::RenderQueuedPanels()
+{
+    // No longer needed - global queue handles rendering
+    // Kept for API compatibility
+}
+
+void CVRPopupHUDManager::ClearRenderQueue()
+{
+    // No longer needed - global queue handles clearing
+    // Kept for API compatibility
 }
 
 void CVRPopupHUDManager::ResetState()

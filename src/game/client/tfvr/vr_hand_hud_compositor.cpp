@@ -1,5 +1,6 @@
 #include "cbase.h"
 #include "vr_hand_hud_compositor.h"
+#include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "c_tfvr_hand.h"
 #include "openxr_manager.h"
@@ -1098,6 +1099,9 @@ void CVRStatusHUDManager::Update()
     m_flScale = tfvr_status_hud_scale.GetFloat();
 }
 
+// Priority for hand HUDs (rendered close to player)
+static const int PRIORITY_HAND_HUD = 200;
+
 //-----------------------------------------------------------------------------
 void CVRStatusHUDManager::Render()
 {
@@ -1130,18 +1134,31 @@ void CVRStatusHUDManager::Render()
     if (IsPanelBackfacing(panelToWorld))
         return;
     
-    m_pCompositor->SetVisible(true);
-    
-    g_pMatSystemSurface->DrawPanelIn3DSpace(
-        m_pCompositor->GetVPanel(),
-        panelToWorld,
-        compositorWidth,
-        compositorHeight,
-        worldWidth,
-        worldHeight
-    );
-    
-    m_pCompositor->SetVisible(false);
+    // Queue for distance-sorted rendering
+    if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+    {
+        bool bWasVisible = m_pCompositor->IsVisible();
+        g_pVRWorldUIQueue->QueuePanel(m_pCompositor, panelToWorld,
+                                      compositorWidth, compositorHeight,
+                                      worldWidth, worldHeight,
+                                      PRIORITY_HAND_HUD, true, bWasVisible);
+    }
+    else
+    {
+        // Fallback: render immediately
+        m_pCompositor->SetVisible(true);
+        g_pMatSystemSurface->DisableClipping(true);
+        g_pMatSystemSurface->DrawPanelIn3DSpace(
+            m_pCompositor->GetVPanel(),
+            panelToWorld,
+            compositorWidth,
+            compositorHeight,
+            worldWidth,
+            worldHeight
+        );
+        g_pMatSystemSurface->DisableClipping(false);
+        m_pCompositor->SetVisible(false);
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -1447,18 +1464,31 @@ void CVRWeaponHUDManager::Render()
     if (IsPanelBackfacing(panelToWorld))
         return;
     
-    m_pCompositor->SetVisible(true);
-    
-    g_pMatSystemSurface->DrawPanelIn3DSpace(
-        m_pCompositor->GetVPanel(),
-        panelToWorld,
-        compositorWidth,
-        compositorHeight,
-        worldWidth,
-        worldHeight
-    );
-    
-    m_pCompositor->SetVisible(false);
+    // Queue for distance-sorted rendering
+    if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+    {
+        bool bWasVisible = m_pCompositor->IsVisible();
+        g_pVRWorldUIQueue->QueuePanel(m_pCompositor, panelToWorld,
+                                      compositorWidth, compositorHeight,
+                                      worldWidth, worldHeight,
+                                      PRIORITY_HAND_HUD, true, bWasVisible);
+    }
+    else
+    {
+        // Fallback: render immediately
+        m_pCompositor->SetVisible(true);
+        g_pMatSystemSurface->DisableClipping(true);
+        g_pMatSystemSurface->DrawPanelIn3DSpace(
+            m_pCompositor->GetVPanel(),
+            panelToWorld,
+            compositorWidth,
+            compositorHeight,
+            worldWidth,
+            worldHeight
+        );
+        g_pMatSystemSurface->DisableClipping(false);
+        m_pCompositor->SetVisible(false);
+    }
 }
 
 //-----------------------------------------------------------------------------

@@ -1,5 +1,9 @@
 // Purpose: VR World Health Icon - Renders floating health icons in 3D world
 //          space above players' heads, always facing the player's view.
+//
+// NOTE: This manager renders immediately rather than using the global UI queue
+//       because it reuses wrapper panels for multiple entities in a loop.
+//       The panel data changes for each entity, so queuing doesn't work.
 
 #include "cbase.h"
 #include "vr_world_health_icon.h"

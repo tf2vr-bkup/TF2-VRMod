@@ -1,5 +1,9 @@
 // Purpose: VR Spectator Extras - Renders player names and health bars in 3D
 //          world space above teammates/entities when glowing or spectating.
+//
+// NOTE: This manager renders immediately rather than using the global UI queue
+//       because it reuses a single panel for multiple entities in a loop.
+//       The panel data changes for each entity, so queuing doesn't work.
 
 #include "cbase.h"
 #include "vr_spectator_extras.h"

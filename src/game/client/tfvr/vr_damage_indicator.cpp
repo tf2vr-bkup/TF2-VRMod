@@ -1,5 +1,6 @@
 #include "cbase.h"
 #include "vr_damage_indicator.h"
+#include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "hudelement.h"
 #include "hud.h"
@@ -300,6 +301,9 @@ bool CVRDamageIndicatorManager::CalculateSpringTransform(VMatrix& transform)
     return true;
 }
 
+// Priority for damage indicator (head-relative, medium distance)
+static const int PRIORITY_DAMAGE_INDICATOR = 160;
+
 //-----------------------------------------------------------------------------
 void CVRDamageIndicatorManager::Render()
 {
@@ -323,21 +327,32 @@ void CVRDamageIndicatorManager::Render()
     if (!CalculateSpringTransform(panelToWorld))
         return;
     
-    // Make panel visible for rendering
+    // Queue for distance-sorted rendering
     bool bWasVisible = m_pDamageIndicatorPanel->IsVisible();
-    m_pDamageIndicatorPanel->SetVisible(true);
     
-    g_pMatSystemSurface->DrawPanelIn3DSpace(
-        m_pDamageIndicatorPanel->GetVPanel(),
-        panelToWorld,
-        m_nPanelPixelWidth,
-        m_nPanelPixelHeight,
-        m_flPanelWidth,
-        m_flPanelHeight
-    );
-    
-    // Restore visibility
-    m_pDamageIndicatorPanel->SetVisible(bWasVisible);
+    if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+    {
+        g_pVRWorldUIQueue->QueuePanel(m_pDamageIndicatorPanel, panelToWorld,
+                                      m_nPanelPixelWidth, m_nPanelPixelHeight,
+                                      m_flPanelWidth, m_flPanelHeight,
+                                      PRIORITY_DAMAGE_INDICATOR, true, bWasVisible);
+    }
+    else
+    {
+        // Fallback: render immediately
+        m_pDamageIndicatorPanel->SetVisible(true);
+        g_pMatSystemSurface->DisableClipping(true);
+        g_pMatSystemSurface->DrawPanelIn3DSpace(
+            m_pDamageIndicatorPanel->GetVPanel(),
+            panelToWorld,
+            m_nPanelPixelWidth,
+            m_nPanelPixelHeight,
+            m_flPanelWidth,
+            m_flPanelHeight
+        );
+        g_pMatSystemSurface->DisableClipping(false);
+        m_pDamageIndicatorPanel->SetVisible(bWasVisible);
+    }
     
     if (tfvr_damage_indicator_debug.GetBool())
     {

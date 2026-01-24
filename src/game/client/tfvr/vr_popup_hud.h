@@ -8,9 +8,26 @@
 #include "mathlib/vmatrix.h"
 #include "vgui_controls/Panel.h"
 #include "vgui_controls/EditablePanel.h"
+#include "utlvector.h"
 
 // Forward declarations
 class CHudElement;
+
+//-----------------------------------------------------------------------------
+// Purpose: Render item for distance-sorted 3D UI rendering
+//-----------------------------------------------------------------------------
+struct VRPanelRenderItem
+{
+    vgui::Panel* pPanel;        // The panel to render
+    VMatrix transform;          // World transform for rendering
+    int pixelWidth;             // Panel width in pixels
+    int pixelHeight;            // Panel height in pixels
+    float worldWidth;           // World width in units
+    float worldHeight;          // World height in units
+    float distanceFromHead;     // Distance from head (for sorting)
+    bool bRestoreVisibility;    // Whether to restore visibility after render
+    bool bWasVisible;           // Original visibility state
+};
 
 //-----------------------------------------------------------------------------
 // Purpose: Simple wrapper panel that paints a target panel at (0,0) offset
@@ -91,6 +108,18 @@ private:
     
     // Render voice status panels (self-icon and other players speaking)
     void RenderVoiceStatus(const VMatrix& baseTransform);
+    
+    // Distance-sorted rendering
+    void QueuePanelForRender(vgui::Panel* pPanel, const VMatrix& transform, 
+                             int pixelWidth, int pixelHeight,
+                             float worldWidth, float worldHeight,
+                             const Vector& headPos,
+                             bool bRestoreVisibility = false, bool bWasVisible = false);
+    void RenderQueuedPanels();
+    void ClearRenderQueue();
+    
+    CUtlVector<VRPanelRenderItem> m_renderQueue;
+    Vector m_headPosForSort;  // Cached head position for distance calculations
     
 private:
     bool m_bInitialized;

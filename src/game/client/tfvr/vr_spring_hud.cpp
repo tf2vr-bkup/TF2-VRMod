@@ -1,5 +1,6 @@
 #include "cbase.h"
 #include "vr_spring_hud.h"
+#include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "hudelement.h"
 #include "hud.h"
@@ -267,6 +268,9 @@ bool CVRSpringHUDManager::CalculateSpringTransform(VMatrix& transform)
     return true;
 }
 
+// Priority for spring HUD (kill feed - medium distance from player)
+static const int PRIORITY_SPRING_HUD = 150;
+
 //-----------------------------------------------------------------------------
 void CVRSpringHUDManager::Render()
 {
@@ -299,21 +303,32 @@ void CVRSpringHUDManager::Render()
     if (!CalculateSpringTransform(panelToWorld))
         return;
     
-    // Make panel visible for rendering
+    // Queue for distance-sorted rendering
     bool bWasVisible = m_pKillFeedPanel->IsVisible();
-    m_pKillFeedPanel->SetVisible(true);
     
-    g_pMatSystemSurface->DrawPanelIn3DSpace(
-        m_pKillFeedPanel->GetVPanel(),
-        panelToWorld,
-        m_nPanelPixelWidth,
-        m_nPanelPixelHeight,
-        m_flPanelWidth,
-        m_flPanelHeight
-    );
-    
-    // Restore visibility
-    m_pKillFeedPanel->SetVisible(bWasVisible);
+    if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+    {
+        g_pVRWorldUIQueue->QueuePanel(m_pKillFeedPanel, panelToWorld,
+                                      m_nPanelPixelWidth, m_nPanelPixelHeight,
+                                      m_flPanelWidth, m_flPanelHeight,
+                                      PRIORITY_SPRING_HUD, true, bWasVisible);
+    }
+    else
+    {
+        // Fallback: render immediately
+        m_pKillFeedPanel->SetVisible(true);
+        g_pMatSystemSurface->DisableClipping(true);
+        g_pMatSystemSurface->DrawPanelIn3DSpace(
+            m_pKillFeedPanel->GetVPanel(),
+            panelToWorld,
+            m_nPanelPixelWidth,
+            m_nPanelPixelHeight,
+            m_flPanelWidth,
+            m_flPanelHeight
+        );
+        g_pMatSystemSurface->DisableClipping(false);
+        m_pKillFeedPanel->SetVisible(bWasVisible);
+    }
     
     if (tfvr_killfeed_debug.GetBool())
     {

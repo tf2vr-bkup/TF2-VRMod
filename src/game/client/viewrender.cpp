@@ -63,6 +63,7 @@
 #include "tfvr/vr_popup_hud.h"
 #include "tfvr/vr_world_health_icon.h"
 #include "tfvr/vr_damage_numbers.h"
+#include "tfvr/vr_world_ui_queue.h"
 #include "tfvr/vr_spectator_extras.h"
 
 #ifdef TF_CLIENT_DLL
@@ -2536,6 +2537,25 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 					}
 				}
 				
+				// Begin VR World UI frame for distance-sorted rendering
+				// All managers queue their panels, then FlushRenderQueue renders them sorted
+				if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+				{
+					// Get head position for distance sorting
+					Vector headPos;
+					if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
+					{
+						VMatrix worldFromMideye = g_ClientVirtualReality.GetWorldFromMidEye();
+						headPos = worldFromMideye.GetTranslation();
+					}
+					else
+					{
+						C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+						headPos = pPlayer ? pPlayer->EyePosition() : vec3_origin;
+					}
+					g_pVRWorldUIQueue->BeginFrame(headPos);
+				}
+				
 				// Render VR Status HUD (left hand: health, objectives)
 				if (g_pVRStatusHUDManager)
 				{
@@ -2591,7 +2611,13 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 					g_pVRWeaponSelectManager->Render();
 				}
 				
-				// Render VR laser pointer on top of HUD/menus
+				// Flush the VR World UI queue - renders all panels sorted by distance
+				if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+				{
+					g_pVRWorldUIQueue->FlushRenderQueue();
+				}
+				
+				// Render VR laser pointer on top of HUD/menus (always last)
 				if (g_pVRLaserPointer)
 				{
 					g_pVRLaserPointer->RenderLaserOnTop();

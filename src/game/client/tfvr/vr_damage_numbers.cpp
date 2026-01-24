@@ -1,5 +1,9 @@
 // Purpose: VR Damage Numbers - Renders floating damage/healing numbers in 3D 
 //          world space above victims, matching vanilla TF2 behavior.
+//
+// NOTE: This manager renders immediately rather than using the global UI queue
+//       because it reuses a single panel for multiple damage numbers in a loop.
+//       The panel data changes for each number, so queuing doesn't work.
 
 #include "cbase.h"
 #include "vr_damage_numbers.h"

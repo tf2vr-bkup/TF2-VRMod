@@ -5,6 +5,7 @@
 
 #include "cbase.h"
 #include "vr_weapon_select.h"
+#include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "tf_weaponbase.h"
 #include "view.h"
@@ -963,6 +964,9 @@ void CVRWeaponSelectManager::Update(float deltaTime)
 	}
 }
 
+// Priority for weapon select menu (should be on top of most things)
+static const int PRIORITY_WEAPON_SELECT = 250;
+
 void CVRWeaponSelectManager::Render()
 {
 	VPROF("CVRWeaponSelectManager::Render");
@@ -981,19 +985,30 @@ void CVRWeaponSelectManager::Render()
 	if (!CalculateMenuTransform(menuTransform))
 		return;
 	
-	// Make panel visible for rendering
-	m_pPanel->SetVisible(true);
+	// Queue for distance-sorted rendering
+	bool bWasVisible = m_pPanel->IsVisible();
 	
-	// Draw panel in 3D space
-	g_pMatSystemSurface->DrawPanelIn3DSpace(
-		m_pPanel->GetVPanel(),
-		menuTransform,
-		m_nPanelPixelWidth,
-		m_nPanelPixelHeight,
-		m_flPanelWorldWidth,
-		m_flPanelWorldHeight
-	);
-	
-	// Hide panel again
-	m_pPanel->SetVisible(false);
+	if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+	{
+		g_pVRWorldUIQueue->QueuePanel(m_pPanel, menuTransform,
+		                              m_nPanelPixelWidth, m_nPanelPixelHeight,
+		                              m_flPanelWorldWidth, m_flPanelWorldHeight,
+		                              PRIORITY_WEAPON_SELECT, true, bWasVisible);
+	}
+	else
+	{
+		// Fallback: render immediately
+		m_pPanel->SetVisible(true);
+		g_pMatSystemSurface->DisableClipping(true);
+		g_pMatSystemSurface->DrawPanelIn3DSpace(
+			m_pPanel->GetVPanel(),
+			menuTransform,
+			m_nPanelPixelWidth,
+			m_nPanelPixelHeight,
+			m_flPanelWorldWidth,
+			m_flPanelWorldHeight
+		);
+		g_pMatSystemSurface->DisableClipping(false);
+		m_pPanel->SetVisible(false);
+	}
 }

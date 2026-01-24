@@ -1013,6 +1013,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_damage_numbers.cpp"
 			$File   "tfvr\vr_spectator_extras.h"
 			$File   "tfvr\vr_spectator_extras.cpp"
+			$File   "tfvr\vr_world_ui_queue.h"
+			$File   "tfvr\vr_world_ui_queue.cpp"
 			
 			$Folder "VR Weapons"
 			{

@@ -31,6 +31,7 @@
 #include "vr_world_health_icon.h"
 #include "vr_damage_numbers.h"
 #include "vr_spectator_extras.h"
+#include "vr_world_ui_queue.h"
 
 #include <algorithm>
 
@@ -108,6 +109,22 @@ void CVRMenuManager::Initialize()
     if (m_pConVarPrimaryHand)
     {
         m_nMenuHand = m_pConVarPrimaryHand->GetInt();
+    }
+    
+    // Initialize VR World UI Queue first (used by all other managers for distance-sorted rendering)
+    if (!g_pVRWorldUIQueue)
+    {
+        g_pVRWorldUIQueue = new CVRWorldUIQueue();
+        if (g_pVRWorldUIQueue->Initialize())
+        {
+            DevMsg("VR Menu Manager: World UI Queue initialized\n");
+        }
+        else
+        {
+            delete g_pVRWorldUIQueue;
+            g_pVRWorldUIQueue = nullptr;
+            Warning("VR Menu Manager: Failed to initialize World UI Queue\n");
+        }
     }
     
     // Initialize VR Status HUD Manager (left hand: health, objectives)
@@ -352,6 +369,14 @@ void CVRMenuManager::Shutdown()
         delete m_pVRSpectatorExtrasManager;
         m_pVRSpectatorExtrasManager = nullptr;
         g_pVRSpectatorExtrasManager = nullptr;
+    }
+    
+    // Shutdown VR World UI Queue last (used by all other managers)
+    if (g_pVRWorldUIQueue)
+    {
+        g_pVRWorldUIQueue->Shutdown();
+        delete g_pVRWorldUIQueue;
+        g_pVRWorldUIQueue = nullptr;
     }
     
     m_pVRManager = nullptr;
