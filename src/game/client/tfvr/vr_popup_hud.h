@@ -60,11 +60,16 @@ public:
     // Check if any popup is currently being shown
     bool IsShowingPopup() const { return m_pActivePanel != nullptr; }
     
+    // Debug output for voice UI state
+    void DebugDumpVoiceUIState();
+    
     // Static methods for VR suppression of vanilla 2D rendering
     static bool ShouldSuppressNotificationPanel();
     static bool ShouldSuppressSpectatorTargetID();
     static bool ShouldSuppressSecondaryTargetID();
     static bool ShouldSuppressBuildingStatus();
+    static bool ShouldSuppressVoiceSelfStatus();
+    static bool ShouldSuppressVoiceStatus();
 
 private:
     // Find TF2's HUD panels
@@ -84,6 +89,9 @@ private:
     // Render all notification panels (called from Render)
     void RenderNotifications(const VMatrix& baseTransform);
     
+    // Render voice status panels (self-icon and other players speaking)
+    void RenderVoiceStatus(const VMatrix& baseTransform);
+    
 private:
     bool m_bInitialized;
     bool m_bEnabled;
@@ -101,6 +109,10 @@ private:
     vgui::Panel* m_pSecondaryTargetID;    // CSecondaryTargetID - healer notification
     vgui::Panel* m_pBuildingStatusEngineer; // CHudBuildingStatusContainer_Engineer
     vgui::Panel* m_pBuildingStatusSpy;    // CHudBuildingStatusContainer_Spy
+    
+    // Voice status panels
+    vgui::Panel* m_pVoiceSelfStatus;      // CHudVoiceSelfStatus - local player speaking icon
+    vgui::Panel* m_pVoiceStatus;          // CHudVoiceStatus - other players speaking list
     
     // Wrapper panel for rendering match status without clipping
     CVRPanelWrapper* m_pMatchStatusWrapper;
@@ -129,6 +141,19 @@ private:
     bool m_bNotificationsEnabled;
     float m_flNotificationsOffsetY;     // Vertical offset below timer
     float m_flNotificationsScale;       // Scale multiplier for notifications
+    
+    // Voice status UI configuration
+    bool m_bVoiceStatusEnabled;
+    float m_flVoiceDistance;            // Distance from head (independent transform)
+    float m_flVoiceScale;               // Scale multiplier for voice panels
+    
+    // Self-status (local player speaking icon) offsets
+    float m_flVoiceSelfOffsetX;         // Horizontal offset (positive = right)
+    float m_flVoiceSelfOffsetY;         // Vertical offset (positive = up)
+    
+    // Other players speaking list offsets  
+    float m_flVoiceOthersOffsetX;       // Horizontal offset (positive = right)
+    float m_flVoiceOthersOffsetY;       // Vertical offset (positive = up)
 };
 
 // Global instance

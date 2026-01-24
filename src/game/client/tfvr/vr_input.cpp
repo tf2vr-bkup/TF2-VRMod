@@ -38,6 +38,18 @@ ConVar tfvr_weapon_switch_stick_enabled( "tfvr_weapon_switch_stick_enabled", "0"
 ConVar tfvr_weapon_switch_tilt_threshold( "tfvr_weapon_switch_tilt_threshold", "0.7", FCVAR_ARCHIVE, "Tilt threshold for weapon switching (0.0-1.0)" );
 ConVar tfvr_weapon_switch_debug( "tfvr_weapon_switch_debug", "0", FCVAR_ARCHIVE, "Show debug output for weapon switching actions" );
 
+// Voice chat gesture ConVars (walkie-talkie style activation)
+ConVar tfvr_voice_gesture_enabled( "tfvr_voice_gesture_enabled", "1", FCVAR_ARCHIVE, "Enable walkie-talkie style voice chat (hold offhand near ear and press trigger)" );
+ConVar tfvr_voice_ear_radius( "tfvr_voice_ear_radius", "15.0", FCVAR_ARCHIVE, "Radius around left ear for voice chat activation (in game units)" );
+ConVar tfvr_voice_ear_offset( "tfvr_voice_ear_offset", "8.0", FCVAR_ARCHIVE, "Lateral offset from head center to left ear (in game units)" );
+ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE, "Show debug output for voice chat gesture detection" );
+
+// Voice gesture state - used to suppress offhand attack when voice is active
+static bool s_bVoiceGestureActive = false;
+
+// Primary hand ConVar (defined in vr_menu_manager.cpp)
+extern ConVar tfvr_primary_hand;
+
 // Movement speed ConVars
 extern ConVar cl_forwardspeed;
 extern ConVar cl_sidespeed;
@@ -230,15 +242,189 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
         return;
     }
     
+    // =========================================================================
+    // Voice chat activation
+    // MUST be processed BEFORE attack inputs so we can suppress the offhand trigger
+    // Uses the "voice" action which is bound to the left trigger by default.
+    // 
+    // When gesture mode is ENABLED (tfvr_voice_gesture_enabled 1):
+    //   - Press trigger while controller is near left ear to activate voice
+    //   - Voice stays active until trigger is released (even if moving out of range)
+    //   - Moving into range while already holding trigger does NOT activate
+    //
+    // When gesture mode is DISABLED (tfvr_voice_gesture_enabled 0):
+    //   - Simply pressing the voice action activates voice directly
+    //   - No proximity check required
+    //
+    // In both modes, when voice is active, secondary fire is suppressed.
+    // =========================================================================
+    if (g_pOpenXRManager)
+    {
+        // Persistent state for voice action edge detection
+        static bool bLastVoiceActionPressed = false;
+        
+        // Get the voice action value (bound to left trigger by default)
+        float voiceActionValue = g_pOpenXRManager->GetAnalogValue("voice");
+        bool bVoiceActionPressed = (voiceActionValue > 0.5f);
+        bool bVoiceActionJustPressed = bVoiceActionPressed && !bLastVoiceActionPressed;
+        bool bVoiceActionJustReleased = !bVoiceActionPressed && bLastVoiceActionPressed;
+        
+        if (tfvr_voice_gesture_enabled.GetBool())
+        {
+            // GESTURE MODE: Require proximity to left ear
+            
+            // Determine which hand is the offhand (opposite of primary hand)
+            // tfvr_primary_hand: 0 = left primary (right is offhand), 1 = right primary (left is offhand)
+            bool bLeftIsOffhand = (tfvr_primary_hand.GetInt() == 1);
+            
+            // Get HMD pose in playspace/chaperone coordinates
+            Vector hmdOrigin;
+            QAngle hmdAngles;
+            g_pOpenXRManager->GetHMDInChaperone(hmdOrigin, hmdAngles);
+            
+            // Calculate left ear position (offset to the left of the head center)
+            Vector hmdForward, hmdRight, hmdUp;
+            AngleVectors(hmdAngles, &hmdForward, &hmdRight, &hmdUp);
+            
+            float earOffset = tfvr_voice_ear_offset.GetFloat();
+            Vector leftEarPos = hmdOrigin - hmdRight * earOffset; // Negative right = left
+            
+            // Get offhand controller position in RAW playspace coordinates (same as HMD)
+            Vector offhandPos;
+            bool bOffhandValid = false;
+            VMatrix offhandPose;
+            
+            if (bLeftIsOffhand)
+            {
+                if (g_pOpenXRManager->GetLeftControllerPoseRaw(offhandPose))
+                {
+                    offhandPos = offhandPose.GetTranslation();
+                    bOffhandValid = true;
+                }
+            }
+            else
+            {
+                if (g_pOpenXRManager->GetRightControllerPoseRaw(offhandPose))
+                {
+                    offhandPos = offhandPose.GetTranslation();
+                    bOffhandValid = true;
+                }
+            }
+            
+            // Check proximity to left ear
+            float earRadius = tfvr_voice_ear_radius.GetFloat();
+            bool bNearEar = false;
+            float distanceToEar = 0.0f;
+            
+            if (bOffhandValid)
+            {
+                distanceToEar = (offhandPos - leftEarPos).Length();
+                bNearEar = (distanceToEar <= earRadius);
+            }
+            
+            // Gesture activation logic:
+            // - Activate ONLY when voice action is pressed (rising edge) while inside ear radius
+            // - Stay active until voice action is released, regardless of position
+            // - Moving into range while already holding doesn't activate
+            
+            if (bVoiceActionJustPressed && bNearEar && !s_bVoiceGestureActive)
+            {
+                s_bVoiceGestureActive = true;
+                engine->ClientCmd_Unrestricted("+voicerecord\n");
+                if (tfvr_voice_gesture_debug.GetBool())
+                {
+                    DevMsg("VR Voice: Activated (gesture mode, distance: %.1f)\n", distanceToEar);
+                }
+            }
+            else if (bVoiceActionJustReleased && s_bVoiceGestureActive)
+            {
+                s_bVoiceGestureActive = false;
+                engine->ClientCmd_Unrestricted("-voicerecord\n");
+                if (tfvr_voice_gesture_debug.GetBool())
+                {
+                    DevMsg("VR Voice: Deactivated (gesture mode)\n");
+                }
+            }
+            
+            // Debug output
+            if (tfvr_voice_gesture_debug.GetBool())
+            {
+                static float lastVoiceDebugTime = 0.0f;
+                float currentTime = gpGlobals->curtime;
+                
+                if (currentTime - lastVoiceDebugTime > 0.5f)
+                {
+                    DevMsg("VR Voice: Mode=Gesture, Offhand=%s, Valid=%d, Distance=%.1f (radius=%.1f), Action=%.2f, NearEar=%d, Active=%d\n",
+                           bLeftIsOffhand ? "Left" : "Right",
+                           bOffhandValid ? 1 : 0,
+                           distanceToEar,
+                           earRadius,
+                           voiceActionValue,
+                           bNearEar ? 1 : 0,
+                           s_bVoiceGestureActive ? 1 : 0);
+                    lastVoiceDebugTime = currentTime;
+                }
+            }
+        }
+        else
+        {
+            // DIRECT MODE: Voice action directly activates voice (no proximity check)
+            
+            if (bVoiceActionJustPressed && !s_bVoiceGestureActive)
+            {
+                s_bVoiceGestureActive = true;
+                engine->ClientCmd_Unrestricted("+voicerecord\n");
+                if (tfvr_voice_gesture_debug.GetBool())
+                {
+                    DevMsg("VR Voice: Activated (direct mode)\n");
+                }
+            }
+            else if (bVoiceActionJustReleased && s_bVoiceGestureActive)
+            {
+                s_bVoiceGestureActive = false;
+                engine->ClientCmd_Unrestricted("-voicerecord\n");
+                if (tfvr_voice_gesture_debug.GetBool())
+                {
+                    DevMsg("VR Voice: Deactivated (direct mode)\n");
+                }
+            }
+            
+            // Debug output
+            if (tfvr_voice_gesture_debug.GetBool())
+            {
+                static float lastVoiceDebugTime = 0.0f;
+                float currentTime = gpGlobals->curtime;
+                
+                if (currentTime - lastVoiceDebugTime > 0.5f)
+                {
+                    DevMsg("VR Voice: Mode=Direct, Action=%.2f, Active=%d\n",
+                           voiceActionValue,
+                           s_bVoiceGestureActive ? 1 : 0);
+                    lastVoiceDebugTime = currentTime;
+                }
+            }
+        }
+        
+        // Update action state for next frame
+        bLastVoiceActionPressed = bVoiceActionPressed;
+    }
+    
     // Normal gameplay input processing (only when menu is not visible)
-    // Primary attack
+    
+    // Determine which hand is offhand for voice gesture suppression
+    // tfvr_primary_hand: 0 = left primary (right is offhand), 1 = right primary (left is offhand)
+    bool bLeftIsOffhand = (tfvr_primary_hand.GetInt() == 1);
+    
+    // Primary attack - suppress if voice gesture is active AND right hand is offhand
     bool bPrimaryAttack = g_pOpenXRManager->GetAnalogValue("primary_attack") > 0.5f;
-    if (bPrimaryAttack)
+    bool bSuppressPrimary = s_bVoiceGestureActive && !bLeftIsOffhand; // Right is offhand, uses primary_attack
+    if (bPrimaryAttack && !bSuppressPrimary)
         cmd->buttons |= IN_ATTACK;
 
-    // Secondary attack
+    // Secondary attack - suppress if voice gesture is active AND left hand is offhand
     bool bSecondaryAttack = g_pOpenXRManager->GetAnalogValue("secondary_attack") > 0.5f;
-    if (bSecondaryAttack)
+    bool bSuppressSecondary = s_bVoiceGestureActive && bLeftIsOffhand; // Left is offhand, uses secondary_attack
+    if (bSecondaryAttack && !bSuppressSecondary)
         cmd->buttons |= IN_ATTACK2;
 
     // Use

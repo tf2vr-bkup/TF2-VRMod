@@ -10,6 +10,7 @@
 #include "hud.h"
 #include "view.h"
 #include "vgui/ISurface.h"
+#include "voice_status.h"
 #include "vgui/IVGui.h"
 #include "VGuiMatSurface/IMatSystemSurface.h"
 #include "iclientmode.h"
@@ -98,6 +99,31 @@ ConVar tfvr_popup_hud_healer_offset_x("tfvr_popup_hud_healer_offset_x", "0", FCV
 ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "0", FCVAR_ARCHIVE, 
     "Vertical offset for healer notification panel (positive = up)");
 
+// Voice status UI ConVars
+ConVar tfvr_popup_hud_voice_enabled("tfvr_popup_hud_voice_enabled", "1", FCVAR_ARCHIVE, 
+    "Enable VR rendering of voice status panels (self-icon and other players speaking)");
+ConVar tfvr_popup_hud_voice_distance("tfvr_popup_hud_voice_distance", "100", FCVAR_ARCHIVE,
+    "Distance of voice UI from head (independent of popup panels)");
+ConVar tfvr_popup_hud_voice_scale("tfvr_popup_hud_voice_scale", "0.4", FCVAR_ARCHIVE, 
+    "Scale multiplier for voice status panels");
+
+// Self-status (local player speaking icon) positioning
+ConVar tfvr_popup_hud_voice_self_offset_x("tfvr_popup_hud_voice_self_offset_x", "35", FCVAR_ARCHIVE, 
+    "Horizontal offset for self speaking icon (positive = right)");
+ConVar tfvr_popup_hud_voice_self_offset_y("tfvr_popup_hud_voice_self_offset_y", "20", FCVAR_ARCHIVE, 
+    "Vertical offset for self speaking icon (positive = up)");
+
+// Other players speaking list positioning
+ConVar tfvr_popup_hud_voice_others_offset_x("tfvr_popup_hud_voice_others_offset_x", "-35", FCVAR_ARCHIVE, 
+    "Horizontal offset for other players speaking list (positive = right)");
+ConVar tfvr_popup_hud_voice_others_offset_y("tfvr_popup_hud_voice_others_offset_y", "15", FCVAR_ARCHIVE, 
+    "Vertical offset for other players speaking list (positive = up)");
+
+ConVar tfvr_popup_hud_voice_debug("tfvr_popup_hud_voice_debug", "0", FCVAR_ARCHIVE, 
+    "Debug output for voice status VR rendering");
+ConVar tfvr_popup_hud_voice_test("tfvr_popup_hud_voice_test", "0", FCVAR_CHEAT, 
+    "Force voice UI to render for testing (bypasses voice manager check)");
+
 //=============================================================================
 // CVRPanelWrapper Implementation
 //=============================================================================
@@ -175,6 +201,10 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_pBuildingStatusEngineer = nullptr;
     m_pBuildingStatusSpy = nullptr;
     
+    // Voice status panels
+    m_pVoiceSelfStatus = nullptr;
+    m_pVoiceStatus = nullptr;
+    
     m_flCurrentYaw = 0.0f;
     m_flTargetYaw = 0.0f;
     
@@ -189,6 +219,15 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_bNotificationsEnabled = true;
     m_flNotificationsOffsetY = -15.0f;
     m_flNotificationsScale = 0.5f;
+    
+    // Voice status UI configuration
+    m_bVoiceStatusEnabled = true;
+    m_flVoiceDistance = 100.0f;
+    m_flVoiceScale = 0.4f;
+    m_flVoiceSelfOffsetX = 35.0f;
+    m_flVoiceSelfOffsetY = 20.0f;
+    m_flVoiceOthersOffsetX = -35.0f;
+    m_flVoiceOthersOffsetY = 15.0f;
 }
 
 CVRPopupHUDManager::~CVRPopupHUDManager()
@@ -260,6 +299,10 @@ void CVRPopupHUDManager::Shutdown()
     m_pSecondaryTargetID = nullptr;
     m_pBuildingStatusEngineer = nullptr;
     m_pBuildingStatusSpy = nullptr;
+    
+    // Clear voice panel pointers
+    m_pVoiceSelfStatus = nullptr;
+    m_pVoiceStatus = nullptr;
     
     m_bInitialized = false;
 }
@@ -417,12 +460,42 @@ void CVRPopupHUDManager::AcquirePanels()
         }
     }
     
+    // CHudVoiceSelfStatus - local player speaking icon
+    if (!m_pVoiceSelfStatus)
+    {
+        CHudElement* pElement = gHUD.FindElement("CHudVoiceSelfStatus");
+        if (pElement)
+        {
+            m_pVoiceSelfStatus = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pVoiceSelfStatus)
+            {
+                DevMsg("VR Popup HUD: Found voice self status panel\n");
+            }
+        }
+    }
+    
+    // CHudVoiceStatus - other players speaking list
+    if (!m_pVoiceStatus)
+    {
+        CHudElement* pElement = gHUD.FindElement("CHudVoiceStatus");
+        if (pElement)
+        {
+            m_pVoiceStatus = dynamic_cast<vgui::Panel*>(pElement);
+            if (m_pVoiceStatus)
+            {
+                DevMsg("VR Popup HUD: Found voice status panel\n");
+            }
+        }
+    }
+    
     if (bFirstAcquire && (m_pScoreboardPanel || m_pWinPanel))
     {
         DevMsg("VR Popup HUD: Acquired panels - Scoreboard=%p, WinPanel=%p, ArenaWin=%p, MatchSummary=%p\n",
             m_pScoreboardPanel, m_pWinPanel, m_pArenaWinPanel, m_pMatchSummaryPanel);
         DevMsg("VR Popup HUD: Notification panels - Notification=%p, MainTarget=%p, SpectatorTarget=%p, SecondaryTarget=%p, BuildingEngy=%p, BuildingSpy=%p\n",
             m_pNotificationPanel, m_pMainTargetID, m_pSpectatorTargetID, m_pSecondaryTargetID, m_pBuildingStatusEngineer, m_pBuildingStatusSpy);
+        DevMsg("VR Popup HUD: Voice panels - VoiceSelf=%p, VoiceStatus=%p\n",
+            m_pVoiceSelfStatus, m_pVoiceStatus);
         bFirstAcquire = false;
     }
     
@@ -559,6 +632,15 @@ void CVRPopupHUDManager::Update(float deltaTime)
     m_flNotificationsOffsetY = tfvr_popup_hud_notifications_offset_y.GetFloat();
     m_flNotificationsScale = tfvr_popup_hud_notifications_scale.GetFloat();
     
+    // Voice status UI settings
+    m_bVoiceStatusEnabled = tfvr_popup_hud_voice_enabled.GetBool();
+    m_flVoiceDistance = tfvr_popup_hud_voice_distance.GetFloat();
+    m_flVoiceScale = tfvr_popup_hud_voice_scale.GetFloat();
+    m_flVoiceSelfOffsetX = tfvr_popup_hud_voice_self_offset_x.GetFloat();
+    m_flVoiceSelfOffsetY = tfvr_popup_hud_voice_self_offset_y.GetFloat();
+    m_flVoiceOthersOffsetX = tfvr_popup_hud_voice_others_offset_x.GetFloat();
+    m_flVoiceOthersOffsetY = tfvr_popup_hud_voice_others_offset_y.GetFloat();
+    
     // Try to acquire panels if we don't have them yet
     if (!m_pScoreboardPanel && !m_pWinPanel)
     {
@@ -671,6 +753,12 @@ void CVRPopupHUDManager::Render()
         if (m_bNotificationsEnabled && pPlayer->IsAlive())
         {
             RenderNotifications(panelToWorld);
+        }
+        
+        // And still render voice status even without a main panel
+        if (m_bVoiceStatusEnabled)
+        {
+            RenderVoiceStatus(panelToWorld);
         }
         return;
     }
@@ -866,6 +954,12 @@ void CVRPopupHUDManager::Render()
         RenderNotifications(panelToWorld);
     }
     
+    // Render voice status panels (self-icon and other players speaking)
+    if (m_bVoiceStatusEnabled)
+    {
+        RenderVoiceStatus(panelToWorld);
+    }
+    
     if (tfvr_popup_hud_debug.GetBool())
     {
         // Draw debug visualization at center
@@ -1000,6 +1094,218 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
     }
 }
 
+extern ConVar tfvr_popup_hud_voice_debug;
+extern ConVar tfvr_popup_hud_voice_test;
+
+void CVRPopupHUDManager::RenderVoiceStatus(const VMatrix& /*baseTransform*/)
+{
+    // Render voice status panels using the SPRING ARM positioning
+    // Uses m_flCurrentYaw (spring arm yaw) for consistent positioning
+    // Not affected by popup panel size/position - only by spring arm state
+    // This includes:
+    // - CHudVoiceSelfStatus: Icon when local player is speaking (separate offset)
+    // - CHudVoiceStatus: List of other players who are speaking (separate offset)
+    
+    // Get voice manager to check speaking status directly
+    // (We can't rely on panel visibility since we're suppressing the 2D HUD)
+    CVoiceStatus* pVoiceMgr = GetClientVoiceMgr();
+    bool bTestMode = tfvr_popup_hud_voice_test.GetBool();
+    
+    if (!pVoiceMgr && !bTestMode)
+    {
+        if (tfvr_popup_hud_voice_debug.GetBool())
+        {
+            static float lastDebugTime = 0.0f;
+            if (gpGlobals->curtime - lastDebugTime > 1.0f)
+            {
+                DevMsg("VR Voice UI: No voice manager!\n");
+                lastDebugTime = gpGlobals->curtime;
+            }
+        }
+        return;
+    }
+    
+    // Get player for fallback positioning
+    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    if (!pPlayer)
+        return;
+    
+    // Get head position in world space (same method as main popup panels)
+    // This properly tracks the HMD including when crouching
+    Vector headPos;
+    if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
+    {
+        VMatrix worldFromMideye = g_ClientVirtualReality.GetWorldFromMidEye();
+        headPos = worldFromMideye.GetTranslation();
+    }
+    else
+    {
+        headPos = pPlayer->EyePosition();
+    }
+    
+    // Use the SPRING ARM yaw (m_flCurrentYaw) for consistent positioning
+    // This is the same spring-follow system used by popup panels
+    Vector forward, right, up;
+    QAngle springAngles(0, m_flCurrentYaw, 0);
+    AngleVectors(springAngles, &forward, &right, &up);
+    
+    // Calculate base position using head position at voice distance
+    Vector basePos = headPos + forward * m_flVoiceDistance;
+    
+    // Build base rotation matrix (facing player, using spring arm orientation)
+    VMatrix voiceBaseTransform;
+    voiceBaseTransform.Identity();
+    
+    // Set rotation: -forward as Z (facing player), right as X, up as Y
+    voiceBaseTransform[0][0] = right.x;    voiceBaseTransform[0][1] = up.x;    voiceBaseTransform[0][2] = -forward.x;
+    voiceBaseTransform[1][0] = right.y;    voiceBaseTransform[1][1] = up.y;    voiceBaseTransform[1][2] = -forward.y;
+    voiceBaseTransform[2][0] = right.z;    voiceBaseTransform[2][1] = up.z;    voiceBaseTransform[2][2] = -forward.z;
+    voiceBaseTransform.SetTranslation(basePos);
+    
+    // Calculate voice panel scale (use m_flScale as base, which is the popup HUD scale)
+    float voiceScale = m_flScale * m_flVoiceScale;
+    float pixelsPerUnit = 100.0f;
+    
+    // Check if local player is speaking (use voice manager, not panel visibility)
+    // In test mode, always pretend local player is speaking
+    bool bLocalPlayerSpeaking = bTestMode || (pVoiceMgr && pVoiceMgr->IsLocalPlayerSpeaking());
+    
+    // Debug output
+    if (tfvr_popup_hud_voice_debug.GetBool())
+    {
+        static float lastDebugTime = 0.0f;
+        if (gpGlobals->curtime - lastDebugTime > 0.5f)
+        {
+            int selfW = 0, selfH = 0;
+            if (m_pVoiceSelfStatus)
+                m_pVoiceSelfStatus->GetSize(selfW, selfH);
+            
+            DevMsg("VR Voice UI: Speaking=%d, Panel=%p, Size=%dx%d, Scale=%.2f, Dist=%.1f, SpringYaw=%.1f\n",
+                   bLocalPlayerSpeaking ? 1 : 0,
+                   m_pVoiceSelfStatus,
+                   selfW, selfH,
+                   voiceScale,
+                   m_flVoiceDistance,
+                   m_flCurrentYaw);
+            lastDebugTime = gpGlobals->curtime;
+        }
+    }
+    
+    // Voice self status (local player speaking icon)
+    if (m_pVoiceSelfStatus && bLocalPlayerSpeaking)
+    {
+        int panelWidth, panelHeight;
+        m_pVoiceSelfStatus->GetSize(panelWidth, panelHeight);
+        
+        if (panelWidth > 0 && panelHeight > 0)
+        {
+            float worldWidth = (panelWidth / pixelsPerUnit) * voiceScale;
+            float worldHeight = (panelHeight / pixelsPerUnit) * voiceScale;
+            
+            // Position using SELF offsets
+            Vector topLeft = basePos 
+                - right * (worldWidth * 0.5f)           // Center horizontally
+                + up * (worldHeight * 0.5f)             // Center vertically
+                + right * m_flVoiceSelfOffsetX          // Apply self horizontal offset
+                + up * m_flVoiceSelfOffsetY;            // Apply self vertical offset
+            
+            VMatrix voiceTransform = voiceBaseTransform;
+            voiceTransform.SetTranslation(topLeft);
+            
+            // Temporarily make panel visible for rendering
+            bool bWasVisible = m_pVoiceSelfStatus->IsVisible();
+            m_pVoiceSelfStatus->SetVisible(true);
+            
+            // Disable clipping and render
+            g_pMatSystemSurface->DisableClipping(true);
+            
+            g_pMatSystemSurface->DrawPanelIn3DSpace(
+                m_pVoiceSelfStatus->GetVPanel(),
+                voiceTransform,
+                panelWidth,
+                panelHeight,
+                worldWidth,
+                worldHeight
+            );
+            
+            g_pMatSystemSurface->DisableClipping(false);
+            
+            // Restore visibility
+            m_pVoiceSelfStatus->SetVisible(bWasVisible);
+            
+            if (tfvr_popup_hud_voice_debug.GetBool())
+            {
+                DevMsg("VR Voice UI: Rendered self-status at (%.1f, %.1f, %.1f), offset (%.1f, %.1f)\n",
+                       topLeft.x, topLeft.y, topLeft.z,
+                       m_flVoiceSelfOffsetX, m_flVoiceSelfOffsetY);
+            }
+        }
+        else if (tfvr_popup_hud_voice_debug.GetBool())
+        {
+            DevMsg("VR Voice UI: Self-status panel size is 0!\n");
+        }
+    }
+    
+    // Check if any other players are speaking
+    // In test mode, don't show other players panel (just test self-status)
+    bool bOtherPlayersSpeaking = false;
+    if (pVoiceMgr)
+    {
+        for (int i = 1; i <= gpGlobals->maxClients; i++)
+        {
+            if (pVoiceMgr->IsPlayerSpeaking(i))
+            {
+                bOtherPlayersSpeaking = true;
+                break;
+            }
+        }
+    }
+    
+    // Voice status (other players speaking)
+    if (m_pVoiceStatus && bOtherPlayersSpeaking)
+    {
+        int panelWidth, panelHeight;
+        m_pVoiceStatus->GetSize(panelWidth, panelHeight);
+        
+        if (panelWidth > 0 && panelHeight > 0)
+        {
+            float worldWidth = (panelWidth / pixelsPerUnit) * voiceScale;
+            float worldHeight = (panelHeight / pixelsPerUnit) * voiceScale;
+            
+            // Position using OTHERS offsets (completely independent of self-status)
+            Vector topLeft = basePos 
+                - right * (worldWidth * 0.5f)           // Center horizontally
+                + up * (worldHeight * 0.5f)             // Center vertically
+                + right * m_flVoiceOthersOffsetX        // Apply others horizontal offset
+                + up * m_flVoiceOthersOffsetY;          // Apply others vertical offset
+            
+            VMatrix voiceTransform = voiceBaseTransform;
+            voiceTransform.SetTranslation(topLeft);
+            
+            // Temporarily make panel visible for rendering
+            bool bWasVisible = m_pVoiceStatus->IsVisible();
+            m_pVoiceStatus->SetVisible(true);
+            
+            // Disable clipping and render
+            g_pMatSystemSurface->DisableClipping(true);
+            
+            g_pMatSystemSurface->DrawPanelIn3DSpace(
+                m_pVoiceStatus->GetVPanel(),
+                voiceTransform,
+                panelWidth,
+                panelHeight,
+                worldWidth,
+                worldHeight
+            );
+            
+            g_pMatSystemSurface->DisableClipping(false);
+            
+            // Restore visibility
+            m_pVoiceStatus->SetVisible(bWasVisible);
+        }
+    }
+}
+
 void CVRPopupHUDManager::ResetState()
 {
     m_flCurrentYaw = GetCurrentViewYaw();
@@ -1093,4 +1399,147 @@ bool CVRPopupHUDManager::ShouldSuppressBuildingStatus()
         return false;
     
     return true;
+}
+
+bool CVRPopupHUDManager::ShouldSuppressVoiceSelfStatus()
+{
+    if (!g_pVRPopupHUDManager)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bEnabled)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bVoiceStatusEnabled)
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    return true;
+}
+
+bool CVRPopupHUDManager::ShouldSuppressVoiceStatus()
+{
+    if (!g_pVRPopupHUDManager)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bEnabled)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bVoiceStatusEnabled)
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    return true;
+}
+
+//=============================================================================
+// Debug method to dump voice UI status
+//=============================================================================
+void CVRPopupHUDManager::DebugDumpVoiceUIState()
+{
+    Msg("=== VR Voice UI Debug ===\n");
+    Msg("Initialized: %d\n", m_bInitialized ? 1 : 0);
+    Msg("Enabled: %d\n", m_bEnabled ? 1 : 0);
+    Msg("VoiceStatusEnabled: %d\n", m_bVoiceStatusEnabled ? 1 : 0);
+    Msg("UseVR(): %d\n", UseVR() ? 1 : 0);
+    
+    Msg("\n--- Panels ---\n");
+    Msg("VoiceSelfStatus panel: %p\n", m_pVoiceSelfStatus);
+    Msg("VoiceStatus panel: %p\n", m_pVoiceStatus);
+    
+    if (m_pVoiceSelfStatus)
+    {
+        int w, h;
+        m_pVoiceSelfStatus->GetSize(w, h);
+        Msg("VoiceSelfStatus size: %dx%d\n", w, h);
+        Msg("VoiceSelfStatus visible: %d\n", m_pVoiceSelfStatus->IsVisible() ? 1 : 0);
+    }
+    
+    if (m_pVoiceStatus)
+    {
+        int w, h;
+        m_pVoiceStatus->GetSize(w, h);
+        Msg("VoiceStatus size: %dx%d\n", w, h);
+        Msg("VoiceStatus visible: %d\n", m_pVoiceStatus->IsVisible() ? 1 : 0);
+    }
+    
+    Msg("\n--- Voice Manager ---\n");
+    CVoiceStatus* pVoiceMgr = GetClientVoiceMgr();
+    if (pVoiceMgr)
+    {
+        Msg("Voice manager: %p\n", pVoiceMgr);
+        Msg("Local player speaking: %d\n", pVoiceMgr->IsLocalPlayerSpeaking() ? 1 : 0);
+        
+        int speakingCount = 0;
+        for (int i = 1; i <= gpGlobals->maxClients; i++)
+        {
+            if (pVoiceMgr->IsPlayerSpeaking(i))
+            {
+                Msg("  Player %d is speaking\n", i);
+                speakingCount++;
+            }
+        }
+        Msg("Total players speaking: %d\n", speakingCount);
+    }
+    else
+    {
+        Msg("Voice manager: NULL\n");
+    }
+    
+    Msg("\n--- Config ---\n");
+    Msg("Voice scale: %.2f (m_flScale=%.2f * m_flVoiceScale=%.2f)\n", 
+        m_flScale * m_flVoiceScale,
+        m_flScale,
+        m_flVoiceScale);
+    Msg("Voice distance: %.1f\n", m_flVoiceDistance);
+    Msg("Voice self offset: (%.1f, %.1f)\n", 
+        m_flVoiceSelfOffsetX,
+        m_flVoiceSelfOffsetY);
+    Msg("Voice others offset: (%.1f, %.1f)\n", 
+        m_flVoiceOthersOffsetX,
+        m_flVoiceOthersOffsetY);
+    
+    // Try to find the HUD elements directly
+    Msg("\n--- HUD Element Search ---\n");
+    CHudElement* pSelfElement = gHUD.FindElement("CHudVoiceSelfStatus");
+    CHudElement* pStatusElement = gHUD.FindElement("CHudVoiceStatus");
+    Msg("FindElement(CHudVoiceSelfStatus): %p\n", pSelfElement);
+    Msg("FindElement(CHudVoiceStatus): %p\n", pStatusElement);
+    
+    if (pSelfElement)
+    {
+        vgui::Panel* pPanel = dynamic_cast<vgui::Panel*>(pSelfElement);
+        Msg("  Cast to vgui::Panel: %p\n", pPanel);
+        if (pPanel)
+        {
+            int w, h;
+            pPanel->GetSize(w, h);
+            Msg("  Panel size: %dx%d\n", w, h);
+        }
+    }
+}
+
+//=============================================================================
+// Console command to dump voice UI status
+//=============================================================================
+CON_COMMAND(tfvr_debug_voice_ui, "Dump VR voice UI debug info")
+{
+    if (!g_pVRPopupHUDManager)
+    {
+        Msg("VR Popup HUD Manager not initialized\n");
+        return;
+    }
+    
+    g_pVRPopupHUDManager->DebugDumpVoiceUIState();
 }

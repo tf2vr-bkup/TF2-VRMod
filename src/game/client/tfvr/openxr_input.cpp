@@ -158,6 +158,12 @@ bool COpenXRInputManager::CreateActions()
     if (leftGrip.handle == XR_NULL_HANDLE) return false;
     m_actions["left_grip"] = leftGrip;
 
+    // Add voice action for voice chat activation
+    // Used when gesture mode is disabled, or for the gesture trigger when enabled
+    XrInputAction voice = CreateFloatAction("voice", "Voice Chat");
+    if (voice.handle == XR_NULL_HANDLE) return false;
+    m_actions["voice"] = voice;
+
     // Add weapon select hold action (for radial weapon selection menu)
     XrInputAction weaponSelectHold = CreateBooleanAction("weapon_select_hold", "Weapon Select Hold");
     if (weaponSelectHold.handle == XR_NULL_HANDLE) return false;
@@ -270,6 +276,19 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["secondary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Voice chat (left trigger - same as secondary, used for voice gesture or direct voice)
+    if (m_actions.find("voice") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["voice"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -551,6 +570,19 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["secondary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Voice chat (left trigger - same as secondary, used for voice gesture or direct voice)
+    if (m_actions.find("voice") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["voice"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
