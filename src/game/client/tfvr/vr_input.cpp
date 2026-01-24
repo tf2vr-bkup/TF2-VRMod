@@ -47,6 +47,9 @@ ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE,
 // Voice gesture state - used to suppress offhand attack when voice is active
 static bool s_bVoiceGestureActive = false;
 
+// Left thumbstick click: quick press = medic call, long hold = scoreboard
+ConVar tfvr_medic_hold_threshold( "tfvr_medic_hold_threshold", "0.3", FCVAR_ARCHIVE, "Hold time in seconds before scoreboard shows (shorter = medic call)" );
+
 // Primary hand ConVar (defined in vr_menu_manager.cpp)
 extern ConVar tfvr_primary_hand;
 
@@ -186,28 +189,57 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     static bool bLastMenuButtonState = false;
     bool bMenuButtonPressed = bMenu && !bLastMenuButtonState;
     
-    // Get scoreboard button state (left thumbstick click)
+    // Get left thumbstick click state (medic call on quick press, scoreboard on hold)
     static bool bLastScoreboardButtonState = false;
+    static float flButtonPressTime = 0.0f;
+    static bool bScoreboardShowing = false;
+    
     bool bScoreboard = g_pOpenXRManager->IsButtonPressed("scoreboard");
     bool bScoreboardButtonPressed = bScoreboard && !bLastScoreboardButtonState;
     bool bScoreboardButtonReleased = !bScoreboard && bLastScoreboardButtonState;
     
-    // Handle scoreboard - show while held, hide when released
+    float flHoldThreshold = tfvr_medic_hold_threshold.GetFloat();
+    
+    // Handle left thumbstick click: quick press = medic, long hold = scoreboard
     if (bScoreboardButtonPressed)
     {
-        // Show scoreboard when button is pressed
-        if (gViewPortInterface)
+        // Record when button was pressed
+        flButtonPressTime = gpGlobals->curtime;
+        bScoreboardShowing = false;
+    }
+    else if (bScoreboard && !bScoreboardShowing)
+    {
+        // Button is being held - check if we've passed the threshold to show scoreboard
+        float flHoldTime = gpGlobals->curtime - flButtonPressTime;
+        if (flHoldTime >= flHoldThreshold)
         {
-            gViewPortInterface->ShowPanel(PANEL_SCOREBOARD, true);
+            // Show scoreboard after hold threshold
+            if (gViewPortInterface)
+            {
+                gViewPortInterface->ShowPanel(PANEL_SCOREBOARD, true);
+            }
+            bScoreboardShowing = true;
         }
     }
     else if (bScoreboardButtonReleased)
     {
-        // Hide scoreboard when button is released
-        if (gViewPortInterface)
+        float flHoldTime = gpGlobals->curtime - flButtonPressTime;
+        
+        if (bScoreboardShowing)
         {
-            gViewPortInterface->ShowPanel(PANEL_SCOREBOARD, false);
+            // Hide scoreboard when button is released after long hold
+            if (gViewPortInterface)
+            {
+                gViewPortInterface->ShowPanel(PANEL_SCOREBOARD, false);
+            }
         }
+        else if (flHoldTime < flHoldThreshold)
+        {
+            // Quick press - call for medic
+            engine->ClientCmd_Unrestricted("voicemenu 0 0");
+        }
+        
+        bScoreboardShowing = false;
     }
     bLastScoreboardButtonState = bScoreboard;
     
