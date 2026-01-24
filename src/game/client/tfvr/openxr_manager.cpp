@@ -1,4 +1,4 @@
-﻿#include "cbase.h"
+#include "cbase.h"
 #include "openxr_manager.h"
 #include "openxr_input.h"
 #include "openxr_hand_tracking.h"
@@ -1208,24 +1208,134 @@ CON_COMMAND(vr_calibrate_seated_height_auto, "Auto-calibrate seated height offse
     }
 }
 
-// Command to debug HMD position (raw vs scaled)
-CON_COMMAND(vr_debug_hmd_position, "Show raw vs scaled HMD position for debugging")
+// Command to toggle seated/standing mode and auto-calibrate (for pause menu button)
+CON_COMMAND(vr_toggle_seated_mode, "Toggle between seated and standing VR mode with auto-calibration")
 {
     if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
     {
-        DevMsg("VR not active\n");
+        DevMsg("VR not active - cannot toggle seated mode\n");
         return;
     }
     
-    Vector rawPos = g_pOpenXRManager->GetRawHMDPosition();
-    VMatrix scaledPose = g_pOpenXRManager->GetMideyePose();
-    Vector scaledPos = scaledPose.GetTranslation();
+    ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
+    if (!tfvr_seated_mode)
+        return;
+        
+    bool bCurrentlySeated = tfvr_seated_mode->GetBool();
     
-    DevMsg("HMD Position Debug:\n");
-    DevMsg("  Raw OpenXR position (meters): x=%.3f, y=%.3f, z=%.3f\n", rawPos.x, rawPos.y, rawPos.z);
-    DevMsg("  Raw height in inches: %.1f\n", rawPos.y * 39.3701f);
-    DevMsg("  Scaled position (game units): x=%.1f, y=%.1f, z=%.1f\n", scaledPos.x, scaledPos.y, scaledPos.z);
-    DevMsg("  Current world scale: %.1f\n", CalculateDynamicWorldScale());
+    if (bCurrentlySeated)
+    {
+        // Switching to STANDING mode - disable seated mode and auto-calibrate standing height
+        tfvr_seated_mode->SetValue(0);
+        Msg("VR Mode: Switching to STANDING\n");
+        
+        // Auto-calibrate standing height
+        Vector rawHmdPos = g_pOpenXRManager->GetRawHMDPosition();
+        float hmdHeightMeters = rawHmdPos.y;
+        float hmdHeightInches = hmdHeightMeters * 39.3701f;
+        
+        // Add estimate for head-to-top-of-head (about 4 inches)
+        float estimatedPlayerHeight = hmdHeightInches + 4.0f;
+        
+        if (estimatedPlayerHeight >= 24.0f && estimatedPlayerHeight <= 100.0f)
+        {
+            ConVar* tfvr_player_height = cvar->FindVar("tfvr_player_height");
+            if (tfvr_player_height)
+            {
+                tfvr_player_height->SetValue(estimatedPlayerHeight);
+                Msg("  Auto-calibrated standing height to %.1f inches\n", estimatedPlayerHeight);
+            }
+            
+            // Enable height calibration
+            ConVar* tfvr_height_calibration = cvar->FindVar("tfvr_height_calibration");
+            if (tfvr_height_calibration)
+            {
+                tfvr_height_calibration->SetValue(1);
+            }
+        }
+        else
+        {
+            Msg("  Height %.1f inches out of range - please stand tall and try again\n", estimatedPlayerHeight);
+        }
+    }
+    else
+    {
+        // Switching to SEATED mode - enable seated mode and auto-calibrate seated height offset
+        Msg("VR Mode: Switching to SEATED\n");
+        
+        // Get current HMD height and calculate offset needed
+        Vector rawHmdPos = g_pOpenXRManager->GetRawHMDPosition();
+        float hmdHeightMeters = rawHmdPos.y;
+        float hmdHeightInches = hmdHeightMeters * 39.3701f;
+        
+        // Calculate offset to reach comfortable standing eye height (about 64 inches)
+        float targetStandingEyeHeight = 64.0f;
+        float neededOffset = targetStandingEyeHeight - hmdHeightInches;
+        
+        ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
+        if (tfvr_seated_height_offset)
+        {
+            tfvr_seated_height_offset->SetValue(neededOffset);
+            Msg("  Auto-calibrated seated height offset to %.1f inches\n", neededOffset);
+        }
+        
+        // Enable seated mode
+        tfvr_seated_mode->SetValue(1);
+    }
+}
+
+// Command to recalibrate current VR mode (for pause menu button)
+CON_COMMAND(vr_recalibrate, "Recalibrate the current VR mode (seated or standing)")
+{
+    if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
+    {
+        DevMsg("VR not active - cannot recalibrate\n");
+        return;
+    }
+    
+    ConVar* tfvr_seated_mode = cvar->FindVar("tfvr_seated_mode");
+    bool bSeatedMode = tfvr_seated_mode && tfvr_seated_mode->GetBool();
+    
+    Vector rawHmdPos = g_pOpenXRManager->GetRawHMDPosition();
+    float hmdHeightMeters = rawHmdPos.y;
+    float hmdHeightInches = hmdHeightMeters * 39.3701f;
+    
+    if (bSeatedMode)
+    {
+        // Recalibrate seated mode
+        Msg("VR Recalibrate: Seated mode - sit normally\n");
+        
+        float targetStandingEyeHeight = 64.0f;
+        float neededOffset = targetStandingEyeHeight - hmdHeightInches;
+        
+        ConVar* tfvr_seated_height_offset = cvar->FindVar("tfvr_seated_height_offset");
+        if (tfvr_seated_height_offset)
+        {
+            tfvr_seated_height_offset->SetValue(neededOffset);
+            Msg("  Seated height offset recalibrated to %.1f inches\n", neededOffset);
+        }
+    }
+    else
+    {
+        // Recalibrate standing mode
+        Msg("VR Recalibrate: Standing mode - stand tall\n");
+        
+        float estimatedPlayerHeight = hmdHeightInches + 4.0f;
+        
+        if (estimatedPlayerHeight >= 24.0f && estimatedPlayerHeight <= 100.0f)
+        {
+            ConVar* tfvr_player_height = cvar->FindVar("tfvr_player_height");
+            if (tfvr_player_height)
+            {
+                tfvr_player_height->SetValue(estimatedPlayerHeight);
+                Msg("  Standing height recalibrated to %.1f inches\n", estimatedPlayerHeight);
+            }
+        }
+        else
+        {
+            Msg("  Height out of valid range (24-100 inches)\n");
+        }
+    }
 }
 
 // Command to test dynamic world scaling
