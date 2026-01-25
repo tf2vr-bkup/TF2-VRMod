@@ -47,7 +47,7 @@ ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE,
 // Voice gesture state - used to suppress offhand attack when voice is active
 static bool s_bVoiceGestureActive = false;
 
-// Left thumbstick click: quick press = medic call, long hold = scoreboard
+// Left thumbstick click or trackpad press: quick press = medic call, long hold = scoreboard
 ConVar tfvr_medic_hold_threshold( "tfvr_medic_hold_threshold", "0.3", FCVAR_ARCHIVE, "Hold time in seconds before scoreboard shows (shorter = medic call)" );
 
 // Primary hand ConVar (defined in vr_menu_manager.cpp)
@@ -189,7 +189,7 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     static bool bLastMenuButtonState = false;
     bool bMenuButtonPressed = bMenu && !bLastMenuButtonState;
     
-    // Get left thumbstick click state (medic call on quick press, scoreboard on hold)
+    // Get left thumbstick/trackpad state (medic call on quick press, scoreboard on hold)
     static bool bLastScoreboardButtonState = false;
     static float flButtonPressTime = 0.0f;
     static bool bScoreboardShowing = false;
@@ -200,7 +200,7 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     
     float flHoldThreshold = tfvr_medic_hold_threshold.GetFloat();
     
-    // Handle left thumbstick click: quick press = medic, long hold = scoreboard
+    // Handle left thumbstick/trackpad: quick press = medic, long hold = scoreboard
     if (bScoreboardButtonPressed)
     {
         // Record when button was pressed

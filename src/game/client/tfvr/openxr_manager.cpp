@@ -19,6 +19,9 @@
 
 #include "mathlib/mathlib.h"
 
+#include <vector>
+#include <cstring>
+
 // Forward declaration for global menu manager pointer
 extern class CVRMenuManager* g_pVRMenuManager;
 
@@ -415,14 +418,89 @@ void COpenXRManager::Reactivate()
 
 bool COpenXRManager::CreateOpenXRInstance() 
 {
-    const char* extensions[] = { 
-        XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME,
-        XR_EXT_HAND_TRACKING_EXTENSION_NAME
+    // First, enumerate available extensions to check for optional ones
+    uint32_t extensionCount = 0;
+    xrEnumerateInstanceExtensionProperties(nullptr, 0, &extensionCount, nullptr);
+    
+    std::vector<XrExtensionProperties> availableExtensions(extensionCount);
+    for (auto& ext : availableExtensions) {
+        ext.type = XR_TYPE_EXTENSION_PROPERTIES;
+        ext.next = nullptr;
+    }
+    xrEnumerateInstanceExtensionProperties(nullptr, extensionCount, &extensionCount, availableExtensions.data());
+    
+    // Log all available extensions for debugging
+    DevMsg("OpenXR: Runtime reports %d available extensions:\n", extensionCount);
+    for (uint32_t i = 0; i < extensionCount; i++) {
+        DevMsg("  [%d] %s (v%d)\n", i, availableExtensions[i].extensionName, availableExtensions[i].extensionVersion);
+    }
+    
+    // Specifically check for render model extensions
+    DevMsg("OpenXR: Looking for extension '%s'\n", XR_EXT_RENDER_MODEL_EXTENSION_NAME);
+    DevMsg("OpenXR: Looking for extension '%s'\n", XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME);
+    
+    // Helper to check if an extension is available
+    auto isExtensionAvailable = [&](const char* name) -> bool {
+        for (const auto& ext : availableExtensions) {
+            if (strcmp(ext.extensionName, name) == 0) {
+                return true;
+            }
+        }
+        return false;
     };
+    
+    // Build list of extensions to enable
+    std::vector<const char*> extensionsToEnable;
+    
+    // Required extension - Vulkan graphics binding
+    bool hasVulkanEnable2 = isExtensionAvailable(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+    if (!hasVulkanEnable2) {
+        DevMsg("OpenXR: CRITICAL - %s not available! VR cannot initialize.\n", XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+        return false;
+    }
+    extensionsToEnable.push_back(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+    
+    // Optional: Hand tracking
+    bool hasHandTracking = isExtensionAvailable(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+    if (hasHandTracking) {
+        extensionsToEnable.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+        DevMsg("OpenXR: Hand tracking extension available and enabled\n");
+    } else {
+        DevMsg("OpenXR: Hand tracking extension not available\n");
+    }
+    
+    // Optional: XR_EXT_uuid (required by render model extension)
+    bool hasUuidExt = isExtensionAvailable(XR_EXT_UUID_EXTENSION_NAME);
+    if (hasUuidExt) {
+        extensionsToEnable.push_back(XR_EXT_UUID_EXTENSION_NAME);
+        DevMsg("OpenXR: UUID extension available and enabled\n");
+    }
+    
+    // Optional render model extensions (require XR_EXT_uuid)
+    bool hasRenderModelExt = isExtensionAvailable(XR_EXT_RENDER_MODEL_EXTENSION_NAME);
+    bool hasInteractionRenderModelExt = isExtensionAvailable(XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME);
+    
+    if (hasUuidExt && hasRenderModelExt && hasInteractionRenderModelExt) {
+        extensionsToEnable.push_back(XR_EXT_RENDER_MODEL_EXTENSION_NAME);
+        extensionsToEnable.push_back(XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME);
+        DevMsg("OpenXR: Render model extensions available and enabled\n");
+    } else {
+        DevMsg("OpenXR: Render model extensions not available or missing dependencies (uuid=%d, renderModel=%d, interactionRenderModel=%d)\n", 
+               hasUuidExt, hasRenderModelExt, hasInteractionRenderModelExt);
+    }
+    
+    // Log all extensions we're requesting
+    DevMsg("OpenXR: Requesting %d extensions:\n", (int)extensionsToEnable.size());
+    for (const char* ext : extensionsToEnable) {
+        DevMsg("  - %s\n", ext);
+    }
+    
     XrInstanceCreateInfo createInfo = { XR_TYPE_INSTANCE_CREATE_INFO };
-    createInfo.enabledExtensionCount = 2;
-    createInfo.enabledExtensionNames = extensions;
-    createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensionsToEnable.size());
+    createInfo.enabledExtensionNames = extensionsToEnable.data();
+    // Use OpenXR 1.0.0 API version - SteamVR doesn't support 1.1 yet
+    // We can still use 1.1 extensions if the runtime advertises them
+    createInfo.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
     strcpy_s(createInfo.applicationInfo.applicationName, "TF2VR");
     strcpy_s(createInfo.applicationInfo.engineName, "Source 2013");
     

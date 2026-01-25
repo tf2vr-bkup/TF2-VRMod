@@ -169,10 +169,19 @@ bool COpenXRInputManager::CreateActions()
     if (weaponSelectHold.handle == XR_NULL_HANDLE) return false;
     m_actions["weapon_select_hold"] = weaponSelectHold;
 
-    // Add scoreboard action (left thumbstick click)
+    // Add scoreboard action (left thumbstick click for Index/Quest, plus trackpad force for Index)
     XrInputAction scoreboard = CreateBooleanAction("scoreboard", "Scoreboard");
     if (scoreboard.handle == XR_NULL_HANDLE) return false;
     m_actions["scoreboard"] = scoreboard;
+
+    // Add trackpad force actions for Index controllers (trackpad has force, not click)
+    XrInputAction leftTrackpadForce = CreateFloatAction("left_trackpad_force", "Left Trackpad Force");
+    if (leftTrackpadForce.handle == XR_NULL_HANDLE) return false;
+    m_actions["left_trackpad_force"] = leftTrackpadForce;
+
+    XrInputAction rightTrackpadForce = CreateFloatAction("right_trackpad_force", "Right Trackpad Force");
+    if (rightTrackpadForce.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_trackpad_force"] = rightTrackpadForce;
 
     return true;
 }
@@ -412,20 +421,7 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         }
     }
 
-    // Weapon select hold binding (right trackpad click for Index)
-    if (m_actions.find("weapon_select_hold") != m_actions.end())
-    {
-        XrPath bindingPath;
-        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/click", &bindingPath)))
-        {
-            XrActionSuggestedBinding binding;
-            binding.action = m_actions["weapon_select_hold"].handle;
-            binding.binding = bindingPath;
-            suggestedBindings.push_back(binding);
-        }
-    }
-
-    // Scoreboard binding (left thumbstick click for Index)
+    // Scoreboard binding (left thumbstick click for Index - also available via trackpad force)
     if (m_actions.find("scoreboard") != m_actions.end())
     {
         XrPath bindingPath;
@@ -433,6 +429,32 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["scoreboard"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Trackpad force bindings for Index (trackpad has force sensor, not click button)
+    // These are used to simulate button presses via force threshold
+    if (m_actions.find("left_trackpad_force") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/force", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_trackpad_force"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("right_trackpad_force") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/force", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_trackpad_force"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -1275,6 +1297,41 @@ void COpenXRInputManager::PollInput()
                 }
             }
             // Failed to get pose state - silent handling
+        }
+    }
+
+    // Convert trackpad force to boolean states for Index controllers
+    // These set the scoreboard and weapon_select_hold button states when trackpad force exceeds threshold
+    // Only applies when trackpad force actions are active (Index controller connected)
+    const float TRACKPAD_FORCE_THRESHOLD = 0.25f;
+    
+    // Check if left trackpad force action is active (has valid binding on current controller)
+    // OR with existing scoreboard state (from thumbstick click) so either input works
+    auto leftForceActionIt = m_actions.find("left_trackpad_force");
+    if (leftForceActionIt != m_actions.end())
+    {
+        XrActionStateGetInfo getInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
+        getInfo.action = leftForceActionIt->second.handle;
+        XrActionStateFloat state{ XR_TYPE_ACTION_STATE_FLOAT };
+        if (XR_SUCCEEDED(xrGetActionStateFloat(m_session, &getInfo, &state)) && state.isActive)
+        {
+            // Trackpad force action is active - OR with existing scoreboard state
+            bool trackpadPressed = (state.currentState > TRACKPAD_FORCE_THRESHOLD);
+            m_currentButtonStates["scoreboard"] = m_currentButtonStates["scoreboard"] || trackpadPressed;
+        }
+    }
+    
+    // Check if right trackpad force action is active (has valid binding on current controller)
+    auto rightForceActionIt = m_actions.find("right_trackpad_force");
+    if (rightForceActionIt != m_actions.end())
+    {
+        XrActionStateGetInfo getInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
+        getInfo.action = rightForceActionIt->second.handle;
+        XrActionStateFloat state{ XR_TYPE_ACTION_STATE_FLOAT };
+        if (XR_SUCCEEDED(xrGetActionStateFloat(m_session, &getInfo, &state)) && state.isActive)
+        {
+            // Trackpad force action is active - use it for weapon_select_hold
+            m_currentButtonStates["weapon_select_hold"] = (state.currentState > TRACKPAD_FORCE_THRESHOLD);
         }
     }
 }

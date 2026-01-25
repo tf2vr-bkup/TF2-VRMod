@@ -28,6 +28,7 @@
 #include "tf_matchmaking_dashboard_side_panel.h"
 #include "tf_matchmaking_dashboard_explanations.h"
 #include "tf_matchmaking_dashboard_mvm_criteria.h"
+#include "tf_create_server_dialog.h"
 
 using namespace vgui;
 using namespace GCSDK;
@@ -924,8 +925,8 @@ void CTFMatchmakingDashboard::OnPlayCommunity()
 void CTFMatchmakingDashboard::OnCreateServer()
 {
 	ClearAllStacks();
-	// Just call the command directly
-	engine->ClientCmd_Unrestricted( "gamemenucommand OpenCreateMultiplayerGameDialog" );
+	// Show our custom TF2VR create server dialog with bot count selection
+	ShowCreateServerDialog( this );
 }
 
 void CTFMatchmakingDashboard::OnPlayEvent()
