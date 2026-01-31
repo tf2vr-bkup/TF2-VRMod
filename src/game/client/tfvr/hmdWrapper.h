@@ -24,6 +24,13 @@ extern "C" bool __declspec(dllexport) dxvkIsSessionFocused();
 extern "C" void __declspec(dllexport) dxvkSetSourceState(int state);
 extern "C" bool __declspec(dllexport) dxvkIsCompositorActive();
 extern "C" void __declspec(dllexport) dxvkSubmitMenuFrame(void* textureHandle, int width, int height);
+extern "C" void __declspec(dllexport) dxvkSetLaserActiveHand(bool isLeftHand);  // Set compositor laser hand
+extern "C" void __declspec(dllexport) dxvkSetAimSpaces(XrSpace leftAimSpace, XrSpace rightAimSpace);  // Pass aim spaces for direct sampling
+extern "C" void __declspec(dllexport) dxvkSetLaserColor(float r, float g, float b);  // Set laser color (0-1 range)
+extern "C" void __declspec(dllexport) dxvkSetLaserLength(float lengthMeters);  // Set laser length in meters
+extern "C" void __declspec(dllexport) dxvkSetLaserWidth(float widthMeters);    // Set laser width in meters
+extern "C" void __declspec(dllexport) dxvkSetLaserIntersectionLength(float lengthMeters);  // Set actual laser length after intersection
+extern "C" void __declspec(dllexport) dxvkSetControllerAimPose(bool isLeftHand, const XrPosef* pose);  // Update aim pose from game
 
 // VR Compositor Internal Functions (not exported, but declared for linking)
 void InitVRCompositor(class OpenXRDirectMode* manager);

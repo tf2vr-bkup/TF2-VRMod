@@ -22,6 +22,15 @@ bool COpenXRInputManager::Initialize()
     if (!CreateActions()) return false;
     if (!CreateInteractionProfiles()) return false;
     if (!AttachActionSet()) return false;
+    
+    // Pass aim spaces to compositor for direct sampling
+    XrSpace leftAimSpace = GetActionSpace("left_hand_pose");
+    XrSpace rightAimSpace = GetActionSpace("right_hand_pose");
+    if (leftAimSpace != XR_NULL_HANDLE && rightAimSpace != XR_NULL_HANDLE) {
+        dxvkSetAimSpaces(leftAimSpace, rightAimSpace);
+        DevMsg("Passed aim spaces to compositor for direct sampling\n");
+    }
+    
     return true;
 }
 
@@ -1381,6 +1390,15 @@ bool COpenXRInputManager::IsControllerPoseValid(const char* actionName)
 {
     auto it = m_currentPoseValidStates.find(actionName);
     return it != m_currentPoseValidStates.end() && it->second;
+}
+
+XrSpace COpenXRInputManager::GetActionSpace(const char* actionName)
+{
+    auto it = m_actionSpaces.find(actionName);
+    if (it != m_actionSpaces.end()) {
+        return it->second;
+    }
+    return XR_NULL_HANDLE;
 }
 
 bool COpenXRInputManager::IsUIInteractionPressed(const char* actionName, float threshold)

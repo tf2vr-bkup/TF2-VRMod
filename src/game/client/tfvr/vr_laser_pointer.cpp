@@ -2,6 +2,7 @@
 #include "vr_laser_pointer.h"
 #include "openxr_manager.h"
 #include "vr_menu_manager.h"
+#include "hmdWrapper.h"
 #include "materialsystem/imaterial.h"
 #include "materialsystem/imaterialsystem.h"
 #include "materialsystem/imesh.h"
@@ -88,6 +89,30 @@ void CVRLaserPointer::Update(float frametime)
     // Check if laser is enabled
     if (!tfvr_laser_enabled.GetBool())
         return;
+    
+    // Sync laser parameters to compositor (convert game units to meters)
+    static float lastSyncedR = -1, lastSyncedG = -1, lastSyncedB = -1;
+    static float lastSyncedLength = -1, lastSyncedWidth = -1;
+    
+    float r = tfvr_laser_color_r.GetInt() / 255.0f;
+    float g = tfvr_laser_color_g.GetInt() / 255.0f;
+    float b = tfvr_laser_color_b.GetInt() / 255.0f;
+    float lengthMeters = tfvr_laser_length.GetFloat() / 39.3701f;  // Game units to meters
+    float widthMeters = tfvr_laser_width.GetFloat() / 39.3701f;
+    
+    // Only sync if changed (reduce bridge calls)
+    if (r != lastSyncedR || g != lastSyncedG || b != lastSyncedB) {
+        dxvkSetLaserColor(r, g, b);
+        lastSyncedR = r; lastSyncedG = g; lastSyncedB = b;
+    }
+    if (lengthMeters != lastSyncedLength) {
+        dxvkSetLaserLength(lengthMeters);
+        lastSyncedLength = lengthMeters;
+    }
+    if (widthMeters != lastSyncedWidth) {
+        dxvkSetLaserWidth(widthMeters);
+        lastSyncedWidth = widthMeters;
+    }
     
     UpdateLaserPointer();
     // Note: Rendering is now done on-demand via RenderLaserOnTop()
@@ -201,6 +226,8 @@ void CVRLaserPointer::UpdateLaserPointer()
             // Menu not visible or no intersection - laser goes full length in controller direction
             m_laserEnd = controllerPos + forwardSource * m_laserLength;
         }
+        
+        // Note: Compositor calculates its own intersection for the compositor laser
         
         m_bLaserActive = true;
         

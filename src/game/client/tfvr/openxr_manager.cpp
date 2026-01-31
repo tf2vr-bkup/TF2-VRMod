@@ -826,6 +826,7 @@ void COpenXRManager::UpdateOpenXRViewData()
     if (m_inputManager)
     {
         m_inputManager->PollInput();
+        // Note: Aim poses are now sampled directly by compositor via dxvkSetAimSpaces()
     }
 
     // Update hand tracking (debug rendering moved to view.cpp after smoothing is applied)

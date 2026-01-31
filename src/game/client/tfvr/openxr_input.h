@@ -38,6 +38,9 @@ public:
     // Controller pose tracking
     bool GetControllerPose(const char* actionName, XrPosef& pose);
     bool IsControllerPoseValid(const char* actionName);
+    
+    // Get action space handle for direct sampling
+    XrSpace GetActionSpace(const char* actionName);
 
 private:
     bool CreateActionSet();
