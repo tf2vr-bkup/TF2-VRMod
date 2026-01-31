@@ -16,6 +16,7 @@
 #include "tf_playerclass_shared.h"
 #include "const.h"
 #include "c_tf_playerclass.h"
+#include "client_virtualreality.h"
 
 #include "mathlib/mathlib.h"
 
@@ -2804,6 +2805,87 @@ bool COpenXRManager::GetRightControllerPoseXR(XrPosef& pose)
 {
     if (!m_inputManager) return false;
     return m_inputManager->GetControllerPose("right_hand_pose", pose);
+}
+
+bool COpenXRManager::GetLeftControllerAimRay(Vector& worldPos, Vector& worldDir)
+{
+    XrPosef xrPose;
+    if (!GetLeftControllerPoseXR(xrPose))
+        return false;
+    
+    return ComputeAimRayFromXRPose(xrPose, worldPos, worldDir);
+}
+
+bool COpenXRManager::GetRightControllerAimRay(Vector& worldPos, Vector& worldDir)
+{
+    XrPosef xrPose;
+    if (!GetRightControllerPoseXR(xrPose))
+        return false;
+    
+    return ComputeAimRayFromXRPose(xrPose, worldPos, worldDir);
+}
+
+bool COpenXRManager::ComputeAimRayFromXRPose(const XrPosef& xrPose, Vector& worldPos, Vector& worldDir)
+{
+    // This uses the same transformation approach as the laser pointer
+    // to ensure consistent aiming between the laser and menu cursor
+    
+    float worldScale = CalculateDynamicWorldScale();
+    
+    // Build rotation matrix from quaternion (OpenXR space)
+    float qx = xrPose.orientation.x;
+    float qy = xrPose.orientation.y;
+    float qz = xrPose.orientation.z;
+    float qw = xrPose.orientation.w;
+    
+    float xx = qx * qx, yy = qy * qy, zz = qz * qz;
+    float xz = qx * qz, yz = qy * qz;
+    float wx = qw * qx, wy = qw * qy;
+    
+    // Get Z axis direction (backward in OpenXR space) - third column of rotation matrix
+    // For quaternion (qx,qy,qz,qw), Z column is: (2(xz+wy), 2(yz-wx), 1-2(xx+yy))
+    Vector zAxisXR;
+    zAxisXR.x = 2.0f * (xz + wy);
+    zAxisXR.y = 2.0f * (yz - wx);
+    zAxisXR.z = 1.0f - 2.0f * (xx + yy);
+    
+    // Position in OpenXR space (meters)
+    Vector posXR(xrPose.position.x, xrPose.position.y, xrPose.position.z);
+    
+    // Convert position from OpenXR to Source playspace and scale to game units
+    Vector playspacePosSource;
+    playspacePosSource.x = -posXR.z * worldScale;
+    playspacePosSource.y = -posXR.x * worldScale;
+    playspacePosSource.z = posXR.y * worldScale;
+    
+    // Transform position through head-relative to world
+    extern CClientVirtualReality g_ClientVirtualReality;
+    VMatrix headInPlayspace = GetMideyePose();
+    VMatrix headInverse = headInPlayspace.InverseTR();
+    VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+    
+    Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
+    worldPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);
+    
+    // To get the correct world direction, transform a point along the forward direction
+    // the same way we transform the position, then compute the difference
+    Vector testPointXR = posXR + zAxisXR * (-0.1f);  // 10cm forward in OpenXR (negative Z)
+    
+    // Convert test point to Source playspace
+    Vector testPointSource;
+    testPointSource.x = -testPointXR.z * worldScale;
+    testPointSource.y = -testPointXR.x * worldScale;
+    testPointSource.z = testPointXR.y * worldScale;
+    
+    // Transform test point through head-relative to world
+    Vector testRelativeToHead = headInverse.VMul4x3(testPointSource);
+    Vector testPointWorld = smoothedHeadWorld.VMul4x3(testRelativeToHead);
+    
+    // Direction is from controller position to test point
+    worldDir = testPointWorld - worldPos;
+    worldDir.NormalizeInPlace();
+    
+    return true;
 }
 
 COpenXRManager g_TFVR;

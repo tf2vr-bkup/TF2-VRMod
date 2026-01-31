@@ -102,6 +102,12 @@ public:
     // Raw XR poses (OpenXR space, for custom transformation)
     bool GetLeftControllerPoseXR(XrPosef& pose);
     bool GetRightControllerPoseXR(XrPosef& pose);
+    
+    // Properly transformed aim pose (position and direction in world space)
+    // Uses same transformation as laser pointer for consistent aiming
+    bool GetLeftControllerAimRay(Vector& worldPos, Vector& worldDir);
+    bool GetRightControllerAimRay(Vector& worldPos, Vector& worldDir);
+    
     bool IsLeftControllerGripPoseValid();
     bool IsRightControllerGripPoseValid();
 
@@ -123,6 +129,9 @@ public:
     const XrView* GetViews() const { return m_views; }
 
 private:
+    // Helper for computing aim ray from XrPosef
+    bool ComputeAimRayFromXRPose(const XrPosef& xrPose, Vector& worldPos, Vector& worldDir);
+    
     // OpenXR Resources
     XrInstance m_instance = nullptr;
     XrSession m_session = nullptr;
