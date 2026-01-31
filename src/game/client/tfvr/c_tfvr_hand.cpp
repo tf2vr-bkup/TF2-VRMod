@@ -913,6 +913,16 @@ static void SafeQuaternionSlerp(const Quaternion &from, const Quaternion &to, fl
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Check if a weapon is a medigun (any variant)
+//-----------------------------------------------------------------------------
+static bool IsWeaponMedigun(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon)
+		return false;
+	return pWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Apply two-hand grip rotation to a transform matrix
 //          Uses minimal rotation (quaternion swing) to point Y axis toward desiredY
 //          This preserves the controller's roll perfectly - only pitch/yaw changes
@@ -1211,6 +1221,46 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	// Reset shutdown flag in case we're reinitializing
 	m_bShuttingDown = false;
 	
+	// Reset ALL state for clean reinitialize (match constructor)
+	m_hHeldWeapon = NULL;
+	m_hRenderWeapon = NULL;
+	m_bHandTrackingValid = false;
+	m_bControllerTracked = false;
+	m_iFireSequence = -1;
+	m_iIdleSequence = -1;
+	m_bPlayingFireAnim = false;
+	m_flFireAnimStartTime = 0.0f;
+	m_iOffHandBone = -1;
+	m_iOffHandMiddleFingerBone = -1;
+	m_flTwoHandBlend = 0.0f;
+	m_bOffhandGripActive = false;
+	m_bWasOffhandGripActive = false;
+	m_flGripRotationBlend = 0.0f;
+	m_bBoneMappingSetup = false;
+	m_bHandBoneOffsetValid = false;
+	m_iHandBone = -1;
+	m_bIdleMuzzleOffsetValid = false;
+	m_iCachedMuzzleWeaponID = -1;
+	SetIdentityMatrix(m_matIdleHandBoneTransform);
+	m_vecOffhandGripForward = Vector(1, 0, 0);
+	m_vecOffhandGripUp = Vector(0, 0, 1);
+	m_vecCachedGripDelta = vec3_origin;
+	m_vecCachedGripYAxis = Vector(0, 1, 0);
+	m_vIdleMuzzleOffset = vec3_origin;
+	m_angIdleMuzzleAngles = vec3_angle;
+	m_bCritBoostActive = false;
+	SetIdentityMatrix(m_matWeaponBoneWorld);
+	m_bWeaponBoneWorldValid = false;
+	m_iMeleeSwingIndex = 0;
+	m_szMeleeSwingBase[0] = '\0';
+	m_iMeleeSwingCount = 0;
+	
+	// Reset left hand wearables
+	m_hLeftHandWatch = NULL;
+	m_bOwnWatchModel = false;
+	m_hLeftHandBall = NULL;
+	m_iLastBallAmmo = -1;
+	
 	m_hOwnerPlayer = pOwner;
 	m_handSide = handSide;
 	
@@ -1334,7 +1384,9 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	// Set initial skin based on team
 	int iTeamNumber = pOwner->GetTeamNumber();
 	m_nSkin = (iTeamNumber == TF_TEAM_BLUE) ? 1 : 0;
-	Msg("VR Hand (%s): Team=%d, Skin=%d\n", IsLeftHand() ? "LEFT" : "RIGHT", iTeamNumber, m_nSkin);
+	Msg("VR Initialize: %s hand complete - Class=%d, Team=%d, Skin=%d, m_bShuttingDown=%s\n", 
+		IsLeftHand() ? "LEFT" : "RIGHT", m_iLastPlayerClass, iTeamNumber, m_nSkin,
+		m_bShuttingDown ? "true" : "false");
 
 	return true;
 }
@@ -1344,6 +1396,18 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::Shutdown()
 {
+	Msg("VR Shutdown: %s hand shutting down (owner=%p, already shutting down=%s)\n", 
+		IsLeftHand() ? "LEFT" : "RIGHT",
+		m_hOwnerPlayer.Get(),
+		m_bShuttingDown ? "YES" : "NO");
+	
+	// Stack trace for debugging
+	// Print who called us
+	if (m_bShuttingDown)
+	{
+		Msg("VR Shutdown: WARNING - already shut down! Double shutdown detected.\n");
+	}
+	
 	m_bShuttingDown = true;
 	
 	// Unequip any held weapon
@@ -1391,9 +1455,13 @@ void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 	if (!tfvr_hands_enabled.GetBool())
 		return;
 
+	Msg("VR SpawnVRHands: Called for class %d\n", pPlayer->GetPlayerClass()->GetClassIndex());
+
 	// If hands already exist, reinitialize them
 	if (g_pLocalPlayerLeftHand && g_pLocalPlayerRightHand)
 	{
+		Msg("VR SpawnVRHands: Reinitializing existing hands\n");
+		
 		// Reinitialize with new player pointer
 		g_pLocalPlayerLeftHand->Shutdown();
 		g_pLocalPlayerRightHand->Shutdown();
@@ -1403,8 +1471,10 @@ void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 		{
 			g_pLocalPlayerLeftHand->Spawn();
 			g_pLocalPlayerRightHand->Spawn();
+			Msg("VR SpawnVRHands: Reinit successful\n");
 			return;
 		}
+		Msg("VR SpawnVRHands: Reinit FAILED\n");
 	}
 
 	// Create new left hand entity
@@ -1444,16 +1514,29 @@ void C_TFVRHand::RemoveVRHands(C_TFPlayer *pPlayer)
 	if (!pPlayer)
 		return;
 
+	// IMPORTANT: Only shutdown hands if they're actually owned by this player
+	// This prevents an old player entity's UpdateOnRemove from shutting down
+	// hands that have already been transferred to a new player entity
 	if (g_pLocalPlayerLeftHand)
 	{
-		g_pLocalPlayerLeftHand->Shutdown();
-		g_pLocalPlayerLeftHand->AddEffects(EF_NODRAW);
-	}
-	
-	if (g_pLocalPlayerRightHand)
-	{
-		g_pLocalPlayerRightHand->Shutdown();
-		g_pLocalPlayerRightHand->AddEffects(EF_NODRAW);
+		C_TFPlayer* pCurrentOwner = g_pLocalPlayerLeftHand->GetOwnerPlayer();
+		if (pCurrentOwner == pPlayer)
+		{
+			Msg("VR RemoveVRHands: Shutting down hands for player %p\n", pPlayer);
+			g_pLocalPlayerLeftHand->Shutdown();
+			g_pLocalPlayerLeftHand->AddEffects(EF_NODRAW);
+			
+			if (g_pLocalPlayerRightHand)
+			{
+				g_pLocalPlayerRightHand->Shutdown();
+				g_pLocalPlayerRightHand->AddEffects(EF_NODRAW);
+			}
+		}
+		else
+		{
+			Msg("VR RemoveVRHands: Skipping - hands owned by different player (owner=%p, caller=%p)\n", 
+				pCurrentOwner, pPlayer);
+		}
 	}
 }
 
@@ -1529,7 +1612,15 @@ void C_TFVRHand::Update()
 {
 	// Early out if shutting down
 	if (m_bShuttingDown)
+	{
+		static float lastShutdownMsg = 0;
+		if (gpGlobals->curtime - lastShutdownMsg > 1.0f)
+		{
+			Msg("VR Update: %s hand is shutdown, skipping\n", IsLeftHand() ? "LEFT" : "RIGHT");
+			lastShutdownMsg = gpGlobals->curtime;
+		}
 		return;
+	}
 
 	// Validate we still have an owner
 	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
@@ -1576,6 +1667,8 @@ void C_TFVRHand::Update()
 	int currentClass = pOwner->GetPlayerClass()->GetClassIndex();
 	if (m_iLastPlayerClass != TF_CLASS_UNDEFINED && currentClass != m_iLastPlayerClass)
 	{
+		Msg("VR Update: %s hand detected class change %d -> %d, shutting down\n", 
+			IsLeftHand() ? "LEFT" : "RIGHT", m_iLastPlayerClass, currentClass);
 		AddEffects(EF_NODRAW);
 		m_bShuttingDown = true; // Prevent rendering until reinitialized
 		m_iLastPlayerClass = currentClass;
@@ -1612,6 +1705,7 @@ void C_TFVRHand::Update()
 		// Check if we should skip two-handing for this weapon
 		// Some weapons don't have proper off-hand grip points
 		bool bSkipTwoHand = false;
+		bool bPassiveGripOnly = false;  // Passive grip = position snap only, no rotation control
 		if (pRightHand)
 		{
 			C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
@@ -1626,6 +1720,13 @@ void C_TFVRHand::Update()
 				{
 					bSkipTwoHand = true;
 				}
+				// Pistols - passive grip only (no active grip button required, no rotation control)
+				else if (iWeaponID == TF_WEAPON_PISTOL ||
+				         iWeaponID == TF_WEAPON_PISTOL_SCOUT ||
+				         iWeaponID == TF_WEAPON_HANDGUN_SCOUT_SECONDARY)  // Pretty Boy's, Winger
+				{
+					bPassiveGripOnly = true;
+				}
 			}
 		}
 		
@@ -1636,6 +1737,78 @@ void C_TFVRHand::Update()
 			m_bOffhandGripActive = false;
 			m_bWasOffhandGripActive = false;
 			m_flGripRotationBlend = 0.0f;
+		}
+		else if (bPassiveGripOnly && pRightHand && pRightHand->GetHeldWeapon())
+		{
+			// Passive grip only (pistols): position snapping without rotation control
+			// No grip button required, just distance-based blending
+			Vector gripTargetPos;
+			QAngle gripTargetAngles;
+			
+			if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
+			{
+				// Get our current hand position - use middle finger proximal for snap detection
+				Vector leftHandPos = m_vecLastValidPosition;
+				if (m_pHandTracker)
+				{
+					Vector fingerPos;
+					QAngle fingerAngles;
+					if (m_pHandTracker->GetHandJoint(true, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fingerPos, fingerAngles))
+					{
+						leftHandPos = fingerPos;
+					}
+				}
+				
+				// Calculate distance to grip target
+				float distance = (leftHandPos - gripTargetPos).Length();
+				
+				float snapDist = tfvr_twohand_snap_distance.GetFloat();
+				float blendDist = tfvr_twohand_blend_distance.GetFloat();
+				
+				// Calculate blend amount based on distance only (no grip button required)
+				float targetBlend = 0.0f;
+				if (distance <= snapDist)
+				{
+					targetBlend = 1.0f;
+				}
+				else if (distance <= blendDist)
+				{
+					targetBlend = 1.0f - ((distance - snapDist) / (blendDist - snapDist));
+				}
+				
+				// Smoothly interpolate towards target blend
+				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+				m_flTwoHandBlend = EasedApproach(targetBlend, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+				
+				// Passive grip does NOT set m_bOffhandGripActive or m_flGripRotationBlend
+				// This means the weapon rotation is NOT influenced by the left hand
+				m_bOffhandGripActive = false;
+				m_bWasOffhandGripActive = false;
+				m_flGripRotationBlend = 0.0f;
+				
+				if (tfvr_twohand_debug.GetBool())
+				{
+					// ORANGE box = pistol passive grip target
+					debugoverlay->AddBoxOverlay(gripTargetPos, Vector(-1,-1,-1), Vector(1,1,1), 
+						gripTargetAngles, 255, 128, 0, 128, 0.1f);
+					
+					// RED box = left hand middle finger position
+					debugoverlay->AddBoxOverlay(leftHandPos, Vector(-0.5f,-0.5f,-0.5f), Vector(0.5f,0.5f,0.5f), 
+						vec3_angle, 255, 0, 0, 128, 0.1f);
+					
+					// ORANGE line = distance being measured
+					debugoverlay->AddLineOverlay(leftHandPos, gripTargetPos, 
+						255, 128, 0, true, 0.1f);
+				}
+			}
+			else
+			{
+				// No grip target, blend out
+				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+				m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+			}
 		}
 		else if (pRightHand && pRightHand->GetHeldWeapon())
 		{
@@ -1901,9 +2074,156 @@ void C_TFVRHand::Update()
 		}
 	}
 	
-	// Check if the player's active weapon has changed (for right hand only)
-	if (IsRightHand())
+	// Right-hand passive grip for left-hand medigun
+	// When left hand holds medigun, right hand can do passive grip (position only, no weapon rotation)
+	if (IsRightHand() && tfvr_twohand_enabled.GetBool())
 	{
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		
+		// Only active when left hand is holding medigun
+		bool bLeftHasMedigun = pLeftHand && IsWeaponMedigun(pLeftHand->GetHeldWeapon());
+		
+		if (tfvr_twohand_debug.GetBool())
+		{
+			static float lastDebugTime = 0;
+			if (gpGlobals->curtime - lastDebugTime > 2.0f)
+			{
+				C_TFWeaponBase *pLeftWeapon = pLeftHand ? pLeftHand->GetHeldWeapon() : NULL;
+				Msg("RightHand Update: pLeftHand=%p, LeftWeapon=%p (%s), IsMedigun=%d\n",
+					pLeftHand, pLeftWeapon, 
+					pLeftWeapon ? pLeftWeapon->GetClassname() : "none",
+					bLeftHasMedigun ? 1 : 0);
+				lastDebugTime = gpGlobals->curtime;
+			}
+		}
+		
+		if (bLeftHasMedigun)
+		{
+			Vector gripTargetPos;
+			QAngle gripTargetAngles;
+			
+			if (tfvr_twohand_debug.GetBool())
+			{
+				static float lastDebugTime = 0;
+				if (gpGlobals->curtime - lastDebugTime > 2.0f)
+				{
+					Msg("About to call GetOffHandGripTarget on left hand...\n");
+					lastDebugTime = gpGlobals->curtime;
+				}
+			}
+			
+			bool bGotGripTarget = pLeftHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles);
+			
+			if (tfvr_twohand_debug.GetBool())
+			{
+				static float lastDebugTime2 = 0;
+				if (gpGlobals->curtime - lastDebugTime2 > 2.0f)
+				{
+					Msg("GetOffHandGripTarget returned: %s, pos=(%.1f, %.1f, %.1f)\n", 
+						bGotGripTarget ? "true" : "false",
+						gripTargetPos.x, gripTargetPos.y, gripTargetPos.z);
+					
+					// Also show the left hand's actual position for comparison
+					Vector leftHandPos = pLeftHand->GetAbsOrigin();
+					Msg("  Left hand VR position: (%.1f, %.1f, %.1f)\n",
+						leftHandPos.x, leftHandPos.y, leftHandPos.z);
+					
+					lastDebugTime2 = gpGlobals->curtime;
+				}
+			}
+			
+			if (bGotGripTarget)
+			{
+				// Get our current hand position - use middle finger proximal for snap detection
+				Vector rightHandPos = m_vecLastValidPosition;
+				if (m_pHandTracker)
+				{
+					Vector fingerPos;
+					QAngle fingerAngles;
+					if (m_pHandTracker->GetHandJoint(false, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fingerPos, fingerAngles))
+					{
+						rightHandPos = fingerPos;
+					}
+				}
+				
+				// Calculate distance to grip target (bip_hand_R position)
+				float distance = (rightHandPos - gripTargetPos).Length();
+				
+				float snapDist = tfvr_twohand_snap_distance.GetFloat();
+				float blendDist = tfvr_twohand_blend_distance.GetFloat();
+				
+				// Passive two-handing: Calculate blend amount based on distance only
+				// No grip button required for passive grip
+				float targetBlend = 0.0f;
+				if (distance <= snapDist)
+				{
+					targetBlend = 1.0f;
+				}
+				else if (distance <= blendDist)
+				{
+					targetBlend = 1.0f - ((distance - snapDist) / (blendDist - snapDist));
+				}
+				
+				// Smoothly interpolate towards target blend
+				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+				m_flTwoHandBlend = EasedApproach(targetBlend, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+				
+				// NOTE: Passive grip does NOT set m_bOffhandGripActive or m_flGripRotationBlend
+				// This means the weapon rotation is NOT influenced by the right hand
+				
+				if (tfvr_twohand_debug.GetBool())
+				{
+					// MAGENTA box = medigun grip target (bip_hand_R from left hand model)
+					debugoverlay->AddBoxOverlay(gripTargetPos, Vector(-1,-1,-1), Vector(1,1,1), 
+						gripTargetAngles, 255, 0, 255, 128, 0.1f);
+					
+					// RED box = right hand middle finger position
+					debugoverlay->AddBoxOverlay(rightHandPos, Vector(-0.5f,-0.5f,-0.5f), Vector(0.5f,0.5f,0.5f), 
+						vec3_angle, 255, 0, 0, 128, 0.1f);
+					
+					// MAGENTA line = distance being measured
+					debugoverlay->AddLineOverlay(rightHandPos, gripTargetPos, 
+						255, 0, 255, true, 0.1f);
+					
+					static float lastDebugTime = 0;
+					if (gpGlobals->curtime - lastDebugTime > 0.5f)
+					{
+						DevMsg("Medigun RightGrip: dist=%.1f, snapDist=%.1f, blend=%.2f, target=%.2f\n", 
+							distance, snapDist, m_flTwoHandBlend, targetBlend);
+						lastDebugTime = gpGlobals->curtime;
+					}
+				}
+			}
+			else
+			{
+				// No valid grip target, blend back
+				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+				m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+			}
+		}
+		else
+		{
+			// Left hand doesn't have medigun, reset right hand grip state
+			if (m_flTwoHandBlend > 0.001f)
+			{
+				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+				m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+			}
+		}
+	}
+	
+	// Check if the player's active weapon has changed
+	// Per-weapon hand routing: medigun -> left hand, all other weapons -> right hand
+	{
+		C_TFWeaponBase *pActiveWeapon = pOwner->GetActiveTFWeapon();
+		bool bIsMedigun = IsWeaponMedigun(pActiveWeapon);
+		
+		// Determine if this hand should hold the current weapon
+		bool bThisHandShouldEquip = (IsRightHand() && !bIsMedigun) || (IsLeftHand() && bIsMedigun);
+		
 		// VR: Unequip weapons on round loss or stalemate (matches vanilla TF2 behavior)
 		bool bShouldUnequipForRoundEnd = false;
 		
@@ -1937,10 +2257,14 @@ void C_TFVRHand::Update()
 				UnequipWeapon();
 			}
 		}
-		else
+		// Unequip if this hand has a weapon but shouldn't (weapon type changed)
+		else if (m_hHeldWeapon.Get() && !bThisHandShouldEquip)
+		{
+			UnequipWeapon();
+		}
+		else if (bThisHandShouldEquip)
 		{
 			// Normal weapon update logic
-			C_TFWeaponBase *pActiveWeapon = pOwner->GetActiveTFWeapon();
 			C_TFWeaponBase *pCurrentHeld = m_hHeldWeapon.Get();
 			
 			// Detect weapon change: either different weapon, or current held weapon is now invalid
@@ -2400,7 +2724,22 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		float cycleToSample = m_bPlayingFireAnim ? currentCycle : 0.0f;
 		
 		if (seqToSample < 0)
-			seqToSample = 0;  // Fallback to first sequence
+		{
+			// No idle sequence set - check if we're gripping the medigun
+			// If so, use the "idle" animation which has grip poses
+			if (IsRightHand() && m_flTwoHandBlend > 0.01f)
+			{
+				C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+				if (pLeftHand && IsWeaponMedigun(pLeftHand->GetHeldWeapon()))
+				{
+					// Use "idle" animation for grip pose
+					seqToSample = LookupSequence("idle");
+				}
+			}
+			
+			if (seqToSample < 0)
+				seqToSample = 0;  // Fallback to first sequence
+		}
 		
 		// Sample animation directly
 		float poseParameters[MAXSTUDIOPOSEPARAM];
@@ -2628,6 +2967,103 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			
 			// Position weapon from current bones (position offset applied later)
 			PositionWeaponFromBones(pBoneToWorldOut, nMaxBones);
+		}
+		else if (IsRightHand() && m_flTwoHandBlend > 0.01f)
+		{
+			// Right hand passive grip for left hand's medigun
+			// Use GetOffHandGripTarget on the left hand to get the grip position
+			C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+			bool bUsedGripPose = false;
+			
+			if (pLeftHand && IsWeaponMedigun(pLeftHand->GetHeldWeapon()))
+			{
+				Vector gripTargetPos;
+				QAngle gripTargetAngles;
+				
+				// GetOffHandGripTarget on LEFT hand returns the bip_hand_R position in world space
+				if (pLeftHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true))
+				{
+					// Apply easing to the blend
+					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+					float easedBlend = ApplyEaseOutToBlend(m_flTwoHandBlend, easePower, true);
+					
+					// Get current hand position
+					Vector currentPos;
+					QAngle currentAngles;
+					MatrixAngles(pBoneToWorldOut[m_iHandBone], currentAngles, currentPos);
+					
+					// Blend position
+					Vector blendedPos;
+					VectorLerp(currentPos, gripTargetPos, easedBlend, blendedPos);
+					
+					// Blend rotation
+					Quaternion currentQuat, gripQuat, blendedQuat;
+					AngleQuaternion(currentAngles, currentQuat);
+					AngleQuaternion(gripTargetAngles, gripQuat);
+					QuaternionSlerp(currentQuat, gripQuat, easedBlend, blendedQuat);
+					
+					// Calculate position offset to apply to all bones
+					Vector posOffset = blendedPos - currentPos;
+					
+					// Calculate rotation delta to apply around the hand position
+					Quaternion invCurrentQuat;
+					QuaternionInvert(currentQuat, invCurrentQuat);
+					Quaternion rotDelta;
+					QuaternionMult(blendedQuat, invCurrentQuat, rotDelta);
+					
+					matrix3x4_t rotDeltaMatrix;
+					QuaternionMatrix(rotDelta, vec3_origin, rotDeltaMatrix);
+					
+					// Apply offset and rotation to ALL bones (moves entire skeleton as one unit)
+					for (int i = 0; i < numBones; i++)
+					{
+						Vector bonePos;
+						QAngle boneAngles;
+						MatrixAngles(pBoneToWorldOut[i], boneAngles, bonePos);
+						
+						// Move bone by the position offset
+						bonePos += posOffset;
+						
+						// Rotate position around the NEW hand position
+						Vector relPos = bonePos - blendedPos;
+						Vector rotatedRelPos;
+						VectorRotate(relPos, rotDeltaMatrix, rotatedRelPos);
+						bonePos = blendedPos + rotatedRelPos;
+						
+						// Rotate the bone's orientation
+						Quaternion boneQuat;
+						AngleQuaternion(boneAngles, boneQuat);
+						Quaternion rotatedQuat;
+						QuaternionMult(rotDelta, boneQuat, rotatedQuat);
+						
+						QAngle rotatedAngles;
+						QuaternionAngles(rotatedQuat, rotatedAngles);
+						
+						AngleMatrix(rotatedAngles, bonePos, pBoneToWorldOut[i]);
+					}
+					
+					bUsedGripPose = true;
+					
+					if (tfvr_twohand_debug.GetBool())
+					{
+						static float lastDebugTime = 0;
+						if (gpGlobals->curtime - lastDebugTime > 0.5f)
+						{
+							DevMsg("TwoHand RightGrip: blend=%.2f, target=(%.1f, %.1f, %.1f), current=(%.1f, %.1f, %.1f)\n", 
+								m_flTwoHandBlend, gripTargetPos.x, gripTargetPos.y, gripTargetPos.z,
+								currentPos.x, currentPos.y, currentPos.z);
+							lastDebugTime = gpGlobals->curtime;
+						}
+					}
+				}
+			}
+			
+			// Only apply finger tracking if we didn't get a grip pose
+			if (!bUsedGripPose)
+			{
+				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+			}
+			// When gripping, DON'T apply finger tracking - use the sampled grip pose
 		}
 		else if (IsLeftHand() && m_flTwoHandBlend > 0.01f)
 		{
@@ -3198,40 +3634,91 @@ void C_TFVRHand::HideOppositeHand(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C
 
 //-----------------------------------------------------------------------------
 // Purpose: Get the off-hand grip target position from the weapon hand's animation
-//          This returns the position where the left hand should go when two-handing
-//          Only valid on the RIGHT hand (which holds the weapon)
+//          This returns the position where the off-hand should go when two-handing
+//          Works bidirectionally:
+//          - Called on RIGHT hand: returns LEFT hand grip target (bip_hand_L)
+//          - Called on LEFT hand: returns RIGHT hand grip target (bip_hand_R)
 //          bUseCurrentAnimation: false = sample idle (for stable weapon rotation)
 //                                true = sample current animation (for visual positioning)
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation)
 {
-	// Only the right hand (weapon hand) can provide grip targets
-	if (!IsRightHand())
-		return false;
-	
 	// Need a held weapon for two-handing
 	if (!m_hHeldWeapon.Get())
+	{
+		if (tfvr_twohand_debug.GetBool() && IsLeftHand())
+		{
+			static float lastDebugTime = 0;
+			if (gpGlobals->curtime - lastDebugTime > 2.0f)
+			{
+				Msg("GetOffHandGripTarget: LEFT hand has no held weapon!\n");
+				lastDebugTime = gpGlobals->curtime;
+			}
+		}
 		return false;
+	}
 	
 	CStudioHdr *pStudioHdr = GetModelPtr();
 	if (!pStudioHdr)
+	{
+		if (tfvr_twohand_debug.GetBool() && IsLeftHand())
+		{
+			static float lastDebugTime = 0;
+			if (gpGlobals->curtime - lastDebugTime > 2.0f)
+			{
+				Msg("GetOffHandGripTarget: LEFT hand has no model ptr!\n");
+				lastDebugTime = gpGlobals->curtime;
+			}
+		}
 		return false;
+	}
 		
 	UpdateHandTransform();
 	
-	// Look up the off-hand bones (left hand on right hand's model)
-	// Due to skeleton issues, children of bip_hand_L may be broken in animation data.
-	// We use bip_hand_L (which works) and calculate middle finger base from bind pose.
+	// Look up the off-hand bones based on which hand we are
+	// Right hand looks for left-hand bones, left hand looks for right-hand bones
 	if (m_iOffHandBone < 0)
 	{
-		// Find the left hand bone (this one is correct in animation)
-		m_iOffHandBone = LookupBone("bip_hand_L");
-		if (m_iOffHandBone < 0)
-			m_iOffHandBone = LookupBone("ValveBiped.Bip01_L_Hand");
-		if (m_iOffHandBone < 0)
-			m_iOffHandBone = LookupBone("bip_hand_l");
-		if (m_iOffHandBone < 0)
-			m_iOffHandBone = LookupBone("weapon_bone_L");
+		if (IsRightHand())
+		{
+			// Right hand provides left-hand grip target
+			m_iOffHandBone = LookupBone("bip_hand_L");
+			if (m_iOffHandBone < 0)
+				m_iOffHandBone = LookupBone("ValveBiped.Bip01_L_Hand");
+			if (m_iOffHandBone < 0)
+				m_iOffHandBone = LookupBone("bip_hand_l");
+			if (m_iOffHandBone < 0)
+				m_iOffHandBone = LookupBone("weapon_bone_L");
+			
+			// Also look up middle finger base for bind pose offset calculation
+			m_iOffHandMiddleFingerBone = LookupBone("bip_middle_0_L");
+		}
+		else
+		{
+			// Left hand provides right-hand grip target (for medigun)
+			// The LEFT HAND MODEL has bip_hand_R bones for the grip pose
+			// We need to look on THIS hand's model, not the weapon
+			m_iOffHandBone = LookupBone("bip_hand_R");
+			if (m_iOffHandBone < 0)
+				m_iOffHandBone = LookupBone("ValveBiped.Bip01_R_Hand");
+			if (m_iOffHandBone < 0)
+				m_iOffHandBone = LookupBone("bip_hand_r");
+			if (m_iOffHandBone < 0)
+				m_iOffHandBone = LookupBone("weapon_bone_R");
+			
+			if (tfvr_twohand_debug.GetBool())
+			{
+				static float lastDebugTime = 0;
+				if (gpGlobals->curtime - lastDebugTime > 2.0f)
+				{
+					DevMsg("TwoHand Medigun: Looking for bip_hand_R on left hand model, found bone %d\n", m_iOffHandBone);
+					lastDebugTime = gpGlobals->curtime;
+				}
+			}
+			
+			// Also look up middle finger base for bind pose offset calculation
+			m_iOffHandMiddleFingerBone = LookupBone("bip_middle_0_R");
+		}
 		
 		if (m_iOffHandBone < 0)
 		{
@@ -3247,8 +3734,16 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 			return false;
 		}
 		
-		// Also look up middle finger base for bind pose offset calculation
-		m_iOffHandMiddleFingerBone = LookupBone("bip_middle_0_L");
+		if (tfvr_twohand_debug.GetBool() && IsLeftHand())
+		{
+			static float lastDebugTime = 0;
+			if (gpGlobals->curtime - lastDebugTime > 2.0f)
+			{
+				Msg("GetOffHandGripTarget: LEFT hand bone lookup OK: m_iHandBone=%d, m_iOffHandBone=%d\n", 
+					m_iHandBone, m_iOffHandBone);
+				lastDebugTime = gpGlobals->curtime;
+			}
+		}
 	}
 	
 	// We need to calculate the off-hand position using the same transform logic
@@ -3258,13 +3753,27 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	// 2. Apply the current VR controller transform (anchor delta)
 	
 	if (m_iHandBone < 0)
+	{
+		if (tfvr_twohand_debug.GetBool() && IsLeftHand())
+		{
+			static float lastDebugTime = 0;
+			if (gpGlobals->curtime - lastDebugTime > 2.0f)
+			{
+				Msg("GetOffHandGripTarget: LEFT hand m_iHandBone=%d (invalid!)\n", m_iHandBone);
+				lastDebugTime = gpGlobals->curtime;
+			}
+		}
 		return false;
+	}
 	
 	int numBones = pStudioHdr->numbones();
 	
-	// Sample the current animation (not just idle, so we follow fire animations etc.)
+	// Sample the current animation using the entity's pose parameters
 	float poseParameters[MAXSTUDIOPOSEPARAM];
-	memset(poseParameters, 0, sizeof(poseParameters));
+	for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+	{
+		poseParameters[i] = GetPoseParameter(i);
+	}
 	
 	IBoneSetup boneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
 	
@@ -3297,6 +3806,17 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	}
 	boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
 	
+	if (tfvr_twohand_debug.GetBool() && IsLeftHand())
+	{
+		static float lastDebugTime = 0;
+		if (gpGlobals->curtime - lastDebugTime > 2.0f)
+		{
+			Msg("TwoHand: Left hand sampling seq %d (idle=%d), m_iHandBone=%d, m_iOffHandBone=%d\n", 
+				seqToSample, m_iIdleSequence, m_iHandBone, m_iOffHandBone);
+			lastDebugTime = gpGlobals->curtime;
+		}
+	}
+	
 	// Build bone transforms from sampled animation (local to parent)
 	matrix3x4_t sampledBones[MAXSTUDIOBONES];
 	for (int i = 0; i < numBones; i++)
@@ -3319,21 +3839,53 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 			SetIdentityMatrix(sampledBones[i]);
 	}
 	
+	// Debug: show bip_hand_R position in model space (before VR transform)
+	if (tfvr_twohand_debug.GetBool() && IsLeftHand() && m_iOffHandBone >= 0)
+	{
+		static float lastDebugTime = 0;
+		if (gpGlobals->curtime - lastDebugTime > 2.0f)
+		{
+			Vector offHandModelPos;
+			QAngle offHandModelAngles;
+			MatrixAngles(sampledBones[m_iOffHandBone], offHandModelAngles, offHandModelPos);
+			
+			Vector handBoneModelPos;
+			QAngle handBoneModelAngles;
+			MatrixAngles(sampledBones[m_iHandBone], handBoneModelAngles, handBoneModelPos);
+			
+			Msg("TwoHand ModelSpace: bip_hand_L=(%.1f,%.1f,%.1f), bip_hand_R=(%.1f,%.1f,%.1f)\n",
+				handBoneModelPos.x, handBoneModelPos.y, handBoneModelPos.z,
+				offHandModelPos.x, offHandModelPos.y, offHandModelPos.z);
+			lastDebugTime = gpGlobals->curtime;
+		}
+	}
+	
 	// Get the current VR controller transform (where the right hand actually is)
 	matrix3x4_t controllerTransform;
 	AngleMatrix(m_angLastValidAngles, m_vecLastValidPosition, controllerTransform);
 	
 	// Apply hand rotation offsets (must match SetupBones logic exactly)
 	// Uses per-class offsets when enabled, falls back to global offsets
+	// Use THIS hand's offsets (not the target grip hand)
 	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
 	int ownerClass = pOwner ? pOwner->GetPlayerClass()->GetClassIndex() : TF_CLASS_UNDEFINED;
+	bool bIsLeftHand = IsLeftHand();
 	
 	QAngle rotOffset(0, 0, 0);
-	if (!GetPerClassHandOffset(ownerClass, false, rotOffset))  // false = right hand
+	if (!GetPerClassHandOffset(ownerClass, bIsLeftHand, rotOffset))
 	{
-		rotOffset.x = tfvr_hands_right_offset_pitch.GetFloat();
-		rotOffset.y = tfvr_hands_right_offset_yaw.GetFloat();
-		rotOffset.z = tfvr_hands_right_offset_roll.GetFloat();
+		if (bIsLeftHand)
+		{
+			rotOffset.x = tfvr_hands_left_offset_pitch.GetFloat();
+			rotOffset.y = tfvr_hands_left_offset_yaw.GetFloat();
+			rotOffset.z = tfvr_hands_left_offset_roll.GetFloat();
+		}
+		else
+		{
+			rotOffset.x = tfvr_hands_right_offset_pitch.GetFloat();
+			rotOffset.y = tfvr_hands_right_offset_yaw.GetFloat();
+			rotOffset.z = tfvr_hands_right_offset_roll.GetFloat();
+		}
 	}
 	
 	if (rotOffset.x != 0 || rotOffset.y != 0 || rotOffset.z != 0)
@@ -3348,11 +3900,20 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	
 	// Apply hand position offsets (same as in SetupBones)
 	Vector posOffset(0, 0, 0);
-	if (!GetPerClassHandPositionOffset(ownerClass, false, posOffset))  // false = right hand
+	if (!GetPerClassHandPositionOffset(ownerClass, bIsLeftHand, posOffset))
 	{
-		posOffset.x = tfvr_hands_right_offset_x.GetFloat();
-		posOffset.y = tfvr_hands_right_offset_y.GetFloat();
-		posOffset.z = tfvr_hands_right_offset_z.GetFloat();
+		if (bIsLeftHand)
+		{
+			posOffset.x = tfvr_hands_left_offset_x.GetFloat();
+			posOffset.y = tfvr_hands_left_offset_y.GetFloat();
+			posOffset.z = tfvr_hands_left_offset_z.GetFloat();
+		}
+		else
+		{
+			posOffset.x = tfvr_hands_right_offset_x.GetFloat();
+			posOffset.y = tfvr_hands_right_offset_y.GetFloat();
+			posOffset.z = tfvr_hands_right_offset_z.GetFloat();
+		}
 	}
 	
 	if (posOffset.x != 0 || posOffset.y != 0 || posOffset.z != 0)
@@ -3557,7 +4118,16 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	QAngle weaponAng;
 	
 	// Get the hand's weapon_bone world transform
-	int handWeaponBone = LookupBone("weapon_bone");
+	// For left-hand medigun, use weapon_bone_L to match the weapon's bone
+	int handWeaponBone = -1;
+	if (IsLeftHand() && IsWeaponMedigun(m_hHeldWeapon.Get()))
+	{
+		handWeaponBone = LookupBone("weapon_bone_L");
+	}
+	if (handWeaponBone < 0)
+	{
+		handWeaponBone = LookupBone("weapon_bone");
+	}
 	
 	if (handWeaponBone >= 0 && handWeaponBone < nMaxBones)
 	{
@@ -3575,15 +4145,25 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		MatrixAngles(handWeaponBoneMatrix, boneAng, bonePos);
 		
 		// Check if weapon has a weapon_bone we need to align
-		int weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone");
+		// For left-hand medigun, use weapon_bone_L instead of weapon_bone
+		int weaponWeaponBone = -1;
+		if (IsLeftHand() && IsWeaponMedigun(m_hHeldWeapon.Get()))
+		{
+			weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone_L");
+		}
+		if (weaponWeaponBone < 0)
+		{
+			weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone");
+		}
 		
 		if (tfvr_debug_weapon_position.GetBool())
 		{
 			C_TFWeaponBase *pDebugWeapon = m_hHeldWeapon.Get();
-			Msg("Weapon: %s, weapon_bone index: %d, hand weapon_bone: %d\n", 
+			Msg("Weapon: %s, weapon_bone index: %d, hand weapon_bone: %d, IsLeftHand: %d\n", 
 				pDebugWeapon ? pDebugWeapon->GetClassname() : "null",
 				weaponWeaponBone,
-				handWeaponBone);
+				handWeaponBone,
+				IsLeftHand() ? 1 : 0);
 			Msg("Hand anim sequence: %d, Hand model: %s\n",
 				GetSequence(), 
 				GetModelName() ? GetModelName() : "null");
@@ -3674,9 +4254,6 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			weaponPos = bonePos;
 			weaponAng = boneAng;
 		}
-	
-	// Per-weapon corrections can be added here if needed
-	// (Most weapons should work with proper bone hierarchy calculation above)
 	
 	// Apply user adjustments in local weapon space
 	Vector userOffset(
@@ -4643,6 +5220,14 @@ bool C_TFVRHand::ShouldDraw()
 	if (!tfvr_hands_enabled.GetBool())
 		return false;
 	
+	// Don't draw merc hands during preamble (no class selected) - show controller models instead
+	if (pOwner->GetPlayerClass() && pOwner->GetPlayerClass()->GetClassIndex() == TF_CLASS_UNDEFINED)
+		return false;
+	
+	// Don't draw merc hands when dead - show controller models instead
+	if (pOwner->IsPlayerDead())
+		return false;
+	
 	// Always draw hands in VR (bypass frustum culling)
 	// The hands are almost always in view, and we want smooth rendering
 	return true;
@@ -5118,9 +5703,17 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UnequipWeapon()
 {
-	// Invalidate cached idle muzzle offset
+	// Invalidate cached state
 	m_bIdleMuzzleOffsetValid = false;
 	m_iCachedMuzzleWeaponID = -1;
+	m_iOffHandBone = -1;
+	m_iOffHandMiddleFingerBone = -1;
+	
+	// Reset two-hand grip state
+	m_flTwoHandBlend = 0.0f;
+	m_bOffhandGripActive = false;
+	m_bWasOffhandGripActive = false;
+	m_flGripRotationBlend = 0.0f;
 	
 	// Clean up left hand wearables when right hand unequips weapon
 	if (IsRightHand())

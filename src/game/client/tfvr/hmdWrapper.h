@@ -17,6 +17,8 @@ extern "C" bool __declspec(dllexport) dxvkBeginFrame();
 extern "C" bool __declspec(dllexport) dxvkEndFrame();
 extern "C" void __declspec(dllexport) dxvkGetPredictedDisplayTime(XrTime& time);
 extern "C" void __declspec(dllexport) dxvkGetViews(XrView*& views, XrSpaceLocation& headLocation, uint32_t& viewCount);
+extern "C" void __declspec(dllexport) dxvkSetSessionFocused(bool focused);
+extern "C" bool __declspec(dllexport) dxvkIsSessionFocused();
 
 // New VR Compositor State Management
 extern "C" void __declspec(dllexport) dxvkSetSourceState(int state);

@@ -697,18 +697,45 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         QAngle leftAngles;
         MatrixAngles(leftControllerPose.As3x4(), leftAngles);
         
-        // Store in command for weapon shooting synchronization
-        cmd->leftControllerOrigin = leftPos;
-        cmd->leftControllerAngles = leftAngles;
-        
-        // Debug output
-        if (tfvr_controller_tracking_debug.GetBool())
+        // Check if left hand is holding a weapon (e.g., medigun) - if so, send muzzle position/angles
+        C_TFVRHand* pLeftHand = GetLocalPlayerLeftHand();
+        if (pLeftHand && pLeftHand->GetHeldWeapon())
         {
-            DevMsg("Left Controller: pos(%.2f, %.2f, %.2f) angles(%.1f, %.1f, %.1f)\n", 
-                   leftPos.x, leftPos.y, leftPos.z, leftAngles.x, leftAngles.y, leftAngles.z);
+            Vector muzzlePos;
+            QAngle muzzleAngles;
+            if (pLeftHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+            {
+                // Send weapon muzzle position AND angles for server-side hit detection
+                cmd->leftControllerOrigin = muzzlePos;
+                cmd->leftControllerAngles = muzzleAngles;
+                
+                if (tfvr_controller_tracking_debug.GetBool())
+                {
+                    DevMsg("Left Hand: Weapon muzzle pos(%.2f, %.2f, %.2f), angles(%.1f, %.1f, %.1f)\n", 
+                           muzzlePos.x, muzzlePos.y, muzzlePos.z,
+                           muzzleAngles.x, muzzleAngles.y, muzzleAngles.z);
+                }
+            }
+            else
+            {
+                // Fallback to controller position if muzzle lookup fails
+                cmd->leftControllerOrigin = leftPos;
+                cmd->leftControllerAngles = leftAngles;
+            }
         }
-        
-
+        else
+        {
+            // No weapon held, use controller position/angles
+            cmd->leftControllerOrigin = leftPos;
+            cmd->leftControllerAngles = leftAngles;
+            
+            // Debug output
+            if (tfvr_controller_tracking_debug.GetBool())
+            {
+                DevMsg("Left Controller: pos(%.2f, %.2f, %.2f) angles(%.1f, %.1f, %.1f)\n", 
+                       leftPos.x, leftPos.y, leftPos.z, leftAngles.x, leftAngles.y, leftAngles.z);
+            }
+        }
     }
     
     if (rightValid)

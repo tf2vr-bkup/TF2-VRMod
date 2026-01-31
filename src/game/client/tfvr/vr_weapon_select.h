@@ -38,11 +38,8 @@ public:
 	
 	// Get the currently selected slot (-1 if none/center)
 	int GetSelectedSlot() const { return m_nSelectedSlot; }
-	
-	// Set number of quadrants to display (3, 4, or 5)
 	void SetNumQuadrants(int num) { m_nNumQuadrants = num; }
 	
-	C_TFWeaponBase* GetWeaponInSlot(int slot);
 	
 	// Convert a slot index to screen coordinates for drawing
 	void SlotToCoords(int slot, int &x, int &y);
@@ -55,6 +52,9 @@ public:
 	
 	// Draw weapon icon and name in a quadrant
 	void DrawWeaponInQuadrant(C_TFWeaponBase *pWeapon, int slot, bool selected, int centerX, int centerY);
+	
+	// Get weapon in a specific slot
+	C_TFWeaponBase* GetWeaponInSlot(int slot);
 
 	// Slot layout configuration
 	// Slot angles: 0=12 o'clock (primary), 1=9 o'clock (secondary), 2=3 o'clock (melee), 3=6 o'clock (PDA)

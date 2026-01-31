@@ -1017,6 +1017,10 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_spectator_extras.cpp"
 			$File   "tfvr\vr_world_ui_queue.h"
 			$File   "tfvr\vr_world_ui_queue.cpp"
+			$File   "tfvr\vr_controller_model.h"
+			$File   "tfvr\vr_controller_model.cpp"
+			$File   "tfvr\cgltf.h"
+			$File   "tfvr\stb_image.h"
 			
 			$Folder "VR Weapons"
 			{

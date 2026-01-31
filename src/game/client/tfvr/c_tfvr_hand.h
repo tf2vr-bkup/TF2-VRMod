@@ -90,6 +90,7 @@ public:
 	bool IsLeftHand() const { return m_handSide == VR_HAND_LEFT; }
 	bool IsRightHand() const { return m_handSide == VR_HAND_RIGHT; }
 	COpenXRHandTracker* GetHandTracker() const { return m_pHandTracker; }
+	int GetHandBoneIndex() const { return m_iHandBone; }
 	
 	// Weapon management
 	void EquipWeapon(C_TFWeaponBase *pWeapon);
@@ -128,6 +129,11 @@ public:
 	float GetGripRotationBlend() const { return m_flGripRotationBlend; }   // Separate blend for weapon rotation
 	const Vector& GetOffhandGripForward() const { return m_vecOffhandGripForward; }
 	const Vector& GetOffhandGripUp() const { return m_vecOffhandGripUp; }
+	
+	// Animation state getters (for cross-hand animation sampling)
+	int GetIdleSequenceIndex() const { return m_iIdleSequence; }
+	bool IsPlayingFireAnim() const { return m_bPlayingFireAnim; }
+	int GetOffHandBoneIndex() const { return m_iOffHandBone; }
 
 private:
 	// Which hand this entity represents

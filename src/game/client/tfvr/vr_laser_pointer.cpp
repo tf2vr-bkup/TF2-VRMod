@@ -8,6 +8,7 @@
 #include "engine/ivdebugoverlay.h"
 #include "vgui_controls/Controls.h"
 #include "convar.h"
+#include "client_virtualreality.h"
 
 // ConVars for laser pointer control
 ConVar tfvr_laser_enabled("tfvr_laser_enabled", "1", FCVAR_ARCHIVE, "Enable VR laser pointer");
@@ -102,44 +103,94 @@ void CVRLaserPointer::UpdateLaserPointer()
         return;
     }
     
-    // Get controller pose based on which hand the menu manager is actually using
-    VMatrix controllerPose;
-    bool controllerValid = false;
+    // Get raw XR pose for proper transformation (matches controller model approach)
+    XrPosef xrPose;
+    bool poseValid = false;
     int menuHand = g_pVRMenuManager->GetActiveMenuHand();
     
-    // Get controller pose for the same hand the menu is using
     if (menuHand == 0) // Left hand
     {
         if (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
         {
-            controllerValid = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
+            poseValid = g_pOpenXRManager->GetLeftControllerPoseXR(xrPose);
         }
     }
     else // Right hand
     {
         if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
         {
-            controllerValid = g_pOpenXRManager->GetRightControllerPose(controllerPose);
+            poseValid = g_pOpenXRManager->GetRightControllerPoseXR(xrPose);
         }
     }
     
-    if (controllerValid)
+    if (poseValid)
     {
-        // Extract position and orientation
-        Vector controllerPos = controllerPose.GetTranslation();
-        QAngle controllerAngles;
-        MatrixAngles(controllerPose.As3x4(), controllerAngles);
+        // Transform using the same approach as controller models:
+        // 1. Work in OpenXR space first, then convert to Source
         
-        // Calculate laser direction
-        Vector forward;
-        AngleVectors(controllerAngles, &forward);
+        float worldScale = g_pOpenXRManager->GetWorldScale();
+        
+        // Build rotation matrix from quaternion (OpenXR space)
+        float qx = xrPose.orientation.x;
+        float qy = xrPose.orientation.y;
+        float qz = xrPose.orientation.z;
+        float qw = xrPose.orientation.w;
+        
+        float xx = qx * qx, yy = qy * qy, zz = qz * qz;
+        float xy = qx * qy, xz = qx * qz, yz = qy * qz;
+        float wx = qw * qx, wy = qw * qy, wz = qw * qz;
+        
+        // In OpenXR, -Z is forward (away from user), +Z is backward (toward user)
+        // Get the Z axis direction (backward in OpenXR space) - third column of rotation matrix
+        // For quaternion (qx,qy,qz,qw), Z column is: (2(xz+wy), 2(yz-wx), 1-2(xx+yy))
+        Vector zAxisXR;
+        zAxisXR.x = 2.0f * (xz + wy);
+        zAxisXR.y = 2.0f * (yz - wx);
+        zAxisXR.z = 1.0f - 2.0f * (xx + yy);
+        
+        // Position in OpenXR space (meters)
+        Vector posXR(xrPose.position.x, xrPose.position.y, xrPose.position.z);
+        
+        // Convert position from OpenXR to Source playspace and scale to game units
+        Vector playspacePosSource;
+        playspacePosSource.x = -posXR.z * worldScale;  // Source X = -OpenXR Z
+        playspacePosSource.y = -posXR.x * worldScale;  // Source Y = -OpenXR X
+        playspacePosSource.z = posXR.y * worldScale;   // Source Z = OpenXR Y
+        
+        // Transform position through head-relative to world (same as controller models)
+        extern CClientVirtualReality g_ClientVirtualReality;
+        VMatrix headInPlayspace = g_pOpenXRManager->GetMideyePose();
+        VMatrix headInverse = headInPlayspace.InverseTR();
+        VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+        
+        Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
+        Vector controllerPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);
+        
+        // To get the correct world direction, transform a point along the forward direction
+        // the same way we transform the position, then compute the difference
+        Vector testPointXR = posXR + zAxisXR * (-0.1f);  // 10cm forward in OpenXR (negative Z)
+        
+        // Convert test point to Source playspace
+        Vector testPointSource;
+        testPointSource.x = -testPointXR.z;
+        testPointSource.y = -testPointXR.x;
+        testPointSource.z = testPointXR.y;
+        testPointSource *= worldScale;
+        
+        // Transform test point through head-relative to world
+        Vector testRelativeToHead = headInverse.VMul4x3(testPointSource);
+        Vector testPointWorld = smoothedHeadWorld.VMul4x3(testRelativeToHead);
+        
+        // Direction is from controller position to test point
+        Vector forwardSource = testPointWorld - controllerPos;
+        forwardSource.NormalizeInPlace();
         
         // Set laser start and end points
         m_laserStart = controllerPos;
         m_laserLength = tfvr_laser_length.GetFloat();
         
         // Laser only interacts with menu plane - no world collision detection
-        Vector menuIntersection = GetCursorWorldPosition(controllerPos, forward);
+        Vector menuIntersection = GetCursorWorldPosition(controllerPos, forwardSource);
         if (menuIntersection != vec3_origin)
         {
             // Laser ends at menu plane intersection
@@ -148,7 +199,7 @@ void CVRLaserPointer::UpdateLaserPointer()
         else
         {
             // Menu not visible or no intersection - laser goes full length in controller direction
-            m_laserEnd = controllerPos + forward * m_laserLength;
+            m_laserEnd = controllerPos + forwardSource * m_laserLength;
         }
         
         m_bLaserActive = true;
@@ -164,10 +215,9 @@ void CVRLaserPointer::UpdateLaserPointer()
         // Optional debug output
         if (tfvr_laser_debug.GetBool())
         {
-            DevMsg("Laser: hand=%d pos(%.2f, %.2f, %.2f) dir(%.2f, %.2f, %.2f) length=%.1f color=(%d,%d,%d)\n",
+            DevMsg("Laser: hand=%d pos(%.2f, %.2f, %.2f) dir(%.2f, %.2f, %.2f) length=%.1f\n",
                    menuHand, controllerPos.x, controllerPos.y, controllerPos.z,
-                   forward.x, forward.y, forward.z, m_laserLength,
-                   m_laserColor.r(), m_laserColor.g(), m_laserColor.b());
+                   forwardSource.x, forwardSource.y, forwardSource.z, m_laserLength);
         }
     }
     else

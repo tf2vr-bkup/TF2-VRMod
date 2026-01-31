@@ -65,6 +65,7 @@
 #include "tfvr/vr_damage_numbers.h"
 #include "tfvr/vr_world_ui_queue.h"
 #include "tfvr/vr_spectator_extras.h"
+#include "tfvr/vr_controller_model.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2554,6 +2555,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 						headPos = pPlayer ? pPlayer->EyePosition() : vec3_origin;
 					}
 					g_pVRWorldUIQueue->BeginFrame(headPos);
+				}
+				
+				// Render VR Controller Models (during preamble/death)
+				if (g_pVRControllerModelManager)
+				{
+					g_pVRControllerModelManager->Render();
 				}
 				
 				// Render VR Status HUD (left hand: health, objectives)

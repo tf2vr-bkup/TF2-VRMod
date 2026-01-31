@@ -23263,12 +23263,23 @@ Vector CTFPlayer::ScriptWeapon_ShootPosition()
 }
 //-----------------------------------------------------------------------------
 // Purpose: VR-specific weapon shooting position that uses controller positions
+//         Medigun uses left controller, all other weapons use right controller
 //-----------------------------------------------------------------------------
 Vector CTFPlayer::Weapon_ShootPosition( void )
 {
 	// Check if client is using VR and we have valid controller data
 	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
 	{
+		// Check if active weapon is a medigun - use left controller
+		CTFWeaponBase *pActiveWeapon = GetActiveTFWeapon();
+		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
+		{
+			if (m_leftControllerOrigin != vec3_origin)
+			{
+				return m_leftControllerOrigin;
+			}
+		}
+		
 		// Use raw controller position without offset for VR consistency
 		Vector shootPos = m_rightControllerOrigin;
 
@@ -23280,12 +23291,23 @@ Vector CTFPlayer::Weapon_ShootPosition( void )
 }
 //-----------------------------------------------------------------------------
 // Purpose: VR-specific weapon shooting angles that uses controller angles
+//         Medigun uses left controller, all other weapons use right controller
 //-----------------------------------------------------------------------------
 QAngle CTFPlayer::Weapon_ShootAngles( void )
 {
 	// Check if client is using VR and we have valid controller data
 	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
 	{
+		// Check if active weapon is a medigun - use left controller
+		CTFWeaponBase *pActiveWeapon = GetActiveTFWeapon();
+		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
+		{
+			if (m_leftControllerOrigin != vec3_origin)
+			{
+				return m_leftControllerAngles;
+			}
+		}
+		
 		// Use right controller angles for weapon shooting (typically the shooting hand)
 		return m_rightControllerAngles;
 	}

@@ -2164,11 +2164,22 @@ void COpenXRManager::Update(float frametime)
 
 			switch (sessionStateEvent->state)
 			{
+			// Session has input focus (overlay closed)
+			case XR_SESSION_STATE_FOCUSED:
+				m_sessionFocused = true;
+				break;
+				
+			// Session visible but no input focus (overlay open)
+			case XR_SESSION_STATE_VISIBLE:
+				m_sessionFocused = false;
+				break;
+			
 			// Session is stopping (e.g., user quit via XR runtime)
 			case XR_SESSION_STATE_STOPPING:
 				Log("Shutdown requested by OpenXR runtime\n");
 				xrEndSession(m_session); // Gracefully end the session
 				m_sessionRunning = false;
+				m_sessionFocused = false;
 				if (engine)
 				{
 					// Assuming engine has a similar quit command
@@ -2179,6 +2190,7 @@ void COpenXRManager::Update(float frametime)
 			// Session is losing focus (e.g., dashboard activated)
 			case XR_SESSION_STATE_LOSS_PENDING:
 				Log("OpenXR dashboard likely activated\n");
+				m_sessionFocused = false;
 				if (engine && !enginevgui->IsGameUIVisible()) // Assume IsGameUIVisible exists
 				{
 					engine->ClientCmd_Unrestricted("gameui_toggle\n");
@@ -2780,6 +2792,18 @@ bool COpenXRManager::GetRightControllerPoseRaw(VMatrix& pose)
         return true;
     }
     return false;
+}
+
+bool COpenXRManager::GetLeftControllerPoseXR(XrPosef& pose)
+{
+    if (!m_inputManager) return false;
+    return m_inputManager->GetControllerPose("left_hand_pose", pose);
+}
+
+bool COpenXRManager::GetRightControllerPoseXR(XrPosef& pose)
+{
+    if (!m_inputManager) return false;
+    return m_inputManager->GetControllerPose("right_hand_pose", pose);
 }
 
 COpenXRManager g_TFVR;

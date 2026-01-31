@@ -4196,23 +4196,43 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 	// Check if VR is active and controller tracking is enabled
 	if (IsInVRMode() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
+		// Determine which hand holds the weapon (medigun uses left hand)
+		C_TFVRHand* pWeaponHand = NULL;
+		C_TFWeaponBase* pActiveWeapon = GetActiveTFWeapon();
+		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
+		{
+			pWeaponHand = GetLocalPlayerLeftHand();
+		}
+		else
+		{
+			pWeaponHand = GetLocalPlayerRightHand();
+		}
+		
 		// CRITICAL: Use weapon muzzle position from VR hand, NOT controller position!
-		C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
-		if (pRightHand && pRightHand->GetHeldWeapon())
+		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
 			Vector muzzlePos;
 			QAngle muzzleAngles;
-			if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+			if (pWeaponHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
 			{
 				return muzzlePos;
 			}
 		}
 		
-		// Fallback: Get the right controller pose
-		VMatrix rightControllerPose;
-		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		// Fallback: Get the appropriate controller pose
+		VMatrix controllerPose;
+		bool bGotPose = false;
+		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
 		{
-			Vector controllerPos = rightControllerPose.GetTranslation();
+			bGotPose = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
+		}
+		else
+		{
+			bGotPose = g_pOpenXRManager->GetRightControllerPose(controllerPose);
+		}
+		if (bGotPose)
+		{
+			Vector controllerPos = controllerPose.GetTranslation();
 			return controllerPos;
 		}
 	}
@@ -4229,15 +4249,27 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 	// Only use VR controller angles if VR is actually active
 	if (IsInVRMode() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
-		if (pRightHand && pRightHand->GetHeldWeapon())
+		// Determine which hand holds the weapon (medigun uses left hand)
+		C_TFVRHand* pWeaponHand = NULL;
+		C_TFWeaponBase* pActiveWeapon = GetActiveTFWeapon();
+		bool bIsMedigun = (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN);
+		if (bIsMedigun)
+		{
+			pWeaponHand = GetLocalPlayerLeftHand();
+		}
+		else
+		{
+			pWeaponHand = GetLocalPlayerRightHand();
+		}
+		
+		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
 			// For melee weapons, use raw controller forward direction
 			// Melee weapons don't have meaningful "muzzle" attachments
-			C_TFWeaponBase* pWeapon = pRightHand->GetHeldWeapon();
+			C_TFWeaponBase* pWeapon = pWeaponHand->GetHeldWeapon();
 			if (pWeapon && pWeapon->GetTFWpnData().m_iWeaponType == TF_WPN_TYPE_MELEE)
 			{
-				// Use controller angles directly for melee
+				// Use controller angles directly for melee (always right hand for melee)
 				VMatrix rightControllerPose;
 				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
 				{
@@ -4247,21 +4279,30 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 				}
 			}
 			
-			// For ranged weapons, use weapon muzzle angles
+			// For ranged weapons (including medigun), use weapon muzzle angles
 			Vector muzzlePos;
 			QAngle muzzleAngles;
-			if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+			if (pWeaponHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
 			{
 				return muzzleAngles;
 			}
 		}
 		
-		// Fallback: Get the right controller pose
-		VMatrix rightControllerPose;
-		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		// Fallback: Get the appropriate controller pose
+		VMatrix controllerPose;
+		bool bGotPose = false;
+		if (bIsMedigun)
+		{
+			bGotPose = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
+		}
+		else
+		{
+			bGotPose = g_pOpenXRManager->GetRightControllerPose(controllerPose);
+		}
+		if (bGotPose)
 		{
 			QAngle controllerAngles;
-			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+			MatrixAngles(controllerPose.As3x4(), controllerAngles);
 			return controllerAngles;
 		}
 	}
@@ -4273,16 +4314,28 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 //-----------------------------------------------------------------------------
 // Purpose: Returns the weapon model for particle effect attachment
 //          In VR mode, returns the VR render weapon for proper beam origin
+//          Medigun uses left hand, all other weapons use right hand
 //-----------------------------------------------------------------------------
 C_BaseAnimating* C_TFPlayer::GetRenderedWeaponModel()
 {
 	// Check if VR is active and we have a VR render weapon
 	if (IsInVRMode() && IsLocalPlayer())
 	{
-		C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
-		if (pRightHand)
+		// Determine which hand holds the weapon (medigun uses left hand)
+		C_TFVRHand* pWeaponHand = NULL;
+		C_TFWeaponBase* pActiveWeapon = GetActiveTFWeapon();
+		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
 		{
-			C_BaseAnimating* pRenderWeapon = pRightHand->GetRenderWeapon();
+			pWeaponHand = GetLocalPlayerLeftHand();
+		}
+		else
+		{
+			pWeaponHand = GetLocalPlayerRightHand();
+		}
+		
+		if (pWeaponHand)
+		{
+			C_BaseAnimating* pRenderWeapon = pWeaponHand->GetRenderWeapon();
 			if (pRenderWeapon)
 			{
 				return pRenderWeapon;
@@ -6316,9 +6369,14 @@ void C_TFPlayer::ClientThink()
 
 //-----------------------------------------------------------------------------
 // Purpose: Update VR weapon attachment to hands
+// NOTE: Weapon equipping is now handled in C_TFVRHand::Update() which has
+// per-weapon hand routing (medigun to left hand, others to right hand)
 //-----------------------------------------------------------------------------
 void C_TFPlayer::UpdateVRWeapons()
 {
+	// Weapon equipping is handled in C_TFVRHand::Update()
+	return;
+	
 	// Get the dominant hand (right hand for now - could be made configurable)
 	C_TFVRHand *pDominantHand = GetLocalPlayerRightHand();
 	if ( !pDominantHand )

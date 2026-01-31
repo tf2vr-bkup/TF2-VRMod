@@ -29,6 +29,7 @@ public:
     void Deactivate(); // Deactivate session without destroying it
     void Reactivate(); // Reactivate existing session
     bool IsActive() const { return m_vrActive; }
+    bool IsSessionFocused() const { return m_sessionFocused; }  // False when SteamVR overlay is open
 
     bool BeginFrame();
     bool EndFrame();
@@ -97,6 +98,10 @@ public:
     // Raw controller poses (playspace-relative, no player transforms)
     bool GetLeftControllerPoseRaw(VMatrix& pose);
     bool GetRightControllerPoseRaw(VMatrix& pose);
+    
+    // Raw XR poses (OpenXR space, for custom transformation)
+    bool GetLeftControllerPoseXR(XrPosef& pose);
+    bool GetRightControllerPoseXR(XrPosef& pose);
     bool IsLeftControllerGripPoseValid();
     bool IsRightControllerGripPoseValid();
 
@@ -129,6 +134,7 @@ private:
     bool m_sessionInitialized = false; // Track if session was ever created
     
     bool m_sessionRunning = false;
+    bool m_sessionFocused = true;  // True when session has input focus (false when overlay is open)
 
     // Recentering data
     Quaternion m_recenterQuaternion;  // Stores the quaternion to adjust HMD orientation
