@@ -32,6 +32,7 @@ private:
     // Helper methods
     Vector GetCursorWorldPosition(const Vector& controllerPos, const Vector& controllerForward);
     void CreateLaserMaterial();
+    void SyncSettingsToCompositor();  // Push cvar values to compositor
 
     // Laser state
     bool m_bLaserActive;

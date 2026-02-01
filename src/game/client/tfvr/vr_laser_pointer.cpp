@@ -44,6 +44,24 @@ CVRLaserPointer::~CVRLaserPointer()
 void CVRLaserPointer::Initialize()
 {
     CreateLaserMaterial();
+    
+    // Sync laser settings to compositor immediately on initialization
+    // This ensures the compositor has correct values before any frames are rendered
+    SyncSettingsToCompositor();
+}
+
+void CVRLaserPointer::SyncSettingsToCompositor()
+{
+    // Convert game units to meters and sync all laser parameters to compositor
+    float r = tfvr_laser_color_r.GetInt() / 255.0f;
+    float g = tfvr_laser_color_g.GetInt() / 255.0f;
+    float b = tfvr_laser_color_b.GetInt() / 255.0f;
+    float lengthMeters = tfvr_laser_length.GetFloat() / 39.3701f;  // Game units to meters
+    float widthMeters = tfvr_laser_width.GetFloat() / 39.3701f;
+    
+    dxvkSetLaserColor(r, g, b);
+    dxvkSetLaserLength(lengthMeters);
+    dxvkSetLaserWidth(widthMeters);
 }
 
 void CVRLaserPointer::Shutdown()
@@ -86,13 +104,11 @@ void CVRLaserPointer::Update(float frametime)
     if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
         return;
     
-    // Check if laser is enabled
-    if (!tfvr_laser_enabled.GetBool())
-        return;
-    
     // Sync laser parameters to compositor (convert game units to meters)
+    // Must happen BEFORE the enabled check so compositor gets correct values on startup
     static float lastSyncedR = -1, lastSyncedG = -1, lastSyncedB = -1;
     static float lastSyncedLength = -1, lastSyncedWidth = -1;
+    static bool initialSyncDone = false;
     
     float r = tfvr_laser_color_r.GetInt() / 255.0f;
     float g = tfvr_laser_color_g.GetInt() / 255.0f;
@@ -100,19 +116,26 @@ void CVRLaserPointer::Update(float frametime)
     float lengthMeters = tfvr_laser_length.GetFloat() / 39.3701f;  // Game units to meters
     float widthMeters = tfvr_laser_width.GetFloat() / 39.3701f;
     
-    // Only sync if changed (reduce bridge calls)
-    if (r != lastSyncedR || g != lastSyncedG || b != lastSyncedB) {
+    // Force sync on first update (ensure compositor gets cvar values on startup)
+    // After that, only sync if changed (reduce bridge calls)
+    bool forceSync = !initialSyncDone;
+    if (forceSync || r != lastSyncedR || g != lastSyncedG || b != lastSyncedB) {
         dxvkSetLaserColor(r, g, b);
         lastSyncedR = r; lastSyncedG = g; lastSyncedB = b;
     }
-    if (lengthMeters != lastSyncedLength) {
+    if (forceSync || lengthMeters != lastSyncedLength) {
         dxvkSetLaserLength(lengthMeters);
         lastSyncedLength = lengthMeters;
     }
-    if (widthMeters != lastSyncedWidth) {
+    if (forceSync || widthMeters != lastSyncedWidth) {
         dxvkSetLaserWidth(widthMeters);
         lastSyncedWidth = widthMeters;
     }
+    initialSyncDone = true;
+    
+    // Check if laser is enabled (after sync so compositor always has correct values)
+    if (!tfvr_laser_enabled.GetBool())
+        return;
     
     UpdateLaserPointer();
     // Note: Rendering is now done on-demand via RenderLaserOnTop()
