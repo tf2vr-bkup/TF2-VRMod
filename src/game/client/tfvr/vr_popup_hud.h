@@ -47,6 +47,10 @@ public:
     
     virtual void Paint() override;
     
+    // Static flag to bypass suppression during VR wrapper paint
+    // Set to true inside Paint() so suppression functions know we're actively rendering
+    static bool s_bInsideWrapperPaint;
+    
 private:
     vgui::Panel* m_pTargetPanel;
     int m_nContentOffsetX;
@@ -136,6 +140,7 @@ private:
     vgui::Panel* m_pMainTargetID;         // CMainTargetID - target ID when pointing at players/buildings
     vgui::Panel* m_pSpectatorTargetID;    // CSpectatorTargetID - spectator mode target ID
     vgui::Panel* m_pSecondaryTargetID;    // CSecondaryTargetID - healer notification
+    CHudElement* m_pSecondaryTargetIDElement; // CHudElement pointer for ShouldDraw() check
     vgui::Panel* m_pBuildingStatusEngineer; // CHudBuildingStatusContainer_Engineer
     vgui::Panel* m_pBuildingStatusSpy;    // CHudBuildingStatusContainer_Spy
     
@@ -183,6 +188,10 @@ private:
     // Other players speaking list offsets  
     float m_flVoiceOthersOffsetX;       // Horizontal offset (positive = right)
     float m_flVoiceOthersOffsetY;       // Vertical offset (positive = up)
+    
+    // VR rendering bypass flag - when true, suppression functions return false
+    // to allow the panel to render during VR capture
+    bool m_bRenderingSecondaryTargetID;
 };
 
 // Global instance

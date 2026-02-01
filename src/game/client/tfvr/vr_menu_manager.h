@@ -20,6 +20,7 @@ class CVRPopupHUDManager;
 class CVRWorldHealthIconManager;
 class CVRDamageNumberManager;
 class CVRSpectatorExtrasManager;
+class CVRSpectatorCamera;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -171,6 +172,9 @@ private:
     
     // VR Spectator Extras (world-space player names and health bars)
     CVRSpectatorExtrasManager* m_pVRSpectatorExtrasManager;
+    
+    // VR Spectator Camera (Half-Life: Alyx style camera smoothing for streaming/trailers)
+    CVRSpectatorCamera* m_pVRSpectatorCamera;
 };
 
 // Global instance

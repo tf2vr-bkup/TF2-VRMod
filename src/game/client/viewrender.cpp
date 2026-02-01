@@ -66,6 +66,7 @@
 #include "tfvr/vr_world_ui_queue.h"
 #include "tfvr/vr_spectator_extras.h"
 #include "tfvr/vr_controller_model.h"
+#include "tfvr/vr_spectator_camera.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -6636,14 +6637,112 @@ void CViewRender::RenderVREyeToScreen(const CViewSetup &view, StereoEye_t eye)
 		SourceRect.y = (vrHeight - SourceRect.height) / 2;
 	}
 
+	// Spectator camera smoothing (Mode 1: mirror-only)
+	// Smooths roll for streaming without affecting the player's VR view
+	float spectatorZoom = 1.0f;
+	float rollDelta = 0.0f;
+	
+	if (g_pVRSpectatorCamera && g_pVRSpectatorCamera->IsMirrorOnlyMode())
+	{
+		spectatorZoom = g_pVRSpectatorCamera->GetMirrorZoom();
+		rollDelta = g_pVRSpectatorCamera->GetMirrorSmoothingDelta().z;
+		g_pVRSpectatorCamera->DrawDebug();
+	}
+
 	IMaterial *pCurrentRenderMat = g_pOpenXRManager->GetRenderTargetMat();
 	pCurrentRenderMat->IncrementReferenceCount();
 
 	CMatRenderContextPtr pRenderContext(materials);
-	pRenderContext->DrawScreenSpaceRectangle(pCurrentRenderMat,
-		0, 0, ScreenRect.width, ScreenRect.height,
-		SourceRect.x, SourceRect.y, SourceRect.x + SourceRect.width - 1, SourceRect.y + SourceRect.height - 1,
-		vrWidth, vrHeight);
+	
+	bool useSpectatorRendering = (g_pVRSpectatorCamera && g_pVRSpectatorCamera->IsMirrorOnlyMode());
+	
+	if (useSpectatorRendering)
+	{
+		// Sample the full eye texture, scale to fit screen width, apply zoom and roll rotation
+		int eyeWidth = vrWidth / 2;
+		int eyeHeight = vrHeight;
+		int eyeX = (eye == STEREO_EYE_LEFT ? 0 : vrWidth / 2);
+		
+		float u0 = (float)eyeX / (float)vrWidth;
+		float v0 = 0.0f;
+		float u1 = (float)(eyeX + eyeWidth) / (float)vrWidth;
+		float v1 = 1.0f;
+		
+		// At 1.0x zoom: width = screen width, height maintains VR aspect ratio
+		float vrAspect = (float)eyeWidth / (float)eyeHeight;
+		float baseQuadWidth = (float)ScreenRect.width;
+		float baseQuadHeight = baseQuadWidth / vrAspect;
+		
+		float scaledWidth = baseQuadWidth * spectatorZoom;
+		float scaledHeight = baseQuadHeight * spectatorZoom;
+		float offsetX = ((float)ScreenRect.width - scaledWidth) * 0.5f;
+		float offsetY = ((float)ScreenRect.height - scaledHeight) * 0.5f;
+		
+		// Set up orthographic projection
+		pRenderContext->MatrixMode(MATERIAL_VIEW);
+		pRenderContext->PushMatrix();
+		pRenderContext->LoadIdentity();
+		
+		pRenderContext->MatrixMode(MATERIAL_PROJECTION);
+		pRenderContext->PushMatrix();
+		pRenderContext->LoadIdentity();
+		pRenderContext->Ortho(0, ScreenRect.height, ScreenRect.width, 0, -99999, 99999);
+		
+		pRenderContext->MatrixMode(MATERIAL_MODEL);
+		pRenderContext->PushMatrix();
+		pRenderContext->LoadIdentity();
+		
+		// Apply roll compensation
+		float cx = ScreenRect.width * 0.5f;
+		float cy = ScreenRect.height * 0.5f;
+		pRenderContext->Translate(cx, cy, 0.0f);
+		pRenderContext->Rotate(rollDelta, 0.0f, 0.0f, 1.0f);
+		pRenderContext->Translate(-cx, -cy, 0.0f);
+		
+		// Draw quad
+		pRenderContext->Bind(pCurrentRenderMat);
+		IMesh *pMesh = pRenderContext->GetDynamicMesh(true);
+		CMeshBuilder meshBuilder;
+		meshBuilder.Begin(pMesh, MATERIAL_QUADS, 1);
+		
+		meshBuilder.Position3f(offsetX, offsetY, 0.0f);
+		meshBuilder.TexCoord2f(0, u0, v0);
+		meshBuilder.Color4ub(255, 255, 255, 255);
+		meshBuilder.AdvanceVertex();
+		
+		meshBuilder.Position3f(offsetX + scaledWidth, offsetY, 0.0f);
+		meshBuilder.TexCoord2f(0, u1, v0);
+		meshBuilder.Color4ub(255, 255, 255, 255);
+		meshBuilder.AdvanceVertex();
+		
+		meshBuilder.Position3f(offsetX + scaledWidth, offsetY + scaledHeight, 0.0f);
+		meshBuilder.TexCoord2f(0, u1, v1);
+		meshBuilder.Color4ub(255, 255, 255, 255);
+		meshBuilder.AdvanceVertex();
+		
+		meshBuilder.Position3f(offsetX, offsetY + scaledHeight, 0.0f);
+		meshBuilder.TexCoord2f(0, u0, v1);
+		meshBuilder.Color4ub(255, 255, 255, 255);
+		meshBuilder.AdvanceVertex();
+		
+		meshBuilder.End();
+		pMesh->Draw();
+		
+		pRenderContext->MatrixMode(MATERIAL_MODEL);
+		pRenderContext->PopMatrix();
+		pRenderContext->MatrixMode(MATERIAL_PROJECTION);
+		pRenderContext->PopMatrix();
+		pRenderContext->MatrixMode(MATERIAL_VIEW);
+		pRenderContext->PopMatrix();
+	}
+	else
+	{
+		// Standard rendering (spectator mode off)
+		pRenderContext->DrawScreenSpaceRectangle(pCurrentRenderMat,
+			0, 0, ScreenRect.width, ScreenRect.height,
+			SourceRect.x, SourceRect.y, SourceRect.x + SourceRect.width - 1, SourceRect.y + SourceRect.height - 1,
+			vrWidth, vrHeight);
+	}
 
 	pCurrentRenderMat->DecrementReferenceCount();
 }

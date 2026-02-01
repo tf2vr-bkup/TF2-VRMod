@@ -140,10 +140,16 @@ CVRPanelWrapper::CVRPanelWrapper(vgui::Panel* parent, const char* name)
     SetPaintBackgroundEnabled(false);
 }
 
+// Static flag definition
+bool CVRPanelWrapper::s_bInsideWrapperPaint = false;
+
 void CVRPanelWrapper::Paint()
 {
     if (!m_pTargetPanel)
         return;
+    
+    // Set bypass flag so suppression functions know we're actively rendering
+    s_bInsideWrapperPaint = true;
     
     // Get the target panel's screen position
     int panelScreenX = 0, panelScreenY = 0;
@@ -175,6 +181,9 @@ void CVRPanelWrapper::Paint()
     
     // Restore visibility
     m_pTargetPanel->SetVisible(bWasVisible);
+    
+    // Clear bypass flag
+    s_bInsideWrapperPaint = false;
 }
 
 //=============================================================================
@@ -199,6 +208,7 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_pMainTargetID = nullptr;
     m_pSpectatorTargetID = nullptr;
     m_pSecondaryTargetID = nullptr;
+    m_pSecondaryTargetIDElement = nullptr;
     m_pBuildingStatusEngineer = nullptr;
     m_pBuildingStatusSpy = nullptr;
     
@@ -229,6 +239,9 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_flVoiceSelfOffsetY = 20.0f;
     m_flVoiceOthersOffsetX = -35.0f;
     m_flVoiceOthersOffsetY = 15.0f;
+    
+    // VR rendering bypass flag
+    m_bRenderingSecondaryTargetID = false;
 }
 
 CVRPopupHUDManager::~CVRPopupHUDManager()
@@ -298,6 +311,7 @@ void CVRPopupHUDManager::Shutdown()
     m_pMainTargetID = nullptr;
     m_pSpectatorTargetID = nullptr;
     m_pSecondaryTargetID = nullptr;
+    m_pSecondaryTargetIDElement = nullptr;
     m_pBuildingStatusEngineer = nullptr;
     m_pBuildingStatusSpy = nullptr;
     
@@ -426,6 +440,7 @@ void CVRPopupHUDManager::AcquirePanels()
         if (pElement)
         {
             m_pSecondaryTargetID = dynamic_cast<vgui::Panel*>(pElement);
+            m_pSecondaryTargetIDElement = pElement;  // Store CHudElement for ShouldDraw() check
             if (m_pSecondaryTargetID)
             {
                 DevMsg("VR Popup HUD: Found secondary target ID (healer) panel\n");
@@ -1042,7 +1057,20 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
     // Slot 0.5: Secondary target ID (healer notification - "Healer: [name]")
     // Shares slot with spectator target ID since they're mutually exclusive (alive vs spectating)
     // Uses wrapper to ensure content is centered (panel has screen-relative positioning internally)
-    if (m_pSecondaryTargetID && m_pSecondaryTargetID->IsVisible() && m_pHealerWrapper)
+    // NOTE: We check ShouldDraw() on the CHudElement instead of IsVisible() on the panel
+    // because VGUI panel visibility is not automatically synced with CHudElement::ShouldDraw()
+    if (tfvr_popup_hud_notifications_debug.GetBool())
+    {
+        static float lastDebugTime = 0.0f;
+        if (gpGlobals->curtime - lastDebugTime > 1.0f)
+        {
+            DevMsg("VR Healer Panel Debug: Panel=%p Element=%p Wrapper=%p ShouldDraw=%s\n",
+                m_pSecondaryTargetID, m_pSecondaryTargetIDElement, m_pHealerWrapper,
+                (m_pSecondaryTargetIDElement ? (m_pSecondaryTargetIDElement->ShouldDraw() ? "YES" : "NO") : "N/A"));
+            lastDebugTime = gpGlobals->curtime;
+        }
+    }
+    if (m_pSecondaryTargetID && m_pSecondaryTargetIDElement && m_pSecondaryTargetIDElement->ShouldDraw() && m_pHealerWrapper)
     {
         float healerOffsetX = tfvr_popup_hud_healer_offset_x.GetFloat();
         float healerOffsetY = tfvr_popup_hud_healer_offset_y.GetFloat();
@@ -1050,6 +1078,11 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
         // Get the actual panel size
         int panelWidth, panelHeight;
         m_pSecondaryTargetID->GetSize(panelWidth, panelHeight);
+        
+        if (tfvr_popup_hud_notifications_debug.GetBool())
+        {
+            DevMsg("VR Healer Panel: Rendering! Size=%dx%d\n", panelWidth, panelHeight);
+        }
         
         // Configure wrapper to capture just this panel's content
         m_pHealerWrapper->SetTargetPanel(m_pSecondaryTargetID);
@@ -1390,6 +1423,11 @@ bool CVRPopupHUDManager::ShouldSuppressSecondaryTargetID()
     
     // Only suppress if VR is active
     if (!UseVR())
+        return false;
+    
+    // Don't suppress when VR wrapper panel is actively painting
+    // This allows the panel to render when captured for 3D display
+    if (CVRPanelWrapper::s_bInsideWrapperPaint)
         return false;
     
     return true;

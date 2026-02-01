@@ -275,6 +275,7 @@ CClientVirtualReality::CClientVirtualReality()
 	m_PlayerTorsoAngle.Init();
 	m_WorldFromWeapon.Identity();
 	m_WorldFromMidEye.Identity();
+	m_WorldFromMidEyeRaw.Identity();
 	
 	m_bOverrideTorsoAngle = false;
 	m_OverrideTorsoOffset.Init();
@@ -1180,16 +1181,40 @@ void CClientVirtualReality::ClearCustomHUDBounds()
 
 // --------------------------------------------------------------------
 // Purpose: Update VR matrices with fresh player data
+// Note: Spectator camera smoothing (Mode 2) is applied in view.cpp before this is called
 // --------------------------------------------------------------------
 void CClientVirtualReality::UpdateWorldFromMidEyeMatrices( const Vector &origin, const QAngle &angles )
 {
 	// m_WorldFromMidEye: Full head orientation including pitch/roll (for menus)
 	m_WorldFromMidEye.SetupMatrixOrgAngles(origin, angles);
 	
+	// m_WorldFromMidEyeRaw: Same as m_WorldFromMidEye when no smoothing is active
+	m_WorldFromMidEyeRaw.SetupMatrixOrgAngles(origin, angles);
+	
 	// m_WorldFromMidEyeNoDebugCam: Torso angles without pitch/roll tilt (for player body/meathook)
 	QAngle torsoAngles = angles;
 	torsoAngles[PITCH] = 0.0f;  // Don't tilt the body up/down
 	torsoAngles[ROLL] = 0.0f;   // Don't roll the body
+	m_WorldFromMidEyeNoDebugCam.SetupMatrixOrgAngles(origin, torsoAngles);
+}
+
+// --------------------------------------------------------------------
+// Purpose: Update VR matrices with separate smoothed (for view) and raw (for controllers) angles
+// Used by spectator camera Mode 2 to keep hands stable while smoothing the view
+// --------------------------------------------------------------------
+void CClientVirtualReality::UpdateWorldFromMidEyeMatricesWithRaw( const Vector &origin, const QAngle &smoothedAngles, const QAngle &rawAngles )
+{
+	// m_WorldFromMidEye: Smoothed head orientation (for view rendering and menus)
+	m_WorldFromMidEye.SetupMatrixOrgAngles(origin, smoothedAngles);
+	
+	// m_WorldFromMidEyeRaw: Raw (unsmoothed) head orientation (for controller positioning)
+	m_WorldFromMidEyeRaw.SetupMatrixOrgAngles(origin, rawAngles);
+	
+	// m_WorldFromMidEyeNoDebugCam: Torso angles without pitch/roll tilt (for player body/meathook)
+	// Use smoothed angles for consistency with the view
+	QAngle torsoAngles = smoothedAngles;
+	torsoAngles[PITCH] = 0.0f;
+	torsoAngles[ROLL] = 0.0f;
 	m_WorldFromMidEyeNoDebugCam.SetupMatrixOrgAngles(origin, torsoAngles);
 }
 

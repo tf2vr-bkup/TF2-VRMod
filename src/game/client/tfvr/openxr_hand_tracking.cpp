@@ -262,7 +262,7 @@ void COpenXRHandTracker::ConvertXrPoseToSourceFormat(const XrPosef& xrPose, Vect
             VMatrix jointRelativeToHead = rawHeadPlayspace.InverseTR() * jointMatrix;
             
             // Get smoothed head-in-world transform (includes stair/prediction smoothing)
-            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
             
             // Apply the relative transform to the smoothed head position
             VMatrix finalJointPose = smoothedHeadWorld * jointRelativeToHead;

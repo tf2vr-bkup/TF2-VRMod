@@ -50,6 +50,7 @@
 #include "tfvr/openxr_hand_tracking.h"
 #include "tfvr/vr_input.h"
 #include "tfvr/vr_laser_pointer.h"
+#include "tfvr/vr_spectator_camera.h"
 
 #if defined( REPLAY_ENABLED )
 #include "replay/ireplaysystem.h"
@@ -716,9 +717,35 @@ void CViewRender::SetUpViews()
 			{
 				// CRITICAL: Use the smoothed viewEye.origin from CalcView - don't override it!
 				// CalcView already applied GetPredictionErrorSmoothingVector() smoothing
-			
-				// Store the smoothed view for VR rendering - DON'T modify viewEye.origin!
-				g_ClientVirtualReality.UpdateWorldFromMidEyeMatrices(viewEye.origin, viewEye.angles);
+				
+				// Store raw angles before any spectator smoothing
+				QAngle rawAngles = viewEye.angles;
+				
+				// Apply spectator camera smoothing for Mode 2 (full smoothing)
+				// This modifies the actual view angles, creating cinematic smoothing for trailers
+				// WARNING: This creates input lag - only use for recording, not gameplay!
+				if (g_pVRSpectatorCamera && g_pVRSpectatorCamera->IsFullSmoothingMode())
+				{
+					QAngle smoothedAngles;
+					g_pVRSpectatorCamera->ApplySmoothing(rawAngles, smoothedAngles);
+					viewEye.angles = smoothedAngles;
+					
+					// Store BOTH smoothed (for view) and raw (for controllers) transforms
+					// This keeps hands stable while the view is smoothed
+					g_ClientVirtualReality.UpdateWorldFromMidEyeMatricesWithRaw(viewEye.origin, smoothedAngles, rawAngles);
+				}
+				// For Mode 1 (mirror-only), just track angles without modifying view
+				else if (g_pVRSpectatorCamera && g_pVRSpectatorCamera->IsMirrorOnlyMode())
+				{
+					QAngle unused;
+					g_pVRSpectatorCamera->ApplySmoothing(viewEye.angles, unused);
+					g_ClientVirtualReality.UpdateWorldFromMidEyeMatrices(viewEye.origin, viewEye.angles);
+				}
+				else
+				{
+					// No spectator smoothing - store the view for VR rendering
+					g_ClientVirtualReality.UpdateWorldFromMidEyeMatrices(viewEye.origin, viewEye.angles);
+				}
 				
 				// Render hand tracking debug visualization AFTER smoothing is set
 				// so the debug cubes use the current frame's smoothed transforms

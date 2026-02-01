@@ -209,7 +209,7 @@ void CVRLaserPointer::UpdateLaserPointer()
         extern CClientVirtualReality g_ClientVirtualReality;
         VMatrix headInPlayspace = g_pOpenXRManager->GetMideyePose();
         VMatrix headInverse = headInPlayspace.InverseTR();
-        VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+        VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
         
         Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
         Vector controllerPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);

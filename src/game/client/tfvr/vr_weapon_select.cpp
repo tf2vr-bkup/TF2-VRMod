@@ -708,7 +708,7 @@ void CVRWeaponSelectManager::OpenMenu()
 	menuPos += Vector(0, 0, 1) * upOffset; // World up for vertical offset
 	
 	// Calculate playspace world matrix using proper matrix math
-	VMatrix headWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+	VMatrix headWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
 	VMatrix headPlayspaceMatrix = g_pOpenXRManager->GetMideyePose();
 	VMatrix playspaceToHead = headPlayspaceMatrix.InverseTR();
 	VMatrix playspaceWorldMatrix = headWorldMatrix * playspaceToHead;
@@ -792,7 +792,7 @@ bool CVRWeaponSelectManager::CalculateMenuTransform(VMatrix &transform)
 		return false;
 	
 	// Calculate current playspace world matrix using proper matrix math
-	VMatrix headWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+	VMatrix headWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
 	VMatrix headPlayspaceMatrix = g_pOpenXRManager->GetMideyePose();
 	VMatrix playspaceToHead = headPlayspaceMatrix.InverseTR();
 	VMatrix playspaceWorldMatrix = headWorldMatrix * playspaceToHead;
@@ -835,7 +835,7 @@ void CVRWeaponSelectManager::UpdateHandPositionOnMenu()
 		return;
 	
 	// Calculate current playspace world matrix and menu world position
-	VMatrix headWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+	VMatrix headWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
 	VMatrix headPlayspaceMatrix = g_pOpenXRManager->GetMideyePose();
 	VMatrix playspaceToHead = headPlayspaceMatrix.InverseTR();
 	VMatrix playspaceWorldMatrix = headWorldMatrix * playspaceToHead;

@@ -2378,7 +2378,7 @@ bool COpenXRManager::GetLeftControllerPose(VMatrix& pose)
                 VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
                 
                 // Get smoothed head-in-world transform (includes stair/prediction smoothing)
-                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
                 
                 // Apply the relative transform to the smoothed head position
                 pose = smoothedHeadWorld * controllerRelativeToHead;
@@ -2489,7 +2489,7 @@ bool COpenXRManager::GetRightControllerPose(VMatrix& pose)
                 VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
                 
                 // Get smoothed head-in-world transform (includes stair/prediction smoothing)
-                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
                 
                 // Apply the relative transform to the smoothed head position
                 pose = smoothedHeadWorld * controllerRelativeToHead;
@@ -2628,7 +2628,7 @@ bool COpenXRManager::GetLeftControllerGripPose(VMatrix& pose)
                 VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
                 
                 // Get smoothed head-in-world transform (includes stair/prediction smoothing)
-                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
                 
                 // Apply the relative transform to the smoothed head position
                 pose = smoothedHeadWorld * controllerRelativeToHead;
@@ -2697,7 +2697,7 @@ bool COpenXRManager::GetRightControllerGripPose(VMatrix& pose)
                 VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
                 
                 // Get smoothed head-in-world transform (includes stair/prediction smoothing)
-                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
                 
                 // Apply the relative transform to the smoothed head position
                 pose = smoothedHeadWorld * controllerRelativeToHead;
@@ -2881,7 +2881,7 @@ bool COpenXRManager::SampleFreshRightControllerPose(Vector& worldPos, QAngle& wo
             // Calculate controller relative to head, then apply smoothed head world transform
             VMatrix rawHeadPlayspace = GetMideyePose();
             VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
-            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
             pose = smoothedHeadWorld * controllerRelativeToHead;
         }
         else
@@ -2954,7 +2954,7 @@ bool COpenXRManager::SampleFreshLeftControllerPose(Vector& worldPos, QAngle& wor
             // Calculate controller relative to head, then apply smoothed head world transform
             VMatrix rawHeadPlayspace = GetMideyePose();
             VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
-            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
             pose = smoothedHeadWorld * controllerRelativeToHead;
         }
         else
@@ -3020,7 +3020,7 @@ bool COpenXRManager::ComputeAimRayFromXRPose(const XrPosef& xrPose, Vector& worl
     extern CClientVirtualReality g_ClientVirtualReality;
     VMatrix headInPlayspace = GetMideyePose();
     VMatrix headInverse = headInPlayspace.InverseTR();
-    VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+    VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
     
     Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
     worldPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);

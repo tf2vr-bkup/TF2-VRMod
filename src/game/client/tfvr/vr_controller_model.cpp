@@ -873,7 +873,7 @@ void CVRControllerModelManager::UpdateControllerPoses()
 				{
 					VMatrix headInPlayspace = m_pOpenXRManager->GetMideyePose();
 					VMatrix poseRelativeToHead = headInPlayspace.InverseTR() * poseInPlayspace;
-					VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+					VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
 					model.currentPose = smoothedHeadWorld * poseRelativeToHead;
 				}
 				else
@@ -1008,7 +1008,7 @@ void CVRControllerModelManager::RenderController(const GameControllerModel& mode
 	extern CClientVirtualReality g_ClientVirtualReality;
 	VMatrix headInPlayspace = m_pOpenXRManager->GetMideyePose();
 	VMatrix headInverse = headInPlayspace.InverseTR();
-	VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+	VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
 	
 	// Build OpenXR pose rotation matrix (constant for all vertices)
 	const XrPosef& xrPose = model.currentPoseXR;

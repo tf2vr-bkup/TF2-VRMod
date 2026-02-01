@@ -31,6 +31,7 @@
 #include "vr_world_health_icon.h"
 #include "vr_damage_numbers.h"
 #include "vr_spectator_extras.h"
+#include "vr_spectator_camera.h"
 #include "vr_world_ui_queue.h"
 #include "vr_controller_model.h"
 
@@ -103,6 +104,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRWorldHealthIconManager(nullptr)
     , m_pVRDamageNumberManager(nullptr)
     , m_pVRSpectatorExtrasManager(nullptr)
+    , m_pVRSpectatorCamera(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -289,6 +291,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Spectator Camera (Half-Life: Alyx style camera smoothing)
+    if (!m_pVRSpectatorCamera)
+    {
+        m_pVRSpectatorCamera = new CVRSpectatorCamera();
+        if (m_pVRSpectatorCamera->Initialize())
+        {
+            g_pVRSpectatorCamera = m_pVRSpectatorCamera;
+            DevMsg("VR Menu Manager: Spectator Camera initialized\n");
+        }
+        else
+        {
+            delete m_pVRSpectatorCamera;
+            m_pVRSpectatorCamera = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Spectator Camera\n");
+        }
+    }
+    
     // Initialize VR Controller Model Manager (shows controllers during preamble/death)
     if (!g_pVRControllerModelManager && g_pOpenXRManager)
     {
@@ -394,6 +413,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRSpectatorExtrasManager;
         m_pVRSpectatorExtrasManager = nullptr;
         g_pVRSpectatorExtrasManager = nullptr;
+    }
+    
+    // Shutdown VR Spectator Camera
+    if (m_pVRSpectatorCamera)
+    {
+        m_pVRSpectatorCamera->Shutdown();
+        delete m_pVRSpectatorCamera;
+        m_pVRSpectatorCamera = nullptr;
+        g_pVRSpectatorCamera = nullptr;
     }
     
     // Shutdown VR Controller Model Manager
@@ -803,6 +831,11 @@ void CVRMenuManager::HandleMenuInput()
             if (m_pVRSpringHUDManager)
             {
                 m_pVRSpringHUDManager->ResetState();
+            }
+            // Reset spectator camera on map change to avoid lingering smoothing state
+            if (m_pVRSpectatorCamera)
+            {
+                m_pVRSpectatorCamera->Reset();
             }
         }
     }
@@ -1787,7 +1820,7 @@ Vector CVRMenuManager::CalculateCurrentPlayspaceOriginWorldPos()
     }
     
     extern CClientVirtualReality g_ClientVirtualReality;
-    VMatrix currentHeadWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+    VMatrix currentHeadWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
     
     // GetMideyePose() returns head position relative to playspace origin
     VMatrix headRelativeToPlayspace = m_pVRManager->GetMideyePose();

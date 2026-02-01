@@ -112,7 +112,9 @@ public:
 	// VR Matrix Updates
 	//---------------------------------------------------------
 	void UpdateWorldFromMidEyeMatrices( const Vector &origin, const QAngle &angles );
+	void UpdateWorldFromMidEyeMatricesWithRaw( const Vector &origin, const QAngle &smoothedAngles, const QAngle &rawAngles );
 	const VMatrix & GetWorldFromMidEyeWithPitchRoll() const { return m_WorldFromMidEye; }
+	const VMatrix & GetWorldFromMidEyeRaw() const { return m_WorldFromMidEyeRaw; }
 
 	//---------------------------------------------------------
 	// Enter/leave VR mode
@@ -129,6 +131,9 @@ private:
 
 	// Where the current mideye is relative to the (game)world.
 	VMatrix			m_WorldFromMidEye;
+	
+	// Raw (unsmoothed) head transform - used for controller positioning during spectator Mode 2
+	VMatrix			m_WorldFromMidEyeRaw;
 
 	// used for drawing the HUD
 	float			m_fHudHorizontalFov;
