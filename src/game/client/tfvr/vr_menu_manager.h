@@ -66,6 +66,7 @@ private:
     // Helper functions
     void HandleMenuButtonInput();
     void ComputeCursorPositionCompositor(int& px, int& py); // Playspace-relative cursor for compositor mode
+    void ResetMousePriorityTracking();  // Reset mouse/VR control tracking state when menu opens
     void HandleCompositorMode(SourceEngineState state);
     void HandleTraditionalVRMode(SourceEngineState state);
     
@@ -97,6 +98,16 @@ private:
     // Cursor state
     int m_nOldCursorX;
     int m_nOldCursorY;
+    
+    // Input priority tracking - compare mouse vs VR movement to determine which has priority
+    int m_nLastMouseCursorX;           // Last cursor position (to detect mouse movement)
+    int m_nLastMouseCursorY;
+    Vector m_vecLastControllerPos;     // Last controller position (to detect VR movement)
+    Vector m_vecControllerAnchor;      // Controller position when mouse took priority (dead zone center)
+    float m_flRecentMouseMovement;     // Rolling average of mouse movement (pixels/frame)
+    float m_flRecentVRMovement;        // Rolling average of VR controller movement (world units/frame)
+    bool m_bVRCursorUpdateInProgress;  // Flag to distinguish VR cursor updates from mouse
+    bool m_bMouseHasPriority;          // True if mouse is currently more active than VR
     
     // VR manager reference
     COpenXRManager* m_pVRManager;

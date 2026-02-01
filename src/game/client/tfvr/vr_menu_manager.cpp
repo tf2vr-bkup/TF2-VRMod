@@ -32,17 +32,14 @@
 #include "vr_damage_numbers.h"
 #include "vr_spectator_extras.h"
 #include "vr_world_ui_queue.h"
+#include "vr_controller_model.h"
 
-#include <algorithm>
-
-// Global instances
-CVRMenuManager* g_pVRMenuManager = nullptr;
-extern vgui::IInputInternal *g_InputInternal;
-extern COpenXRManager* g_pOpenXRManager;
-
-// TF2-specific externs
+// Game-specific externs
 extern IViewPort* gViewPortInterface;
 extern IClientMode* g_pClientMode;
+
+// Global menu manager pointer
+CVRMenuManager* g_pVRMenuManager = nullptr;
 
 // ConVars for VR menu control
 ConVar tfvr_primary_hand("tfvr_primary_hand", "1", FCVAR_ARCHIVE, "Primary hand for VR input: 0=left, 1=right");
@@ -51,6 +48,10 @@ extern ConVar tfvr_menu_scale;
 ConVar tfvr_cursor_threshold("tfvr_cursor_threshold", "0.05", FCVAR_ARCHIVE, "Minimum VR controller movement required to override mouse (in world units)");
 ConVar tfvr_cursor_head_threshold("tfvr_cursor_head_threshold", "0.1", FCVAR_ARCHIVE, "Minimum VR head movement required to override mouse (in world units)");
 ConVar tfvr_cursor_debug("tfvr_cursor_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR cursor threshold");
+ConVar tfvr_cursor_mouse_priority("tfvr_cursor_mouse_priority", "1", FCVAR_ARCHIVE, "Enable mouse/VR priority system: 0=VR only, 1=Auto (more active input wins), 2=Mouse only");
+ConVar tfvr_cursor_vr_sensitivity("tfvr_cursor_vr_sensitivity", "500", FCVAR_ARCHIVE, "Scaling factor to compare VR movement to mouse (higher = VR needs less movement to win)");
+ConVar tfvr_cursor_smoothing("tfvr_cursor_smoothing", "0.8", FCVAR_ARCHIVE, "Smoothing for input activity tracking (0-1, higher = slower response to input changes)");
+ConVar tfvr_cursor_vr_deadzone("tfvr_cursor_vr_deadzone", "2", FCVAR_ARCHIVE, "Dead zone radius for VR controller (world units). VR only takes priority when controller moves outside this radius from where mouse took over.");
 ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
 ConVar tfvr_playspace_anchoring("tfvr_playspace_anchoring", "1", FCVAR_ARCHIVE, "Anchor menu to playspace origin instead of player");
 ConVar tfvr_class_menu_hold_threshold("tfvr_class_menu_hold_threshold", "0.25", FCVAR_ARCHIVE, "Hold time in seconds for team menu (quick release = class menu)");
@@ -71,6 +72,14 @@ CVRMenuManager::CVRMenuManager()
     , m_nMenuHand(1) // Default to right hand
     , m_nOldCursorX(-1)
     , m_nOldCursorY(-1)
+    , m_nLastMouseCursorX(-1)
+    , m_nLastMouseCursorY(-1)
+    , m_vecLastControllerPos(0, 0, 0)
+    , m_vecControllerAnchor(0, 0, 0)
+    , m_flRecentMouseMovement(0.0f)
+    , m_flRecentVRMovement(0.0f)
+    , m_bVRCursorUpdateInProgress(false)
+    , m_bMouseHasPriority(false)
     , m_pVRManager(nullptr)
     , m_pLocalPlayer(nullptr)
     , m_savedPlayerViewOrigin(0, 0, 0)
@@ -280,6 +289,22 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Controller Model Manager (shows controllers during preamble/death)
+    if (!g_pVRControllerModelManager && g_pOpenXRManager)
+    {
+        g_pVRControllerModelManager = new CVRControllerModelManager();
+        if (g_pVRControllerModelManager->Initialize(g_pOpenXRManager))
+        {
+            DevMsg("VR Menu Manager: Controller Model Manager initialized\n");
+        }
+        else
+        {
+            delete g_pVRControllerModelManager;
+            g_pVRControllerModelManager = nullptr;
+            DevMsg("VR Menu Manager: Controller Model Manager not available (render model extension may not be supported)\n");
+        }
+    }
+    
     // VR Menu Manager initialized
     
     // Ensure initial HUD positioning is set up for compositor
@@ -371,6 +396,14 @@ void CVRMenuManager::Shutdown()
         g_pVRSpectatorExtrasManager = nullptr;
     }
     
+    // Shutdown VR Controller Model Manager
+    if (g_pVRControllerModelManager)
+    {
+        g_pVRControllerModelManager->Shutdown();
+        delete g_pVRControllerModelManager;
+        g_pVRControllerModelManager = nullptr;
+    }
+    
     // Shutdown VR World UI Queue last (used by all other managers)
     if (g_pVRWorldUIQueue)
     {
@@ -393,6 +426,12 @@ void CVRMenuManager::Update()
 
     m_pVRManager = g_pOpenXRManager;
     m_pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+    
+    // Update VR Controller Model Manager
+    if (g_pVRControllerModelManager)
+    {
+        g_pVRControllerModelManager->Update(gpGlobals->frametime);
+    }
     
     // Debug output during state checks
     static float s_flLastDebugTime = 0.0f;
@@ -811,6 +850,9 @@ void CVRMenuManager::HandleMenuInput()
             
             m_bMenuPositionFixed = true;
             
+            // Reset mouse priority tracking to prevent false detection from cursor position changes
+            ResetMousePriorityTracking();
+            
             // Check if we should use playspace anchoring
             m_bUsePlayspaceAnchoring = tfvr_playspace_anchoring.GetBool();
             
@@ -884,6 +926,9 @@ void CVRMenuManager::HandleMenuInput()
                      
                      m_bMenuPositionFixed = true;
                      m_bUsePlayspaceAnchoring = tfvr_playspace_anchoring.GetBool();
+                     
+                     // Reset mouse priority tracking to prevent false detection from cursor position changes
+                     ResetMousePriorityTracking();
                      
                      DevMsg("VR Menu: Fixed menu position for main menu (no player) at HMD pose\n");
                      
@@ -1077,6 +1122,9 @@ void CVRMenuManager::HandleMenuButtonInput()
         m_nMenuHand = 0; // Left hand
         m_bMenuButtonPressed = true;
         
+        // Update compositor laser to match active hand
+        dxvkSetLaserActiveHand(true);  // Left hand
+        
         // For ViewPort menus, we need to simulate a mouse click at the current cursor position
         if (vgui::surface() && vgui::surface()->IsCursorVisible())
         {
@@ -1106,6 +1154,9 @@ void CVRMenuManager::HandleMenuButtonInput()
     {
         m_nMenuHand = 1; // Right hand
         m_bMenuButtonPressed = true;
+        
+        // Update compositor laser to match active hand
+        dxvkSetLaserActiveHand(false);  // Right hand
         
         // For ViewPort menus, we need to simulate a mouse click at the current cursor position
         if (vgui::surface() && vgui::surface()->IsCursorVisible())
@@ -1146,6 +1197,24 @@ void CVRMenuManager::HandleMenuButtonInput()
     }
 }
 
+void CVRMenuManager::ResetMousePriorityTracking()
+{
+    // Reset input priority tracking state
+    // Called when menus open to start fresh
+    m_nLastMouseCursorX = -1;
+    m_nLastMouseCursorY = -1;
+    m_vecLastControllerPos.Init(0, 0, 0);
+    m_vecControllerAnchor.Init(0, 0, 0);
+    m_flRecentMouseMovement = 0.0f;
+    m_flRecentVRMovement = 0.0f;
+    m_bMouseHasPriority = false;
+    
+    if (tfvr_cursor_debug.GetBool())
+    {
+        DevMsg("VR Cursor: Reset input priority tracking (menu opened)\n");
+    }
+}
+
 void CVRMenuManager::UpdateCursorPosition()
 {
     // TF2VR: Allow cursor positioning without a local player (main menu case)
@@ -1158,6 +1227,139 @@ void CVRMenuManager::UpdateCursorPosition()
     if (m_bUsePlayspaceAnchoring)
     {
         UpdatePlayspaceAnchoredPosition();
+    }
+
+    // Mouse priority mode check
+    int mousePriorityMode = tfvr_cursor_mouse_priority.GetInt();
+    
+    // Mode 2: Mouse only - completely disable VR cursor positioning
+    if (mousePriorityMode == 2)
+    {
+        return;
+    }
+    
+    // Mode 1: Auto priority - compare mouse vs VR movement, more active input wins
+    if (mousePriorityMode == 1)
+    {
+        float smoothing = clamp(tfvr_cursor_smoothing.GetFloat(), 0.0f, 0.99f);
+        float vrSensitivity = tfvr_cursor_vr_sensitivity.GetFloat();
+        
+        // Measure mouse movement this frame
+        float mouseMovementThisFrame = 0.0f;
+        int currentCursorX = 0, currentCursorY = 0;
+        if (vgui::surface())
+        {
+            vgui::surface()->SurfaceGetCursorPos(currentCursorX, currentCursorY);
+        }
+        
+        if (!m_bVRCursorUpdateInProgress && m_nLastMouseCursorX >= 0 && m_nLastMouseCursorY >= 0)
+        {
+            int deltaX = abs(currentCursorX - m_nLastMouseCursorX);
+            int deltaY = abs(currentCursorY - m_nLastMouseCursorY);
+            if (deltaX > 1 || deltaY > 1)  // Filter tiny noise
+            {
+                mouseMovementThisFrame = sqrtf((float)(deltaX * deltaX + deltaY * deltaY));
+            }
+        }
+        
+        // Update mouse position tracking
+        m_nLastMouseCursorX = currentCursorX;
+        m_nLastMouseCursorY = currentCursorY;
+        
+        // Measure VR controller movement this frame
+        float vrMovementThisFrame = 0.0f;
+        Vector currentControllerPos(0, 0, 0);
+        bool controllerValid = false;
+        
+        if (m_nMenuHand == 0 && g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            bool poseValid = dxvkIsCompositorActive() ? 
+                g_pOpenXRManager->GetLeftControllerPoseRaw(controllerMatrix) :
+                g_pOpenXRManager->GetLeftControllerPose(controllerMatrix);
+            if (poseValid)
+            {
+                currentControllerPos = controllerMatrix.GetTranslation();
+                controllerValid = true;
+            }
+        }
+        else if (m_nMenuHand == 1 && g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+        {
+            VMatrix controllerMatrix;
+            bool poseValid = dxvkIsCompositorActive() ? 
+                g_pOpenXRManager->GetRightControllerPoseRaw(controllerMatrix) :
+                g_pOpenXRManager->GetRightControllerPose(controllerMatrix);
+            if (poseValid)
+            {
+                currentControllerPos = controllerMatrix.GetTranslation();
+                controllerValid = true;
+            }
+        }
+        
+        if (controllerValid && m_vecLastControllerPos.LengthSqr() > 0.0f)
+        {
+            vrMovementThisFrame = (currentControllerPos - m_vecLastControllerPos).Length();
+        }
+        m_vecLastControllerPos = currentControllerPos;
+        
+        // Scale VR movement to be comparable to mouse pixels
+        float scaledVRMovement = vrMovementThisFrame * vrSensitivity;
+        
+        // Update rolling averages with exponential smoothing
+        m_flRecentMouseMovement = (m_flRecentMouseMovement * smoothing) + (mouseMovementThisFrame * (1.0f - smoothing));
+        m_flRecentVRMovement = (m_flRecentVRMovement * smoothing) + (scaledVRMovement * (1.0f - smoothing));
+        
+        // Priority logic with dead zone for VR
+        float deadZoneRadius = tfvr_cursor_vr_deadzone.GetFloat();
+        
+        if (m_bMouseHasPriority)
+        {
+            // Mouse currently has priority
+            // VR can only take back if controller moves OUTSIDE the dead zone from anchor
+            if (controllerValid && m_vecControllerAnchor.LengthSqr() > 0.0f)
+            {
+                float distanceFromAnchor = (currentControllerPos - m_vecControllerAnchor).Length();
+                
+                if (distanceFromAnchor > deadZoneRadius)
+                {
+                    // Controller moved outside dead zone - VR takes priority
+                    m_bMouseHasPriority = false;
+                    if (tfvr_cursor_debug.GetBool())
+                    {
+                        DevMsg("VR Cursor: VR takes priority (controller moved %.3f outside %.3f dead zone)\n",
+                               distanceFromAnchor, deadZoneRadius);
+                    }
+                }
+            }
+        }
+        else
+        {
+            // VR currently has priority
+            // Mouse can take over if it's more active than VR
+            if (m_flRecentMouseMovement > m_flRecentVRMovement && m_flRecentMouseMovement > 1.0f)
+            {
+                // Mouse is more active - takes priority
+                m_bMouseHasPriority = true;
+                
+                // Save controller position as anchor for dead zone
+                if (controllerValid)
+                {
+                    m_vecControllerAnchor = currentControllerPos;
+                }
+                
+                if (tfvr_cursor_debug.GetBool())
+                {
+                    DevMsg("VR Cursor: Mouse takes priority (mouse=%.1f > VR=%.1f), anchor set\n",
+                           m_flRecentMouseMovement, m_flRecentVRMovement);
+                }
+            }
+        }
+        
+        // If mouse has priority, skip VR cursor update
+        if (m_bMouseHasPriority)
+        {
+            return;
+        }
     }
 
     // Get current VR controller position for threshold checking
@@ -1205,7 +1407,7 @@ void CVRMenuManager::UpdateCursorPosition()
         static Vector lastControllerPos = currentControllerPos;
         float movementDistance = (currentControllerPos - lastControllerPos).Length();
         
-        // If movement is too small, don't update cursor (preserve mouse input)
+        // If movement is too small, don't update cursor
         if (movementDistance < tfvr_cursor_threshold.GetFloat())
         {
             return;
@@ -1253,6 +1455,9 @@ void CVRMenuManager::UpdateCursorPosition()
     // Update cursor if position changed
     if ((px != m_nOldCursorX) || (py != m_nOldCursorY))
     {
+        // Mark that we're doing a VR cursor update (so we don't mistake this for mouse movement)
+        m_bVRCursorUpdateInProgress = true;
+        
         // For ViewPort menus, we need to use surface cursor functions
         if (vgui::surface())
         {
@@ -1273,6 +1478,13 @@ void CVRMenuManager::UpdateCursorPosition()
         
         m_nOldCursorX = px;
         m_nOldCursorY = py;
+        
+        // Update tracked mouse position to the new VR-set position
+        // so we can detect when the user moves it with the actual mouse
+        m_nLastMouseCursorX = px;
+        m_nLastMouseCursorY = py;
+        
+        m_bVRCursorUpdateInProgress = false;
     }
 }
 
@@ -1289,20 +1501,17 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     Vector controllerPos;
     QAngle controllerAngles;
     bool controllerValid = false;
+    Vector rayDir;
     
-    // Try to get the pose from the active hand
+    // Try to get the aim ray from the active hand using properly transformed pose
     if (m_nMenuHand == 0) // Left hand
     {
         if (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
         {
-            VMatrix controllerMatrix;
-            if (g_pOpenXRManager->GetLeftControllerPose(controllerMatrix))
+            controllerValid = g_pOpenXRManager->GetLeftControllerAimRay(controllerPos, rayDir);
+            if (controllerValid)
             {
-                controllerPos = controllerMatrix.GetTranslation();
-                // Extract forward direction directly from matrix
-                Vector forward = controllerMatrix.GetForward();
-                VectorAngles(forward, controllerAngles);
-                controllerValid = true;
+                VectorAngles(rayDir, controllerAngles);
             }
         }
     }
@@ -1310,14 +1519,10 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     {
         if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
         {
-            VMatrix controllerMatrix;
-            if (g_pOpenXRManager->GetRightControllerPose(controllerMatrix))
+            controllerValid = g_pOpenXRManager->GetRightControllerAimRay(controllerPos, rayDir);
+            if (controllerValid)
             {
-                controllerPos = controllerMatrix.GetTranslation();
-                // Extract forward direction directly from matrix
-                Vector forward = controllerMatrix.GetForward();
-                VectorAngles(forward, controllerAngles);
-                controllerValid = true;
+                VectorAngles(rayDir, controllerAngles);
             }
         }
     }
@@ -1326,15 +1531,9 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     
     if (controllerValid)
     {
-        // Use controller position and orientation for ray
+        // Use controller position and direction for ray
         rayStart = controllerPos;
-        
-        // Get forward direction from controller angles
-        Vector rayDir;
-        AngleVectors(controllerAngles, &rayDir);
         VectorMA(controllerPos, 1000.0f, rayDir, rayEnd);
-        
-        
     }
     else
     {
