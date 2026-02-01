@@ -7,6 +7,7 @@
 #include "cbase.h"
 #include "vr_controller_model.h"
 #include "openxr_manager.h"
+#include "vr_menu_manager.h"
 #include "tf_shareddefs.h"
 #include "c_tf_player.h"
 #include "view.h"
@@ -345,15 +346,8 @@ bool CVRControllerModelManager::ShouldShowControllers() const
 		return true;
 	}
 	
-	// Show when pause menu is open
-	if (engine && engine->IsPaused())
-	{
-		return true;
-	}
-	
-	// Show when game UI is visible (ESC menu)
-	extern IEngineVGui* enginevgui;
-	if (enginevgui && enginevgui->IsGameUIVisible())
+	// Show when any VR menu is visible (includes class select, team select, pause menu, etc.)
+	if (g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible())
 	{
 		return true;
 	}
