@@ -410,6 +410,9 @@ ConVar tfvr_hands_shadow_distance("tfvr_hands_shadow_distance", "2000", FCVAR_CH
 ConVar tfvr_hands_shadow_type("tfvr_hands_shadow_type", "2", FCVAR_CHEAT, "Shadow type for VR hands (0=none, 1=simple, 2=texture, 3=texture_dynamic)");
 ConVar tfvr_hands_shadow_debug("tfvr_hands_shadow_debug", "0", FCVAR_CHEAT, "Show shadow debug info for VR hands");
 
+// Muzzle position mode for effects (sounds, muzzle flash, tracers)
+ConVar tfvr_muzzle_direct_mode("tfvr_muzzle_direct_mode", "0", FCVAR_ARCHIVE, "Use controller pose directly for muzzle position (0=attachment system, 1=direct controller+offset)");
+
 // Two-handed weapon convars
 ConVar tfvr_twohand_enabled("tfvr_twohand_enabled", "1", FCVAR_ARCHIVE, "Enable two-handed weapon gripping");
 ConVar tfvr_twohand_snap_distance("tfvr_twohand_snap_distance", "8", FCVAR_ARCHIVE, "Distance (inches) at which off-hand snaps to weapon grip");
@@ -1170,6 +1173,11 @@ C_TFVRHand::C_TFVRHand()
 	SetIdentityMatrix(m_matWeaponBoneWorld);
 	m_bWeaponBoneWorldValid = false;
 	
+	// Cached muzzle position
+	m_vecCachedMuzzlePos = vec3_origin;
+	m_angCachedMuzzleAngles = vec3_angle;
+	m_bCachedMuzzleValid = false;
+	
 	// Melee swing cycling
 	m_iMeleeSwingIndex = 0;
 	m_szMeleeSwingBase[0] = '\0';
@@ -1251,6 +1259,9 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bCritBoostActive = false;
 	SetIdentityMatrix(m_matWeaponBoneWorld);
 	m_bWeaponBoneWorldValid = false;
+	m_vecCachedMuzzlePos = vec3_origin;
+	m_angCachedMuzzleAngles = vec3_angle;
+	m_bCachedMuzzleValid = false;
 	m_iMeleeSwingIndex = 0;
 	m_szMeleeSwingBase[0] = '\0';
 	m_iMeleeSwingCount = 0;
@@ -2587,6 +2598,45 @@ void C_TFVRHand::UpdateHandTransform()
 	else
 	{
 		SetRenderColor(255, 255, 255, 255 * tfvr_hands_alpha.GetFloat());
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update this hand's position using FRESHLY SAMPLED XR pose
+//          This bypasses the cached poses and directly queries OpenXR
+//          for the most up-to-date controller position. Use this when
+//          spawning effects that need to match current visual position.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateHandTransformFresh()
+{
+	if (m_bShuttingDown)
+		return;
+		
+	if (!g_pOpenXRManager)
+		return;
+
+	Vector freshPos;
+	QAngle freshAngles;
+	bool bGotPose = false;
+	
+	if (IsLeftHand())
+		bGotPose = g_pOpenXRManager->SampleFreshLeftControllerPose(freshPos, freshAngles);
+	else
+		bGotPose = g_pOpenXRManager->SampleFreshRightControllerPose(freshPos, freshAngles);
+	
+	if (bGotPose)
+	{
+		m_vecLastValidPosition = freshPos;
+		m_angLastValidAngles = freshAngles;
+		m_bControllerTracked = true;
+		
+		SetAbsOrigin(m_vecLastValidPosition);
+		SetAbsAngles(m_angLastValidAngles);
+	}
+	// If fresh sampling failed, fall back to regular update
+	else
+	{
+		UpdateHandTransform();
 	}
 }
 
@@ -4375,6 +4425,19 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		MatrixGetColumn(m_matWeaponBoneWorld, 3, pos);
 		m_pCritBoostEffect->SetControlPoint(0, pos);
 	}
+	
+	// Cache the muzzle position NOW while bones are fresh
+	// This will be used by tracers/effects that query muzzle position later
+	m_bCachedMuzzleValid = false;
+	int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
+	if (iMuzzle > 0)
+	{
+		if (pRenderWeapon->GetAttachment(iMuzzle, m_vecCachedMuzzlePos, m_angCachedMuzzleAngles))
+		{
+			m_bCachedMuzzleValid = true;
+		}
+	}
+	
 }
 
 //-----------------------------------------------------------------------------
@@ -4405,6 +4468,44 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 	// CRITICAL: Get the absolute LATEST VR tracking data RIGHT NOW!
 	// This ensures we have the most up-to-date hand position
 	UpdateHandTransform();
+	
+	// DIRECT CONTROLLER MODE: Use controller pose directly with fixed offset
+	// This bypasses all bone/attachment systems which may have timing issues
+	// Toggle with tfvr_muzzle_direct_mode ConVar
+	if (tfvr_muzzle_direct_mode.GetBool())
+	{
+		if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+		{
+			VMatrix controllerPose;
+			if (g_pOpenXRManager->GetRightControllerPose(controllerPose))
+			{
+				// Get controller position and orientation
+				outPos = controllerPose.GetTranslation();
+				MatrixAngles(controllerPose.As3x4(), outAngles);
+				
+				// Apply a fixed forward offset to approximate muzzle position
+				// The controller aim pose points forward, so we offset along that direction
+				Vector forward, right, up;
+				AngleVectors(outAngles, &forward, &right, &up);
+				
+				// Offset forward by ~30 units (approximate distance from grip to muzzle)
+				// This can be tuned per-weapon if needed
+				outPos += forward * 30.0f;
+				
+				return true;
+			}
+		}
+		
+		// Fallback to cached hand position if controller pose not available
+		outPos = m_vecLastValidPosition;
+		outAngles = m_angLastValidAngles;
+		Vector forward;
+		AngleVectors(outAngles, &forward, NULL, NULL);
+		outPos += forward * 30.0f;
+		return true;
+	}
+	
+	// ATTACHMENT MODE (tfvr_muzzle_direct_mode 0): Use bone/attachment system
 	
 	// Check weapon type for special handling
 	int weaponType = -1;
@@ -4523,54 +4624,41 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		}
 	}
 	
-	// STANDARD WEAPONS: Update bones and get muzzle attachment
-	matrix3x4_t boneArray[MAXSTUDIOBONES];
-	SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
-	// SetupBones calls PositionWeaponFromBones which updates render weapon position
-	
-	// Force the weapon to update its bone matrices based on the position we set
-	pRenderWeapon->SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
-	
-	// Now use the standard GetAttachment - it will work correctly!
-	int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
-	if (iMuzzle > 0 && pRenderWeapon->GetAttachment(iMuzzle, outPos, outAngles))
+	// STANDARD WEAPONS: Use cached muzzle position if valid (set during PositionWeaponFromBones)
+	// This ensures the muzzle position matches the rendered weapon position
+	if (m_bCachedMuzzleValid)
 	{
-		// Apply per-class aim direction corrections
-		// The weapon visual position is correct, but the muzzle attachment's orientation needs adjustment
-		if (pOwner)
-		{
-			int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
-			
-			// Demoman weapons have a different muzzle attachment orientation
-			if (playerClass == TF_CLASS_DEMOMAN)
-			{
-				// Get the direction vectors from the muzzle
-				Vector forward, right, up;
-				AngleVectors(outAngles, &forward, &right, &up);
-				
-				// Rotate 90 degrees around the right axis (swap forward and up)
-				Vector newForward = up;      // What was pointing up is now forward
-				Vector newUp = -forward;     // What was pointing forward is now down (negated to point up)
-				
-				// Now rotate 90 degrees around the new forward axis (roll correction)
-				Vector newRight = newUp;
-				newUp = -right;
-				
-				// Build new angles from the rotated vectors
-				VectorAngles(newForward, newUp, outAngles);
-			}
-		}
-		
+		outPos = m_vecCachedMuzzlePos;
+		outAngles = m_angCachedMuzzleAngles;
 		return true;
 	}
 	
-	// Fallback: no muzzle attachment found, use weapon's forward direction
-	outPos = pRenderWeapon->GetAbsOrigin();
-	outAngles = pRenderWeapon->GetAbsAngles();
+	// Fallback: Force bone setup and query attachment directly
+	// This ensures bones are current before querying
+	InvalidateBoneCache();
+	matrix3x4_t boneArray[MAXSTUDIOBONES];
+	SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
 	
-	Vector forward, up;
-	AngleVectors(outAngles, &forward, NULL, &up);
-	outPos += forward * 15.0f + up * 2.0f;
+	int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
+	if (iMuzzle > 0)
+	{
+		Vector muzzlePos;
+		QAngle muzzleAngles;
+		if (pRenderWeapon->GetAttachment(iMuzzle, muzzlePos, muzzleAngles))
+		{
+			outPos = muzzlePos;
+			outAngles = muzzleAngles;
+			return true;
+		}
+	}
+	
+	// Final fallback: use controller position with forward offset
+	outPos = GetAbsOrigin();
+	outAngles = GetAbsAngles();
+	
+	Vector forward;
+	AngleVectors(outAngles, &forward, NULL, NULL);
+	outPos += forward * 30.0f;
 	
 	return true;
 }

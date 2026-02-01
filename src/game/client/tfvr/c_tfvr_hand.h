@@ -54,6 +54,7 @@ public:
 	virtual void ClientThink() override;
 	void Update(); // Manual update method
 	void UpdateHandTransform();
+	void UpdateHandTransformFresh(); // Uses freshly sampled XR pose
 	void UpdateHandBones();
 	
 	// Helper to get hand joint transforms as matrix
@@ -216,6 +217,11 @@ private:
 	// This is used by overlays to avoid stale bone cache issues
 	matrix3x4_t m_matWeaponBoneWorld;
 	bool m_bWeaponBoneWorldValid;
+	
+	// Cached muzzle position - set during PositionWeaponFromBones for effects
+	Vector m_vecCachedMuzzlePos;
+	QAngle m_angCachedMuzzleAngles;
+	bool m_bCachedMuzzleValid;
 	
 	// =========================================================================
 	// LEFT HAND WEARABLES - spy watches, scout balls, etc.

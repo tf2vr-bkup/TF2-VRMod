@@ -41,6 +41,9 @@ public:
     
     // Get action space handle for direct sampling
     XrSpace GetActionSpace(const char* actionName);
+    
+    // Sample a fresh pose directly from OpenXR (bypasses cache for lowest latency)
+    bool SamplePoseNow(const char* actionName, XrPosef& pose);
 
 private:
     bool CreateActionSet();

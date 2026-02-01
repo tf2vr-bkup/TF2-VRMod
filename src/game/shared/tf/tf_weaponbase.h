@@ -357,6 +357,9 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	virtual void Misfire( void );
 	virtual void FireFullClipAtOnce( void );
 	virtual void PrimaryAttack();
+	
+	// VR: Override to emit sounds from weapon muzzle position instead of player center
+	virtual void WeaponSound( WeaponSound_t sound_type, float soundtime = 0.0f ) OVERRIDE;
 	virtual void SecondaryAttack();
 	void CalcIsAttackCritical( void );
 	virtual bool CalcIsAttackCriticalHelper();
@@ -431,17 +434,22 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	void			ApplyItemRegen( void );
 
 	kill_eater_event_t GetKillEaterKillEventType() const;
-	
-	// VR: Override sound emission origin to use VR hand position
-	virtual Vector GetSoundEmissionOrigin() const OVERRIDE;
 #endif
 
 	// Utility.
 	CBasePlayer *GetPlayerOwner() const;
 	CTFPlayer *GetTFPlayerOwner() const;
 
+#ifdef GAME_DLL
+	// VR: Override sound emission origin to use correct position (server only)
+	virtual Vector GetSoundEmissionOrigin() const OVERRIDE;
+#endif
+
 #ifdef CLIENT_DLL
 	virtual bool	ShouldPlayClientReloadSound() { return false; }
+	
+	// VR: Get correct position for sounds (since weapon entity position is garbage in VR)
+	Vector GetVRSoundPosition() const;
 
 	C_BaseEntity *GetWeaponForEffect();
 

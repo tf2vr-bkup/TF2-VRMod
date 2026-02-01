@@ -2234,6 +2234,12 @@ void CTFFlameThrower::OnDataChanged(DataUpdateType_t updateType)
 	}
 	else 
 	{
+		// VR DEBUG: Log why we're stopping flame
+		if ( m_pFiringLoop || m_pFiringStartSound )
+		{
+			DevMsg( "VR Flamethrower OnDataChanged else: IsCarrierAlive=%d, WeaponState=%d (need %d), Ammo=%d, m_iWeaponState=%d\n",
+				IsCarrierAlive() ? 1 : 0, WeaponState(), WEAPON_IS_ACTIVE, bLocalPlayerAmmo ? 1 : 0, m_iWeaponState );
+		}
 		StopFlame();
 		StopPilotLight();
 		StopFullCritEffect();
@@ -2468,6 +2474,11 @@ void CTFFlameThrower::StopHitSound()
 //-----------------------------------------------------------------------------
 void CTFFlameThrower::StopFlame( bool bAbrupt /* = false */ )
 {
+	if ( m_pFiringLoop || m_pFiringStartSound )
+	{
+		DevMsg( "VR Flamethrower StopFlame called with active sounds!\n" );
+	}
+	
 	if ( ( m_pFiringLoop || m_pFiringStartSound ) && !bAbrupt )
 	{
 		// play a quick wind-down poof when the flame stops

@@ -1401,6 +1401,38 @@ XrSpace COpenXRInputManager::GetActionSpace(const char* actionName)
     return XR_NULL_HANDLE;
 }
 
+bool COpenXRInputManager::SamplePoseNow(const char* actionName, XrPosef& pose)
+{
+    // Get the action space for this pose action
+    XrSpace actionSpace = GetActionSpace(actionName);
+    if (actionSpace == XR_NULL_HANDLE)
+        return false;
+    
+    XrSpace refSpace = m_manager->GetReferenceSpace();
+    if (refSpace == XR_NULL_HANDLE)
+        return false;
+    
+    // Get the current predicted display time directly from DXVK
+    XrTime currentTime = 0;
+    dxvkGetPredictedDisplayTime(currentTime);
+    
+    if (currentTime == 0)
+        return false;
+    
+    // Sample the pose directly from OpenXR
+    XrSpaceLocation spaceLocation = {XR_TYPE_SPACE_LOCATION};
+    XrResult result = xrLocateSpace(actionSpace, refSpace, currentTime, &spaceLocation);
+    
+    XrSpaceLocationFlags requiredFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    if (XR_SUCCEEDED(result) && (spaceLocation.locationFlags & requiredFlags) == requiredFlags)
+    {
+        pose = spaceLocation.pose;
+        return true;
+    }
+    
+    return false;
+}
+
 bool COpenXRInputManager::IsUIInteractionPressed(const char* actionName, float threshold)
 {
     auto it = m_currentAnalogStates.find(actionName);

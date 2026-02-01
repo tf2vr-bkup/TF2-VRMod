@@ -110,6 +110,10 @@ public:
     
     bool IsLeftControllerGripPoseValid();
     bool IsRightControllerGripPoseValid();
+    
+    // Fresh pose sampling (bypasses cache for lowest latency - use for sounds/effects)
+    bool SampleFreshRightControllerPose(Vector& worldPos, QAngle& worldAngles);
+    bool SampleFreshLeftControllerPose(Vector& worldPos, QAngle& worldAngles);
 
     // Frame state access
     const XrFrameState& GetFrameState() const { return m_frameState; }
@@ -144,6 +148,10 @@ private:
     
     bool m_sessionRunning = false;
     bool m_sessionFocused = true;  // True when session has input focus (false when overlay is open)
+    
+    // Frame-consistent pose tracking: only poll input once per frame to prevent
+    // pose changes between game logic and rendering
+    int m_lastInputPollFrame = -1;
 
     // Recentering data
     Quaternion m_recenterQuaternion;  // Stores the quaternion to adjust HMD orientation

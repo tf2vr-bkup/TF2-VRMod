@@ -822,17 +822,28 @@ void COpenXRManager::UpdateOpenXRViewData()
         return;
     }
 
-    // Poll input state here since the frame state is valid after BeginFrame
-    if (m_inputManager)
+    // CRITICAL: Only poll input ONCE per frame to ensure pose consistency
+    // between game logic (effects, sounds) and rendering (visuals).
+    // If we poll multiple times, poses can change mid-frame causing effects
+    // to lag behind the visual hand/weapon position.
+    int currentFrame = gpGlobals ? gpGlobals->framecount : 0;
+    bool bFirstPollThisFrame = (m_lastInputPollFrame != currentFrame);
+    
+    if (bFirstPollThisFrame)
     {
-        m_inputManager->PollInput();
-        // Note: Aim poses are now sampled directly by compositor via dxvkSetAimSpaces()
-    }
+        if (m_inputManager)
+        {
+            m_inputManager->PollInput();
+            // Note: Aim poses are now sampled directly by compositor via dxvkSetAimSpaces()
+        }
 
-    // Update hand tracking (debug rendering moved to view.cpp after smoothing is applied)
-    if (m_handTracker)
-    {
-        m_handTracker->UpdateHandTracking();
+        // Update hand tracking (debug rendering moved to view.cpp after smoothing is applied)
+        if (m_handTracker)
+        {
+            m_handTracker->UpdateHandTracking();
+        }
+        
+        m_lastInputPollFrame = currentFrame;
     }
 
     uint32_t viewCount;
@@ -2824,6 +2835,152 @@ bool COpenXRManager::GetRightControllerAimRay(Vector& worldPos, Vector& worldDir
         return false;
     
     return ComputeAimRayFromXRPose(xrPose, worldPos, worldDir);
+}
+
+bool COpenXRManager::SampleFreshRightControllerPose(Vector& worldPos, QAngle& worldAngles)
+{
+    if (!m_inputManager)
+        return false;
+    
+    // Sample FRESH pose directly from OpenXR (bypasses per-frame cache)
+    XrPosef xrPose;
+    if (!m_inputManager->SamplePoseNow("right_hand_pose", xrPose))
+        return false;
+    
+    // Use the exact same transformation as GetRightControllerPose but with fresh pose data
+    VMatrix controllerInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
+        ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+    
+    // Apply position correction in playspace if enabled
+    if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
+    {
+        VMatrix headInPlayspace = GetMideyePose();
+        VMatrix headRelativeController = headInPlayspace.InverseTR() * controllerInPlayspace;
+        
+        Vector headRelativePos = headRelativeController.GetTranslation();
+        float baseScale = tfvr_worldscale.GetFloat();
+        float currentScale = CalculateDynamicWorldScale();
+        float scaleFactor = currentScale / baseScale;
+        float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
+        headRelativePos.y += scaledCorrection;
+        
+        headRelativeController.SetTranslation(headRelativePos);
+        controllerInPlayspace = headInPlayspace * headRelativeController;
+    }
+    
+    // Get player's world transform and apply VR smoothing
+    C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+    if (pPlayer)
+    {
+        extern CClientVirtualReality g_ClientVirtualReality;
+        extern bool UseVR();
+        
+        VMatrix pose;
+        if (UseVR())
+        {
+            // Calculate controller relative to head, then apply smoothed head world transform
+            VMatrix rawHeadPlayspace = GetMideyePose();
+            VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
+            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+            pose = smoothedHeadWorld * controllerRelativeToHead;
+        }
+        else
+        {
+            pose = controllerInPlayspace;
+        }
+        
+        // Apply manual testing offsets if set
+        if (tfvr_pose_offset_x.GetFloat() != 0.0f || tfvr_pose_offset_y.GetFloat() != 0.0f || tfvr_pose_offset_z.GetFloat() != 0.0f)
+        {
+            Vector currentPos = pose.GetTranslation();
+            currentPos.x += tfvr_pose_offset_x.GetFloat();
+            currentPos.y += tfvr_pose_offset_y.GetFloat();
+            currentPos.z += tfvr_pose_offset_z.GetFloat();
+            pose.SetTranslation(currentPos);
+        }
+        
+        worldPos = pose.GetTranslation();
+        MatrixAngles(pose.As3x4(), worldAngles);
+        return true;
+    }
+    
+    // Fallback: just use playspace pose
+    worldPos = controllerInPlayspace.GetTranslation();
+    MatrixAngles(controllerInPlayspace.As3x4(), worldAngles);
+    return true;
+}
+
+bool COpenXRManager::SampleFreshLeftControllerPose(Vector& worldPos, QAngle& worldAngles)
+{
+    if (!m_inputManager)
+        return false;
+    
+    // Sample FRESH pose directly from OpenXR (bypasses per-frame cache)
+    XrPosef xrPose;
+    if (!m_inputManager->SamplePoseNow("left_hand_pose", xrPose))
+        return false;
+    
+    // Use the exact same transformation as GetLeftControllerPose but with fresh pose data
+    VMatrix controllerInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
+        ToSourceCoordinateSystemFloorAligned(xrPose) : ToSourceCoordinateSystem(xrPose);
+    
+    // Apply position correction in playspace if enabled
+    if (tfvr_aim_pose_y_correction.GetFloat() != 0.0f)
+    {
+        VMatrix headInPlayspace = GetMideyePose();
+        VMatrix headRelativeController = headInPlayspace.InverseTR() * controllerInPlayspace;
+        
+        Vector headRelativePos = headRelativeController.GetTranslation();
+        float baseScale = tfvr_worldscale.GetFloat();
+        float currentScale = CalculateDynamicWorldScale();
+        float scaleFactor = currentScale / baseScale;
+        float scaledCorrection = tfvr_aim_pose_y_correction.GetFloat() * scaleFactor;
+        headRelativePos.y += scaledCorrection;
+        
+        headRelativeController.SetTranslation(headRelativePos);
+        controllerInPlayspace = headInPlayspace * headRelativeController;
+    }
+    
+    // Get player's world transform and apply VR smoothing
+    C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+    if (pPlayer)
+    {
+        extern CClientVirtualReality g_ClientVirtualReality;
+        extern bool UseVR();
+        
+        VMatrix pose;
+        if (UseVR())
+        {
+            // Calculate controller relative to head, then apply smoothed head world transform
+            VMatrix rawHeadPlayspace = GetMideyePose();
+            VMatrix controllerRelativeToHead = rawHeadPlayspace.InverseTR() * controllerInPlayspace;
+            VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeWithPitchRoll();
+            pose = smoothedHeadWorld * controllerRelativeToHead;
+        }
+        else
+        {
+            pose = controllerInPlayspace;
+        }
+        
+        // Apply manual testing offsets if set
+        if (tfvr_pose_offset_x.GetFloat() != 0.0f || tfvr_pose_offset_y.GetFloat() != 0.0f || tfvr_pose_offset_z.GetFloat() != 0.0f)
+        {
+            Vector currentPos = pose.GetTranslation();
+            currentPos.x += tfvr_pose_offset_x.GetFloat();
+            currentPos.y += tfvr_pose_offset_y.GetFloat();
+            currentPos.z += tfvr_pose_offset_z.GetFloat();
+            pose.SetTranslation(currentPos);
+        }
+        
+        worldPos = pose.GetTranslation();
+        MatrixAngles(pose.As3x4(), worldAngles);
+        return true;
+    }
+    
+    // Fallback: just use playspace pose
+    worldPos = controllerInPlayspace.GetTranslation();
+    MatrixAngles(controllerInPlayspace.As3x4(), worldAngles);
+    return true;
 }
 
 bool COpenXRManager::ComputeAimRayFromXRPose(const XrPosef& xrPose, Vector& worldPos, Vector& worldDir)

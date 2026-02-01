@@ -6953,6 +6953,27 @@ void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 		m_headInPlayerO = currentHmdInWorldO;
 		m_headInPlayerA = currentHmdInWorldA;
 	}
+	
+	// CRITICAL FIX FOR MUZZLE FLASH/TRACER LAG:
+	// Force VR hand bone setup NOW, before any game logic (weapon firing, effects) runs.
+	// This ensures the muzzle attachment positions are up-to-date when effects are spawned.
+	// Without this, effects spawn using stale bone data from the previous frame.
+	C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+	
+	if (pRightHand)
+	{
+		pRightHand->InvalidateBoneCache();
+		matrix3x4_t boneArray[MAXSTUDIOBONES];
+		pRightHand->SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+	}
+	
+	if (pLeftHand)
+	{
+		pLeftHand->InvalidateBoneCache();
+		matrix3x4_t boneArray[MAXSTUDIOBONES];
+		pLeftHand->SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+	}
 }
 
 
@@ -7060,9 +7081,11 @@ bool C_TFPlayer::CreateMove( float flInputSampleTime, CUserCmd *pCmd )
 		VectorCopy( pCmd->viewangles, angMoveAngle );
 	}
 
-	BaseClass::CreateMove( flInputSampleTime, pCmd );
-
+	// CRITICAL: Set up VR bones BEFORE BaseClass::CreateMove runs weapon prediction
+	// This ensures muzzle flash/tracer effects spawn at the correct current positions
 	ComputeFullBodyIK(pCmd);
+
+	BaseClass::CreateMove( flInputSampleTime, pCmd );
 
 	// Don't avoid players if in the middle of a high five. This prevents high-fivers from becoming separated.
 	if ( !bInTaunt || ( !m_bIsReadyToHighFive && !CTFPlayerSharedUtils::ConceptIsPartnerTaunt( m_Shared.m_iTauntConcept ) ) )

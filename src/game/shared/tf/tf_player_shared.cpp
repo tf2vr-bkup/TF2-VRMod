@@ -39,6 +39,8 @@
 #include "c_baseviewmodel.h"
 #include "c_tf_player.h"
 #include "tfvr/c_tfvr_hand.h"
+#include "tfvr/openxr_manager.h"
+#include "debugoverlay_shared.h"
 #include "c_te_effect_dispatch.h"
 #include "c_tf_fx.h"
 #include "soundenvelope.h"
@@ -10470,35 +10472,28 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 				bool bInToolRecordingMode = clienttools->IsInRecordingMode();
 
 	// VR: Check for VR weapon FIRST before other logic
+	// Use the VR hand's cached muzzle position (set during PositionWeaponFromBones)
 	CTFWeaponBase *pTFWpn = dynamic_cast<CTFWeaponBase*>( pWpn );
 	if ( pTFWpn && pTFWpn->IsHeldByVRHand() && pLocalPlayer )
 	{
 		C_TFPlayer *pTFPlayer = ToTFPlayer( pLocalPlayer );
 		if ( pTFPlayer && pTFPlayer->IsInVRMode() )
 		{
-			// Get the right hand
+			Vector muzzlePos;
+			QAngle muzzleAngles;
+			
+			// Use VR hand's muzzle position (cached during bone setup)
 			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 			if ( pRightHand && pRightHand->GetHeldWeapon() == pTFWpn )
 			{
-				// Get muzzle position from VR hand (uses render weapon)
-				Vector muzzlePos;
-				QAngle muzzleAngles;
 				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
 				{
-					// Apply adjustable offset to align tracers with muzzle
+					// Apply manual offset from ConVars for fine-tuning
 					Vector forward, right, up;
 					AngleVectors( muzzleAngles, &forward, &right, &up );
-					
-					// Apply ConVar-controlled offsets along each axis
 					muzzlePos += forward * tfvr_tracer_offset_forward.GetFloat();
 					muzzlePos += right * tfvr_tracer_offset_right.GetFloat();
 					muzzlePos += up * tfvr_tracer_offset_up.GetFloat();
-					
-					// Compensate for player velocity - tracers render after the shot was fired,
-					// so offset the start position forward along velocity to match current visual
-					Vector velocity = pTFPlayer->GetAbsVelocity();
-					float velocityCompensation = tfvr_tracer_velocity_compensation.GetFloat();
-					muzzlePos += velocity * velocityCompensation;
 					
 					vecStart = muzzlePos;
 				}

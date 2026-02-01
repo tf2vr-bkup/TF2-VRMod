@@ -15,6 +15,7 @@
 
 #ifdef CLIENT_DLL
 #include "tfvr/c_tfvr_hand.h"
+#include "debugoverlay_shared.h"
 #endif
 
 #include "gcsdk/gcmsg.h"
@@ -2435,6 +2436,16 @@ void CTFWeaponBase::ItemPostFrame( void )
 		return;
 	}
 
+#ifdef CLIENT_DLL
+	// VR FIX: Keep weapon entity position updated every frame for correct sound spatialization
+	// This ensures single-shot weapon sounds also emit from the correct position
+	if ( m_bHeldByVRHand )
+	{
+		Vector vrPos = GetVRSoundPosition();
+		SetAbsOrigin( vrPos );
+	}
+#endif
+
 	bool bNeedsReload = NeedsReloadForAmmo1( GetMaxClip1() ) || ( IsEnergyWeapon() && !Energy_FullyCharged() );
 
 	// If we're not shooting, and we want to autoreload, press our reload key
@@ -3202,49 +3213,29 @@ void CTFWeaponBase::CreateMuzzleFlashEffects( C_BaseEntity *pAttachEnt, int nInd
 
 void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* pAttachEnt )
 {
-#ifdef CLIENT_DLL
-	// VR: For weapons held by VR hands, spawn at muzzle position with velocity compensation
+	// VR: Create particle effect directly on render weapon with proper entity binding
 	if ( m_bHeldByVRHand )
 	{
-		// Find the VR hand that's holding us
-		C_TFPlayer *pOwner = ToTFPlayer( GetOwner() );
-		if ( pOwner && pOwner->IsInVRMode() )
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 		{
-			// Get the right hand (weapons are held in right hand)
-			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
-			if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+			if ( pRenderWeapon )
 			{
-				// Get the render weapon and use its muzzle attachment directly
-				// This avoids aim corrections that are applied for projectile direction
-				C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
-				if ( pRenderWeapon )
+				// Create the particle using ParticleProp on the render weapon
+				// This properly binds the particle to follow the entity
+				CNewParticleEffect *pEffect = pRenderWeapon->ParticleProp()->Create( effectName, PATTACH_POINT_FOLLOW, "muzzle" );
+				if ( pEffect )
 				{
-					Vector vecMuzzlePos;
-					QAngle angMuzzleAngles;
-					
-					// Get raw muzzle attachment position/angles (no aim correction)
-					int muzzleAttach = pRenderWeapon->LookupAttachment( "muzzle" );
-					if ( muzzleAttach > 0 )
-					{
-						pRenderWeapon->GetAttachment( muzzleAttach, vecMuzzlePos, angMuzzleAngles );
-						
-						// Compensate for player velocity (same as tracers)
-						extern ConVar tfvr_tracer_velocity_compensation;
-						Vector velocity = pOwner->GetAbsVelocity();
-						float velocityCompensation = tfvr_tracer_velocity_compensation.GetFloat();
-						vecMuzzlePos += velocity * velocityCompensation;
-						
-						// Spawn at world position - muzzle flash is short-lived so won't drift noticeably
-						DispatchParticleEffect( effectName, vecMuzzlePos, angMuzzleAngles );
-						return;
-					}
+					// Explicitly bind control point 0 to the render weapon entity
+					pEffect->SetControlPointEntity( 0, pRenderWeapon );
 				}
+				return;
 			}
 		}
 	}
-#endif
 	
-	// Default: attach to the "muzzle" attachment point
+	// Attach to the "muzzle" attachment point and follow it
 	DispatchParticleEffect( effectName, PATTACH_POINT_FOLLOW, pAttachEnt, "muzzle" );
 }
 
@@ -3397,8 +3388,11 @@ void CTFWeaponBase::ProcessMuzzleFlashEvent( void )
 			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
 			if ( pRenderWeapon )
 			{
-				// Force bone setup on the render weapon so attachments work
-				pRenderWeapon->SetupBones( NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime );
+				// Force bone setup on the hand (this also sets up the weapon via PositionWeaponFromBones)
+				pRightHand->InvalidateBoneCache();
+				matrix3x4_t handBones[MAXSTUDIOBONES];
+				pRightHand->SetupBones( handBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime );
+				
 				pAttachEnt = pRenderWeapon;
 			}
 		}
@@ -3541,6 +3535,16 @@ void CTFWeaponBase::OnPreDataChanged( DataUpdateType_t type )
 void CTFWeaponBase::OnDataChanged( DataUpdateType_t type )
 {
 	BaseClass::OnDataChanged( type );
+
+	// VR FIX: Keep weapon entity position updated for correct sound spatialization
+	// In VR mode, the weapon entity's position is garbage because ShouldDraw() returns false
+	// and the engine doesn't properly update positions for non-drawn entities.
+	// This affects ALL weapon sounds (flamethrower, minigun, medigun, etc.)
+	if ( m_bHeldByVRHand )
+	{
+		Vector vrPos = GetVRSoundPosition();
+		SetAbsOrigin( vrPos );
+	}
 
 	if ( type == DATA_UPDATE_CREATED )
 	{
@@ -4598,22 +4602,105 @@ CTFPlayer *CTFWeaponBase::GetTFPlayerOwner() const
 	return dynamic_cast<CTFPlayer*>( GetOwner() );
 }
 
+// -----------------------------------------------------------------------------
+// Purpose: Override to emit sounds from weapon muzzle position in VR
+// -----------------------------------------------------------------------------
+void CTFWeaponBase::WeaponSound( WeaponSound_t sound_type, float soundtime /* = 0.0f */ )
+{
+#ifdef CLIENT_DLL
+	// VR FIX: For VR weapons, update weapon position to muzzle and emit from weapon entity
+	// This gives proper spatialization and tracking (weapon has valid server entindex)
+	if ( m_bHeldByVRHand )
+	{
+		const char *shootsound = GetShootSound( sound_type );
+		if ( !shootsound || !shootsound[0] )
+			return;
+
+		CSoundParameters params;
+		if ( !GetParametersForSound( shootsound, params, NULL ) )
+			return;
+
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		
+		if ( pRightHand )
+		{
+			// Get muzzle position and update weapon entity position for sound tracking
+			Vector muzzlePos;
+			QAngle muzzleAngles;
+			if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
+			{
+				// Update weapon entity position to muzzle so sounds track correctly
+				SetAbsOrigin( muzzlePos );
+				
+				// Use PAS filter centered on muzzle position
+				CPASAttenuationFilter filter( muzzlePos, params.soundlevel );
+				if ( IsPredicted() && CBaseEntity::GetPredictionPlayer() )
+				{
+					filter.UsePredictionRules();
+				}
+				
+				// Emit from weapon entity (has valid server entindex) - sound will track weapon movement
+				EmitSound( filter, entindex(), shootsound, NULL, soundtime );
+				return;
+			}
+		}
+	}
+#endif
+
+	// Non-VR: use default behavior
+	BaseClass::WeaponSound( sound_type, soundtime );
+}
+
 #ifdef GAME_DLL
 // -----------------------------------------------------------------------------
-// Purpose: Override sound emission origin to use VR hand position when in VR
+// Purpose: Override sound emission origin to use correct position in VR (server)
 // -----------------------------------------------------------------------------
 Vector CTFWeaponBase::GetSoundEmissionOrigin() const
 {
+	// Server-side: use weapon shoot position for VR players
 	CTFPlayer *pPlayer = GetTFPlayerOwner();
 	if ( pPlayer && pPlayer->IsInVRMode() )
 	{
-		// Use the networked controller position that's used for weapon firing
-		// This ensures sounds come from the weapon's actual position in VR
 		return pPlayer->Weapon_ShootPosition();
 	}
 	
-	// Fall back to default behavior (WorldSpaceCenter)
+	// Fall back to default behavior
 	return BaseClass::GetSoundEmissionOrigin();
+}
+#endif
+
+#ifdef CLIENT_DLL
+// -----------------------------------------------------------------------------
+// Purpose: Get correct sound position for VR weapons (client helper)
+// -----------------------------------------------------------------------------
+Vector CTFWeaponBase::GetVRSoundPosition() const
+{
+	// VR FIX: In VR mode, the weapon entity's position is not updated properly
+	// Use the cached muzzle position from the VR hand for consistency with visuals
+	if ( m_bHeldByVRHand )
+	{
+		// Primary: Use VR hand's cached muzzle position (same as visuals/effects)
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+		{
+			Vector muzzlePos;
+			QAngle muzzleAngles;
+			if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
+			{
+				return muzzlePos;
+			}
+		}
+		
+		// Fallback: Use cached Weapon_ShootPosition
+		C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+		if ( pPlayer )
+		{
+			return pPlayer->Weapon_ShootPosition();
+		}
+	}
+	
+	// Non-VR: use normal position
+	return GetAbsOrigin();
 }
 #endif
 
