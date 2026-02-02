@@ -188,10 +188,6 @@ private:
     // Other players speaking list offsets  
     float m_flVoiceOthersOffsetX;       // Horizontal offset (positive = right)
     float m_flVoiceOthersOffsetY;       // Vertical offset (positive = up)
-    
-    // VR rendering bypass flag - when true, suppression functions return false
-    // to allow the panel to render during VR capture
-    bool m_bRenderingSecondaryTargetID;
 };
 
 // Global instance

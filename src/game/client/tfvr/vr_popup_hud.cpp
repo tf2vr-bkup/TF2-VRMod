@@ -239,9 +239,6 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_flVoiceSelfOffsetY = 20.0f;
     m_flVoiceOthersOffsetX = -35.0f;
     m_flVoiceOthersOffsetY = 15.0f;
-    
-    // VR rendering bypass flag
-    m_bRenderingSecondaryTargetID = false;
 }
 
 CVRPopupHUDManager::~CVRPopupHUDManager()
@@ -1034,8 +1031,10 @@ void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMat
     }
     
     // Queue the panel for distance-sorted rendering
+    // Pass visibility restore parameters so the queue can make the panel visible when rendering
+    // Always restore to invisible (false) - these panels should only be visible during 3D capture
     QueuePanelForRender(pPanel, notificationTransform, panelWidth, panelHeight,
-                        worldWidth, worldHeight, m_headPosForSort);
+                        worldWidth, worldHeight, m_headPosForSort, true, false);
 }
 
 void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
@@ -1059,18 +1058,11 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
     // Uses wrapper to ensure content is centered (panel has screen-relative positioning internally)
     // NOTE: We check ShouldDraw() on the CHudElement instead of IsVisible() on the panel
     // because VGUI panel visibility is not automatically synced with CHudElement::ShouldDraw()
-    if (tfvr_popup_hud_notifications_debug.GetBool())
-    {
-        static float lastDebugTime = 0.0f;
-        if (gpGlobals->curtime - lastDebugTime > 1.0f)
-        {
-            DevMsg("VR Healer Panel Debug: Panel=%p Element=%p Wrapper=%p ShouldDraw=%s\n",
-                m_pSecondaryTargetID, m_pSecondaryTargetIDElement, m_pHealerWrapper,
-                (m_pSecondaryTargetIDElement ? (m_pSecondaryTargetIDElement->ShouldDraw() ? "YES" : "NO") : "N/A"));
-            lastDebugTime = gpGlobals->curtime;
-        }
-    }
-    if (m_pSecondaryTargetID && m_pSecondaryTargetIDElement && m_pSecondaryTargetIDElement->ShouldDraw() && m_pHealerWrapper)
+    // Also verify player is still alive - ShouldDraw may briefly return true after death
+    C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+    bool bPlayerAlive = pLocalPlayer && pLocalPlayer->IsAlive();
+    if (m_pSecondaryTargetID && m_pSecondaryTargetIDElement && bPlayerAlive && 
+        m_pSecondaryTargetIDElement->ShouldDraw() && m_pHealerWrapper)
     {
         float healerOffsetX = tfvr_popup_hud_healer_offset_x.GetFloat();
         float healerOffsetY = tfvr_popup_hud_healer_offset_y.GetFloat();
@@ -1078,11 +1070,6 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
         // Get the actual panel size
         int panelWidth, panelHeight;
         m_pSecondaryTargetID->GetSize(panelWidth, panelHeight);
-        
-        if (tfvr_popup_hud_notifications_debug.GetBool())
-        {
-            DevMsg("VR Healer Panel: Rendering! Size=%dx%d\n", panelWidth, panelHeight);
-        }
         
         // Configure wrapper to capture just this panel's content
         m_pHealerWrapper->SetTargetPanel(m_pSecondaryTargetID);
