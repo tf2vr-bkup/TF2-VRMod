@@ -871,7 +871,13 @@ void CViewRender::SetUpViews()
 
 	// Compute the world->main camera transform
     // This is only done for the main "middle-eye" view, not for the various other views.
-	ComputeCameraVariables( viewEye.origin, viewEye.angles,
+	// For VR: compute view vectors without roll so particles don't tilt with HMD
+	QAngle particleAngles = viewEye.angles;
+	if ( g_pOpenXRManager && g_pOpenXRManager->IsActive() )
+	{
+		particleAngles.z = 0.0f; // Zero out roll for particle billboarding
+	}
+	ComputeCameraVariables( viewEye.origin, particleAngles,
 		&g_vecVForward, &g_vecVRight, &g_vecVUp, &g_matCamInverse );
 
 	// set up the hearing origin...

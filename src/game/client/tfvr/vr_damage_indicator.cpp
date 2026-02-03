@@ -9,9 +9,14 @@
 #include "VGuiMatSurface/IMatSystemSurface.h"
 #include "iclientmode.h"
 #include "tier0/vprof.h"
+#include "sourcevr/isourcevirtualreality.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+// Medic caller panel size constants (from tf_hud_mediccallers.cpp)
+#define MEDICCALLER_WIDE        (XRES(56))
+#define MEDICCALLER_TALL        (YRES(48))
 
 // Global instance
 CVRDamageIndicatorManager* g_pVRDamageIndicatorManager = nullptr;
@@ -45,6 +50,12 @@ ConVar tfvr_damage_indicator_height("tfvr_damage_indicator_height", "512", FCVAR
 
 ConVar tfvr_damage_indicator_debug("tfvr_damage_indicator_debug", "0", FCVAR_ARCHIVE, 
     "Show debug info for damage indicator positioning");
+
+// Medic caller ConVars
+ConVar tfvr_medic_caller_enabled("tfvr_medic_caller_enabled", "1", FCVAR_ARCHIVE, 
+    "Enable VR rendering of medic caller panels on the damage indicator overlay");
+ConVar tfvr_medic_caller_debug("tfvr_medic_caller_debug", "0", FCVAR_ARCHIVE, 
+    "Show debug info for medic caller rendering");
 
 //=============================================================================
 // CVRDamageIndicatorManager Implementation
@@ -144,19 +155,24 @@ void CVRDamageIndicatorManager::ResetState()
 //-----------------------------------------------------------------------------
 float CVRDamageIndicatorManager::GetCurrentViewYaw() const
 {
-    // Get the current view angles
-    QAngle viewAngles;
-    engine->GetViewAngles(viewAngles);
-    return viewAngles[YAW];
+    // Get the forward direction from the actual view vectors (roll-independent)
+    Vector forward = MainViewForward();
+    
+    // Project forward onto horizontal plane and get yaw
+    float yaw = RAD2DEG(atan2f(forward.y, forward.x));
+    return yaw;
 }
 
 //-----------------------------------------------------------------------------
 float CVRDamageIndicatorManager::GetCurrentViewPitch() const
 {
-    // Get the current view angles
-    QAngle viewAngles;
-    engine->GetViewAngles(viewAngles);
-    return viewAngles[PITCH];
+    // Get the forward direction from the actual view vectors (roll-independent)
+    Vector forward = MainViewForward();
+    
+    // Get pitch from forward direction
+    float horizontalDist = sqrtf(forward.x * forward.x + forward.y * forward.y);
+    float pitch = RAD2DEG(atan2f(-forward.z, horizontalDist));
+    return pitch;
 }
 
 //-----------------------------------------------------------------------------
@@ -266,12 +282,33 @@ bool CVRDamageIndicatorManager::CalculateSpringTransform(VMatrix& transform)
     // Get the player's eye position
     Vector eyePos = MainViewOrigin();
     
-    // Build orientation: use spring yaw and pitch
+    // Build orientation: use spring yaw and pitch, but compute vectors using world-up
+    // to ensure panel stays level regardless of head roll
     QAngle panelAngles(m_flCurrentPitch, m_flCurrentYaw, 0);
     
-    // Get forward/right/up vectors for the spring arm
-    Vector forward, right, up;
-    AngleVectors(panelAngles, &forward, &right, &up);
+    // Get forward vector from the angles
+    Vector forward;
+    AngleVectors(panelAngles, &forward, nullptr, nullptr);
+    
+    // Use world-up to compute right and up vectors (ensures no roll influence)
+    Vector worldUp(0, 0, 1);
+    Vector right = CrossProduct(worldUp, forward);
+    float rightLen = right.NormalizeInPlace();
+    
+    // Handle looking straight up/down
+    Vector up;
+    if (rightLen < 0.001f)
+    {
+        // Looking straight up or down - pick an arbitrary right vector
+        right = Vector(1, 0, 0);
+        up = CrossProduct(forward, right);
+        up.NormalizeInPlace();
+    }
+    else
+    {
+        up = CrossProduct(forward, right);
+        up.NormalizeInPlace();
+    }
     
     // Calculate panel position
     // Start at distance in front, then apply offsets
@@ -360,5 +397,107 @@ void CVRDamageIndicatorManager::Render()
             m_flTargetYaw, m_flCurrentYaw, 
             AngleDiff(m_flTargetYaw, m_flCurrentYaw));
     }
+    
+    // Also render medic caller panels on the same overlay
+    if (tfvr_medic_caller_enabled.GetBool())
+    {
+        RenderMedicCallers(panelToWorld);
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Render medic caller panels on the damage indicator overlay
+//-----------------------------------------------------------------------------
+void CVRDamageIndicatorManager::RenderMedicCallers(const VMatrix& panelToWorld)
+{
+    // Get the viewport which is the parent of all medic caller panels
+    vgui::Panel* pViewport = g_pClientMode ? g_pClientMode->GetViewport() : nullptr;
+    if (!pViewport)
+        return;
+    
+    // Iterate through viewport children looking for MedicCallerPanel instances
+    int nChildren = pViewport->GetChildCount();
+    int nMedicCallersFound = 0;
+    
+    for (int i = 0; i < nChildren; i++)
+    {
+        vgui::Panel* pChild = pViewport->GetChild(i);
+        if (!pChild || !pChild->IsVisible())
+            continue;
+        
+        // Check if this is a MedicCallerPanel by name
+        const char* pszName = pChild->GetName();
+        if (!pszName || V_strcmp(pszName, "MedicCallerPanel") != 0)
+            continue;
+        
+        nMedicCallersFound++;
+        
+        // Get the panel size
+        int panelWidth, panelHeight;
+        pChild->GetSize(panelWidth, panelHeight);
+        
+        if (panelWidth <= 0 || panelHeight <= 0)
+            continue;
+        
+        // Calculate world size based on the same scale as damage indicator
+        float scale = tfvr_damage_indicator_scale.GetFloat();
+        float aspectRatio = (float)panelWidth / (float)panelHeight;
+        float worldHeight = m_flDistance * scale * 0.5f;  // Slightly smaller than damage indicator
+        float worldWidth = worldHeight * aspectRatio;
+        
+        // Queue for rendering on the same overlay as damage indicator
+        if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+        {
+            g_pVRWorldUIQueue->QueuePanel(pChild, panelToWorld,
+                                          panelWidth, panelHeight,
+                                          worldWidth, worldHeight,
+                                          PRIORITY_DAMAGE_INDICATOR + 1, true, false);
+        }
+        else
+        {
+            // Fallback: render immediately
+            pChild->SetVisible(true);
+            g_pMatSystemSurface->DisableClipping(true);
+            g_pMatSystemSurface->DrawPanelIn3DSpace(
+                pChild->GetVPanel(),
+                panelToWorld,
+                panelWidth,
+                panelHeight,
+                worldWidth,
+                worldHeight
+            );
+            g_pMatSystemSurface->DisableClipping(false);
+            pChild->SetVisible(false);
+        }
+    }
+    
+    if (tfvr_medic_caller_debug.GetBool() && nMedicCallersFound > 0)
+    {
+        DevMsg("MedicCaller: Rendered %d caller panels\n", nMedicCallersFound);
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Check if medic caller panels should be suppressed in 2D
+//-----------------------------------------------------------------------------
+bool CVRDamageIndicatorManager::ShouldSuppressMedicCallerPanel()
+{
+    if (!g_pVRDamageIndicatorManager)
+        return false;
+    
+    if (!g_pVRDamageIndicatorManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRDamageIndicatorManager->m_bEnabled)
+        return false;
+    
+    if (!tfvr_medic_caller_enabled.GetBool())
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    return true;
 }
 

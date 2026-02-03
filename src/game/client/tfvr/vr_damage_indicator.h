@@ -14,6 +14,7 @@ class CHudElement;
 // Purpose: Manages the VR damage direction indicator that lazily follows the
 //          player's view yaw. Similar to the spring HUD for kill feed but
 //          with its own settings tuned for damage indication visibility.
+//          Also renders medic caller panels on the same overlay.
 //          Features:
 //          - Deadzone: HUD stays still when view is within deadzone angle
 //          - Smooth follow: Outside deadzone, HUD smoothly catches up
@@ -34,12 +35,16 @@ public:
     
     void SetEnabled(bool enabled) { m_bEnabled = enabled; }
     bool IsEnabled() const { return m_bEnabled; }
+    
+    // Static method for VR suppression of vanilla 2D medic caller rendering
+    static bool ShouldSuppressMedicCallerPanel();
 
 private:
     bool CalculateSpringTransform(VMatrix& transform);
     float GetCurrentViewYaw() const;
     float GetCurrentViewPitch() const;
     void UpdateSpringAngles(float deltaTime);
+    void RenderMedicCallers(const VMatrix& panelToWorld);
     
 private:
     bool m_bInitialized;

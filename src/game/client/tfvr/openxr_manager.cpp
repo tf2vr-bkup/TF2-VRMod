@@ -310,6 +310,14 @@ bool COpenXRManager::Initialize()
     g_pVRLaserPointer = m_laserPointer;
 
     m_vrActive = true;
+    
+    // Enable VR particle stabilization - particles ignore camera roll for comfort
+    ConVarRef vrParticleStabilize( "vr_particle_stabilize_roll" );
+    if ( vrParticleStabilize.IsValid() )
+    {
+        vrParticleStabilize.SetValue( 1 );
+    }
+    
     // OpenXR VR mode initialized successfully
     return true;
 }
@@ -354,6 +362,14 @@ void COpenXRManager::Shutdown()
 
     m_vrActive = false;
     m_sessionInitialized = false;
+    
+    // Disable VR particle stabilization
+    ConVarRef vrParticleStabilize( "vr_particle_stabilize_roll" );
+    if ( vrParticleStabilize.IsValid() )
+    {
+        vrParticleStabilize.SetValue( 0 );
+    }
+    
     DevMsg("OpenXR resources cleaned up.\n");
 }
 
@@ -375,6 +391,14 @@ void COpenXRManager::Deactivate()
     }
 
     m_vrActive = false;
+    
+    // Disable VR particle stabilization while VR is inactive
+    ConVarRef vrParticleStabilize( "vr_particle_stabilize_roll" );
+    if ( vrParticleStabilize.IsValid() )
+    {
+        vrParticleStabilize.SetValue( 0 );
+    }
+    
     DevMsg("VR session deactivated (all components preserved for instant reactivation)\n");
 }
 
@@ -414,6 +438,14 @@ void COpenXRManager::Reactivate()
     g_pVRLaserPointer = m_laserPointer;
 
     m_vrActive = true;
+    
+    // Re-enable VR particle stabilization
+    ConVarRef vrParticleStabilize( "vr_particle_stabilize_roll" );
+    if ( vrParticleStabilize.IsValid() )
+    {
+        vrParticleStabilize.SetValue( 1 );
+    }
+    
     DevMsg("VR session reactivated instantly (all components preserved)\n");
 }
 

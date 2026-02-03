@@ -658,22 +658,72 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 
 	// This is a bitfield. A set bit means lock to the world, a clear bit means don't.
 	int iVrHudAxisLockToWorld = tfvr_hud_axis_lock_to_world.GetInt();
-	if ( ( iVrHudAxisLockToWorld & (1<<ROLL) ) != 0 )
+	
+	// When locking roll to world, we need to compute orientation using world-up
+	// Simply zeroing the roll Euler angle doesn't work because the angles are coupled
+	bool bLockRoll = ( iVrHudAxisLockToWorld & (1<<ROLL) ) != 0;
+	bool bLockPitch = ( iVrHudAxisLockToWorld & (1<<PITCH) ) != 0;
+	
+	if ( bLockRoll )
 	{
-		HudAngles[ROLL] = 0.0f;
+		// Compute HUD forward from angles (ignoring roll)
+		Vector hudForward;
+		AngleVectors( HudAngles, &hudForward, nullptr, nullptr );
+		
+		// If locking pitch, project forward onto horizontal plane
+		if ( bLockPitch )
+		{
+			hudForward.z = 0.0f;
+			float len = hudForward.NormalizeInPlace();
+			if ( len < 0.001f )
+			{
+				// Looking straight up/down, use a default forward
+				hudForward = Vector(1, 0, 0);
+			}
+		}
+		
+		// Use world-up to compute a level orientation
+		Vector worldUp(0, 0, 1);
+		Vector hudRight = CrossProduct(worldUp, hudForward);
+		float rightLen = hudRight.NormalizeInPlace();
+		
+		Vector hudUp;
+		if ( rightLen < 0.001f )
+		{
+			// HUD forward is straight up/down
+			hudRight = Vector(1, 0, 0);
+			hudUp = CrossProduct(hudForward, hudRight);
+			hudUp.NormalizeInPlace();
+		}
+		else
+		{
+			hudUp = CrossProduct(hudForward, hudRight);
+			hudUp.NormalizeInPlace();
+		}
+		
+		// Build the matrix directly instead of using SetupMatrixOrgAngles
+		m_WorldFromHud.Identity();
+		m_WorldFromHud[0][0] = hudForward.x;  m_WorldFromHud[0][1] = -hudRight.x;  m_WorldFromHud[0][2] = hudUp.x;
+		m_WorldFromHud[1][0] = hudForward.y;  m_WorldFromHud[1][1] = -hudRight.y;  m_WorldFromHud[1][2] = hudUp.y;
+		m_WorldFromHud[2][0] = hudForward.z;  m_WorldFromHud[2][1] = -hudRight.z;  m_WorldFromHud[2][2] = hudUp.z;
+		m_WorldFromHud.SetTranslation( m_PlayerViewOrigin );
 	}
-	if ( ( iVrHudAxisLockToWorld & (1<<PITCH) ) != 0 )
+	else
 	{
-		HudAngles[PITCH] = 0.0f;
+		// Original behavior - just zero out angles as requested
+		if ( bLockPitch )
+		{
+			HudAngles[PITCH] = 0.0f;
+		}
+		if ( ( iVrHudAxisLockToWorld & (1<<YAW) ) != 0 )
+		{
+			// Locking the yaw to the world is not particularly helpful, so what it actually means is lock it to the weapon.
+			QAngle aimAngles;
+			MatrixAngles( m_WorldFromWeapon.As3x4(), aimAngles );
+			HudAngles[YAW] = aimAngles[YAW];
+		}
+		m_WorldFromHud.SetupMatrixOrgAngles( m_PlayerViewOrigin, HudAngles );
 	}
-	if ( ( iVrHudAxisLockToWorld & (1<<YAW) ) != 0 )
-	{
-		// Locking the yaw to the world is not particularly helpful, so what it actually means is lock it to the weapon.
-		QAngle aimAngles;
-		MatrixAngles( m_WorldFromWeapon.As3x4(), aimAngles );
-		HudAngles[YAW] = aimAngles[YAW];
-	}
-	m_WorldFromHud.SetupMatrixOrgAngles( m_PlayerViewOrigin, HudAngles );
 
 	// Remember in source X forwards, Y left, Z up.
 	// We need to transform to a more conventional X right, Y up, Z backwards before doing the projection.

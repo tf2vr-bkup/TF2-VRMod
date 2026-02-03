@@ -896,8 +896,16 @@ void SetupCurrentView( const Vector &vecOrigin, const QAngle &angles, view_id_t 
 	g_vecCurrentRenderOrigin = vecOrigin;
 	g_vecCurrentRenderAngles = angles;
 
-	// Compute the world->main camera transform
-	ComputeCameraVariables( vecOrigin, angles, 
+	// For VR: compute view vectors without roll so particles don't tilt with HMD
+	// This makes screen-aligned particles stay upright regardless of head tilt
+	QAngle particleAngles = angles;
+	if ( g_pOpenXRManager && g_pOpenXRManager->IsActive() )
+	{
+		particleAngles.z = 0.0f; // Zero out roll
+	}
+
+	// Compute the world->main camera transform (used by particles for billboarding)
+	ComputeCameraVariables( vecOrigin, particleAngles, 
 		&g_vecCurrentVForward, &g_vecCurrentVRight, &g_vecCurrentVUp, &g_matCurrentCamInverse );
 
 	g_CurrentViewID = viewID;
