@@ -1512,11 +1512,21 @@ void CFloatingHealthIcon::OnTick( void )
 	float flMaxHealth = m_hEntity->GetMaxHealth();
 	float iMaxBuffedHealth = m_hEntity->GetMaxHealth();
 
-	if ( pTargetPlayer && pTargetPlayer->m_Shared.InCond( TF_COND_DISGUISED ) && pTargetPlayer->IsEnemyPlayer() )
+	// For TF players, use proper max buffed health for overheal calculations
+	if ( pTargetPlayer )
 	{
-		flHealth = (float)pTargetPlayer->m_Shared.GetDisguiseHealth();
-		flMaxHealth = (float)pTargetPlayer->m_Shared.GetDisguiseMaxHealth();
-		iMaxBuffedHealth = pTargetPlayer->m_Shared.GetDisguiseMaxBuffedHealth();
+		if ( pTargetPlayer->m_Shared.InCond( TF_COND_DISGUISED ) && pTargetPlayer->IsEnemyPlayer() )
+		{
+			// Use disguise stats for disguised enemies
+			flHealth = (float)pTargetPlayer->m_Shared.GetDisguiseHealth();
+			flMaxHealth = (float)pTargetPlayer->m_Shared.GetDisguiseMaxHealth();
+			iMaxBuffedHealth = pTargetPlayer->m_Shared.GetDisguiseMaxBuffedHealth();
+		}
+		else
+		{
+			// Use actual max buffed health for proper overheal visualization
+			iMaxBuffedHealth = pTargetPlayer->m_Shared.GetMaxBuffedHealth();
+		}
 	}
 		
 	if ( flHealth != m_flPrevHealth )
