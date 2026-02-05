@@ -1116,11 +1116,9 @@ bool CVRMenuManager::IsMenuVisible()
          C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
          if (pLocalPlayer)
          {
-             // If dead and not spectating, likely showing class selection
-             if (pLocalPlayer->IsPlayerDead() && pLocalPlayer->GetTeamNumber() != TEAM_SPECTATOR)
-             {
-                 bTF2MenuState = true;
-             }
+             // NOTE: We no longer assume dead = menu visible. Being dead doesn't mean
+             // the class select is open - the player could just be in death cam.
+             // The actual class/team menus are detected via ViewPort panels above.
              
              // Check for team assignment state
              if (pLocalPlayer->GetTeamNumber() == TEAM_UNASSIGNED)
