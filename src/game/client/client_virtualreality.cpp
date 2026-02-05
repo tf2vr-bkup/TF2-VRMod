@@ -1345,7 +1345,29 @@ void CClientVirtualReality::NotifyCompositorHUDPosition( const Vector& viewer, c
 		VMatrix currentHeadWorldMatrix;
 		currentHeadWorldMatrix.Identity();
 		matrix3x4_t headMatrix3x4;
-		Vector playerHeadPos = pPlayer->EyePosition();
+		
+		// For custom bounds (menus), use GetVRViewPosition() to match how menu bounds
+		// are calculated. During death, EyePosition() returns dead view height (ground
+		// level), but menus are positioned using GetVRViewPosition() which returns the
+		// VR death position (standing height). Using mismatched heights causes the
+		// compositor menu to appear too high when quitting while dead.
+		Vector playerHeadPos;
+		if (isCustomBounds)
+		{
+			C_TFPlayer* pTFPlayer = C_TFPlayer::GetLocalTFPlayer();
+			if (pTFPlayer)
+			{
+				playerHeadPos = pTFPlayer->GetVRViewPosition();
+			}
+			else
+			{
+				playerHeadPos = pPlayer->EyePosition();
+			}
+		}
+		else
+		{
+			playerHeadPos = pPlayer->EyePosition();
+		}
 		QAngle playerHeadAngles = pPlayer->EyeAngles();
 		AngleMatrix(playerHeadAngles, playerHeadPos, headMatrix3x4);
 		currentHeadWorldMatrix.CopyFrom3x4(headMatrix3x4);

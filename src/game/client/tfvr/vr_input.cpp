@@ -13,6 +13,7 @@
 #include "c_tfvr_hand.h"
 #include <game/client/iviewport.h>
 #include "viewport_panel_names.h"
+#include "ienginevgui.h"
 
 // Engine interface for executing client commands
 extern IVEngineClient *engine;
@@ -254,9 +255,13 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     }
     
     // Handle menu button press to toggle menu state
+    // Note: We check if the Game UI is ACTUALLY visible, not just IsMenuVisible().
+    // IsMenuVisible() returns true when dead to block VR input, but the game UI
+    // might not actually be open. This allows opening the escape menu while dead.
     if (bMenuButtonPressed)
     {
-        if (bMenuVisible)
+        bool bGameUIActuallyVisible = enginevgui && enginevgui->IsGameUIVisible();
+        if (bGameUIActuallyVisible)
         {
             engine->ClientCmd_Unrestricted("gameui_hide\n");
         }
