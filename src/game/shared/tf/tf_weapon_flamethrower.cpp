@@ -2364,9 +2364,16 @@ void CTFFlameThrower::StartFlame()
 	{
 		// VR: Use GetWeaponForEffect() to attach to VR render weapon's muzzle
 		GetWeaponForEffect()->ParticleProp()->Create( "pyro_blast", PATTACH_POINT_FOLLOW, "muzzle" );
-		CLocalPlayerFilter filter;
-		const char *shootsound = GetShootSound( WPN_DOUBLE );
-		EmitSound( filter, entindex(), shootsound );
+
+		if ( m_bHeldByVRHand )
+		{
+			WeaponSound( WPN_DOUBLE );
+		}
+		else
+		{
+			CLocalPlayerFilter filter;
+			EmitSound( filter, entindex(), GetShootSound( WPN_DOUBLE ) );
+		}
 
 		return;
 	}
