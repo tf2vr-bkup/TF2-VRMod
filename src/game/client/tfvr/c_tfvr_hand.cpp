@@ -866,6 +866,15 @@ ConVar tfvr_weapon_fire_anim_roll_scale("tfvr_weapon_fire_anim_roll_scale", "1.0
 ConVar tfvr_weapon_fire_anim_pos_rotation("tfvr_weapon_fire_anim_pos_rotation", "90", FCVAR_ARCHIVE, "Rotation correction for position vector (degrees around Z axis)");
 ConVar tfvr_weapon_fire_anim_angle_rotation("tfvr_weapon_fire_anim_angle_rotation", "180", FCVAR_ARCHIVE, "Coordinate space rotation for fire animation (degrees around Z axis)");
 
+// Weapon-specific aim angle corrections (for weapons with incorrect muzzle attachment orientation)
+// These are applied as LOCAL rotations relative to the muzzle attachment frame
+ConVar tfvr_aim_grenadelauncher_pitch("tfvr_aim_grenadelauncher_pitch", "0", FCVAR_ARCHIVE, "Pitch correction for grenade launcher aim (degrees, local space)");
+ConVar tfvr_aim_grenadelauncher_yaw("tfvr_aim_grenadelauncher_yaw", "90", FCVAR_ARCHIVE, "Yaw correction for grenade launcher aim (degrees, local space)");
+ConVar tfvr_aim_grenadelauncher_roll("tfvr_aim_grenadelauncher_roll", "0", FCVAR_ARCHIVE, "Roll correction for grenade launcher aim (degrees, local space)");
+ConVar tfvr_aim_stickybomb_pitch("tfvr_aim_stickybomb_pitch", "0", FCVAR_ARCHIVE, "Pitch correction for sticky launcher aim (degrees, local space)");
+ConVar tfvr_aim_stickybomb_yaw("tfvr_aim_stickybomb_yaw", "90", FCVAR_ARCHIVE, "Yaw correction for sticky launcher aim (degrees, local space)");
+ConVar tfvr_aim_stickybomb_roll("tfvr_aim_stickybomb_roll", "0", FCVAR_ARCHIVE, "Roll correction for sticky launcher aim (degrees, local space)");
+
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
 static C_TFVRHand *g_pLocalPlayerRightHand = NULL;
@@ -4630,6 +4639,41 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 	{
 		outPos = m_vecCachedMuzzlePos;
 		outAngles = m_angCachedMuzzleAngles;
+		
+		// Apply weapon-specific aim angle corrections as LOCAL rotations
+		// Using matrix multiplication so the correction stays in the muzzle's
+		// local coordinate frame regardless of hand roll/pitch/yaw
+		if (pTFWeapon)
+		{
+			int weaponID = pTFWeapon->GetWeaponID();
+			QAngle correctionAngles(0, 0, 0);
+			bool bNeedsCorrection = false;
+
+			if (weaponID == TF_WEAPON_GRENADELAUNCHER)
+			{
+				correctionAngles.Init(tfvr_aim_grenadelauncher_pitch.GetFloat(),
+				                      tfvr_aim_grenadelauncher_yaw.GetFloat(),
+				                      tfvr_aim_grenadelauncher_roll.GetFloat());
+				bNeedsCorrection = true;
+			}
+			else if (weaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
+			{
+				correctionAngles.Init(tfvr_aim_stickybomb_pitch.GetFloat(),
+				                      tfvr_aim_stickybomb_yaw.GetFloat(),
+				                      tfvr_aim_stickybomb_roll.GetFloat());
+				bNeedsCorrection = true;
+			}
+
+			if (bNeedsCorrection)
+			{
+				matrix3x4_t muzzleMat, correctionMat, resultMat;
+				AngleMatrix(outAngles, vec3_origin, muzzleMat);
+				AngleMatrix(correctionAngles, vec3_origin, correctionMat);
+				ConcatTransforms(muzzleMat, correctionMat, resultMat);
+				MatrixAngles(resultMat, outAngles);
+			}
+		}
+		
 		return true;
 	}
 	
@@ -4648,6 +4692,39 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		{
 			outPos = muzzlePos;
 			outAngles = muzzleAngles;
+			
+			// Apply weapon-specific aim angle corrections as LOCAL rotations
+			if (pTFWeapon)
+			{
+				int weaponID = pTFWeapon->GetWeaponID();
+				QAngle correctionAngles(0, 0, 0);
+				bool bNeedsCorrection = false;
+
+				if (weaponID == TF_WEAPON_GRENADELAUNCHER)
+				{
+					correctionAngles.Init(tfvr_aim_grenadelauncher_pitch.GetFloat(),
+					                      tfvr_aim_grenadelauncher_yaw.GetFloat(),
+					                      tfvr_aim_grenadelauncher_roll.GetFloat());
+					bNeedsCorrection = true;
+				}
+				else if (weaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
+				{
+					correctionAngles.Init(tfvr_aim_stickybomb_pitch.GetFloat(),
+					                      tfvr_aim_stickybomb_yaw.GetFloat(),
+					                      tfvr_aim_stickybomb_roll.GetFloat());
+					bNeedsCorrection = true;
+				}
+
+				if (bNeedsCorrection)
+				{
+					matrix3x4_t muzzleMat, correctionMat, resultMat;
+					AngleMatrix(outAngles, vec3_origin, muzzleMat);
+					AngleMatrix(correctionAngles, vec3_origin, correctionMat);
+					ConcatTransforms(muzzleMat, correctionMat, resultMat);
+					MatrixAngles(resultMat, outAngles);
+				}
+			}
+			
 			return true;
 		}
 	}
@@ -5157,18 +5234,28 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 	// Get the appropriate animation name for this weapon and class
 	const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass, pWeapon);
 	
-	// Look up the sequence
-	int sequence = LookupSequence(animName);
+	// Try VR-specific override first (e.g. "vr_ft_idle" before "ft_idle")
+	int sequence = -1;
+	char vrAnimName[128];
+	Q_snprintf(vrAnimName, sizeof(vrAnimName), "vr_%s", animName);
+	sequence = LookupSequence(vrAnimName);
+
+	const char *usedName = vrAnimName;
 	if (sequence < 0)
 	{
-		// Animation not found - try fallback to "ref" pose
+		usedName = animName;
+		sequence = LookupSequence(animName);
+	}
+	if (sequence < 0)
+	{
+		usedName = "ref";
 		sequence = LookupSequence("ref");
 		if (sequence < 0)
 		{
-			// No ref pose either, just return
 			return;
 		}
 	}
+
 	
 	// Get the sequence descriptor
 	mstudioseqdesc_t &seqdesc = pStudioHdr->pSeqdesc(sequence);
@@ -5563,7 +5650,20 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		
 		if (idleAnimName && idleAnimName[0])
 		{
-			m_iIdleSequence = LookupSequence(idleAnimName);
+			char vrIdleName[128];
+			Q_snprintf(vrIdleName, sizeof(vrIdleName), "vr_%s", idleAnimName);
+			m_iIdleSequence = LookupSequence(vrIdleName);
+			if (m_iIdleSequence >= 0)
+			{
+				DevMsg("VR: Idle sequence using VR override '%s' (seq %d) on model '%s'\n",
+					vrIdleName, m_iIdleSequence, GetModelName());
+			}
+			else
+			{
+				m_iIdleSequence = LookupSequence(idleAnimName);
+				DevMsg("VR: Idle sequence fallback to '%s' (seq %d) on model '%s'\n",
+					idleAnimName, m_iIdleSequence, GetModelName());
+			}
 		}
 		
 		// Also pass fire sequence to render weapon (in case it has its own animations)

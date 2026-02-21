@@ -282,33 +282,12 @@ bool CVRDamageIndicatorManager::CalculateSpringTransform(VMatrix& transform)
     // Get the player's eye position
     Vector eyePos = MainViewOrigin();
     
-    // Build orientation: use spring yaw and pitch, but compute vectors using world-up
-    // to ensure panel stays level regardless of head roll
+    // Build orientation: panelAngles already has roll=0 so AngleVectors
+    // gives roll-independent vectors matching the convention DrawPanelIn3DSpace expects.
     QAngle panelAngles(m_flCurrentPitch, m_flCurrentYaw, 0);
     
-    // Get forward vector from the angles
-    Vector forward;
-    AngleVectors(panelAngles, &forward, nullptr, nullptr);
-    
-    // Use world-up to compute right and up vectors (ensures no roll influence)
-    Vector worldUp(0, 0, 1);
-    Vector right = CrossProduct(worldUp, forward);
-    float rightLen = right.NormalizeInPlace();
-    
-    // Handle looking straight up/down
-    Vector up;
-    if (rightLen < 0.001f)
-    {
-        // Looking straight up or down - pick an arbitrary right vector
-        right = Vector(1, 0, 0);
-        up = CrossProduct(forward, right);
-        up.NormalizeInPlace();
-    }
-    else
-    {
-        up = CrossProduct(forward, right);
-        up.NormalizeInPlace();
-    }
+    Vector forward, right, up;
+    AngleVectors(panelAngles, &forward, &right, &up);
     
     // Calculate panel position
     // Start at distance in front, then apply offsets
@@ -352,7 +331,6 @@ void CVRDamageIndicatorManager::Render()
     if (!m_pDamageIndicatorPanel || !m_pDamageIndicatorElement)
         return;
     
-    // Check if the damage indicator should draw (i.e., has active damage to show)
     if (!m_pDamageIndicatorElement->ShouldDraw())
         return;
     
