@@ -125,6 +125,18 @@ ConVar tfvr_popup_hud_voice_debug("tfvr_popup_hud_voice_debug", "0", FCVAR_ARCHI
 ConVar tfvr_popup_hud_voice_test("tfvr_popup_hud_voice_test", "0", FCVAR_CHEAT, 
     "Force voice UI to render for testing (bypasses voice manager check)");
 
+// Chat panel ConVars
+ConVar tfvr_popup_hud_chat_enabled("tfvr_popup_hud_chat_enabled", "1", FCVAR_ARCHIVE, 
+    "Enable VR rendering of the text chat window on the popup HUD");
+ConVar tfvr_popup_hud_chat_offset_x("tfvr_popup_hud_chat_offset_x", "-25", FCVAR_ARCHIVE, 
+    "Horizontal offset for chat panel (positive = right)");
+ConVar tfvr_popup_hud_chat_offset_y("tfvr_popup_hud_chat_offset_y", "-20", FCVAR_ARCHIVE, 
+    "Vertical offset for chat panel (positive = up)");
+ConVar tfvr_popup_hud_chat_scale("tfvr_popup_hud_chat_scale", "0.5", FCVAR_ARCHIVE, 
+    "Scale multiplier for chat panel (relative to main popup scale)");
+ConVar tfvr_popup_hud_chat_debug("tfvr_popup_hud_chat_debug", "0", FCVAR_ARCHIVE, 
+    "Debug output for chat panel VR rendering");
+
 //=============================================================================
 // CVRPanelWrapper Implementation
 //=============================================================================
@@ -216,6 +228,10 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_pVoiceSelfStatus = nullptr;
     m_pVoiceStatus = nullptr;
     
+    // Chat panel
+    m_pChatPanel = nullptr;
+    m_pChatElement = nullptr;
+    
     m_flCurrentYaw = 0.0f;
     m_flTargetYaw = 0.0f;
     
@@ -239,6 +255,12 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     m_flVoiceSelfOffsetY = 20.0f;
     m_flVoiceOthersOffsetX = -35.0f;
     m_flVoiceOthersOffsetY = 15.0f;
+    
+    // Chat panel configuration
+    m_bChatEnabled = true;
+    m_flChatOffsetX = -25.0f;
+    m_flChatOffsetY = -20.0f;
+    m_flChatScale = 0.5f;
 }
 
 CVRPopupHUDManager::~CVRPopupHUDManager()
@@ -315,6 +337,10 @@ void CVRPopupHUDManager::Shutdown()
     // Clear voice panel pointers
     m_pVoiceSelfStatus = nullptr;
     m_pVoiceStatus = nullptr;
+    
+    // Clear chat panel pointer
+    m_pChatPanel = nullptr;
+    m_pChatElement = nullptr;
     
     m_bInitialized = false;
 }
@@ -501,6 +527,21 @@ void CVRPopupHUDManager::AcquirePanels()
         }
     }
     
+    // CHudChat - text chat window
+    if (!m_pChatPanel)
+    {
+        CHudElement* pElement = gHUD.FindElement("CHudChat");
+        if (pElement)
+        {
+            m_pChatPanel = dynamic_cast<vgui::Panel*>(pElement);
+            m_pChatElement = pElement;
+            if (m_pChatPanel)
+            {
+                DevMsg("VR Popup HUD: Found chat panel\n");
+            }
+        }
+    }
+    
     if (bFirstAcquire && (m_pScoreboardPanel || m_pWinPanel))
     {
         DevMsg("VR Popup HUD: Acquired panels - Scoreboard=%p, WinPanel=%p, ArenaWin=%p, MatchSummary=%p\n",
@@ -509,6 +550,7 @@ void CVRPopupHUDManager::AcquirePanels()
             m_pNotificationPanel, m_pMainTargetID, m_pSpectatorTargetID, m_pSecondaryTargetID, m_pBuildingStatusEngineer, m_pBuildingStatusSpy);
         DevMsg("VR Popup HUD: Voice panels - VoiceSelf=%p, VoiceStatus=%p\n",
             m_pVoiceSelfStatus, m_pVoiceStatus);
+        DevMsg("VR Popup HUD: Chat panel - Chat=%p\n", m_pChatPanel);
         bFirstAcquire = false;
     }
     
@@ -654,6 +696,12 @@ void CVRPopupHUDManager::Update(float deltaTime)
     m_flVoiceOthersOffsetX = tfvr_popup_hud_voice_others_offset_x.GetFloat();
     m_flVoiceOthersOffsetY = tfvr_popup_hud_voice_others_offset_y.GetFloat();
     
+    // Chat panel settings
+    m_bChatEnabled = tfvr_popup_hud_chat_enabled.GetBool();
+    m_flChatOffsetX = tfvr_popup_hud_chat_offset_x.GetFloat();
+    m_flChatOffsetY = tfvr_popup_hud_chat_offset_y.GetFloat();
+    m_flChatScale = tfvr_popup_hud_chat_scale.GetFloat();
+    
     // Try to acquire panels if we don't have them yet
     if (!m_pScoreboardPanel && !m_pWinPanel)
     {
@@ -783,6 +831,12 @@ void CVRPopupHUDManager::Render()
         if (m_bVoiceStatusEnabled)
         {
             RenderVoiceStatus(panelToWorld);
+        }
+        
+        // Always render chat panel (it manages its own fade/visibility internally)
+        if (m_bChatEnabled)
+        {
+            RenderChat(panelToWorld);
         }
         
         // Global queue will flush all panels at end of VR UI rendering
@@ -966,6 +1020,12 @@ void CVRPopupHUDManager::Render()
     if (m_bVoiceStatusEnabled)
     {
         RenderVoiceStatus(panelToWorld);
+    }
+    
+    // Queue chat panel (always rendered - manages its own fade)
+    if (m_bChatEnabled)
+    {
+        RenderChat(panelToWorld);
     }
     
     // Global queue will flush all panels at end of VR UI rendering in viewrender.cpp
@@ -1282,6 +1342,84 @@ void CVRPopupHUDManager::RenderVoiceStatus(const VMatrix& /*baseTransform*/)
     }
 }
 
+void CVRPopupHUDManager::RenderChat(const VMatrix& /*baseTransform*/)
+{
+    if (!m_pChatPanel)
+        return;
+    
+    int panelWidth, panelHeight;
+    m_pChatPanel->GetSize(panelWidth, panelHeight);
+    
+    if (panelWidth <= 0 || panelHeight <= 0)
+        return;
+    
+    // Get player for positioning
+    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    if (!pPlayer)
+        return;
+    
+    // Get head position
+    Vector headPos;
+    if (g_pOpenXRManager && g_pOpenXRManager->IsActive())
+    {
+        VMatrix worldFromMideye = g_ClientVirtualReality.GetWorldFromMidEye();
+        headPos = worldFromMideye.GetTranslation();
+    }
+    else
+    {
+        headPos = pPlayer->EyePosition();
+    }
+    
+    // Use the spring arm yaw for consistent positioning
+    Vector forward, right, up;
+    QAngle springAngles(0, m_flCurrentYaw, 0);
+    AngleVectors(springAngles, &forward, &right, &up);
+    
+    // Position at the same distance as other popup panels
+    Vector basePos = headPos + forward * m_flDistance;
+    
+    // Calculate world dimensions
+    float chatScale = m_flScale * m_flChatScale;
+    float pixelsPerUnit = 100.0f;
+    float worldWidth = (panelWidth / pixelsPerUnit) * chatScale;
+    float worldHeight = (panelHeight / pixelsPerUnit) * chatScale;
+    
+    // Build rotation matrix (facing player)
+    VMatrix chatTransform;
+    chatTransform.Identity();
+    chatTransform[0][0] = right.x;    chatTransform[0][1] = up.x;    chatTransform[0][2] = -forward.x;
+    chatTransform[1][0] = right.y;    chatTransform[1][1] = up.y;    chatTransform[1][2] = -forward.y;
+    chatTransform[2][0] = right.z;    chatTransform[2][1] = up.z;    chatTransform[2][2] = -forward.z;
+    
+    // Position with offsets (bottom-left by default)
+    Vector topLeft = basePos
+        - right * (worldWidth * 0.5f)
+        + up * (worldHeight * 0.5f)
+        + right * m_flChatOffsetX
+        + up * m_flChatOffsetY;
+    
+    chatTransform.SetTranslation(topLeft);
+    
+    if (tfvr_popup_hud_chat_debug.GetBool())
+    {
+        static float lastDebugTime = 0.0f;
+        if (gpGlobals->curtime - lastDebugTime > 1.0f)
+        {
+            DevMsg("VR Chat: Panel=%p, Size=%dx%d, WorldSize=(%.1f, %.1f), Offset=(%.1f, %.1f)\n",
+                   m_pChatPanel, panelWidth, panelHeight, worldWidth, worldHeight,
+                   m_flChatOffsetX, m_flChatOffsetY);
+            lastDebugTime = gpGlobals->curtime;
+        }
+    }
+    
+    // Capture current visibility so we restore correctly after 3D capture.
+    // When the user is typing, the panel is visible (suppression is bypassed)
+    // and must stay visible for VGUI keyboard focus to work.
+    bool bWasVisible = m_pChatPanel->IsVisible();
+    QueuePanelForRender(m_pChatPanel, chatTransform, panelWidth, panelHeight,
+                       worldWidth, worldHeight, m_headPosForSort, true, bWasVisible);
+}
+
 //=============================================================================
 // Distance-sorted rendering (uses global VR World UI Queue)
 //=============================================================================
@@ -1478,6 +1616,38 @@ bool CVRPopupHUDManager::ShouldSuppressVoiceStatus()
     
     // Only suppress if VR is active
     if (!UseVR())
+        return false;
+    
+    return true;
+}
+
+bool CVRPopupHUDManager::ShouldSuppressChat()
+{
+    if (!g_pVRPopupHUDManager)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bInitialized)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bEnabled)
+        return false;
+    
+    if (!g_pVRPopupHUDManager->m_bChatEnabled)
+        return false;
+    
+    // Only suppress if VR is active
+    if (!UseVR())
+        return false;
+    
+    // Don't suppress when VR wrapper panel is actively painting
+    if (CVRPanelWrapper::s_bInsideWrapperPaint)
+        return false;
+    
+    // Don't suppress when the user is actively typing in chat.
+    // The panel must remain visible for VGUI keyboard focus/input to work.
+    // StartMessageMode() sets keyboard input enabled; StopMessageMode() clears it.
+    if (g_pVRPopupHUDManager->m_pChatPanel && 
+        g_pVRPopupHUDManager->m_pChatPanel->IsKeyBoardInputEnabled())
         return false;
     
     return true;

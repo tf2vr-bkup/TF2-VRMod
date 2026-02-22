@@ -91,6 +91,7 @@ public:
     static bool ShouldSuppressBuildingStatus();
     static bool ShouldSuppressVoiceSelfStatus();
     static bool ShouldSuppressVoiceStatus();
+    static bool ShouldSuppressChat();
 
 private:
     // Find TF2's HUD panels
@@ -112,6 +113,9 @@ private:
     
     // Render voice status panels (self-icon and other players speaking)
     void RenderVoiceStatus(const VMatrix& baseTransform);
+    
+    // Render chat panel (text chat window)
+    void RenderChat(const VMatrix& baseTransform);
     
     // Distance-sorted rendering
     void QueuePanelForRender(vgui::Panel* pPanel, const VMatrix& transform, 
@@ -147,6 +151,10 @@ private:
     // Voice status panels
     vgui::Panel* m_pVoiceSelfStatus;      // CHudVoiceSelfStatus - local player speaking icon
     vgui::Panel* m_pVoiceStatus;          // CHudVoiceStatus - other players speaking list
+    
+    // Chat panel
+    vgui::Panel* m_pChatPanel;            // CHudChat - text chat window
+    CHudElement* m_pChatElement;          // CHudElement pointer for ShouldDraw() check
     
     // Wrapper panel for rendering match status without clipping
     CVRPanelWrapper* m_pMatchStatusWrapper;
@@ -188,6 +196,12 @@ private:
     // Other players speaking list offsets  
     float m_flVoiceOthersOffsetX;       // Horizontal offset (positive = right)
     float m_flVoiceOthersOffsetY;       // Vertical offset (positive = up)
+    
+    // Chat panel configuration
+    bool m_bChatEnabled;
+    float m_flChatOffsetX;              // Horizontal offset (positive = right)
+    float m_flChatOffsetY;              // Vertical offset (positive = up)
+    float m_flChatScale;                // Scale multiplier for chat panel
 };
 
 // Global instance
