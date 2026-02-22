@@ -22,6 +22,15 @@ enum VRHandSide
 	VR_HAND_RIGHT = 1
 };
 
+// Medigun fire animation state (fire_on -> fire_loop -> fire_off)
+enum MedigunFireState
+{
+	MEDIGUN_FIRE_IDLE = 0,
+	MEDIGUN_FIRE_ON,
+	MEDIGUN_FIRE_LOOP,
+	MEDIGUN_FIRE_OFF,
+};
+
 //-----------------------------------------------------------------------------
 // Purpose: Client-side VR hand entity that renders a single animated hand
 //          driven by OpenXR hand tracking data
@@ -117,6 +126,9 @@ public:
 	// Fire animation - trigger weapon fire animation
 	void PlayWeaponFireAnimation();
 	
+	// Medigun fire animation state machine (fire_on -> fire_loop -> fire_off)
+	void UpdateMedigunFireAnimation();
+	
 	// Two-handed weapon support
 	// bUseCurrentAnimation: false = use idle (for stable weapon rotation), true = use current (for visual positioning)
 	bool GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation = false);
@@ -175,10 +187,16 @@ private:
 	char m_szModelName[MAX_PATH];
 	
 	// Fire animation
-	int m_iFireSequence;           // Fire animation sequence index
+	int m_iFireSequence;           // Fire animation sequence index (fire_loop for medigun)
 	int m_iIdleSequence;           // Idle animation sequence to return to
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
+	
+	// Medigun fire animation state machine
+	MedigunFireState m_eMedigunFireState;
+	int m_iFireOnSequence;         // fire_on sequence (healing beam starts)
+	int m_iFireOffSequence;        // fire_off sequence (healing beam ends)
+	bool m_bMedigunWasHealing;     // Previous frame healing state for edge detection
 	
 	// Melee swing animation cycling (a -> b -> c -> a...)
 	int m_iMeleeSwingIndex;        // Current swing variant (0=a, 1=b, 2=c)
@@ -186,7 +204,8 @@ private:
 	int m_iMeleeSwingCount;        // Number of swing variants available (usually 3)
 	
 	// Cached transform from idle hand bone to VR controller (calculated once)
-	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose
+	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose (model space)
+	Vector m_vecIdleHandBoneLocalPos;        // Hand bone LOCAL position from idle pose (parent space)
 	bool m_bHandBoneOffsetValid;             // Whether the offset has been calculated
 	
 	// Two-handed weapon support
