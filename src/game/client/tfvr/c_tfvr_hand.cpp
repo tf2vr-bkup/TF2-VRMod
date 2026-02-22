@@ -5638,12 +5638,27 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			{
 				extern ConVar tfvr_weapon_fire_anim_debug;
 				
-				m_iFireSequence = LookupSequence(fireAnimName);
+				// Try VR-specific override first (e.g. "vr_m_fire" before "m_fire")
+				char vrFireName[128];
+				Q_snprintf(vrFireName, sizeof(vrFireName), "vr_%s", fireAnimName);
+				m_iFireSequence = LookupSequence(vrFireName);
 				
-				if (tfvr_weapon_fire_anim_debug.GetBool())
+				if (m_iFireSequence >= 0)
 				{
-					DevMsg("VR: Hand fire animation lookup - name: '%s', sequence: %d\n", 
-						fireAnimName, m_iFireSequence);
+					if (tfvr_weapon_fire_anim_debug.GetBool())
+					{
+						DevMsg("VR: Fire sequence using VR override '%s' (seq %d) on model '%s'\n",
+							vrFireName, m_iFireSequence, GetModelName());
+					}
+				}
+				else
+				{
+					m_iFireSequence = LookupSequence(fireAnimName);
+					if (tfvr_weapon_fire_anim_debug.GetBool())
+					{
+						DevMsg("VR: Fire sequence fallback to '%s' (seq %d) on model '%s'\n",
+							fireAnimName, m_iFireSequence, GetModelName());
+					}
 				}
 			}
 		}
