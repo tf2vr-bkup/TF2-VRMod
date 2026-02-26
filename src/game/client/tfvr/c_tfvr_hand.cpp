@@ -9,6 +9,7 @@
 #include "tf/tf_weapon_minigun.h"
 #include "tf/tf_weapon_medigun.h"
 #include "tf/tf_weapon_grenadelauncher.h"
+#include "tf/tf_weapon_flamethrower.h"
 #include "tf/tf_weapon_bat.h"
 #include "tf/tf_item_wearable.h"
 #include "econ/econ_entity.h"
@@ -992,6 +993,16 @@ static bool IsWeaponMedigun(C_TFWeaponBase *pWeapon)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Check if a weapon is a flamethrower (any variant, not Dragon's Fury)
+//-----------------------------------------------------------------------------
+static bool IsWeaponFlamethrower(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon)
+		return false;
+	return pWeapon->GetWeaponID() == TF_WEAPON_FLAMETHROWER;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Apply two-hand grip rotation to a transform matrix
 //          Uses minimal rotation (quaternion swing) to point Y axis toward desiredY
 //          This preserves the controller's roll perfectly - only pitch/yaw changes
@@ -1205,6 +1216,7 @@ C_TFVRHand::C_TFVRHand()
 	m_bShuttingDown = false;
 	m_iLastPlayerClass = TF_CLASS_UNDEFINED;
 	m_iFireSequence = -1;
+	m_iAltFireSequence = -1;
 	m_iIdleSequence = -1;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
@@ -1212,6 +1224,8 @@ C_TFVRHand::C_TFVRHand()
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
 	m_bMedigunWasHealing = false;
+	m_bFlamethrowerWasFiring = false;
+	m_flFlamethrowerFireBlend = 0.0f;
 	m_vecLastValidPosition = vec3_origin;
 	m_angLastValidAngles = vec3_angle;
 	m_szModelName[0] = '\0';
@@ -1306,6 +1320,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bHandTrackingValid = false;
 	m_bControllerTracked = false;
 	m_iFireSequence = -1;
+	m_iAltFireSequence = -1;
 	m_iIdleSequence = -1;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
@@ -1313,6 +1328,8 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
 	m_bMedigunWasHealing = false;
+	m_bFlamethrowerWasFiring = false;
+	m_flFlamethrowerFireBlend = 0.0f;
 	m_iOffHandBone = -1;
 	m_iOffHandMiddleFingerBone = -1;
 	m_flTwoHandBlend = 0.0f;
@@ -1649,8 +1666,12 @@ void C_TFVRHand::ClientThink()
 	StudioFrameAdvance();
 	
 	// Check if fire animation has completed and return to idle
-	// Skip generic completion for medigun - handled by UpdateMedigunFireAnimation()
-	if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE)
+	// Skip for medigun (handled by UpdateMedigunFireAnimation) and
+	// flamethrower primary fire (handled by UpdateFlamethrowerFireAnimation).
+	// Flamethrower alt-fire (airblast) IS allowed through as a one-shot.
+	bool bFlamethrowerPrimaryActive = (m_flFlamethrowerFireBlend > 0.0f);
+	if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE
+		&& !bFlamethrowerPrimaryActive)
 	{
 		if (tfvr_weapon_fire_anim_debug.GetBool())
 		{
@@ -1723,8 +1744,12 @@ void C_TFVRHand::Update()
 	StudioFrameAdvance();
 	
 	// Check if fire animation has completed and return to idle
-	// Skip generic completion for medigun - handled by UpdateMedigunFireAnimation()
-	if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE)
+	// Skip for medigun (handled by UpdateMedigunFireAnimation) and
+	// flamethrower primary fire (handled by UpdateFlamethrowerFireAnimation).
+	// Flamethrower alt-fire (airblast) IS allowed through as a one-shot.
+	bool bFlamethrowerPrimaryActive = (m_flFlamethrowerFireBlend > 0.0f);
+	if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE
+		&& !bFlamethrowerPrimaryActive)
 	{
 		extern ConVar tfvr_weapon_fire_anim_debug;
 		
@@ -1754,6 +1779,9 @@ void C_TFVRHand::Update()
 	
 	// Update medigun fire animation state machine
 	UpdateMedigunFireAnimation();
+	
+	// Update flamethrower fire animation (driven by weapon fire state)
+	UpdateFlamethrowerFireAnimation();
 	
 	// Check if player class has changed - if so, hide hands temporarily to avoid crash
 	int currentClass = pOwner->GetPlayerClass()->GetClassIndex();
@@ -2863,9 +2891,37 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		boneSetup.InitPose(posAnim, qAnim);
 		boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
 		
-		// During medigun fire, override the hand bone's LOCAL position with the idle value.
-		// This prevents the fire animation from translating the hand bone, which would shift
-		// the entire skeleton (including weapon_bone) and break the right hand grip alignment.
+		// Flamethrower blend: smoothly lerp between idle and fire poses using
+		// m_flFlamethrowerFireBlend (ramped in UpdateFlamethrowerFireAnimation).
+		// This handles both ease-in (starting fire) and ease-out (stopping fire).
+		if (m_bPlayingFireAnim && m_flFlamethrowerFireBlend > 0.0f
+			&& m_flFlamethrowerFireBlend < 1.0f
+			&& IsWeaponFlamethrower(m_hHeldWeapon.Get()))
+		{
+			float flBlend = SimpleSpline(m_flFlamethrowerFireBlend);
+
+			Vector posIdle[MAXSTUDIOBONES];
+			Quaternion qIdle[MAXSTUDIOBONES];
+			for (int i = 0; i < MAXSTUDIOBONES; i++)
+			{
+				posIdle[i].Init();
+				qIdle[i].Init(0, 0, 0, 1);
+			}
+			boneSetup.InitPose(posIdle, qIdle);
+			if (m_iIdleSequence >= 0)
+				boneSetup.AccumulatePose(posIdle, qIdle, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+
+			for (int i = 0; i < numBones; i++)
+			{
+				VectorLerp(posIdle[i], posAnim[i], flBlend, posAnim[i]);
+				QuaternionSlerp(qIdle[i], qAnim[i], flBlend, qAnim[i]);
+			}
+		}
+		
+		// During continuous-fire weapon animations (medigun, flamethrower), override
+		// the hand bone's LOCAL position with the idle value. This prevents the fire
+		// animation from translating the hand bone, which would shift the entire
+		// skeleton (including weapon_bone) and break weapon alignment.
 		// Rotation is preserved so the fire animation's grip squeeze still shows.
 		bool bMedigunFireActive = (m_eMedigunFireState != MEDIGUN_FIRE_IDLE) && m_bPlayingFireAnim;
 		if (bMedigunFireActive && m_bHandBoneOffsetValid)
@@ -3929,6 +3985,31 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	}
 	boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
 	
+	// Apply flamethrower blend to offhand grip target so it eases in/out with the fire anim
+	if (bUseCurrentAnimation && m_bPlayingFireAnim
+		&& m_flFlamethrowerFireBlend > 0.0f && m_flFlamethrowerFireBlend < 1.0f
+		&& IsWeaponFlamethrower(m_hHeldWeapon.Get()))
+	{
+		float flBlend = SimpleSpline(m_flFlamethrowerFireBlend);
+
+		Vector posIdle[MAXSTUDIOBONES];
+		Quaternion qIdle[MAXSTUDIOBONES];
+		for (int i = 0; i < numBones; i++)
+		{
+			posIdle[i].Init();
+			qIdle[i].Init(0, 0, 0, 1);
+		}
+		boneSetup.InitPose(posIdle, qIdle);
+		if (m_iIdleSequence >= 0)
+			boneSetup.AccumulatePose(posIdle, qIdle, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+
+		for (int i = 0; i < numBones; i++)
+		{
+			VectorLerp(posIdle[i], posAnim[i], flBlend, posAnim[i]);
+			QuaternionSlerp(qIdle[i], qAnim[i], flBlend, qAnim[i]);
+		}
+	}
+
 	if (tfvr_twohand_debug.GetBool() && IsLeftHand())
 	{
 		static float lastDebugTime = 0;
@@ -5310,6 +5391,21 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Get the appropriate alt-fire (secondary attack) animation name
+//          Currently only the flamethrower airblast has a distinct alt-fire anim.
+//-----------------------------------------------------------------------------
+const char* GetWeaponAltFireAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
+{
+	if (playerClass == TF_CLASS_PYRO)
+	{
+		if (V_stristr(weaponClass, "flamethrower")) return "ft_alt_fire";
+		if (V_stristr(weaponClass, "rocketlauncher_fireball")) return "ft_alt_fire"; // Dragon's Fury
+	}
+
+	return NULL;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
 //        Samples finger bone rotations from the hand model's weapon animation
 //-----------------------------------------------------------------------------
@@ -5781,6 +5877,36 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			}
 		}
 		
+		// Look up alt-fire (secondary attack) animation if one exists
+		m_iAltFireSequence = -1;
+		const char *altFireAnimName = GetWeaponAltFireAnimation(playerClass, weaponClass, pWeapon);
+		if (altFireAnimName && altFireAnimName[0])
+		{
+			extern ConVar tfvr_weapon_fire_anim_debug;
+
+			char vrAltFireName[128];
+			Q_snprintf(vrAltFireName, sizeof(vrAltFireName), "vr_%s", altFireAnimName);
+			m_iAltFireSequence = LookupSequence(vrAltFireName);
+
+			if (m_iAltFireSequence >= 0)
+			{
+				if (tfvr_weapon_fire_anim_debug.GetBool())
+				{
+					DevMsg("VR: Alt-fire sequence using VR override '%s' (seq %d) on model '%s'\n",
+						vrAltFireName, m_iAltFireSequence, GetModelName());
+				}
+			}
+			else
+			{
+				m_iAltFireSequence = LookupSequence(altFireAnimName);
+				if (tfvr_weapon_fire_anim_debug.GetBool())
+				{
+					DevMsg("VR: Alt-fire sequence fallback to '%s' (seq %d) on model '%s'\n",
+						altFireAnimName, m_iAltFireSequence, GetModelName());
+				}
+			}
+		}
+
 		// Also pass fire sequence to render weapon (in case it has its own animations)
 		pRenderWeapon->SetFireSequence(m_iFireSequence);
 		
@@ -6049,6 +6175,7 @@ void C_TFVRHand::UnequipWeapon()
 	// Reset animation state so next weapon/grip uses fresh lookups
 	m_iIdleSequence = -1;
 	m_iFireSequence = -1;
+	m_iAltFireSequence = -1;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
 	m_bHandBoneOffsetValid = false;
@@ -6056,7 +6183,9 @@ void C_TFVRHand::UnequipWeapon()
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
 	m_bMedigunWasHealing = false;
-	
+	m_bFlamethrowerWasFiring = false;
+	m_flFlamethrowerFireBlend = 0.0f;
+
 	// Reset two-hand grip state
 	m_flTwoHandBlend = 0.0f;
 	m_bOffhandGripActive = false;
@@ -6522,6 +6651,136 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Drive flamethrower fire animation based on weapon fire state.
+//          The flamethrower overrides PrimaryAttack() and never calls
+//          FireProjectile()/DoFireEffects(), so we poll m_iWeaponState
+//          each frame and play/hold/stop the fire animation accordingly.
+//          ft_fire loops while firing, returns to ft_idle when stopped.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateFlamethrowerFireAnimation()
+{
+	const float flEaseInTime = 0.16f;
+	const float flEaseOutTime = 0.16f;
+
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon || !IsWeaponFlamethrower(pWeapon))
+	{
+		if (m_flFlamethrowerFireBlend > 0.0f || m_bFlamethrowerWasFiring)
+		{
+			m_bFlamethrowerWasFiring = false;
+			m_flFlamethrowerFireBlend = 0.0f;
+			m_bPlayingFireAnim = false;
+			if (m_iIdleSequence >= 0)
+			{
+				SetSequence(m_iIdleSequence);
+				SetCycle(0.0f);
+			}
+		}
+		return;
+	}
+
+	extern ConVar tfvr_weapon_fire_anim;
+	extern ConVar tfvr_weapon_fire_anim_debug;
+
+	if (!tfvr_weapon_fire_anim.GetBool())
+		return;
+
+	CTFFlameThrower *pFlameThrower = static_cast<CTFFlameThrower*>(pWeapon);
+	int nWeaponState = pFlameThrower->GetWeaponState();
+	bool bIsFiring = (nWeaponState == FT_STATE_FIRING ||
+	                  nWeaponState == FT_STATE_STARTFIRING);
+	bool bIsAirblasting = (nWeaponState == FT_STATE_SECONDARY);
+
+	if (bIsFiring && !m_bFlamethrowerWasFiring)
+	{
+		// Just started firing - set fire sequence, blend will ramp up
+		if (m_iFireSequence >= 0)
+		{
+			SetSequence(m_iFireSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+			m_bPlayingFireAnim = true;
+			m_flFireAnimStartTime = gpGlobals->curtime;
+			InvalidateBoneCache();
+
+			if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR Flamethrower: Started firing - playing fire anim (seq %d)\n", m_iFireSequence);
+			}
+
+			C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+			if (pRenderWeapon)
+				pRenderWeapon->PlayFireAnimation();
+		}
+	}
+	else if (bIsFiring && m_bPlayingFireAnim)
+	{
+		if (GetCycle() >= 1.0f)
+		{
+			SetCycle(0.0f);
+		}
+	}
+	else if (!bIsFiring && !bIsAirblasting && m_bFlamethrowerWasFiring)
+	{
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR Flamethrower: Stopped firing - blending out (blend %.2f)\n", m_flFlamethrowerFireBlend);
+		}
+	}
+
+	// During airblast, don't touch sequences -- PlayWeaponAltFireAnimation
+	// owns the animation state and the generic completion check handles returning to idle.
+	// Reset blend so it doesn't block the generic one-shot completion check.
+	if (bIsAirblasting)
+	{
+		m_bFlamethrowerWasFiring = false;
+		m_flFlamethrowerFireBlend = 0.0f;
+		return;
+	}
+
+	// Ramp blend weight toward target
+	float flDt = gpGlobals->frametime;
+	if (bIsFiring)
+	{
+		m_flFlamethrowerFireBlend += flDt / flEaseInTime;
+	}
+	else
+	{
+		m_flFlamethrowerFireBlend -= flDt / flEaseOutTime;
+	}
+	m_flFlamethrowerFireBlend = clamp(m_flFlamethrowerFireBlend, 0.0f, 1.0f);
+
+	// Keep fire sequence active while blending out so SetupBones can sample it.
+	// Don't touch anything if alt-fire (airblast) is playing.
+	if (m_flFlamethrowerFireBlend > 0.0f && GetSequence() != m_iAltFireSequence)
+	{
+		m_bPlayingFireAnim = true;
+		if (!bIsFiring && m_iFireSequence >= 0 && GetSequence() != m_iFireSequence)
+		{
+			SetSequence(m_iFireSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(0.0f);
+		}
+	}
+	else if (!bIsFiring && m_bPlayingFireAnim
+		&& GetSequence() != m_iAltFireSequence)
+	{
+		// Blend-out complete, fully return to idle.
+		// Skip if alt-fire (airblast) is playing -- let the generic completion handle it.
+		m_bPlayingFireAnim = false;
+		if (m_iIdleSequence >= 0)
+		{
+			SetSequence(m_iIdleSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(0.0f);
+		}
+		InvalidateBoneCache();
+	}
+
+	m_bFlamethrowerWasFiring = bIsFiring;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Trigger fire animation on the hand (animates fingers during firing)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::PlayWeaponFireAnimation()
@@ -6618,6 +6877,49 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	}
 	
 	// Also trigger animation on the render weapon (if it has one)
+	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+	if (pRenderWeapon)
+	{
+		pRenderWeapon->PlayFireAnimation();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Trigger alt-fire (secondary attack) animation on the hand
+//          Used for flamethrower airblast, etc.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::PlayWeaponAltFireAnimation()
+{
+	extern ConVar tfvr_weapon_fire_anim;
+	extern ConVar tfvr_weapon_fire_anim_debug;
+
+	if (!tfvr_weapon_fire_anim.GetBool())
+		return;
+
+	if (m_iAltFireSequence < 0)
+	{
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: No alt-fire animation sequence set for this hand, falling back to primary fire\n");
+		}
+		PlayWeaponFireAnimation();
+		return;
+	}
+
+	SetSequence(m_iAltFireSequence);
+	SetCycle(0.0f);
+	SetPlaybackRate(1.0f);
+	m_bPlayingFireAnim = true;
+	m_flFireAnimStartTime = gpGlobals->curtime;
+
+	InvalidateBoneCache();
+
+	if (tfvr_weapon_fire_anim_debug.GetBool())
+	{
+		DevMsg("VR: Playing alt-fire animation on hand (sequence %d) at time %.2f\n",
+			m_iAltFireSequence, gpGlobals->curtime);
+	}
+
 	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
 	if (pRenderWeapon)
 	{

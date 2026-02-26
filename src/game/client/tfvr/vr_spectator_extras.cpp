@@ -23,6 +23,7 @@
 #include "iclientmode.h"
 #include "tier0/vprof.h"
 #include "sourcevr/isourcevirtualreality.h"
+#include "vr_menu_manager.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -423,6 +424,9 @@ void CVRSpectatorExtrasManager::Render()
         return;
     
     if (!UseVR())
+        return;
+    
+    if (g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible())
         return;
     
     if (m_vecEntitiesToDraw.Count() == 0)

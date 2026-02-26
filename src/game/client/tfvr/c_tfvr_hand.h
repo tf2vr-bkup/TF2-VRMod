@@ -125,9 +125,13 @@ public:
 	
 	// Fire animation - trigger weapon fire animation
 	void PlayWeaponFireAnimation();
+	void PlayWeaponAltFireAnimation();
 	
 	// Medigun fire animation state machine (fire_on -> fire_loop -> fire_off)
 	void UpdateMedigunFireAnimation();
+	
+	// Flamethrower fire animation - driven by weapon fire state
+	void UpdateFlamethrowerFireAnimation();
 	
 	// Two-handed weapon support
 	// bUseCurrentAnimation: false = use idle (for stable weapon rotation), true = use current (for visual positioning)
@@ -188,6 +192,7 @@ private:
 	
 	// Fire animation
 	int m_iFireSequence;           // Fire animation sequence index (fire_loop for medigun)
+	int m_iAltFireSequence;        // Alt-fire (secondary attack) animation sequence index
 	int m_iIdleSequence;           // Idle animation sequence to return to
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
@@ -197,6 +202,10 @@ private:
 	int m_iFireOnSequence;         // fire_on sequence (healing beam starts)
 	int m_iFireOffSequence;        // fire_off sequence (healing beam ends)
 	bool m_bMedigunWasHealing;     // Previous frame healing state for edge detection
+	
+	// Flamethrower fire animation state tracking
+	bool m_bFlamethrowerWasFiring;   // Previous frame firing state for edge detection
+	float m_flFlamethrowerFireBlend; // Blend weight: 0.0 = idle, 1.0 = fully in fire pose
 	
 	// Melee swing animation cycling (a -> b -> c -> a...)
 	int m_iMeleeSwingIndex;        // Current swing variant (0=a, 1=b, 2=c)

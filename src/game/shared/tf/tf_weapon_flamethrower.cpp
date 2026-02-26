@@ -21,6 +21,7 @@
 	#include "prediction.h"
 	#include "haptics/ihaptics.h"
 	#include "c_tf_gamestats.h"
+	#include "tfvr/c_tfvr_hand.h"
 #else
 
 	#include "explode.h"
@@ -1020,6 +1021,15 @@ void CTFFlameThrower::FireAirBlast( int iAmmoPerShot )
 	if ( prediction->IsFirstTimePredicted() == true )
 	{
 		StartFlame();
+	}
+
+	if ( m_bHeldByVRHand )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+		{
+			pRightHand->PlayWeaponAltFireAnimation();
+		}
 	}
 #endif
 
