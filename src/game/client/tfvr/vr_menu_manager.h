@@ -39,7 +39,12 @@ public:
     void HandleMenuInput();
 
     // Public method to check if menu is visible (for external access)
+    // Includes death state for VR input blocking purposes.
     bool IsMenuVisible();
+
+    // Check if a real menu panel is open (escape menu, class/team select, etc.)
+    // Unlike IsMenuVisible(), does NOT count the death state itself as a menu.
+    bool IsMenuPanelOpen();
     
     // Public method to get the world position where the controller ray intersects the menu plane
     Vector GetMenuPlaneIntersection(const Vector& controllerPos, const Vector& controllerForward);

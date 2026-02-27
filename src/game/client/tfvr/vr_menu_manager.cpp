@@ -1016,6 +1016,48 @@ void CVRMenuManager::HandleMenuInput()
     // Additional player-dependent menu logic can go here if needed
 }
 
+bool CVRMenuManager::IsMenuPanelOpen()
+{
+    bool bGameUIVisible = enginevgui && enginevgui->IsGameUIVisible();
+    if (bGameUIVisible)
+        return true;
+
+    if (gViewPortInterface)
+    {
+        IViewPortPanel* pPanel = nullptr;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_RED);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_BLUE);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_TEAM);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_INTRO);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_INFO);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_MAPINFO);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_ARENA_TEAM);
+        if (pPanel && pPanel->IsVisible()) return true;
+    }
+
+    if (g_pClientMode)
+    {
+        CHudMenu* pHudMenu = GET_HUDELEMENT(CHudMenu);
+        if (pHudMenu && pHudMenu->IsMenuOpen())
+            return true;
+    }
+
+    if (engine && engine->IsInGame())
+    {
+        ConVar* pClassMenuOpen = g_pCVar->FindVar("_cl_classmenuopen");
+        if (pClassMenuOpen && pClassMenuOpen->GetBool())
+            return true;
+    }
+
+    return false;
+}
+
 bool CVRMenuManager::IsMenuVisible()
 {
     // Check multiple conditions to be more robust

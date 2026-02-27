@@ -304,7 +304,7 @@ void CVRWorldHealthIconManager::Render()
     if (!UseVR())
         return;
     
-    if (g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible())
+    if (g_pVRMenuManager && g_pVRMenuManager->IsMenuPanelOpen())
         return;
     
     C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
