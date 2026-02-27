@@ -161,6 +161,12 @@ ConVar tfvr_weapon_hud_ammo_content_offset_y("tfvr_weapon_hud_ammo_content_offse
 ConVar tfvr_weapon_hud_ammo_scale("tfvr_weapon_hud_ammo_scale", "1.0", FCVAR_ARCHIVE, 
     "Scale factor for ammo panel");
 
+// Charge bar layout (bow charge, sticky charge - elements that layer on ammo)
+ConVar tfvr_weapon_hud_charge_offset_x("tfvr_weapon_hud_charge_offset_x", "0", FCVAR_ARCHIVE, 
+    "X offset for charge bars relative to ammo position");
+ConVar tfvr_weapon_hud_charge_offset_y("tfvr_weapon_hud_charge_offset_y", "40", FCVAR_ARCHIVE, 
+    "Y offset for charge bars relative to ammo position (positive = below ammo)");
+
 // Meter layout (sticky count, effect meters, etc.)
 ConVar tfvr_weapon_hud_meters_y("tfvr_weapon_hud_meters_y", "80", FCVAR_ARCHIVE, 
     "Y offset for meter panels (below ammo)");
@@ -913,11 +919,10 @@ void CVRWeaponHUDCompositor::UpdateMeterLayout()
         // Skip elements that layer on ammo (they don't go in horizontal stack)
         if (slot.bLayerOnAmmo)
         {
-            // Still need to position layered elements
             slot.bCenterHorizontally = false;
             slot.bCenterVertically = false;
-            slot.nOffsetX = ammoX;
-            slot.nOffsetY = ammoY;
+            slot.nOffsetX = ammoX + tfvr_weapon_hud_charge_offset_x.GetInt();
+            slot.nOffsetY = ammoY + tfvr_weapon_hud_charge_offset_y.GetInt();
             continue;
         }
         
