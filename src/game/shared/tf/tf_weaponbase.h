@@ -462,6 +462,8 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	virtual bool	CanAttack();
 	virtual int		GetCanAttackFlags() const { return TF_CAN_ATTACK_FLAG_NONE; }
 
+	bool			IsVRMuzzleClippedThroughWall( CTFPlayer *pPlayer ) const;
+
 	// Raising & Lowering for grenade throws
 	bool			WeaponShouldBeLowered( void );
 	virtual bool	Ready( void );

@@ -86,6 +86,9 @@ ConVar tf_scout_hype_pep_mod( "tf_scout_hype_pep_mod", "1.0", FCVAR_REPLICATED |
 ConVar tf_scout_hype_pep_max( "tf_scout_hype_pep_max", "99.0", FCVAR_REPLICATED | FCVAR_CHEAT | FCVAR_DEVELOPMENTONLY );
 ConVar tf_scout_hype_pep_min_damage( "tf_scout_hype_pep_min_damage", "5.0", FCVAR_REPLICATED | FCVAR_CHEAT | FCVAR_DEVELOPMENTONLY );
 
+ConVar tfvr_weapon_wall_clip_check( "tfvr_weapon_wall_clip_check", "1", FCVAR_REPLICATED | FCVAR_NOT_CONNECTED, "Prevent VR weapons from firing when the muzzle is clipped through a wall" );
+ConVar tfvr_weapon_wall_clip_fan_offset( "tfvr_weapon_wall_clip_fan_offset", "12", FCVAR_REPLICATED | FCVAR_NOT_CONNECTED, "Lateral offset (units) for fan traces that distinguish gates/walls from corner peeks" );
+
 ConVar tf_weapon_criticals_nopred( "tf_weapon_criticals_nopred", "1.0", FCVAR_REPLICATED | FCVAR_CHEAT );
 
 #ifdef _DEBUG
@@ -790,6 +793,33 @@ bool CTFWeaponBase::SendWeaponAnim( int iActivity )
 	CTFPlayer *pPlayer = GetTFPlayerOwner();
 	if ( !pPlayer )
 		return BaseClass::SendWeaponAnim( iActivity );
+
+#ifdef CLIENT_DLL
+	if ( m_bHeldByVRHand )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+		{
+			// Sticky launcher / loose cannon: charge on ACT_VM_PULLBACK
+			// Huntsman: initial draw on ACT_ITEM2_VM_CHARGE (remapped from ACT_VM_PULLBACK),
+			//   max-charge shake on ACT_ITEM2_VM_CHARGE_IDLE_3, looping via ACT_ITEM2_VM_IDLE_3
+			if ( iActivity == ACT_VM_PULLBACK || iActivity == ACT_ITEM2_VM_CHARGE )
+			{
+				pRightHand->PlayWeaponChargeAnimation();
+			}
+			else if ( iActivity == ACT_ITEM2_VM_CHARGE_IDLE_3 )
+			{
+				pRightHand->PlayWeaponChargeAnimation2();
+			}
+			else if ( pRightHand->IsPlayingChargeAnim()
+				&& iActivity != ACT_ITEM2_VM_IDLE_2
+				&& iActivity != ACT_ITEM2_VM_IDLE_3 )
+			{
+				pRightHand->StopWeaponChargeAnimation();
+			}
+		}
+	}
+#endif
 
 	if ( m_nInspectStage != INSPECT_INVALID )
 	{
@@ -4749,9 +4779,79 @@ bool CTFWeaponBase::CanAttack()
 	CTFPlayer *pPlayer = GetTFPlayerOwner();
 
 	if ( pPlayer )
+	{
+		if ( IsVRMuzzleClippedThroughWall( pPlayer ) )
+			return false;
+
 		return pPlayer->CanAttack( GetCanAttackFlags() );
+	}
 
 	return false;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: In VR, prevent firing when the weapon muzzle has clipped through
+//          a wall or gate. Two checks:
+//          1) startsolid -- muzzle is embedded inside solid geometry.
+//          2) Fan trace -- three traces from the eye to the muzzle region:
+//             center, and two laterally offset points. If ALL three hit
+//             non-damageable solids, there is a continuous barrier (gate/wall)
+//             between the player and the muzzle. For corner peeks, the offset
+//             on the open side passes through freely, so not all three are
+//             blocked, and firing is allowed.
+//-----------------------------------------------------------------------------
+bool CTFWeaponBase::IsVRMuzzleClippedThroughWall( CTFPlayer *pPlayer ) const
+{
+	if ( !tfvr_weapon_wall_clip_check.GetBool() )
+		return false;
+
+	if ( !pPlayer->IsInVRMode() )
+		return false;
+
+	Vector vecShootPos = pPlayer->Weapon_ShootPosition();
+
+	trace_t trace;
+	CTraceFilterSimple traceFilter( pPlayer, COLLISION_GROUP_NONE );
+
+	UTIL_TraceLine( vecShootPos, vecShootPos, MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
+	if ( trace.startsolid )
+		return true;
+
+	Vector vecEye = pPlayer->EyePosition();
+	Vector vecToMuzzle = vecShootPos - vecEye;
+	float flDist = vecToMuzzle.NormalizeInPlace();
+
+	if ( flDist < 1.0f )
+		return false;
+
+	Vector vecPerp;
+	CrossProduct( vecToMuzzle, Vector( 0, 0, 1 ), vecPerp );
+	float flPerpLen = vecPerp.NormalizeInPlace();
+
+	if ( flPerpLen < 0.1f )
+	{
+		CrossProduct( vecToMuzzle, Vector( 0, 1, 0 ), vecPerp );
+		vecPerp.NormalizeInPlace();
+	}
+
+	float flOffset = tfvr_weapon_wall_clip_fan_offset.GetFloat();
+
+	auto IsBlockedByWall = [&]( const Vector &vecEnd ) -> bool
+	{
+		UTIL_TraceLine( vecEye, vecEnd, MASK_SOLID, &traceFilter, &trace );
+		return trace.fraction < 1.0f && ( !trace.m_pEnt || trace.m_pEnt->m_takedamage == DAMAGE_NO );
+	};
+
+	if ( !IsBlockedByWall( vecShootPos ) )
+		return false;
+
+	if ( !IsBlockedByWall( vecShootPos + vecPerp * flOffset ) )
+		return false;
+
+	if ( !IsBlockedByWall( vecShootPos - vecPerp * flOffset ) )
+		return false;
+
+	return true;
 }
 
 
