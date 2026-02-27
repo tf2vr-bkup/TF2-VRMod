@@ -127,6 +127,13 @@ public:
 	void PlayWeaponFireAnimation();
 	void PlayWeaponAltFireAnimation();
 	
+	// Charge animation - played while holding attack to charge (sticky launcher, huntsman, etc.)
+	// Some weapons have two phases (e.g. huntsman: bw_charge -> bw_shake at max charge)
+	void PlayWeaponChargeAnimation();
+	void PlayWeaponChargeAnimation2();  // Second phase (e.g. max-charge shake)
+	void StopWeaponChargeAnimation();
+	bool IsPlayingChargeAnim() const { return m_bPlayingChargeAnim; }
+	
 	// Medigun fire animation state machine (fire_on -> fire_loop -> fire_off)
 	void UpdateMedigunFireAnimation();
 	
@@ -196,6 +203,11 @@ private:
 	int m_iIdleSequence;           // Idle animation sequence to return to
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
+	
+	// Charge animation (sticky launcher, huntsman, loose cannon, etc.)
+	int m_iChargeSequence;         // Charge/pullback animation sequence index
+	int m_iChargeSequence2;        // Second charge phase (e.g. huntsman max-charge shake)
+	bool m_bPlayingChargeAnim;     // Currently playing charge animation
 	
 	// Medigun fire animation state machine
 	MedigunFireState m_eMedigunFireState;

@@ -1225,6 +1225,9 @@ C_TFVRHand::C_TFVRHand()
 	m_iIdleSequence = -1;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_iChargeSequence = -1;
+	m_iChargeSequence2 = -1;
+	m_bPlayingChargeAnim = false;
 	m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
@@ -1333,6 +1336,9 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_iIdleSequence = -1;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_iChargeSequence = -1;
+	m_iChargeSequence2 = -1;
+	m_bPlayingChargeAnim = false;
 	m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
@@ -2931,10 +2937,12 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		int currentSeq = GetSequence();
 		float currentCycle = GetCycle();
 		
-		// If fire animation is playing, use the actual current sequence (which may be a swing variant)
-		// Otherwise use idle sequence for the weapon pose
-		int seqToSample = m_bPlayingFireAnim ? currentSeq : m_iIdleSequence;
-		float cycleToSample = m_bPlayingFireAnim ? currentCycle : 0.0f;
+		// If fire or charge animation is playing, use the actual current sequence
+		// so the hand bone movement produces visible position offset on the weapon.
+		// Otherwise use idle sequence for the weapon pose.
+		bool bUseCurrentAnim = m_bPlayingFireAnim || m_bPlayingChargeAnim;
+		int seqToSample = bUseCurrentAnim ? currentSeq : m_iIdleSequence;
+		float cycleToSample = bUseCurrentAnim ? currentCycle : 0.0f;
 		
 		if (seqToSample < 0)
 		{
@@ -4050,9 +4058,9 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	int seqToSample;
 	float cycleToSample;
 	
-	if (bUseCurrentAnimation && m_bPlayingFireAnim)
+	if (bUseCurrentAnimation && (m_bPlayingFireAnim || m_bPlayingChargeAnim))
 	{
-		// Sample current fire animation - grip target will move with recoil
+		// Sample current fire/charge animation - grip target will move with recoil/charge
 		seqToSample = GetSequence();
 		cycleToSample = GetCycle();
 	}
@@ -5485,6 +5493,37 @@ const char* GetWeaponAltFireAnimation(int playerClass, const char *weaponClass, 
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Get the charge/pullback animation for weapons that charge up
+//          (sticky launcher, huntsman, loose cannon, etc.)
+//-----------------------------------------------------------------------------
+const char* GetWeaponChargeAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
+{
+	switch (playerClass)
+	{
+		case TF_CLASS_DEMOMAN:
+			if (V_stristr(weaponClass, "pipebomblauncher")) return "sb_autofire";
+			if (V_stristr(weaponClass, "cannon")) return "g_auto_fire"; // Loose Cannon
+			break;
+		case TF_CLASS_SNIPER:
+			if (V_stristr(weaponClass, "compound_bow")) return "bw_charge"; // Initial bow draw
+			break;
+	}
+	return NULL;
+}
+
+// Second phase charge animation (e.g. huntsman arm-strain shake at max charge)
+const char* GetWeaponChargeAnimation2(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
+{
+	switch (playerClass)
+	{
+		case TF_CLASS_SNIPER:
+			if (V_stristr(weaponClass, "compound_bow")) return "bw_shake";
+			break;
+	}
+	return NULL;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
 //        Samples finger bone rotations from the hand model's weapon animation
 //-----------------------------------------------------------------------------
@@ -5506,37 +5545,51 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 	int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
 	const char *weaponClass = pWeapon->GetClassname();
 	
-	// Get the appropriate animation name for this weapon and class
-	const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass, pWeapon);
-	
-	// Try VR-specific override first (e.g. "vr_ft_idle" before "ft_idle")
+	// When a charge animation is active, sample from it instead of the idle pose
+	// so weapon_bone (and fingers) reflect the charge animation's movement
 	int sequence = -1;
-	char vrAnimName[128];
-	Q_snprintf(vrAnimName, sizeof(vrAnimName), "vr_%s", animName);
-	sequence = LookupSequence(vrAnimName);
+	const char *usedName = NULL;
+	float cycle = 0.0f;
 
-	const char *usedName = vrAnimName;
-	if (sequence < 0)
+	if (m_bPlayingChargeAnim || m_bPlayingFireAnim)
 	{
-		usedName = animName;
-		sequence = LookupSequence(animName);
-	}
-	if (sequence < 0)
-	{
-		usedName = "ref";
-		sequence = LookupSequence("ref");
-		if (sequence < 0)
+		int activeSeq = GetSequence();
+		if (activeSeq >= 0)
 		{
-			return;
+			sequence = activeSeq;
+			cycle = GetCycle();
+			usedName = m_bPlayingChargeAnim ? "charge_anim" : "fire_anim";
 		}
 	}
 
-	
+	if (sequence < 0)
+	{
+		// Default: use idle pose animation
+		const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass, pWeapon);
+
+		char vrAnimName[128];
+		Q_snprintf(vrAnimName, sizeof(vrAnimName), "vr_%s", animName);
+		sequence = LookupSequence(vrAnimName);
+
+		usedName = vrAnimName;
+		if (sequence < 0)
+		{
+			usedName = animName;
+			sequence = LookupSequence(animName);
+		}
+		if (sequence < 0)
+		{
+			usedName = "ref";
+			sequence = LookupSequence("ref");
+			if (sequence < 0)
+			{
+				return;
+			}
+		}
+	}
+
 	// Get the sequence descriptor
 	mstudioseqdesc_t &seqdesc = pStudioHdr->pSeqdesc(sequence);
-	
-	// Sample the animation at frame 0 (idle pose)
-	float cycle = 0.0f;
 	
 	// Temporary bone arrays for sampling the animation
 	Vector pos[MAXSTUDIOBONES];
@@ -5558,7 +5611,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 	if (tfvr_debug_weapon_position.GetBool())
 	{
 		Msg("ANIM DEBUG: '%s' seq=%d groupsize=[%d,%d] flags=0x%x numblends=%d numautolayers=%d\n",
-			animName, sequence, seqdesc.groupsize[0], seqdesc.groupsize[1],
+			usedName, sequence, seqdesc.groupsize[0], seqdesc.groupsize[1],
 			seqdesc.flags, seqdesc.numblends, seqdesc.numautolayers);
 	}
 	
@@ -5989,6 +6042,37 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			}
 		}
 
+		// Look up charge/pullback animation if one exists
+		m_iChargeSequence = -1;
+		m_iChargeSequence2 = -1;
+		m_bPlayingChargeAnim = false;
+		const char *chargeAnimName = GetWeaponChargeAnimation(playerClass, weaponClass, pWeapon);
+		if (chargeAnimName && chargeAnimName[0])
+		{
+			extern ConVar tfvr_weapon_fire_anim_debug;
+
+			m_iChargeSequence = LookupSequence(chargeAnimName);
+
+			if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR: Charge sequence '%s' (seq %d) on model '%s'\n",
+					chargeAnimName, m_iChargeSequence, GetModelName());
+			}
+		}
+		const char *chargeAnimName2 = GetWeaponChargeAnimation2(playerClass, weaponClass, pWeapon);
+		if (chargeAnimName2 && chargeAnimName2[0])
+		{
+			extern ConVar tfvr_weapon_fire_anim_debug;
+
+			m_iChargeSequence2 = LookupSequence(chargeAnimName2);
+
+			if (tfvr_weapon_fire_anim_debug.GetBool())
+			{
+				DevMsg("VR: Charge sequence 2 '%s' (seq %d) on model '%s'\n",
+					chargeAnimName2, m_iChargeSequence2, GetModelName());
+			}
+		}
+
 		// Also pass fire sequence to render weapon (in case it has its own animations)
 		pRenderWeapon->SetFireSequence(m_iFireSequence);
 		
@@ -6259,7 +6343,10 @@ void C_TFVRHand::UnequipWeapon()
 	m_iIdleSequence = -1;
 	m_iFireSequence = -1;
 	m_iAltFireSequence = -1;
+	m_iChargeSequence = -1;
+	m_iChargeSequence2 = -1;
 	m_bPlayingFireAnim = false;
+	m_bPlayingChargeAnim = false;
 	m_flFireAnimStartTime = 0.0f;
 	m_bHandBoneOffsetValid = false;
 	m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
@@ -6943,7 +7030,8 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 		return;
 	}
 	
-	// Play the fire animation on the HAND model
+	// Play the fire animation on the HAND model (stops any active charge anim)
+	m_bPlayingChargeAnim = false;
 	SetSequence(sequenceToPlay);
 	SetCycle(0.0f);
 	SetPlaybackRate(1.0f);
@@ -7007,6 +7095,96 @@ void C_TFVRHand::PlayWeaponAltFireAnimation()
 	if (pRenderWeapon)
 	{
 		pRenderWeapon->PlayFireAnimation();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Play charge/pullback animation (looping) while weapon is charging
+//-----------------------------------------------------------------------------
+void C_TFVRHand::PlayWeaponChargeAnimation()
+{
+	extern ConVar tfvr_weapon_fire_anim;
+	extern ConVar tfvr_weapon_fire_anim_debug;
+
+	if (!tfvr_weapon_fire_anim.GetBool())
+		return;
+
+	if (m_iChargeSequence < 0)
+	{
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: No charge animation sequence set for this hand\n");
+		}
+		return;
+	}
+
+	if (m_bPlayingChargeAnim)
+		return;
+
+	SetSequence(m_iChargeSequence);
+	SetCycle(0.0f);
+	SetPlaybackRate(1.0f);
+	m_bPlayingChargeAnim = true;
+	m_bPlayingFireAnim = false;
+
+	InvalidateBoneCache();
+
+	if (tfvr_weapon_fire_anim_debug.GetBool())
+	{
+		DevMsg("VR: Playing charge animation on hand (sequence %d)\n", m_iChargeSequence);
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Play second-phase charge animation (e.g. huntsman max-charge shake)
+//-----------------------------------------------------------------------------
+void C_TFVRHand::PlayWeaponChargeAnimation2()
+{
+	extern ConVar tfvr_weapon_fire_anim;
+	extern ConVar tfvr_weapon_fire_anim_debug;
+
+	if (!tfvr_weapon_fire_anim.GetBool())
+		return;
+
+	if (m_iChargeSequence2 < 0)
+		return;
+
+	SetSequence(m_iChargeSequence2);
+	SetCycle(0.0f);
+	SetPlaybackRate(1.0f);
+	m_bPlayingChargeAnim = true;
+	m_bPlayingFireAnim = false;
+
+	InvalidateBoneCache();
+
+	if (tfvr_weapon_fire_anim_debug.GetBool())
+	{
+		DevMsg("VR: Playing charge phase 2 animation on hand (sequence %d)\n", m_iChargeSequence2);
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Stop charge animation and return to idle
+//-----------------------------------------------------------------------------
+void C_TFVRHand::StopWeaponChargeAnimation()
+{
+	if (!m_bPlayingChargeAnim)
+		return;
+
+	m_bPlayingChargeAnim = false;
+
+	if (m_iIdleSequence >= 0)
+	{
+		SetSequence(m_iIdleSequence);
+		SetCycle(0.0f);
+	}
+
+	InvalidateBoneCache();
+
+	extern ConVar tfvr_weapon_fire_anim_debug;
+	if (tfvr_weapon_fire_anim_debug.GetBool())
+	{
+		DevMsg("VR: Stopped charge animation, returning to idle\n");
 	}
 }
 
