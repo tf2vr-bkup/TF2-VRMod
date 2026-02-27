@@ -231,6 +231,12 @@ private:
 	Vector m_vecCachedGripDelta;       // Cached initial pivot axis from grip start
 	Vector m_vecCachedGripYAxis;       // Cached initial weapon Y-axis from grip start
 	
+	// Aim stabilization - counteracts grip/trigger-induced palm movement
+	// Uses controller aim pose as stable reference; derives palm from controller movement
+	// so grip/trigger finger changes don't shift the hand root or weapon aim
+	matrix3x4_t m_matAimRefPalmOffset;   // Palm transform relative to controller (captured at equip)
+	bool m_bAimRefValid;                 // Whether reference has been captured
+	
 	// Cached idle muzzle offset for pistols (to keep aim stable during fire anim)
 	Vector m_vIdleMuzzleOffset;        // Muzzle offset relative to weapon_bone in idle pose
 	QAngle m_angIdleMuzzleAngles;      // Muzzle angles relative to weapon_bone in idle pose

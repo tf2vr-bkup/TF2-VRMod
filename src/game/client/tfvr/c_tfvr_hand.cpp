@@ -933,6 +933,11 @@ ConVar tfvr_aim_stickybomb_pitch("tfvr_aim_stickybomb_pitch", "0", FCVAR_ARCHIVE
 ConVar tfvr_aim_stickybomb_yaw("tfvr_aim_stickybomb_yaw", "90", FCVAR_ARCHIVE, "Yaw correction for sticky launcher aim (degrees, local space)");
 ConVar tfvr_aim_stickybomb_roll("tfvr_aim_stickybomb_roll", "0", FCVAR_ARCHIVE, "Roll correction for sticky launcher aim (degrees, local space)");
 
+// Aim stabilization - counteracts grip/trigger-induced palm wobble on weapon aim
+ConVar tfvr_aim_stabilize("tfvr_aim_stabilize", "1", FCVAR_ARCHIVE, "Stabilize weapon aim against grip-induced palm movement (0=off, 1=on)");
+ConVar tfvr_aim_stabilize_adapt("tfvr_aim_stabilize_adapt", "0.1", FCVAR_ARCHIVE, "Rate at which aim reference adapts to current grip (per second, 0=never)");
+ConVar tfvr_aim_stabilize_debug("tfvr_aim_stabilize_debug", "0", FCVAR_NONE, "Show aim stabilization debug info");
+
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
 static C_TFVRHand *g_pLocalPlayerRightHand = NULL;
@@ -1243,6 +1248,10 @@ C_TFVRHand::C_TFVRHand()
 	m_vecOffhandGripUp = Vector(0, 0, 1);
 	m_vecCachedGripDelta = vec3_origin;
 	m_vecCachedGripYAxis = Vector(0, 1, 0);
+	
+	// Aim stabilization
+	SetIdentityMatrix(m_matAimRefPalmOffset);
+	m_bAimRefValid = false;
 	
 	// Idle muzzle caching for pistols
 	m_vIdleMuzzleOffset = vec3_origin;
@@ -2660,7 +2669,75 @@ void C_TFVRHand::UpdateHandTransform()
 	
 	bool handValid = GetPalmTransform(palmMatrix);
 	
-	// Update this hand if valid, fallback to wrist, then controller
+	// Aim stabilization: when a weapon is equipped, SteamVR's hand tracking skeleton
+	// shifts the palm/wrist orientation when grip/trigger analog values change (because
+	// it synthesizes a hand pose from controller inputs). This wobbles the weapon aim.
+	// Fix: derive the palm transform from the controller aim pose (which is physically
+	// stable) plus a fixed offset captured at equip time. Finger bones are already
+	// overridden by the weapon grip animation, so nothing is lost visually.
+	if (handValid && m_hHeldWeapon.Get() && tfvr_aim_stabilize.GetBool())
+	{
+		VMatrix controllerPose;
+		bool bControllerValid = IsLeftHand() ?
+			g_pOpenXRManager->GetLeftControllerPose(controllerPose) :
+			g_pOpenXRManager->GetRightControllerPose(controllerPose);
+		
+		if (bControllerValid)
+		{
+			if (!m_bAimRefValid)
+			{
+				// First frame with weapon: capture palm position relative to controller
+				matrix3x4_t controllerInv;
+				MatrixInvert(controllerPose.As3x4(), controllerInv);
+				ConcatTransforms(controllerInv, palmMatrix.As3x4(), m_matAimRefPalmOffset);
+				m_bAimRefValid = true;
+			}
+			else
+			{
+				// Slowly adapt reference so it doesn't lock permanently to the
+				// initial grip state (handles player re-gripping the controller)
+				float adaptRate = tfvr_aim_stabilize_adapt.GetFloat();
+				if (adaptRate > 0.0f && gpGlobals->frametime > 0.0f)
+				{
+					matrix3x4_t controllerInv;
+					MatrixInvert(controllerPose.As3x4(), controllerInv);
+					matrix3x4_t currentPalmOffset;
+					ConcatTransforms(controllerInv, palmMatrix.As3x4(), currentPalmOffset);
+					
+					float lerpAmount = 1.0f - expf(-adaptRate * gpGlobals->frametime);
+					
+					Quaternion refQuat, curQuat, blendedQuat;
+					Vector refPos, curPos, blendedPos;
+					MatrixAngles(m_matAimRefPalmOffset, refQuat, refPos);
+					MatrixAngles(currentPalmOffset, curQuat, curPos);
+					QuaternionSlerp(refQuat, curQuat, lerpAmount, blendedQuat);
+					VectorLerp(refPos, curPos, lerpAmount, blendedPos);
+					QuaternionMatrix(blendedQuat, blendedPos, m_matAimRefPalmOffset);
+				}
+			}
+			
+			// Stabilized palm = controller * refPalmOffset
+			matrix3x4_t stabilizedPalm;
+			ConcatTransforms(controllerPose.As3x4(), m_matAimRefPalmOffset, stabilizedPalm);
+			
+			MatrixAngles(stabilizedPalm, m_angLastValidAngles, m_vecLastValidPosition);
+			m_bControllerTracked = true;
+			
+			if (tfvr_aim_stabilize_debug.GetBool())
+			{
+				Vector rawPos = palmMatrix.GetTranslation();
+				float posDelta = (m_vecLastValidPosition - rawPos).Length();
+				if (posDelta > 0.1f)
+				{
+					DevMsg("AimStab: palm shift %.2f units corrected\n", posDelta);
+				}
+			}
+			
+			goto applyTransform;
+		}
+	}
+	
+	// Normal path: use palm, fallback to wrist, then controller
 	if (handValid)
 	{
 		m_vecLastValidPosition = palmMatrix.GetTranslation();
@@ -2693,6 +2770,8 @@ void C_TFVRHand::UpdateHandTransform()
 			}
 		}
 	}
+	
+applyTransform:
 
 	// Position the entity at the palm position
 	// The animation bones will be positioned relative to this
@@ -5740,6 +5819,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// Store reference to the actual weapon (for getting properties, firing, etc.)
 	m_hHeldWeapon = pWeapon;
 	
+	// Reset aim stabilization so it recaptures reference with this weapon's grip
+	m_bAimRefValid = false;
+	
 	// VR NEW APPROACH: Create a separate render-only entity for the weapon visual
 	// This way the player's actual weapon can remain in the viewmodel system
 	// and we have full control over a separate worldmodel entity for rendering
@@ -6167,6 +6249,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 void C_TFVRHand::UnequipWeapon()
 {
 	// Invalidate cached state
+	m_bAimRefValid = false;
 	m_bIdleMuzzleOffsetValid = false;
 	m_iCachedMuzzleWeaponID = -1;
 	m_iOffHandBone = -1;
