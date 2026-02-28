@@ -594,27 +594,14 @@ void CTFGrenadeLauncher::StartChargeEffects()
 
 void CTFGrenadeLauncher::StopChargeEffects()
 {
-	C_BaseAnimating *pEffectEntity = this;
-
-	if ( m_bHeldByVRHand )
-	{
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
-		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
-		{
-			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
-			if ( pRenderWeapon )
-				pEffectEntity = pRenderWeapon;
-		}
-	}
-
 	if ( m_pCannonFuseSparkEffect )
 	{
-		pEffectEntity->ParticleProp()->StopEmission( m_pCannonFuseSparkEffect );
+		m_pCannonFuseSparkEffect->StopEmission();
 		m_pCannonFuseSparkEffect = NULL;
 	}
 	if ( m_pCannonCharge )
 	{
-		pEffectEntity->ParticleProp()->StopEmission( m_pCannonCharge );
+		m_pCannonCharge->StopEmission();
 		m_pCannonCharge = NULL;
 	}
 }

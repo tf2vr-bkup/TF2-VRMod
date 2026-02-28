@@ -36,10 +36,44 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE) {}
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false) {}
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
+
+	// Ensure VR hand has positioned us before any bone/attachment queries.
+	// This fixes particle effects, muzzle flashes, and other systems that query
+	// attachment positions before the hand's ClientThink has run this frame.
+	// Ensure the owning VR hand has positioned us before any bone/attachment queries.
+	// This fixes particle effects, muzzle flashes, and other systems that query
+	// attachment positions before the hand's ClientThink has run this frame.
+	virtual bool SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int boneMask, float currentTime) OVERRIDE
+	{
+		if (!m_bInSetupBones)
+		{
+			m_bInSetupBones = true;
+
+			// Must pass a real bone array — the hand's SetupBones returns early
+			// without running PositionWeaponFromBones if pBoneToWorldOut is NULL
+			matrix3x4_t handBones[MAXSTUDIOBONES];
+
+			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+			if (pRightHand && pRightHand->GetRenderWeapon() == this)
+			{
+				pRightHand->SetupBones(handBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, currentTime);
+			}
+			else
+			{
+				C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+				if (pLeftHand && pLeftHand->GetRenderWeapon() == this)
+				{
+					pLeftHand->SetupBones(handBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, currentTime);
+				}
+			}
+			m_bInSetupBones = false;
+		}
+		return BaseClass::SetupBones(pBoneToWorldOut, nMaxBones, boneMask, currentTime);
+	}
 	
 	// IHasOwner interface
 	virtual CBaseEntity *GetOwnerViaInterface(void) OVERRIDE
@@ -433,6 +467,7 @@ private:
 	bool m_bPlayingFireAnim;
 	CSmartPtr<CNewParticleEffect> m_pCritBoostEffect;
 	bool m_bCritBoostActive;
+	bool m_bInSetupBones;
 	
 	// Medigun fire animation state
 	int m_iFireOnSequence;
@@ -4694,15 +4729,6 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		}
 	}
 	
-	// Manually override crit boost particle position to use our cached transform
-	// This overrides whatever position the particle system sampled earlier
-	if (m_pCritBoostEffect.IsValid() && m_bWeaponBoneWorldValid)
-	{
-		Vector pos;
-		MatrixGetColumn(m_matWeaponBoneWorld, 3, pos);
-		m_pCritBoostEffect->SetControlPoint(0, pos);
-	}
-	
 	// Cache the muzzle position NOW while bones are fresh
 	// This will be used by tracers/effects that query muzzle position later
 	m_bCachedMuzzleValid = false;
@@ -6578,13 +6604,10 @@ void C_TFVRHand::UpdateCritBoostEffect()
 	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
 	if (pRenderWeapon)
 	{
-		// Attach to render weapon - the particle will use the weapon's model geometry
-		// We manually override the control point position in PositionWeaponFromBones
 		m_pCritBoostEffect = pRenderWeapon->ParticleProp()->Create(pEffectName, PATTACH_ABSORIGIN_FOLLOW);
 	}
 	else
 	{
-		// Fallback - custom origin on hand
 		m_pCritBoostEffect = ParticleProp()->Create(pEffectName, PATTACH_CUSTOMORIGIN);
 		if (m_pCritBoostEffect.IsValid())
 		{
