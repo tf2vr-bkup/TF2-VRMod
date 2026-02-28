@@ -320,6 +320,9 @@ private:
     
     // Track last weapon to detect changes
     CHandle<C_BaseCombatWeapon> m_hLastWeapon;
+    
+    // True when weapon is held by left hand (e.g. medigun)
+    bool m_bWeaponOnLeftHand;
 };
 
 // Global instances

@@ -1347,6 +1347,7 @@ CVRWeaponHUDManager::CVRWeaponHUDManager()
 {
     m_pCompositor = nullptr;
     m_hLastWeapon = nullptr;
+    m_bWeaponOnLeftHand = false;
 }
 
 //-----------------------------------------------------------------------------
@@ -1428,6 +1429,10 @@ void CVRWeaponHUDManager::Update()
         {
             m_hLastWeapon = pWeapon;
             m_pCompositor->RefreshDynamicElements();
+            
+            // Medigun is held on left hand; all other weapons on right
+            CTFWeaponBase* pTFWeapon = pPlayer->GetActiveTFWeapon();
+            m_bWeaponOnLeftHand = (pTFWeapon && pTFWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN);
         }
     }
 }
@@ -1445,8 +1450,8 @@ void CVRWeaponHUDManager::Render()
         return;
     
     // VR: Don't show weapon HUD if no weapon is equipped (e.g., during loser/stalemate)
-    C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
-    if (!pRightHand || !pRightHand->GetHeldWeapon())
+    C_TFVRHand* pWeaponHand = m_bWeaponOnLeftHand ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
+    if (!pWeaponHand || !pWeaponHand->GetHeldWeapon())
         return;
     
     VMatrix panelToWorld;
@@ -1508,18 +1513,16 @@ void CVRWeaponHUDManager::ResetState()
     }
     
     m_hLastWeapon = nullptr;
+    m_bWeaponOnLeftHand = false;
 }
 
 //-----------------------------------------------------------------------------
 bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
 {
-    // Get the right hand (weapon hand)
-    C_TFVRHand* pHand = GetLocalPlayerRightHand();
+    // Get the hand that holds the weapon (left for medigun, right for everything else)
+    C_TFVRHand* pHand = m_bWeaponOnLeftHand ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
     if (!pHand)
-    {
-        // No hand, can't position
         return false;
-    }
     
     bool bGotTransform = false;
     
@@ -1537,7 +1540,13 @@ bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
         C_BaseAnimating* pRenderWeapon = pHand->GetRenderWeapon();
         if (pRenderWeapon)
         {
-            int weaponBone = pRenderWeapon->LookupBone("weapon_bone");
+            // Left-hand medigun uses weapon_bone_L
+            int weaponBone = -1;
+            if (m_bWeaponOnLeftHand)
+                weaponBone = pRenderWeapon->LookupBone("weapon_bone_L");
+            if (weaponBone < 0)
+                weaponBone = pRenderWeapon->LookupBone("weapon_bone");
+            
             if (weaponBone >= 0)
             {
                 matrix3x4_t boneMatrix;
@@ -1547,7 +1556,6 @@ bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
             }
             else
             {
-                // No weapon_bone, use weapon origin
                 Vector weaponPos = pRenderWeapon->GetAbsOrigin();
                 QAngle weaponAngles = pRenderWeapon->GetAbsAngles();
                 
@@ -1575,12 +1583,15 @@ bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
         return false;
     
     // Apply user offsets in weapon space
+    // Flip X offset for left-hand weapons so the HUD mirrors to the other side
     if (m_vOffset.x != 0 || m_vOffset.y != 0 || m_vOffset.z != 0)
     {
         Vector weaponForward, weaponRight, weaponUp;
         transform.GetBasisVectors(weaponForward, weaponRight, weaponUp);
         
-        Vector worldOffset = weaponRight * m_vOffset.x + 
+        float offsetX = m_bWeaponOnLeftHand ? -m_vOffset.x : m_vOffset.x;
+        
+        Vector worldOffset = weaponRight * offsetX + 
                              weaponUp * m_vOffset.y + 
                              weaponForward * m_vOffset.z;
         
@@ -1589,11 +1600,19 @@ bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
     }
     
     // Apply rotation adjustments
+    // Flip yaw and roll for left-hand weapons to mirror the HUD orientation
     if (m_angRotation.x != 0 || m_angRotation.y != 0 || m_angRotation.z != 0)
     {
+        QAngle adjustedRotation = m_angRotation;
+        if (m_bWeaponOnLeftHand)
+        {
+            adjustedRotation.y = -adjustedRotation.y;
+            adjustedRotation.z = -adjustedRotation.z;
+        }
+        
         VMatrix rotationMatrix;
         matrix3x4_t rotMatrix;
-        AngleMatrix(m_angRotation, Vector(0, 0, 0), rotMatrix);
+        AngleMatrix(adjustedRotation, Vector(0, 0, 0), rotMatrix);
         rotationMatrix.CopyFrom3x4(rotMatrix);
         
         transform = transform * rotationMatrix;
