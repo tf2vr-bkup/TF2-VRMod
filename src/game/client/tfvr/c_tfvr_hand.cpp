@@ -4917,7 +4917,7 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 			QAngle correctionAngles(0, 0, 0);
 			bool bNeedsCorrection = false;
 
-			if (weaponID == TF_WEAPON_GRENADELAUNCHER)
+			if (weaponID == TF_WEAPON_GRENADELAUNCHER || weaponID == TF_WEAPON_CANNON)
 			{
 				correctionAngles.Init(tfvr_aim_grenadelauncher_pitch.GetFloat(),
 				                      tfvr_aim_grenadelauncher_yaw.GetFloat(),
@@ -4968,7 +4968,7 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 				QAngle correctionAngles(0, 0, 0);
 				bool bNeedsCorrection = false;
 
-				if (weaponID == TF_WEAPON_GRENADELAUNCHER)
+				if (weaponID == TF_WEAPON_GRENADELAUNCHER || weaponID == TF_WEAPON_CANNON)
 				{
 					correctionAngles.Init(tfvr_aim_grenadelauncher_pitch.GetFloat(),
 					                      tfvr_aim_grenadelauncher_yaw.GetFloat(),
