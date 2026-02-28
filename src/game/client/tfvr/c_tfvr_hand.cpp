@@ -6135,6 +6135,13 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Set up idle animations for the weapon model
 	pRenderWeapon->SetupAnimations();
+
+	// Sync broken bodygroup for breakable melee weapons (bottle, sign, etc.)
+	// so re-equipping an already-broken weapon shows the correct model
+	if (pWeapon->IsBroken())
+	{
+		pRenderWeapon->SetBodygroup(0, 1);
+	}
 	
 	// Copy attached models (festivizers, bot-killers, etc.) from the source weapon
 	pRenderWeapon->CopyAttachedModels(pWeapon);
@@ -6537,6 +6544,14 @@ void C_TFVRHand::UpdateSkins()
 		if (pRenderWeapon->m_nSkin != nWeaponSkin)
 		{
 			pRenderWeapon->m_nSkin = nWeaponSkin;
+		}
+
+		// Sync broken bodygroup for breakable melee weapons (bottle, sign, etc.)
+		// The server sets m_bBroken on crit hits; we mirror it to the VR render weapon
+		int iDesiredBody = pHeldWeapon->IsBroken() ? 1 : 0;
+		if (pRenderWeapon->GetBody() != iDesiredBody)
+		{
+			pRenderWeapon->SetBodygroup(0, iDesiredBody);
 		}
 	}
 }
