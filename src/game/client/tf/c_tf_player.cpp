@@ -3841,6 +3841,7 @@ IMPLEMENT_CLIENTCLASS_DT( C_TFPlayer, DT_TFPlayer, CTFPlayer )
 	RecvPropBool( RECVINFO( m_bUsingVRHeadset ) ),
 	RecvPropBool( RECVINFO( m_bInVRMode ) ),
 	RecvPropVector(RECVINFO(m_roomscaleOffset)),
+	RecvPropBool( RECVINFO( m_bHeadCollisionWarning ) ),
 
 
 END_RECV_TABLE()

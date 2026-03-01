@@ -21,6 +21,7 @@ class CVRWorldHealthIconManager;
 class CVRDamageNumberManager;
 class CVRSpectatorExtrasManager;
 class CVRSpectatorCamera;
+class CVRCollisionWarningManager;
 
 // Global input pointer declarations
 extern vgui::IInputInternal *g_InputInternal;
@@ -180,6 +181,9 @@ private:
     
     // VR Spectator Camera (Half-Life: Alyx style camera smoothing for streaming/trailers)
     CVRSpectatorCamera* m_pVRSpectatorCamera;
+
+    // VR Collision Warning (floating warning text when head position is desynced)
+    CVRCollisionWarningManager* m_pVRCollisionWarningManager;
 };
 
 // Global instance

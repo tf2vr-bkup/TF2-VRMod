@@ -67,6 +67,7 @@
 #include "tfvr/vr_spectator_extras.h"
 #include "tfvr/vr_controller_model.h"
 #include "tfvr/vr_spectator_camera.h"
+#include "tfvr/vr_collision_warning.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2600,6 +2601,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				if (g_pVRPopupHUDManager)
 				{
 					g_pVRPopupHUDManager->Render();
+				}
+				
+				// Render VR Collision Warning (head-relative: desync/collision warning text)
+				if (g_pVRCollisionWarningManager)
+				{
+					g_pVRCollisionWarningManager->Render();
 				}
 				
 				// Render VR Spectator Extras (world-space player names and health bars)

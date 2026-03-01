@@ -32,6 +32,7 @@
 #include "vr_damage_numbers.h"
 #include "vr_spectator_extras.h"
 #include "vr_spectator_camera.h"
+#include "vr_collision_warning.h"
 #include "vr_world_ui_queue.h"
 #include "vr_controller_model.h"
 
@@ -105,6 +106,7 @@ CVRMenuManager::CVRMenuManager()
     , m_pVRDamageNumberManager(nullptr)
     , m_pVRSpectatorExtrasManager(nullptr)
     , m_pVRSpectatorCamera(nullptr)
+    , m_pVRCollisionWarningManager(nullptr)
 {
     m_menuPlayspaceAnchor.Identity();
 }
@@ -308,6 +310,23 @@ void CVRMenuManager::Initialize()
         }
     }
     
+    // Initialize VR Collision Warning (floating warning text)
+    if (!m_pVRCollisionWarningManager)
+    {
+        m_pVRCollisionWarningManager = new CVRCollisionWarningManager();
+        if (m_pVRCollisionWarningManager->Initialize())
+        {
+            g_pVRCollisionWarningManager = m_pVRCollisionWarningManager;
+            DevMsg("VR Menu Manager: Collision Warning Manager initialized\n");
+        }
+        else
+        {
+            delete m_pVRCollisionWarningManager;
+            m_pVRCollisionWarningManager = nullptr;
+            Warning("VR Menu Manager: Failed to initialize Collision Warning Manager\n");
+        }
+    }
+    
     // Initialize VR Controller Model Manager (shows controllers during preamble/death)
     if (!g_pVRControllerModelManager && g_pOpenXRManager)
     {
@@ -413,6 +432,15 @@ void CVRMenuManager::Shutdown()
         delete m_pVRSpectatorExtrasManager;
         m_pVRSpectatorExtrasManager = nullptr;
         g_pVRSpectatorExtrasManager = nullptr;
+    }
+    
+    // Shutdown VR Collision Warning
+    if (m_pVRCollisionWarningManager)
+    {
+        m_pVRCollisionWarningManager->Shutdown();
+        delete m_pVRCollisionWarningManager;
+        m_pVRCollisionWarningManager = nullptr;
+        g_pVRCollisionWarningManager = nullptr;
     }
     
     // Shutdown VR Spectator Camera
@@ -532,6 +560,12 @@ void CVRMenuManager::Update()
     if (m_pVRPopupHUDManager)
     {
         m_pVRPopupHUDManager->Update(gpGlobals->frametime);
+    }
+    
+    // Update VR Collision Warning (floating warning text)
+    if (m_pVRCollisionWarningManager)
+    {
+        m_pVRCollisionWarningManager->Update(gpGlobals->frametime);
     }
     
     // Update VR World Health Icon Manager

@@ -1477,6 +1477,7 @@ private:
 
 	CNetworkVar( bool, m_bUsingVRHeadset );
 	CNetworkVar( bool, m_bInVRMode );		// Tracks actual VR mode usage
+	CNetworkVar( bool, m_bHeadCollisionWarning );
 
 	CNetworkVar( bool, m_bForcedSkin );
 	CNetworkVar( int, m_nForcedSkin );

@@ -852,6 +852,7 @@ IMPLEMENT_SERVERCLASS_ST( CTFPlayer, DT_TFPlayer )
 
 	// VR Related
 	SendPropVector(SENDINFO(m_roomscaleOffset), -1, SPROP_CHANGES_OFTEN | SPROP_NOSCALE),
+	SendPropBool( SENDINFO( m_bHeadCollisionWarning ) ),
 END_SEND_TABLE()
 
 // -------------------------------------------------------------------------------- //
@@ -1092,6 +1093,7 @@ CTFPlayer::CTFPlayer()
 	m_bInVRMode = false;
 	
 	m_lastTimeHeadCleared = 0.0f;
+	m_bHeadCollisionWarning = false;
 	m_clientEyePosition.Init();
 
 	// Initialize VR controller positions
@@ -23520,8 +23522,13 @@ void CTFPlayer::CheckForHeadCollisions()
 		}
 	}
 
-	// Distance limit check - separate thresholds for horizontal and vertical
-	float maxHorizontalDist = 24.f;
+	// Scale horizontal distance threshold based on player velocity so that
+	// knockback (airblast, explosions) and prediction errors at lower framerates
+	// don't cause jarring blinks. Geometry collision above is unaffected.
+	float speed = GetAbsVelocity().Length2D();
+	float velocityLeniency = Min(speed * 0.03f, 20.f);
+
+	float maxHorizontalDist = 24.f + velocityLeniency;
 	float maxVerticalDist = 100.f;
 	Vector delta = headPosition - GetAbsOrigin();
 	float horizontalDist = delta.Length2D();
@@ -23550,11 +23557,16 @@ void CTFPlayer::CheckForHeadCollisions()
 	{
 		color32 fadeColor{ 0, 0, 0, fadeIntensity };
 		UTIL_ScreenFade(this, fadeColor, 0.1f, 0.1f, FFADE_IN);
-		// if (fadeIntensity >= 192 && gpGlobals->curtime - m_lastTimeHeadCleared > 0.1f)
-		//	 UTIL_CenterPrintAll("Please move back\n");
+
+		float timeFaded = gpGlobals->curtime - m_lastTimeHeadCleared;
+		if (fadeIntensity >= 192 && timeFaded > 1.0f)
+		{
+			m_bHeadCollisionWarning = true;
+		}
 	}
 	else
 	{
 		m_lastTimeHeadCleared = gpGlobals->curtime;
+		m_bHeadCollisionWarning = false;
 	}
 }
