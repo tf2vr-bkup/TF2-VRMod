@@ -106,7 +106,7 @@ private:
     void UpdateSpringYaw(float deltaTime);
     
     // Render a single notification panel at a given vertical offset and optional horizontal offset
-    void RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset, float horizontalOffset = 0.0f);
+    void RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset, float horizontalOffset = 0.0f, bool bRestoreVisibility = true, bool bWasVisible = false);
     
     // Render all notification panels (called from Render)
     void RenderNotifications(const VMatrix& baseTransform);

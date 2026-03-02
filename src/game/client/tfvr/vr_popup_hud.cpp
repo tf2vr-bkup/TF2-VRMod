@@ -1038,7 +1038,7 @@ void CVRPopupHUDManager::Render()
     }
 }
 
-void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset, float horizontalOffset)
+void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMatrix& baseTransform, float verticalOffset, float horizontalOffset, bool bRestoreVisibility, bool bWasVisible)
 {
     if (!pPanel || !pPanel->IsVisible())
         return;
@@ -1091,10 +1091,8 @@ void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMat
     }
     
     // Queue the panel for distance-sorted rendering
-    // Pass visibility restore parameters so the queue can make the panel visible when rendering
-    // Always restore to invisible (false) - these panels should only be visible during 3D capture
     QueuePanelForRender(pPanel, notificationTransform, panelWidth, panelHeight,
-                        worldWidth, worldHeight, m_headPosForSort, true, false);
+                        worldWidth, worldHeight, m_headPosForSort, bRestoreVisibility, bWasVisible);
 }
 
 void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
@@ -1144,10 +1142,11 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
     }
     
     // Slot 1: Notification panel (objective notifications like "Intelligence captured")
+    // Paint() suppression handles 2D, so don't toggle visibility (breaks stereo rendering)
     float slot1Offset = baseOffset - slotSpacing;
     if (m_pNotificationPanel && m_pNotificationPanel->IsVisible())
     {
-        RenderNotificationPanel(m_pNotificationPanel, baseTransform, slot1Offset);
+        RenderNotificationPanel(m_pNotificationPanel, baseTransform, slot1Offset, 0.0f, false);
     }
     
     // Slot 2: Building status (engineer or spy)
