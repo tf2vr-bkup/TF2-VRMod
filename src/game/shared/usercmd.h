@@ -51,6 +51,10 @@ public:
 		leftControllerAngles.Init();
 		rightControllerOrigin.Init();
 		rightControllerAngles.Init();
+		vrThrowVelocity.Init();
+		vrThrowOrigin.Init();
+		vrThrowAngles.Init();
+		vrThrowAngVel.Init();
 		forwardmove = 0.0f;
 		sidemove = 0.0f;
 		upmove = 0.0f;
@@ -87,6 +91,10 @@ public:
 		leftControllerAngles = src.leftControllerAngles;
 		rightControllerOrigin = src.rightControllerOrigin;
 		rightControllerAngles = src.rightControllerAngles;
+		vrThrowVelocity		= src.vrThrowVelocity;
+		vrThrowOrigin		= src.vrThrowOrigin;
+		vrThrowAngles		= src.vrThrowAngles;
+		vrThrowAngVel		= src.vrThrowAngVel;
 		forwardmove			= src.forwardmove;
 		sidemove			= src.sidemove;
 		upmove				= src.upmove;
@@ -130,6 +138,10 @@ public:
 		CRC32_ProcessBuffer( &crc, &leftControllerAngles, sizeof( leftControllerAngles ) );
 		CRC32_ProcessBuffer( &crc, &rightControllerOrigin, sizeof( rightControllerOrigin ) );
 		CRC32_ProcessBuffer( &crc, &rightControllerAngles, sizeof( rightControllerAngles ) );
+		CRC32_ProcessBuffer( &crc, &vrThrowVelocity, sizeof( vrThrowVelocity ) );
+		CRC32_ProcessBuffer( &crc, &vrThrowOrigin, sizeof( vrThrowOrigin ) );
+		CRC32_ProcessBuffer( &crc, &vrThrowAngles, sizeof( vrThrowAngles ) );
+		CRC32_ProcessBuffer( &crc, &vrThrowAngVel, sizeof( vrThrowAngVel ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
 		CRC32_ProcessBuffer( &crc, &sidemove, sizeof( sidemove ) );      
 		CRC32_ProcessBuffer( &crc, &upmove, sizeof( upmove ) );         
@@ -155,6 +167,10 @@ public:
 		leftControllerAngles.Init();
 		rightControllerOrigin.Init();
 		rightControllerAngles.Init();
+		vrThrowVelocity.Init();
+		vrThrowOrigin.Init();
+		vrThrowAngles.Init();
+		vrThrowAngVel.Init();
 		forwardmove = 0.f;
 		sidemove = 0.f;
 		upmove = 0.f;
@@ -182,7 +198,13 @@ public:
 	QAngle	leftControllerAngles;
 	Vector	rightControllerOrigin;
 	QAngle	rightControllerAngles;
-	
+
+	// VR physical throw (set on grip/trigger release for throwable weapons)
+	Vector	vrThrowVelocity;
+	Vector	vrThrowOrigin;		// player-relative offset (reconstructed on server)
+	QAngle	vrThrowAngles;		// hand orientation at moment of release
+	Vector	vrThrowAngVel;		// angular velocity of hand (deg/sec, as Vector)
+
 	// Intended velocities
 	//	forward velocity.
 	float	forwardmove;   

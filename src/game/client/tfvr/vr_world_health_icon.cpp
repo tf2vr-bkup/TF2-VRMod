@@ -352,6 +352,8 @@ void CVRWorldHealthIconManager::Render()
     if (!pTargetID->ShouldDraw())
     {
         s_bIsRendering3D = false;
+        // Reset frame counter - panel hasn't been through a layout cycle yet
+        m_nFramesSinceTargetChange = 0;
         return;
     }
     
@@ -471,7 +473,7 @@ void CVRWorldHealthIconManager::Render()
                tfvr_world_targetid_enabled.GetBool(), m_nFramesSinceTargetChange, targetIDPanelWidth);
     }
     
-    if (tfvr_world_targetid_enabled.GetBool() && m_nFramesSinceTargetChange >= 1)
+    if (tfvr_world_targetid_enabled.GetBool() && m_nFramesSinceTargetChange >= 2)
     {
         RenderTargetID(pEntity, pTargetID, distanceScale, bIsBuilding,
                        targetIDPanelWidth, targetIDPanelHeight, tagWorldWidth, tagWorldHeight, tagHeightOffset);

@@ -10,6 +10,8 @@
 #include "vr_menu_manager.h"
 #include "engine/ivdebugoverlay.h"
 #include "tf/c_tf_player.h"
+#include "tf/tf_weaponbase.h"
+#include "tf/tf_shareddefs.h"
 #include "c_tfvr_hand.h"
 #include <game/client/iviewport.h>
 #include "viewport_panel_names.h"
@@ -45,6 +47,11 @@ ConVar tfvr_voice_ear_radius( "tfvr_voice_ear_radius", "15.0", FCVAR_ARCHIVE, "R
 ConVar tfvr_voice_ear_offset( "tfvr_voice_ear_offset", "8.0", FCVAR_ARCHIVE, "Lateral offset from head center to left ear (in game units)" );
 ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE, "Show debug output for voice chat gesture detection" );
 
+// Physical throw ConVars
+ConVar tfvr_physical_throw( "tfvr_physical_throw", "1", FCVAR_ARCHIVE, "Enable physical throwing for throwable weapons (0=classic aim-based throw, 1=gesture-based throw)" );
+ConVar tfvr_physical_throw_debug( "tfvr_physical_throw_debug", "0", FCVAR_ARCHIVE, "Show debug output for physical throw gesture detection" );
+ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", "0.5", FCVAR_ARCHIVE, "Grip analog threshold for physical throw hold (0.0-1.0)" );
+
 // Voice gesture state - used to suppress offhand attack when voice is active
 static bool s_bVoiceGestureActive = false;
 
@@ -67,7 +74,9 @@ float s_flLastSnapTurnTime = 0.0f;
 
 CVRInput::CVRInput()
 {
-    // Constructor - no initialization needed
+    m_bThrowHolding = false;
+    m_nLastThrowableWeaponID = -1;
+    m_bInCreateMove = false;
 }
 
 CVRInput::~CVRInput()
@@ -91,6 +100,9 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
     // Only process VR input if active
     if (active && g_pOpenXRManager && g_pOpenXRManager->IsActive())
     {
+        // Flag so throw gesture only fires during CreateMove, not ExtraMouseSample
+        m_bInCreateMove = true;
+
         // Process VR-specific input
         ProcessVRControllerInput(cmd);
         
@@ -102,6 +114,8 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
         
         // Process VR movement
         ProcessVRMovement(cmd, input_sample_frametime);
+
+        m_bInCreateMove = false;
         
         // VR turning is now handled in the main input system
     }
@@ -464,6 +478,14 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     if (bSecondaryAttack && !bSuppressSecondary)
         cmd->buttons |= IN_ATTACK2;
 
+    // Physical throw gesture — intercepts IN_ATTACK for throwable weapons.
+    // Only process during CreateMove, not ExtraMouseSample (which uses a
+    // disposable dummy command and would consume the release event).
+    if ( tfvr_physical_throw.GetBool() && m_bInCreateMove )
+    {
+        ProcessThrowGesture( cmd, bPrimaryAttack, bSuppressPrimary );
+    }
+
     // Use
     bool bUse = g_pOpenXRManager->IsButtonPressed("use");
     if (bUse)
@@ -786,4 +808,128 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
     // Laser pointer functionality is now handled by CVRLaserPointer class
 }
 
- 
+//-----------------------------------------------------------------------------
+bool CVRInput::IsThrowableWeapon( C_TFWeaponBase *pWeapon )
+{
+    if ( !pWeapon )
+        return false;
+
+    int id = pWeapon->GetWeaponID();
+    return ( id == TF_WEAPON_JAR ||
+             id == TF_WEAPON_JAR_MILK ||
+             id == TF_WEAPON_CLEAVER ||
+             id == TF_WEAPON_JAR_GAS ||
+             id == TF_WEAPON_THROWABLE );
+}
+
+//-----------------------------------------------------------------------------
+// Handles grip/trigger hold-and-release for throwable weapons.
+// Returns true if the primary attack should be suppressed this frame
+// (because we're in physical throw mode and managing IN_ATTACK ourselves).
+//-----------------------------------------------------------------------------
+void CVRInput::ProcessThrowGesture( CUserCmd *cmd, bool bTriggerHeld, bool bSuppressTrigger )
+{
+    C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    if ( !pPlayer )
+        return;
+
+    CTFWeaponBase *pWeapon = pPlayer->GetActiveTFWeapon();
+
+    // If the current weapon isn't throwable, reset state and bail
+    if ( !IsThrowableWeapon( pWeapon ) )
+    {
+        if ( m_bThrowHolding )
+        {
+            m_bThrowHolding = false;
+            m_throwTracker.Reset();
+            if ( tfvr_physical_throw_debug.GetBool() )
+                DevMsg( "VR Throw: Reset (weapon changed)\n" );
+        }
+        m_nLastThrowableWeaponID = -1;
+        return;
+    }
+
+    // If we switched to a different throwable, reset tracking
+    int nWeaponID = pWeapon->GetWeaponID();
+    if ( nWeaponID != m_nLastThrowableWeaponID )
+    {
+        m_bThrowHolding = false;
+        m_throwTracker.Reset();
+        m_nLastThrowableWeaponID = nWeaponID;
+    }
+
+    // Read grip value from weapon hand
+    float flGripValue = g_pOpenXRManager->GetAnalogValue( "right_grip" );
+    bool bGripHeld = ( flGripValue > tfvr_throw_grip_threshold.GetFloat() );
+
+    bool bEitherHeld = bGripHeld || ( bTriggerHeld && !bSuppressTrigger );
+
+    // Get weapon-hand controller pose.  Position is stored relative to the
+    // player entity so artificial locomotion doesn't inflate the velocity.
+    VMatrix controllerPose;
+    bool bPoseValid = g_pOpenXRManager->GetRightControllerPose( controllerPose );
+    Vector vecHandPos = vec3_origin;
+    QAngle angHand( 0, 0, 0 );
+    if ( bPoseValid )
+    {
+        vecHandPos = controllerPose.GetTranslation() - pPlayer->GetAbsOrigin();
+        MatrixAngles( controllerPose.As3x4(), angHand );
+    }
+
+    if ( !m_bThrowHolding )
+    {
+        // Not holding yet — check if player just grabbed
+        if ( bEitherHeld && bPoseValid )
+        {
+            m_bThrowHolding = true;
+            m_throwTracker.Reset();
+            m_throwTracker.AddSample( vecHandPos, angHand, gpGlobals->curtime );
+
+            if ( tfvr_physical_throw_debug.GetBool() )
+                DevMsg( "VR Throw: Holding started (grip=%.2f trigger=%d)\n", flGripValue, bTriggerHeld ? 1 : 0 );
+        }
+    }
+    else
+    {
+        // Currently holding
+        if ( bPoseValid )
+            m_throwTracker.AddSample( vecHandPos, angHand, gpGlobals->curtime );
+
+        if ( !bEitherHeld )
+        {
+            // Released! Compute throw velocity and fire.
+            // The tracker gives us gesture velocity relative to the player.
+            // Player movement velocity is added server-side after the speed
+            // multiplier so it isn't amplified by the throw params.
+            Vector vecThrowVel = m_throwTracker.GetAveragedVelocity();
+
+            cmd->vrThrowVelocity = vecThrowVel;
+
+            // Origin as player-relative offset — the server reconstructs
+            // world-space from its own player position, avoiding latency drift.
+            cmd->vrThrowOrigin = bPoseValid ? vecHandPos : vec3_origin;
+
+            // Hand orientation at release and angular velocity (deg/sec, world XYZ)
+            cmd->vrThrowAngles = m_throwTracker.GetNewestAngles();
+            cmd->vrThrowAngVel = m_throwTracker.GetAveragedAngularVelocity();
+
+            cmd->buttons |= IN_ATTACK;
+
+            m_bThrowHolding = false;
+            m_throwTracker.Reset();
+
+            if ( tfvr_physical_throw_debug.GetBool() )
+            {
+                DevMsg( "VR Throw: Released! velocity=(%.1f, %.1f, %.1f) speed=%.1f angVel=(%.1f, %.1f, %.1f)\n",
+                        vecThrowVel.x, vecThrowVel.y, vecThrowVel.z, vecThrowVel.Length(),
+                        cmd->vrThrowAngVel.x, cmd->vrThrowAngVel.y, cmd->vrThrowAngVel.z );
+            }
+        }
+    }
+
+    // While in holding state, strip IN_ATTACK so the weapon doesn't fire prematurely
+    if ( m_bThrowHolding )
+    {
+        cmd->buttons &= ~IN_ATTACK;
+    }
+}

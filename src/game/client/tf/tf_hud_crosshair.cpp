@@ -81,6 +81,23 @@ bool CHudTFCrosshair::ShouldDraw( void )
 
 		if ( pPlayer->IsTaunting() )
 			return false;
+
+		// VR: hide crosshair on throwables when physical throw is active
+		extern ConVar tfvr_physical_throw;
+		if ( tfvr_physical_throw.GetBool() )
+		{
+			CTFWeaponBase *pWeapon = pPlayer->GetActiveTFWeapon();
+			if ( pWeapon )
+			{
+				int wid = pWeapon->GetWeaponID();
+				if ( wid == TF_WEAPON_JAR || wid == TF_WEAPON_JAR_MILK ||
+					 wid == TF_WEAPON_CLEAVER || wid == TF_WEAPON_JAR_GAS ||
+					 wid == TF_WEAPON_THROWABLE )
+				{
+					return false;
+				}
+			}
+		}
 	}
 
 	if ( m_flTimeToHideUntil > gpGlobals->curtime )

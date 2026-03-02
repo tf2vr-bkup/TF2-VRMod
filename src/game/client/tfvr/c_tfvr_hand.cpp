@@ -1890,6 +1890,15 @@ void C_TFVRHand::Update()
 				{
 					bSkipTwoHand = true;
 				}
+				// Throwables are one-handed - no off-hand grip
+				else if (iWeaponID == TF_WEAPON_JAR ||
+						 iWeaponID == TF_WEAPON_JAR_MILK ||
+						 iWeaponID == TF_WEAPON_CLEAVER ||
+						 iWeaponID == TF_WEAPON_JAR_GAS ||
+						 iWeaponID == TF_WEAPON_THROWABLE)
+				{
+					bSkipTwoHand = true;
+				}
 				// Pistols - passive grip only (no active grip button required, no rotation control)
 				else if (iWeaponID == TF_WEAPON_PISTOL ||
 				         iWeaponID == TF_WEAPON_PISTOL_SCOUT ||
@@ -2437,28 +2446,53 @@ void C_TFVRHand::Update()
 			// Normal weapon update logic
 			C_TFWeaponBase *pCurrentHeld = m_hHeldWeapon.Get();
 			
-			// Detect weapon change: either different weapon, or current held weapon is now invalid
-			bool bNeedsWeaponUpdate = false;
-			
-			if (pActiveWeapon != pCurrentHeld)
+			// VR: Hide throwable weapons immediately when ammo hits 0
+			// (i.e. the player just threw). The hand reverts to empty
+			// pose until the auto weapon-switch kicks in.
+			extern ConVar tfvr_physical_throw;
+			bool bThrowableNoAmmo = false;
+			if (tfvr_physical_throw.GetBool() && pActiveWeapon)
 			{
-				bNeedsWeaponUpdate = true;
-			}
-			else if (pCurrentHeld && !pCurrentHeld->GetOwner())
-			{
-				// Held weapon is orphaned (regenerated/respawned), need to refresh
-				bNeedsWeaponUpdate = true;
-			}
-			
-			if (bNeedsWeaponUpdate)
-			{
-				if (pActiveWeapon)
+				int wid = pActiveWeapon->GetWeaponID();
+				if (wid == TF_WEAPON_JAR || wid == TF_WEAPON_JAR_MILK ||
+					wid == TF_WEAPON_CLEAVER || wid == TF_WEAPON_JAR_GAS ||
+					wid == TF_WEAPON_THROWABLE)
 				{
-					EquipWeapon(pActiveWeapon);
+					if (pOwner->GetAmmoCount(pActiveWeapon->GetPrimaryAmmoType()) <= 0)
+						bThrowableNoAmmo = true;
 				}
-				else
-				{
+			}
+
+			if (bThrowableNoAmmo)
+			{
+				if (pCurrentHeld)
 					UnequipWeapon();
+			}
+			else
+			{
+				// Detect weapon change: either different weapon, or current held weapon is now invalid
+				bool bNeedsWeaponUpdate = false;
+
+				if (pActiveWeapon != pCurrentHeld)
+				{
+					bNeedsWeaponUpdate = true;
+				}
+				else if (pCurrentHeld && !pCurrentHeld->GetOwner())
+				{
+					// Held weapon is orphaned (regenerated/respawned), need to refresh
+					bNeedsWeaponUpdate = true;
+				}
+
+				if (bNeedsWeaponUpdate)
+				{
+					if (pActiveWeapon)
+					{
+						EquipWeapon(pActiveWeapon);
+					}
+					else
+					{
+						UnequipWeapon();
+					}
 				}
 			}
 		}
@@ -4927,48 +4961,50 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		}
 	}
 	
-	// STANDARD WEAPONS: Use cached muzzle position if valid (set during PositionWeaponFromBones)
-	// This ensures the muzzle position matches the rendered weapon position
-	if (m_bCachedMuzzleValid)
+	// STANDARD WEAPONS: Query the render weapon's muzzle attachment directly.
+	// The render weapon's SetupBones override forces the hand to position it
+	// with fresh tracking data before computing bone/attachment transforms,
+	// so the result always reflects the current controller pose.
 	{
-		outPos = m_vecCachedMuzzlePos;
-		outAngles = m_angCachedMuzzleAngles;
-		
-		// Apply weapon-specific aim angle corrections as LOCAL rotations
-		// Using matrix multiplication so the correction stays in the muzzle's
-		// local coordinate frame regardless of hand roll/pitch/yaw
-		if (pTFWeapon)
+		int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
+		if (iMuzzle > 0 && pRenderWeapon->GetAttachment(iMuzzle, outPos, outAngles))
 		{
-			int weaponID = pTFWeapon->GetWeaponID();
-			QAngle correctionAngles(0, 0, 0);
-			bool bNeedsCorrection = false;
+			// Apply weapon-specific aim angle corrections as LOCAL rotations
+			// Using matrix multiplication so the correction stays in the muzzle's
+			// local coordinate frame regardless of hand roll/pitch/yaw
+			if (pTFWeapon)
+			{
+				int weaponID = pTFWeapon->GetWeaponID();
+				QAngle correctionAngles(0, 0, 0);
+				bool bNeedsCorrection = false;
 
-			if (weaponID == TF_WEAPON_GRENADELAUNCHER || weaponID == TF_WEAPON_CANNON)
-			{
-				correctionAngles.Init(tfvr_aim_grenadelauncher_pitch.GetFloat(),
-				                      tfvr_aim_grenadelauncher_yaw.GetFloat(),
-				                      tfvr_aim_grenadelauncher_roll.GetFloat());
-				bNeedsCorrection = true;
-			}
-			else if (weaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
-			{
-				correctionAngles.Init(tfvr_aim_stickybomb_pitch.GetFloat(),
-				                      tfvr_aim_stickybomb_yaw.GetFloat(),
-				                      tfvr_aim_stickybomb_roll.GetFloat());
-				bNeedsCorrection = true;
+				if (weaponID == TF_WEAPON_GRENADELAUNCHER || weaponID == TF_WEAPON_CANNON)
+				{
+					correctionAngles.Init(tfvr_aim_grenadelauncher_pitch.GetFloat(),
+					                      tfvr_aim_grenadelauncher_yaw.GetFloat(),
+					                      tfvr_aim_grenadelauncher_roll.GetFloat());
+					bNeedsCorrection = true;
+				}
+				else if (weaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
+				{
+					correctionAngles.Init(tfvr_aim_stickybomb_pitch.GetFloat(),
+					                      tfvr_aim_stickybomb_yaw.GetFloat(),
+					                      tfvr_aim_stickybomb_roll.GetFloat());
+					bNeedsCorrection = true;
+				}
+
+				if (bNeedsCorrection)
+				{
+					matrix3x4_t muzzleMat, correctionMat, resultMat;
+					AngleMatrix(outAngles, vec3_origin, muzzleMat);
+					AngleMatrix(correctionAngles, vec3_origin, correctionMat);
+					ConcatTransforms(muzzleMat, correctionMat, resultMat);
+					MatrixAngles(resultMat, outAngles);
+				}
 			}
 
-			if (bNeedsCorrection)
-			{
-				matrix3x4_t muzzleMat, correctionMat, resultMat;
-				AngleMatrix(outAngles, vec3_origin, muzzleMat);
-				AngleMatrix(correctionAngles, vec3_origin, correctionMat);
-				ConcatTransforms(muzzleMat, correctionMat, resultMat);
-				MatrixAngles(resultMat, outAngles);
-			}
+			return true;
 		}
-		
-		return true;
 	}
 	
 	// Fallback: Force bone setup and query attachment directly

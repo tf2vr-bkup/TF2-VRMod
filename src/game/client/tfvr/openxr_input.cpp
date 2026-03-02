@@ -167,6 +167,11 @@ bool COpenXRInputManager::CreateActions()
     if (leftGrip.handle == XR_NULL_HANDLE) return false;
     m_actions["left_grip"] = leftGrip;
 
+    // Add right grip button action for throwable weapon gestures
+    XrInputAction rightGrip = CreateFloatAction("right_grip", "Right Grip");
+    if (rightGrip.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_grip"] = rightGrip;
+
     // Add voice action for voice chat activation
     // Used when gesture mode is disabled, or for the gesture trigger when enabled
     XrInputAction voice = CreateFloatAction("voice", "Voice Chat");
@@ -425,6 +430,19 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right grip button binding (for throwable weapon gestures) - Index uses squeeze
+    if (m_actions.find("right_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -725,6 +743,19 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right grip button binding (for throwable weapon gestures) - Quest uses squeeze
+    if (m_actions.find("right_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }

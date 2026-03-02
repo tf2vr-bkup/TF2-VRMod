@@ -211,7 +211,10 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	WriteVec3Diff(buf, to->leftControllerAngles, from->leftControllerAngles);
 	WriteVec3Diff(buf, to->rightControllerOrigin, from->rightControllerOrigin);
 	WriteVec3Diff(buf, to->rightControllerAngles, from->rightControllerAngles);
-	
+	WriteVec3Diff(buf, to->vrThrowVelocity, from->vrThrowVelocity);
+	WriteVec3Diff(buf, to->vrThrowOrigin, from->vrThrowOrigin);
+	WriteVec3Diff(buf, to->vrThrowAngles, from->vrThrowAngles);
+	WriteVec3Diff(buf, to->vrThrowAngVel, from->vrThrowAngVel);
 
 
 #if defined( HL2_CLIENT_DLL )
@@ -358,7 +361,10 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	ReadVec3Diff(buf, move->leftControllerAngles);
 	ReadVec3Diff(buf, move->rightControllerOrigin);
 	ReadVec3Diff(buf, move->rightControllerAngles);
-	
+	ReadVec3Diff(buf, move->vrThrowVelocity);
+	ReadVec3Diff(buf, move->vrThrowOrigin);
+	ReadVec3Diff(buf, move->vrThrowAngles);
+	ReadVec3Diff(buf, move->vrThrowAngVel);
 
 
 #if defined( HL2_DLL )

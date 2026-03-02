@@ -6,10 +6,12 @@
 #include "usercmd.h"
 #include "openxr_manager.h"
 #include "iinput.h"
+#include "tfvr/tfvr_vr_throw.h"
 
 // Forward declarations
 class CInput;
 class IInput;
+class C_TFWeaponBase;
 
 // Global input pointer declaration
 extern IInput* input;
@@ -32,9 +34,16 @@ protected:
     void ProcessVRViewAngles(CUserCmd* cmd);
     void ProcessVRMovement(CUserCmd* cmd, float frametime);
     void ProcessVRControllerTracking(CUserCmd* cmd);
-    
+
+    // Physical throw gesture handling
+    void ProcessThrowGesture(CUserCmd* cmd, bool bTriggerHeld, bool bSuppressTrigger);
+    static bool IsThrowableWeapon( C_TFWeaponBase *pWeapon );
+
 private:
-    // No private members needed for this class
+    CVRVelocityTracker m_throwTracker;
+    bool m_bThrowHolding;
+    int m_nLastThrowableWeaponID;
+    bool m_bInCreateMove;
 };
 
 // Global instances - declared after class definition
