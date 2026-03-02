@@ -115,6 +115,7 @@ private:
     float m_flRecentVRMovement;        // Rolling average of VR controller movement (world units/frame)
     bool m_bVRCursorUpdateInProgress;  // Flag to distinguish VR cursor updates from mouse
     bool m_bMouseHasPriority;          // True if mouse is currently more active than VR
+    float m_flVRReclaimCooldown;       // Seconds remaining before mouse can re-take priority after VR reclaims
     
     // VR manager reference
     COpenXRManager* m_pVRManager;

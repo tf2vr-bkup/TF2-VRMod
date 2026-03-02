@@ -54,6 +54,7 @@ ConVar tfvr_cursor_mouse_priority("tfvr_cursor_mouse_priority", "1", FCVAR_ARCHI
 ConVar tfvr_cursor_vr_sensitivity("tfvr_cursor_vr_sensitivity", "500", FCVAR_ARCHIVE, "Scaling factor to compare VR movement to mouse (higher = VR needs less movement to win)");
 ConVar tfvr_cursor_smoothing("tfvr_cursor_smoothing", "0.8", FCVAR_ARCHIVE, "Smoothing for input activity tracking (0-1, higher = slower response to input changes)");
 ConVar tfvr_cursor_vr_deadzone("tfvr_cursor_vr_deadzone", "2", FCVAR_ARCHIVE, "Dead zone radius for VR controller (world units). VR only takes priority when controller moves outside this radius from where mouse took over.");
+ConVar tfvr_cursor_vr_reclaim_cooldown("tfvr_cursor_vr_reclaim_cooldown", "0.5", FCVAR_ARCHIVE, "Seconds after VR reclaims priority during which mouse cannot re-take (prevents flip-flop)");
 ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
 ConVar tfvr_playspace_anchoring("tfvr_playspace_anchoring", "1", FCVAR_ARCHIVE, "Anchor menu to playspace origin instead of player");
 ConVar tfvr_class_menu_hold_threshold("tfvr_class_menu_hold_threshold", "0.25", FCVAR_ARCHIVE, "Hold time in seconds for team menu (quick release = class menu)");
@@ -82,6 +83,7 @@ CVRMenuManager::CVRMenuManager()
     , m_flRecentVRMovement(0.0f)
     , m_bVRCursorUpdateInProgress(false)
     , m_bMouseHasPriority(false)
+    , m_flVRReclaimCooldown(0.0f)
     , m_pVRManager(nullptr)
     , m_pLocalPlayer(nullptr)
     , m_savedPlayerViewOrigin(0, 0, 0)
@@ -1234,6 +1236,11 @@ void CVRMenuManager::HandleMenuButtonInput()
         m_nMenuHand = 0; // Left hand
         m_bMenuButtonPressed = true;
         
+        // VR trigger press is an explicit signal to use VR - force VR priority
+        m_bMouseHasPriority = false;
+        m_flRecentMouseMovement = 0.0f;
+        m_flVRReclaimCooldown = tfvr_cursor_vr_reclaim_cooldown.GetFloat();
+        
         // Update compositor laser to match active hand
         dxvkSetLaserActiveHand(true);  // Left hand
         
@@ -1266,6 +1273,11 @@ void CVRMenuManager::HandleMenuButtonInput()
     {
         m_nMenuHand = 1; // Right hand
         m_bMenuButtonPressed = true;
+        
+        // VR trigger press is an explicit signal to use VR - force VR priority
+        m_bMouseHasPriority = false;
+        m_flRecentMouseMovement = 0.0f;
+        m_flVRReclaimCooldown = tfvr_cursor_vr_reclaim_cooldown.GetFloat();
         
         // Update compositor laser to match active hand
         dxvkSetLaserActiveHand(false);  // Right hand
@@ -1320,6 +1332,7 @@ void CVRMenuManager::ResetMousePriorityTracking()
     m_flRecentMouseMovement = 0.0f;
     m_flRecentVRMovement = 0.0f;
     m_bMouseHasPriority = false;
+    m_flVRReclaimCooldown = 0.0f;
     
     if (tfvr_cursor_debug.GetBool())
     {
@@ -1424,6 +1437,12 @@ void CVRMenuManager::UpdateCursorPosition()
         // Priority logic with dead zone for VR
         float deadZoneRadius = tfvr_cursor_vr_deadzone.GetFloat();
         
+        // Tick down VR reclaim cooldown
+        if (m_flVRReclaimCooldown > 0.0f)
+        {
+            m_flVRReclaimCooldown -= gpGlobals->frametime;
+        }
+        
         if (m_bMouseHasPriority)
         {
             // Mouse currently has priority
@@ -1436,10 +1455,12 @@ void CVRMenuManager::UpdateCursorPosition()
                 {
                     // Controller moved outside dead zone - VR takes priority
                     m_bMouseHasPriority = false;
+                    m_flRecentMouseMovement = 0.0f;
+                    m_flVRReclaimCooldown = tfvr_cursor_vr_reclaim_cooldown.GetFloat();
                     if (tfvr_cursor_debug.GetBool())
                     {
-                        DevMsg("VR Cursor: VR takes priority (controller moved %.3f outside %.3f dead zone)\n",
-                               distanceFromAnchor, deadZoneRadius);
+                        DevMsg("VR Cursor: VR takes priority (controller moved %.3f outside %.3f dead zone, cooldown %.1fs)\n",
+                               distanceFromAnchor, deadZoneRadius, m_flVRReclaimCooldown);
                     }
                 }
             }
@@ -1447,8 +1468,9 @@ void CVRMenuManager::UpdateCursorPosition()
         else
         {
             // VR currently has priority
-            // Mouse can take over if it's more active than VR
-            if (m_flRecentMouseMovement > m_flRecentVRMovement && m_flRecentMouseMovement > 1.0f)
+            // Mouse can take over if it's more active than VR, but not during reclaim cooldown
+            if (m_flVRReclaimCooldown <= 0.0f &&
+                m_flRecentMouseMovement > m_flRecentVRMovement && m_flRecentMouseMovement > 1.0f)
             {
                 // Mouse is more active - takes priority
                 m_bMouseHasPriority = true;
