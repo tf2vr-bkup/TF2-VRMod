@@ -28,6 +28,7 @@ public:
 	void UpdateBaseGameTextures(IMaterialSystem *pMaterialSystem);
 
 	ITexture* GetVRRenderTarget(int i);
+	ITexture* GetVRHandsRenderTarget();
 	void UpdateVRRenderTargets();
 
 private:
@@ -36,6 +37,7 @@ private:
 	CTextureReference		m_VROneEyeTextureQuarterSize;
 	CTextureReference		m_VRWaterReflectionTexture;
 	CTextureReference		m_VRScreenEffectTexture;
+	CTextureReference		m_VRHandsRenderTarget;
 	int						m_currentMsaa;
 
 	int						m_origThreadMode;
@@ -45,6 +47,7 @@ private:
 	ITexture* CreateVRWaterReflectionTexture( IMaterialSystem* pMaterialSystem, int iSize = 1024 );
 	ITexture* CreateWaterRefractionTexture( IMaterialSystem* pMaterialSystem, int iSize = 1024 );
 	ITexture* CreateVRScreenEffectTexture( IMaterialSystem* pMaterialSystem, int iSize = 1024 );
+	ITexture* CreateVRHandsRenderTarget( IMaterialSystem* pMaterialSystem );
 };
  
 extern CVrRenderTargets* vrRenderTargets;

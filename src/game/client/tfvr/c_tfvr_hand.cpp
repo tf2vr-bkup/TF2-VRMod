@@ -23,6 +23,7 @@
 #include "engine/ivdebugoverlay.h"
 #include "filesystem.h"
 #include "econ/ihasowner.h"
+#include "tfvr/vr_hand_render.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -360,6 +361,13 @@ public:
 	// Override DrawModel to apply ubercharge effect
 	virtual int DrawModel(int flags) OVERRIDE
 	{
+		// VR hand layer: skip during world pass, the owning hand will register us
+		if (VRHandLayer_ShouldSkipDraw())
+		{
+			VRHandLayer_AddRenderable(this);
+			return 0;
+		}
+
 		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
 		if (!pOwner)
 			return 0;
@@ -5821,6 +5829,24 @@ int C_TFVRHand::DrawModel(int flags)
 		
 	if (!ShouldDraw())
 		return 0;
+
+	// VR hand layer: skip during world pass, register self and attachables for hand layer
+	if (VRHandLayer_ShouldSkipDraw())
+	{
+		VRHandLayer_AddRenderable(this);
+
+		// Also register the render weapon so it draws in the hand pass
+		if (m_hRenderWeapon.Get())
+			VRHandLayer_AddRenderable(m_hRenderWeapon.Get());
+
+		// Register left-hand attachables (spy watch, scout ball)
+		if (m_hLeftHandWatch.Get())
+			VRHandLayer_AddRenderable(m_hLeftHandWatch.Get());
+		if (m_hLeftHandBall.Get())
+			VRHandLayer_AddRenderable(m_hLeftHandBall.Get());
+
+		return 0;
+	}
 	
 	// Verify owner is still valid
 	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();

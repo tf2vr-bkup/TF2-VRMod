@@ -1023,6 +1023,8 @@ $Project "Client (TFVR)"
 			$File   "tfvr\vr_world_ui_queue.cpp"
 			$File   "tfvr\vr_controller_model.h"
 			$File   "tfvr\vr_controller_model.cpp"
+			$File   "tfvr\vr_hand_render.h"
+			$File   "tfvr\vr_hand_render.cpp"
 			$File   "tfvr\cgltf.h"
 			$File   "tfvr\stb_image.h"
 			

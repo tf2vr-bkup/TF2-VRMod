@@ -68,6 +68,7 @@
 #include "tfvr/vr_controller_model.h"
 #include "tfvr/vr_spectator_camera.h"
 #include "tfvr/vr_collision_warning.h"
+#include "tfvr/vr_hand_render.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -1197,6 +1198,129 @@ void CViewRender::DrawViewModels( const CViewSetup &viewRender, bool drawViewmod
 
 
 //-----------------------------------------------------------------------------
+// Purpose: Draw VR hands/weapons on a separate layer from the world.
+//          Uses the world's depth buffer for occlusion (no depth clear).
+//          When a different zNear is configured, uses DepthRange to linearly
+//          remap hand-projection depth values into world-projection depth
+//          space. The mapping z_world = a*z_hand + b is mathematically exact.
+//-----------------------------------------------------------------------------
+void CViewRender::DrawVRHands( const CViewSetup &viewRender )
+{
+	if (!VRHandLayer_IsEnabled())
+		return;
+
+	int nRenderables = VRHandLayer_GetRenderableCount();
+	if (nRenderables == 0)
+	{
+		VRHandLayer_ClearRenderables();
+		return;
+	}
+
+	VPROF("CViewRender::DrawVRHands");
+
+	CMatRenderContextPtr pRenderContext( materials );
+	PIXEVENT( pRenderContext, "DrawVRHands" );
+
+	CViewSetup handSetup( viewRender );
+
+	float zNearOverride = VRHandLayer_GetZNearOverride();
+	float zFarOverride = VRHandLayer_GetZFarOverride();
+
+	if (zNearOverride > 0.0f)
+		handSetup.zNear = zNearOverride;
+	if (zFarOverride > 0.0f)
+		handSetup.zFar = zFarOverride;
+
+	bool bNeedsDepthRemap = (handSetup.zNear != viewRender.zNear || handSetup.zFar != viewRender.zFar);
+
+	if (bNeedsDepthRemap)
+	{
+		if (handSetup.m_bViewToProjectionOverride && g_pOpenXRManager && g_pOpenXRManager->IsActive())
+		{
+			ISourceVirtualReality::VREye vrEye = (viewRender.m_eStereoEye == STEREO_EYE_RIGHT)
+				? ISourceVirtualReality::VREye_Right
+				: ISourceVirtualReality::VREye_Left;
+			g_pOpenXRManager->GetEyeProjectionMatrix(
+				handSetup.m_ViewToProjection, vrEye,
+				handSetup.zNear, handSetup.zFar);
+		}
+	}
+
+	ITexture *pRTColor = NULL;
+	if (viewRender.m_eStereoEye != STEREO_EYE_MONO)
+	{
+		pRTColor = g_pOpenXRManager->GetRenderTarget();
+	}
+
+	pRenderContext->MatrixMode( MATERIAL_PROJECTION );
+	pRenderContext->PushMatrix();
+
+	render->Push3DView( handSetup, 0, pRTColor, GetFrustum() );
+
+	// Compute the linear depth remap from hand-projection to world-projection.
+	// In NDC, the mapping is exact: z_world = a * z_hand + b
+	// This maps directly to DepthRange(b, a + b).
+	// Requires DXVK viewport depth unclamped (no [0,1] restriction).
+	float depthRangeMin = 0.0f;
+	float depthRangeMax = 1.0f;
+
+	if (bNeedsDepthRemap)
+	{
+		float wZN = viewRender.zNear;
+		float wZF = viewRender.zFar;
+		float hZN = handSetup.zNear;
+		float hZF = handSetup.zFar;
+
+		// D3D depth: C = zF/(zF-zN), D = -zN*zF/(zF-zN)
+		// z_ndc = C + D/z_eye
+		// Mapping: z_world = (D_w/D_h) * z_hand + (C_w - C_h * D_w/D_h)
+		float C_w = wZF / (wZF - wZN);
+		float C_h = hZF / (hZF - hZN);
+		float D_w = -wZN * wZF / (wZF - wZN);
+		float D_h = -hZN * hZF / (hZF - hZN);
+
+		float a = D_w / D_h;
+		float b = C_w - C_h * a;
+
+		// DepthRange(min, max) applies: z_out = min + z_in * (max - min)
+		// We need: z_out = b + z_in * a, so min = b, max = a + b
+		depthRangeMin = b;
+		depthRangeMax = a + b;
+
+		pRenderContext->DepthRange(depthRangeMin, depthRangeMax);
+	}
+
+	float one[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	render->SetColorModulation( one );
+	render->SetBlend( 1.0f );
+
+	VRHandLayer_SetHandPassActive( true );
+
+	for (int i = 0; i < nRenderables; i++)
+	{
+		IClientRenderable *pRenderable = VRHandLayer_GetRenderable(i);
+		if (pRenderable)
+		{
+			pRenderable->DrawModel( STUDIO_RENDER );
+		}
+	}
+
+	VRHandLayer_SetHandPassActive( false );
+	VRHandLayer_ClearRenderables();
+
+	if (bNeedsDepthRemap)
+	{
+		pRenderContext->DepthRange(0.0f, 1.0f);
+	}
+
+	render->PopView( GetFrustum() );
+
+	pRenderContext->MatrixMode( MATERIAL_PROJECTION );
+	pRenderContext->PopMatrix();
+}
+
+
+//-----------------------------------------------------------------------------
 // Purpose: 
 // Output : Returns true on success, false on failure.
 //-----------------------------------------------------------------------------
@@ -1465,7 +1589,16 @@ void CViewRender::ViewDrawScene( bool bDrew3dSkybox, SkyboxVisibility_t nSkyboxV
 
 	ParticleMgr()->IncrementFrameCode();
 
+	// VR hand layer: flag the world pass so VR hands skip drawing and
+	// register themselves for the separate hand layer pass instead.
+	// Only active for the main view (not shadows, monitors, reflections).
+	if (VRHandLayer_IsEnabled() && viewID == VIEW_MAIN)
+		VRHandLayer_BeginWorldPass();
+
 	DrawWorldAndEntities( drawSkybox, viewRender, nClearFlags, pCustomVisibility );
+
+	if (VRHandLayer_IsEnabled() && viewID == VIEW_MAIN)
+		VRHandLayer_EndWorldPass();
 
 	// Disable fog for the rest of the stuff
 	DisableFog();
@@ -2203,6 +2336,9 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 		*/
 
 		GetClientModeNormal()->DoPostScreenSpaceEffects( &viewRender );
+
+		// Draw VR hands on a separate layer (after world, preserving depth for occlusion)
+		DrawVRHands( viewRender );
 
 		// Now actually draw the viewmodel
 		DrawViewModels( viewRender, whatToDraw & RENDERVIEW_DRAWVIEWMODEL );

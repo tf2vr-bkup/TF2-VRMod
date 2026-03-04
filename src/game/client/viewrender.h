@@ -442,6 +442,7 @@ private:
 	// Drawing primitives
 	bool			ShouldDrawViewModel( bool drawViewmodel );
 	void			DrawViewModels( const CViewSetup &view, bool drawViewmodel );
+	void			DrawVRHands( const CViewSetup &view );
 
 	void			PerformScreenSpaceEffects( int x, int y, int w, int h );
 

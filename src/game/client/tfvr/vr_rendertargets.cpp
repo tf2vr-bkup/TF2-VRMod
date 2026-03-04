@@ -126,6 +126,26 @@ ITexture *CVrRenderTargets::GetVRRenderTarget(int i)
 	return m_VRTwoEyesHMDRenderTargets[i];
 }
 
+ITexture *CVrRenderTargets::GetVRHandsRenderTarget()
+{
+	return m_VRHandsRenderTarget;
+}
+
+ITexture* CVrRenderTargets::CreateVRHandsRenderTarget(IMaterialSystem* pMaterialSystem)
+{
+	// Same size as one eye for per-eye VR hand rendering.
+	// RGBA8888 with alpha for compositing (sniper scope, isolated hand rendering).
+	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+		"_rt_VRHands",
+		g_pOpenXRManager->GetBufferSize().x,
+		g_pOpenXRManager->GetBufferSize().y,
+		RT_SIZE_LITERAL,
+		IMAGE_FORMAT_RGBA8888,
+		MATERIAL_RT_DEPTH_SEPARATE,
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+		CREATERENDERTARGETFLAGS_HDR);
+}
+
 static void GetDesiredFullFrameBufferDimensions(int &width, int &height)
 {
 	width = g_pOpenXRManager->GetBufferSize().x;
@@ -170,6 +190,7 @@ void CVrRenderTargets::UpdateVRRenderTargets()
 			m_VRTwoEyesHMDRenderTargets[i].Init(CreateVRTwoEyesHMDRenderTarget(materials, i));
 		}
 		m_VROneEyeTextureQuarterSize.Init(CreateVROneEyeTextureQuarterSize(materials));
+		m_VRHandsRenderTarget.Init(CreateVRHandsRenderTarget(materials));
 
 		m_VGuiTexture.Init(CreateVGuiTexture(materials));
 
@@ -279,6 +300,9 @@ void CVrRenderTargets::InitClientRenderTargets( IMaterialSystem* pMaterialSystem
 		m_changedThreadMode = false;
 	}
 
+	// VR hands render target (for sniper scope / isolated hand rendering)
+	m_VRHandsRenderTarget.Init( CreateVRHandsRenderTarget( pMaterialSystem ) );
+
 	// Water effects
 	m_WaterReflectionTexture.Init( CreateWaterReflectionTexture( pMaterialSystem ) );
 	m_VRWaterReflectionTexture.Init( CreateVRWaterReflectionTexture( pMaterialSystem ) );
@@ -297,6 +321,7 @@ void CVrRenderTargets::InitClientRenderTargets( IMaterialSystem* pMaterialSystem
 void CVrRenderTargets::ShutdownClientRenderTargets()
 { 
     m_VGuiTexture.Shutdown();
+	m_VRHandsRenderTarget.Shutdown();
 	m_VRWaterReflectionTexture.Shutdown();
 	m_VRScreenEffectTexture.Shutdown();
 
