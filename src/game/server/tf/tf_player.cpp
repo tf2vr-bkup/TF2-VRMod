@@ -853,6 +853,8 @@ IMPLEMENT_SERVERCLASS_ST( CTFPlayer, DT_TFPlayer )
 	// VR Related
 	SendPropVector(SENDINFO(m_roomscaleOffset), -1, SPROP_CHANGES_OFTEN | SPROP_NOSCALE),
 	SendPropBool( SENDINFO( m_bHeadCollisionWarning ) ),
+	
+	SendPropEHandle( SENDINFO( m_hOffHandWeapon ) ),
 END_SEND_TABLE()
 
 // -------------------------------------------------------------------------------- //
