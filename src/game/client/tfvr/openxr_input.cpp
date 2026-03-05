@@ -167,10 +167,15 @@ bool COpenXRInputManager::CreateActions()
     if (leftGrip.handle == XR_NULL_HANDLE) return false;
     m_actions["left_grip"] = leftGrip;
 
-    // Add right grip button action for throwable weapon gestures
+    // Right grip force — used to activate throw hold (requires deliberate squeeze)
     XrInputAction rightGrip = CreateFloatAction("right_grip", "Right Grip");
     if (rightGrip.handle == XR_NULL_HANDLE) return false;
     m_actions["right_grip"] = rightGrip;
+
+    // Right grip value — used to detect throw release (instant binary on Index)
+    XrInputAction rightGripValue = CreateFloatAction("right_grip_value", "Right Grip Value");
+    if (rightGripValue.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_grip_value"] = rightGripValue;
 
     // Add voice action for voice chat activation
     // Used when gesture mode is disabled, or for the gesture trigger when enabled
@@ -422,7 +427,7 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         }
     }
 
-    // Left grip button binding (for two-handed weapon gripping) - Index uses squeeze
+    // Left grip button binding (for two-handed weapon gripping) - Index squeeze/value
     if (m_actions.find("left_grip") != m_actions.end())
     {
         XrPath bindingPath;
@@ -435,14 +440,27 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         }
     }
 
-    // Right grip button binding (for throwable weapon gestures) - Index uses squeeze
+    // Right grip force — activation (requires deliberate squeeze on Index)
     if (m_actions.find("right_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/force", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right grip value — release detection (instant binary on Index)
+    if (m_actions.find("right_grip_value") != m_actions.end())
     {
         XrPath bindingPath;
         if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &bindingPath)))
         {
             XrActionSuggestedBinding binding;
-            binding.action = m_actions["right_grip"].handle;
+            binding.action = m_actions["right_grip_value"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -748,7 +766,7 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         }
     }
 
-    // Right grip button binding (for throwable weapon gestures) - Quest uses squeeze
+    // Right grip — Quest has no force sensor so both map to squeeze/value
     if (m_actions.find("right_grip") != m_actions.end())
     {
         XrPath bindingPath;
@@ -756,6 +774,18 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["right_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("right_grip_value") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip_value"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }

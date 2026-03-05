@@ -50,7 +50,7 @@ ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE,
 // Physical throw ConVars
 ConVar tfvr_physical_throw( "tfvr_physical_throw", "1", FCVAR_ARCHIVE, "Enable physical throwing for throwable weapons (0=classic aim-based throw, 1=gesture-based throw)" );
 ConVar tfvr_physical_throw_debug( "tfvr_physical_throw_debug", "0", FCVAR_ARCHIVE, "Show debug output for physical throw gesture detection" );
-ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", "0.5", FCVAR_ARCHIVE, "Grip analog threshold for physical throw hold (0.0-1.0)" );
+ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", "0.4", FCVAR_ARCHIVE, "Grip force threshold to start throw hold (0.0-1.0, release uses grip value)" );
 
 // Voice gesture state - used to suppress offhand attack when voice is active
 static bool s_bVoiceGestureActive = false;
@@ -858,9 +858,16 @@ void CVRInput::ProcessThrowGesture( CUserCmd *cmd, bool bTriggerHeld, bool bSupp
         m_nLastThrowableWeaponID = nWeaponID;
     }
 
-    // Read grip value from weapon hand
-    float flGripValue = g_pOpenXRManager->GetAnalogValue( "right_grip" );
-    bool bGripHeld = ( flGripValue > tfvr_throw_grip_threshold.GetFloat() );
+    // Grip activation uses squeeze/force (requires deliberate squeeze on Index).
+    // Release detection uses squeeze/value (instant binary on Index).
+    // This gives a firm activation threshold without losing throw velocity on release.
+    float flGripForce = g_pOpenXRManager->GetAnalogValue( "right_grip" );
+    float flGripValue = g_pOpenXRManager->GetAnalogValue( "right_grip_value" );
+    bool bGripActivate = ( flGripForce > tfvr_throw_grip_threshold.GetFloat() );
+    bool bGripStillHeld = ( flGripValue > 0.5f );
+
+    // Use force to start the hold, value to sustain it
+    bool bGripHeld = m_bThrowHolding ? bGripStillHeld : bGripActivate;
 
     bool bEitherHeld = bGripHeld || ( bTriggerHeld && !bSuppressTrigger );
 
@@ -886,7 +893,7 @@ void CVRInput::ProcessThrowGesture( CUserCmd *cmd, bool bTriggerHeld, bool bSupp
             m_throwTracker.AddSample( vecHandPos, angHand, gpGlobals->curtime );
 
             if ( tfvr_physical_throw_debug.GetBool() )
-                DevMsg( "VR Throw: Holding started (grip=%.2f trigger=%d)\n", flGripValue, bTriggerHeld ? 1 : 0 );
+                DevMsg( "VR Throw: Holding started (force=%.2f value=%.2f trigger=%d)\n", flGripForce, flGripValue, bTriggerHeld ? 1 : 0 );
         }
     }
     else
