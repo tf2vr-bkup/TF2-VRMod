@@ -21,7 +21,7 @@
 #endif
 
 extern ConVar tf_flamethrower_burstammo;
-
+extern ConVar tf_fireball_distance;
 
 //=============================================================================
 //
@@ -153,10 +153,12 @@ CBaseEntity* CTFWeaponFlameBall::FireProjectile( CTFPlayer *pPlayer )
 	}
 	GetProjectileFireSetup( pPlayer, vecOffset, &vecSrc, &angForward, false );
 
-	// For VR, trace from the actual projectile spawn position
-	trace_t trace;	
+	trace_t trace;
 	CTraceFilterSimple traceFilter( this, COLLISION_GROUP_NONE );
 	UTIL_TraceHull( vecSrc, vecSrc, -Vector(8,8,8), Vector(8,8,8), MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
+
+	Vector vecForward;
+	AngleVectors( angForward, &vecForward );
 
 	CTFProjectile_Rocket *pRocket = static_cast<CTFProjectile_Rocket*>( CBaseEntity::CreateNoSpawn( "tf_projectile_balloffire", vecSrc, angForward, pPlayer ) );
 	if ( pRocket )
@@ -166,12 +168,14 @@ CBaseEntity* CTFWeaponFlameBall::FireProjectile( CTFPlayer *pPlayer )
 		DoFireEffects();
 
 		pRocket->SetOwnerEntity( pPlayer );
-		pRocket->SetLauncher( this ); 
+		pRocket->SetLauncher( this );
 
-		Vector vForward;
-		AngleVectors( angForward, &vForward, NULL, NULL );
+		float flEndDist = tf_fireball_distance.GetFloat();
 
-		pRocket->SetAbsVelocity( vForward * 600 );
+		Vector vecProjForward = ( vecSrc + vecForward * flEndDist ) - vecSrc;
+		VectorNormalize( vecProjForward );
+
+		pRocket->SetAbsVelocity( vecProjForward * 600 );
 
 		pRocket->SetDamage( 20 );
 		pRocket->ChangeTeam( pPlayer->GetTeamNumber() );
