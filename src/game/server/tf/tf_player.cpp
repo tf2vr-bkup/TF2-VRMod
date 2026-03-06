@@ -23465,16 +23465,18 @@ void CTFPlayer::CheckForHeadCollisions()
 	if (tfvr_disable_collisionfade.GetBool())
 		return;
 
-	if (IsInAVehicle())
+	bool bAlive = IsAlive();
+
+	if (bAlive && IsInAVehicle())
 		return;
 
-	if (GetMoveType() == MOVETYPE_NOCLIP)
+	if (bAlive && GetMoveType() == MOVETYPE_NOCLIP)
 		return;
 
 	if (engine->IsPaused())
 		return;
 
-	if (GetFlags() & FL_FROZEN)
+	if (bAlive && (GetFlags() & FL_FROZEN))
 		return;
 
 	// Only check for VR players
@@ -23502,57 +23504,96 @@ void CTFPlayer::CheckForHeadCollisions()
 	// Use client position for collision detection (known to work correctly)
 	Vector headPosition = clientHeadPosition;
 
-	trace_t pm;
-	Vector headHalfSize(3.5f, 3.5f, 0.1f);
-	CTraceFilterSimpleList filter(COLLISION_GROUP_PLAYER_MOVEMENT);
-	filter.AddEntityToIgnore(this);
-	unsigned int mask = MASK_PLAYERSOLID & ~CONTENTS_MONSTER;
-
 	byte fadeIntensity = 0;
-	float maxDist = 2 * headHalfSize.x;
 
-	// Expanding hull trace
-	for (float closeness = 0.01f; closeness <= maxDist; closeness += 0.1f)
+	if (bAlive)
 	{
-		Vector curSize = headHalfSize + closeness * Vector(1.f, 1.f, .3f);
-		UTIL_TraceHull(headPosition, headPosition, -curSize, curSize, mask, &filter, &pm);
-		
-		if (pm.DidHit())
+		// --- Wall / prop collision (alive only) ---
+		trace_t pm;
+		CTraceFilterSimpleList filter(COLLISION_GROUP_PLAYER_MOVEMENT);
+		filter.AddEntityToIgnore(this);
+		unsigned int mask = MASK_PLAYERSOLID & ~CONTENTS_MONSTER;
+
+		// VIEW_NEARZ is 7 units -- anything closer gets clipped and the
+		// player can see through geometry.  Inner hull = zNear + buffer
+		// so the fade reaches full opacity before clipping occurs.
+		const float zNear = 7.f;
+		const float buffer = 5.f;
+		Vector headHalfSize(zNear + buffer, zNear + buffer, zNear + buffer);
+		float maxDist = 4.f;
+
+		for (float closeness = 0.01f; closeness <= maxDist; closeness += 0.1f)
 		{
-			fadeIntensity = (maxDist - closeness) / maxDist * 256.f;
-			break;
+			Vector curSize = headHalfSize + closeness * Vector(1.f, 1.f, 1.f);
+			UTIL_TraceHull(headPosition, headPosition, -curSize, curSize, mask, &filter, &pm);
+			
+			if (pm.DidHit())
+			{
+				fadeIntensity = (maxDist - closeness) / maxDist * 256.f;
+				break;
+			}
 		}
-	}
 
-	// Scale horizontal distance threshold based on player velocity so that
-	// knockback (airblast, explosions) and prediction errors at lower framerates
-	// don't cause jarring blinks. Geometry collision above is unaffected.
-	float speed = GetAbsVelocity().Length2D();
-	float velocityLeniency = Min(speed * 0.03f, 20.f);
+		// --- Distance-from-origin checks (alive only) ---
+		float speed = GetAbsVelocity().Length2D();
+		float velocityLeniency = Min(speed * 0.03f, 20.f);
 
-	float maxHorizontalDist = 24.f + velocityLeniency;
-	float maxVerticalDist = 100.f;
-	Vector delta = headPosition - GetAbsOrigin();
-	float horizontalDist = delta.Length2D();
-	float verticalDist = fabs(delta.z);
-	
-	byte distanceFadeIntensity = 0;
-	
-	// Check horizontal distance
-	if (horizontalDist > maxHorizontalDist)
-	{
-		float fadeDist = Clamp((horizontalDist - maxHorizontalDist) / 2 / headHalfSize.x, 0.f, 1.f);
-		distanceFadeIntensity = Max(distanceFadeIntensity, byte(fadeDist * 255.f));
+		Vector delta = headPosition - GetAbsOrigin();
+		float horizontalDist = delta.Length2D();
+		float verticalDist = fabs(delta.z);
+
+		// Lean compensation: lowering your head naturally shifts it forward.
+		float expectedEyeHeight = GetViewOffset().z;
+		float headDrop = Max(0.f, expectedEyeHeight - delta.z);
+		float leanLeniency = headDrop * 0.45f;
+
+		float maxHorizontalDist = 28.f + velocityLeniency + leanLeniency;
+		float maxVerticalDist = 100.f;
+
+		byte distanceFadeIntensity = 0;
+
+		if (horizontalDist > maxHorizontalDist)
+		{
+			float fadeDist = Clamp((horizontalDist - maxHorizontalDist) / 8.f, 0.f, 1.f);
+			distanceFadeIntensity = Max(distanceFadeIntensity, byte(fadeDist * 255.f));
+		}
+
+		if (verticalDist > maxVerticalDist)
+		{
+			float fadeDist = Clamp((verticalDist - maxVerticalDist) / 8.f, 0.f, 1.f);
+			distanceFadeIntensity = Max(distanceFadeIntensity, byte(fadeDist * 255.f));
+		}
+
+		fadeIntensity = Max(fadeIntensity, distanceFadeIntensity);
 	}
-	
-	// Check vertical distance
-	if (verticalDist > maxVerticalDist)
+	else
 	{
-		float fadeDist = Clamp((verticalDist - maxVerticalDist) / 2 / headHalfSize.x, 0.f, 1.f);
-		distanceFadeIntensity = Max(distanceFadeIntensity, byte(fadeDist * 255.f));
+		// --- Dead: distance from death position ---
+		// No wall trace (client eye position isn't reliable when dead),
+		// but limit how far the player can drift from where they died.
+		Vector deathDelta = headPosition - m_vecLastDeathPosition;
+		float horizFromDeath = deathDelta.Length2D();
+		float vertFromDeath = fabs(deathDelta.z);
+
+		float maxDeathHorizontal = 36.f;
+		float maxDeathVertical = 100.f;
+
+		byte deathFade = 0;
+
+		if (horizFromDeath > maxDeathHorizontal)
+		{
+			float f = Clamp((horizFromDeath - maxDeathHorizontal) / 8.f, 0.f, 1.f);
+			deathFade = Max(deathFade, byte(f * 255.f));
+		}
+
+		if (vertFromDeath > maxDeathVertical)
+		{
+			float f = Clamp((vertFromDeath - maxDeathVertical) / 8.f, 0.f, 1.f);
+			deathFade = Max(deathFade, byte(f * 255.f));
+		}
+
+		fadeIntensity = deathFade;
 	}
-	
-	fadeIntensity = Max(fadeIntensity, distanceFadeIntensity);
 
 	// Apply fade effect
 	if (fadeIntensity > 0)
