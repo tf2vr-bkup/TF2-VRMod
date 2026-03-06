@@ -16,6 +16,7 @@
 #include <game/client/iviewport.h>
 #include "viewport_panel_names.h"
 #include "ienginevgui.h"
+#include "client_virtualreality.h"
 
 // Engine interface for executing client commands
 extern IVEngineClient *engine;
@@ -51,6 +52,14 @@ ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE,
 ConVar tfvr_physical_throw( "tfvr_physical_throw", "1", FCVAR_ARCHIVE, "Enable physical throwing for throwable weapons (0=classic aim-based throw, 1=gesture-based throw)" );
 ConVar tfvr_physical_throw_debug( "tfvr_physical_throw_debug", "0", FCVAR_ARCHIVE, "Show debug output for physical throw gesture detection" );
 ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", "0.4", FCVAR_ARCHIVE, "Grip force threshold to start throw hold (0.0-1.0, release uses grip value)" );
+
+// Mouth proximity activation for lunchbox/buff items
+ConVar tfvr_mouth_activate_enabled( "tfvr_mouth_activate_enabled", "1", FCVAR_ARCHIVE, "Require holding lunchbox/horn items near mouth to activate" );
+ConVar tfvr_mouth_radius( "tfvr_mouth_radius", "14.0", FCVAR_ARCHIVE, "Radius around mouth for item activation (game units)" );
+ConVar tfvr_mouth_forward_offset( "tfvr_mouth_forward_offset", "6.0", FCVAR_ARCHIVE, "Forward offset from head center to mouth (game units)" );
+ConVar tfvr_mouth_down_offset( "tfvr_mouth_down_offset", "4.0", FCVAR_ARCHIVE, "Downward offset from head center to mouth (game units)" );
+ConVar tfvr_mouth_activate_debug( "tfvr_mouth_activate_debug", "0", FCVAR_ARCHIVE, "Show debug output for mouth proximity activation" );
+ConVar tfvr_mouth_debug_draw( "tfvr_mouth_debug_draw", "0", FCVAR_ARCHIVE, "Draw wireframe sphere at the mouth detection zone" );
 
 // Voice gesture state - used to suppress offhand attack when voice is active
 static bool s_bVoiceGestureActive = false;
@@ -478,6 +487,26 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     if (bSecondaryAttack && !bSuppressSecondary)
         cmd->buttons |= IN_ATTACK2;
 
+    // Mouth proximity gate for lunchbox items and soldier horns:
+    // Suppress primary attack unless the weapon is held near the player's mouth.
+    if ( tfvr_mouth_activate_enabled.GetBool() && m_bInCreateMove )
+    {
+        C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+        if ( pPlayer )
+        {
+            CTFWeaponBase *pWeapon = pPlayer->GetActiveTFWeapon();
+            if ( IsMouthActivatedWeapon( pWeapon ) )
+            {
+                bool bNearMouth = IsWeaponNearMouth( pWeapon );
+
+                if ( !bNearMouth )
+                {
+                    cmd->buttons &= ~IN_ATTACK;
+                }
+            }
+        }
+    }
+
     // Physical throw gesture — intercepts IN_ATTACK for throwable weapons.
     // Only process during CreateMove, not ExtraMouseSample (which uses a
     // disposable dummy command and would consume the release event).
@@ -649,6 +678,26 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
     {
         // Don't process any movement when menu is open
         return;
+    }
+
+    // Block VR thumbstick movement in states that restrict mobility.
+    // Without this, the VR thumbstick bypasses the movement zeroing done in
+    // C_TFPlayer::CreateMove because ProcessVRMovement runs afterward.
+    C_TFPlayer *pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+    if ( pLocalPlayer )
+    {
+        bool bTaunting = pLocalPlayer->m_Shared.InCond( TF_COND_TAUNTING );
+        bool bThriller = pLocalPlayer->m_Shared.InCond( TF_COND_HALLOWEEN_THRILLER );
+        bool bFreezeInput = pLocalPlayer->m_Shared.InCond( TF_COND_FREEZE_INPUT );
+
+        if ( bFreezeInput )
+            return;
+
+        if ( ( bTaunting || bThriller ) && !pLocalPlayer->CanMoveDuringTaunt() )
+            return;
+
+        if ( pLocalPlayer->m_Shared.IsControlStunned() || pLocalPlayer->m_Shared.IsLoserStateStunned() )
+            return;
     }
     
     // Get movement values
@@ -939,4 +988,131 @@ void CVRInput::ProcessThrowGesture( CUserCmd *cmd, bool bTriggerHeld, bool bSupp
     {
         cmd->buttons &= ~IN_ATTACK;
     }
+}
+
+//-----------------------------------------------------------------------------
+bool CVRInput::IsMouthActivatedWeapon( C_TFWeaponBase *pWeapon )
+{
+    if ( !pWeapon )
+        return false;
+
+    int id = pWeapon->GetWeaponID();
+    return ( id == TF_WEAPON_LUNCHBOX || id == TF_WEAPON_BUFF_ITEM );
+}
+
+//-----------------------------------------------------------------------------
+// Returns true when the weapon-holding controller is within mouth proximity.
+// Uses raw playspace coordinates (same space as voice gesture ear check).
+//-----------------------------------------------------------------------------
+bool CVRInput::IsWeaponNearMouth( C_TFWeaponBase *pWeapon )
+{
+    if ( !g_pOpenXRManager || !pWeapon )
+        return false;
+
+    // Determine which hand holds the weapon
+    C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+    C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+
+    bool bWeaponInLeft = ( pLeftHand && pLeftHand->GetHeldWeapon() == pWeapon );
+    bool bWeaponInRight = ( pRightHand && pRightHand->GetHeldWeapon() == pWeapon );
+
+    if ( !bWeaponInLeft && !bWeaponInRight )
+        return false;
+
+    // Get weapon-hand controller position in raw playspace
+    VMatrix controllerPose;
+    bool bPoseValid = false;
+    if ( bWeaponInLeft )
+        bPoseValid = g_pOpenXRManager->GetLeftControllerPoseRaw( controllerPose );
+    else
+        bPoseValid = g_pOpenXRManager->GetRightControllerPoseRaw( controllerPose );
+
+    if ( !bPoseValid )
+        return false;
+
+    Vector controllerPos = controllerPose.GetTranslation();
+
+    // Get HMD pose in playspace
+    Vector hmdOrigin;
+    QAngle hmdAngles;
+    g_pOpenXRManager->GetHMDInChaperone( hmdOrigin, hmdAngles );
+
+    Vector hmdForward, hmdRight, hmdUp;
+    AngleVectors( hmdAngles, &hmdForward, &hmdRight, &hmdUp );
+
+    // Mouth is slightly forward and below head center
+    float fwdOffset = tfvr_mouth_forward_offset.GetFloat();
+    float downOffset = tfvr_mouth_down_offset.GetFloat();
+    Vector mouthPos = hmdOrigin + hmdForward * fwdOffset - hmdUp * downOffset;
+
+    float distance = ( controllerPos - mouthPos ).Length();
+    float radius = tfvr_mouth_radius.GetFloat();
+
+    if ( tfvr_mouth_activate_debug.GetBool() )
+    {
+        static float flLastDebug = 0.0f;
+        if ( gpGlobals->curtime - flLastDebug > 0.3f )
+        {
+            DevMsg( "VR Mouth: dist=%.1f radius=%.1f hand=%s weapon=%d\n",
+                    distance, radius,
+                    bWeaponInLeft ? "Left" : "Right",
+                    pWeapon->GetWeaponID() );
+            flLastDebug = gpGlobals->curtime;
+        }
+    }
+
+    // Debug draw: wireframe sphere at the mouth zone in world space
+    if ( tfvr_mouth_debug_draw.GetBool() && debugoverlay )
+    {
+        // Convert mouth position from playspace to world space
+        VMatrix rawHeadPlayspace = g_pOpenXRManager->GetMideyePose();
+        VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
+
+        // Build mouth position as a point in playspace, then transform
+        // mouthPos is already in playspace; express it relative to head,
+        // then apply the smoothed world transform.
+        VMatrix mouthInPlayspace;
+        mouthInPlayspace.Identity();
+        mouthInPlayspace.SetTranslation( mouthPos );
+
+        VMatrix mouthRelHead = rawHeadPlayspace.InverseTR() * mouthInPlayspace;
+        VMatrix mouthWorld = smoothedHeadWorld * mouthRelHead;
+        Vector worldMouthPos = mouthWorld.GetTranslation();
+
+        bool bInside = ( distance <= radius );
+        int r = bInside ? 0 : 255;
+        int g = bInside ? 255 : 100;
+        int b = 0;
+
+        const int kSegments = 24;
+        for ( int ring = 0; ring < 3; ring++ )
+        {
+            for ( int i = 0; i < kSegments; i++ )
+            {
+                float a0 = ( 2.0f * M_PI * i ) / kSegments;
+                float a1 = ( 2.0f * M_PI * ( i + 1 ) ) / kSegments;
+
+                Vector p0, p1;
+                if ( ring == 0 )      // XY
+                {
+                    p0 = worldMouthPos + Vector( cos(a0), sin(a0), 0 ) * radius;
+                    p1 = worldMouthPos + Vector( cos(a1), sin(a1), 0 ) * radius;
+                }
+                else if ( ring == 1 ) // XZ
+                {
+                    p0 = worldMouthPos + Vector( cos(a0), 0, sin(a0) ) * radius;
+                    p1 = worldMouthPos + Vector( cos(a1), 0, sin(a1) ) * radius;
+                }
+                else                  // YZ
+                {
+                    p0 = worldMouthPos + Vector( 0, cos(a0), sin(a0) ) * radius;
+                    p1 = worldMouthPos + Vector( 0, cos(a1), sin(a1) ) * radius;
+                }
+
+                debugoverlay->AddLineOverlayAlpha( p0, p1, r, g, b, 200, false, 0.016f );
+            }
+        }
+    }
+
+    return ( distance <= radius );
 }

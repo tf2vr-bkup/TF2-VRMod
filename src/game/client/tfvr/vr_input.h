@@ -39,6 +39,10 @@ protected:
     void ProcessThrowGesture(CUserCmd* cmd, bool bTriggerHeld, bool bSuppressTrigger);
     static bool IsThrowableWeapon( C_TFWeaponBase *pWeapon );
 
+    // Mouth proximity activation for lunchbox items and soldier horns
+    bool IsWeaponNearMouth( C_TFWeaponBase *pWeapon );
+    static bool IsMouthActivatedWeapon( C_TFWeaponBase *pWeapon );
+
 private:
     CVRVelocityTracker m_throwTracker;
     bool m_bThrowHolding;
