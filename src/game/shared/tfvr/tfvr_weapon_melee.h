@@ -2,6 +2,12 @@
 //
 // Purpose: TF2VR Melee Base - VR-specific melee functionality
 //
+// DEPRECATED: Physical VR melee is now handled directly in CTFWeaponBaseMelee
+// (tf_weaponbase_melee.h/cpp) via VRPhysicalMeleeUpdate(). This avoids
+// duplicating every melee weapon class and ensures all attribute hooks,
+// damage logic, and balance stay in sync with flatscreen automatically.
+// These classes remain for reference but are no longer used.
+//
 //=============================================================================
 
 #ifndef TFVR_WEAPON_MELEE_H

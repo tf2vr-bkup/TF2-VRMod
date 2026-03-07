@@ -55,6 +55,7 @@ public:
 		vrThrowOrigin.Init();
 		vrThrowAngles.Init();
 		vrThrowAngVel.Init();
+		vrMeleeGripSpeed = 0.0f;
 		forwardmove = 0.0f;
 		sidemove = 0.0f;
 		upmove = 0.0f;
@@ -95,6 +96,7 @@ public:
 		vrThrowOrigin		= src.vrThrowOrigin;
 		vrThrowAngles		= src.vrThrowAngles;
 		vrThrowAngVel		= src.vrThrowAngVel;
+		vrMeleeGripSpeed	= src.vrMeleeGripSpeed;
 		forwardmove			= src.forwardmove;
 		sidemove			= src.sidemove;
 		upmove				= src.upmove;
@@ -142,6 +144,7 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrThrowOrigin, sizeof( vrThrowOrigin ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowAngles, sizeof( vrThrowAngles ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowAngVel, sizeof( vrThrowAngVel ) );
+		CRC32_ProcessBuffer( &crc, &vrMeleeGripSpeed, sizeof( vrMeleeGripSpeed ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
 		CRC32_ProcessBuffer( &crc, &sidemove, sizeof( sidemove ) );      
 		CRC32_ProcessBuffer( &crc, &upmove, sizeof( upmove ) );         
@@ -171,6 +174,7 @@ public:
 		vrThrowOrigin.Init();
 		vrThrowAngles.Init();
 		vrThrowAngVel.Init();
+		vrMeleeGripSpeed = 0.0f;
 		forwardmove = 0.f;
 		sidemove = 0.f;
 		upmove = 0.f;
@@ -204,6 +208,9 @@ public:
 	Vector	vrThrowOrigin;		// player-relative offset (reconstructed on server)
 	QAngle	vrThrowAngles;		// hand orientation at moment of release
 	Vector	vrThrowAngVel;		// angular velocity of hand (deg/sec, as Vector)
+
+	// VR melee: grip speed computed client-side in tracking space (u/s)
+	float	vrMeleeGripSpeed;
 
 	// Intended velocities
 	//	forward velocity.

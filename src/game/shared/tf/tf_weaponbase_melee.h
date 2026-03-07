@@ -99,8 +99,26 @@ protected:
 
 private:
 	bool DoSwingTraceInternal( trace_t &trace, bool bCleave, CUtlVector< trace_t >* pTargetTraceVector );
-	bool OnSwingHit( trace_t &trace );
+	bool OnSwingHit( trace_t &trace, float flDamageMod = 1.0f );
 
+	// VR Physical Melee System
+public:
+	virtual float	GetVRSwingRange( const Vector *pGripPos = NULL );
+	bool			IsOwnerInVR();
+	bool			IsVRPhysicalMeleeWeapon();
+
+protected:
+	void			VRPhysicalMeleeUpdate();
+	bool			DoVRSwingTrace( trace_t &trace );
+	float			CalcVRCooldownDamageMod();
+	bool			GetVRWeaponBoneTransform( Vector &outPos, QAngle &outAng );
+
+	float	m_flVRGripSpeed;
+	float	m_flVRLastHitTime;
+	bool	m_bVRSwingActive;		// true while hand is above swing threshold
+	bool	m_bVRSwingHit;			// true once a hit registers during this swing arc
+
+private:
 	CTFWeaponBaseMelee( const CTFWeaponBaseMelee & ) {}
 };
 

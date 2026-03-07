@@ -2,6 +2,10 @@
 //
 // Purpose: TF2VR Scout Bat - VR melee weapon implementation
 //
+// DEPRECATED: Physical VR melee is now handled directly in CTFWeaponBaseMelee.
+// All melee weapons automatically get VR physical melee support without
+// needing separate VR-specific weapon classes. See tf_weaponbase_melee.h.
+//
 //=============================================================================
 
 #ifndef TFVR_BAT_H

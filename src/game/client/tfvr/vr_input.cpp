@@ -829,9 +829,39 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             QAngle muzzleAngles;
             if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
             {
-                // Send weapon muzzle position AND angles for server-side hit detection
                 cmd->rightControllerOrigin = muzzlePos;
                 cmd->rightControllerAngles = muzzleAngles;
+
+                // For melee weapons, compute grip speed in VR playspace coordinates
+                // (raw controller pose, no world transform). This is immune to
+                // player locomotion, landing, crouching, and collision pushback
+                // because the playspace pose has no player origin baked in.
+                // Only during real CreateMove (command_number > 0) to avoid
+                // ExtraMouseSample clobbering the statics.
+                C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
+                int wtype = pWeapon->GetTFWpnData().m_iWeaponType;
+                if ( cmd->command_number != 0 &&
+                     ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS ) )
+                {
+                    VMatrix matRawPose;
+                    if ( g_pOpenXRManager->GetRightControllerPoseRaw( matRawPose ) )
+                    {
+                        static Vector s_vecPrevTrackingPos = vec3_origin;
+                        static float  s_flPrevTrackingTime = 0.0f;
+
+                        Vector vecTrackingPos = matRawPose.GetTranslation();
+                        float  flNow = Plat_FloatTime();
+                        float  flDt  = flNow - s_flPrevTrackingTime;
+
+                        if ( s_flPrevTrackingTime > 0.0f && flDt > 0.001f && flDt < 0.25f )
+                        {
+                            cmd->vrMeleeGripSpeed = ( vecTrackingPos - s_vecPrevTrackingPos ).Length() / flDt;
+                        }
+
+                        s_vecPrevTrackingPos = vecTrackingPos;
+                        s_flPrevTrackingTime = flNow;
+                    }
+                }
                 
                 if (tfvr_controller_tracking_debug.GetBool())
                 {

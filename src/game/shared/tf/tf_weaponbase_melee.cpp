@@ -8,6 +8,7 @@
 #include "tf_weaponbase_melee.h"
 #include "effect_dispatch_data.h"
 #include "tf_gamerules.h"
+#include "debugoverlay_shared.h"
 
 // Server specific.
 #if !defined( CLIENT_DLL )
@@ -56,6 +57,13 @@ ConVar tf_meleeattackforcescale( "tf_meleeattackforcescale", "80.0", FCVAR_CHEAT
 extern ConVar tf_weapon_criticals_force_random;
 #endif // _DEBUG
 
+// VR Physical Melee ConVars
+ConVar tfvr_melee_range_mult( "tfvr_melee_range_mult", "1.5", FCVAR_REPLICATED, "VR melee range as fraction of base range" );
+ConVar tfvr_melee_swing_speed( "tfvr_melee_swing_speed", "150.0", FCVAR_REPLICATED, "Min grip speed (units/sec) to register a VR melee hit" );
+ConVar tfvr_melee_hull_width( "tfvr_melee_hull_width", "3.0", FCVAR_REPLICATED, "Half-width of VR melee damage hull trace" );
+ConVar tfvr_melee_debug( "tfvr_melee_debug", "0", FCVAR_REPLICATED | FCVAR_CHEAT, "Draw VR melee collision debug. 1=hull, 2=hull+velocity" );
+ConVar tfvr_melee_bone_axis( "tfvr_melee_bone_axis", "-1", FCVAR_ARCHIVE, "Weapon bone axis for melee direction. -1=auto, 0=X(red), 1=Y(green), 2=Z(blue) in HLMV" );
+
 //=============================================================================
 //
 // TFWeaponBase Melee functions.
@@ -80,6 +88,11 @@ void CTFWeaponBaseMelee::WeaponReset( void )
 	m_flSmackTime = -1.0f;
 	m_bConnected = false;
 	m_bMiniCrit = false;
+
+	m_flVRGripSpeed = 0.0f;
+	m_flVRLastHitTime = 0.0f;
+	m_bVRSwingActive = false;
+	m_bVRSwingHit = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -193,6 +206,12 @@ void CTFWeaponBaseMelee::PrimaryAttack()
 	if ( !pPlayer )
 		return;
 
+	// VR: physical melee replaces button-press attacks for actual melee weapons.
+	// Some non-melee items (banners, flags, rocket pack) inherit from this class
+	// but should keep their normal PrimaryAttack behavior.
+	if ( pPlayer->IsInVRMode() && IsVRPhysicalMeleeWeapon() )
+		return;
+
 	if ( !CanAttack() )
 		return;
 
@@ -288,8 +307,8 @@ void CTFWeaponBaseMelee::Swing( CTFPlayer *pPlayer )
 	DoViewModelAnimation();
 
 #ifdef CLIENT_DLL
-	// VR: Trigger swing animation on the VR hand
-	if ( m_bHeldByVRHand )
+	// VR: Trigger swing animation on the VR hand (only for trigger-based melee, not physical)
+	if ( m_bHeldByVRHand && !IsOwnerInVR() )
 	{
 		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
@@ -387,6 +406,16 @@ void CTFWeaponBaseMelee::ItemPreFrame( void )
 //-----------------------------------------------------------------------------
 void CTFWeaponBaseMelee::ItemPostFrame()
 {
+	// VR: use velocity-based physical melee instead of button+smack.
+	// Only for actual melee weapons -- items like banners inherit from this
+	// class but shouldn't trigger physical melee.
+	if ( IsOwnerInVR() && IsVRPhysicalMeleeWeapon() )
+	{
+		VRPhysicalMeleeUpdate();
+		BaseClass::ItemPostFrame();
+		return;
+	}
+
 	// Check for smack.
 	if ( m_flSmackTime > 0.0f && gpGlobals->curtime > m_flSmackTime )
 	{
@@ -564,7 +593,7 @@ bool CTFWeaponBaseMelee::DoSwingTrace( trace_t &trace )
 // Purpose: 
 // Output : float
 //-----------------------------------------------------------------------------
-bool CTFWeaponBaseMelee::OnSwingHit( trace_t &trace )
+bool CTFWeaponBaseMelee::OnSwingHit( trace_t &trace, float flDamageMod )
 {
 	CTFPlayer *pPlayer = GetTFPlayerOwner();
 
@@ -702,7 +731,7 @@ bool CTFWeaponBaseMelee::OnSwingHit( trace_t &trace )
 		WeaponSound( MELEE_HIT_WORLD );
 	}
 
-	DoMeleeDamage( trace.m_pEnt, trace );
+	DoMeleeDamage( trace.m_pEnt, trace, flDamageMod );
 
 	return bHitEnemyPlayer;
 }
@@ -1163,4 +1192,290 @@ char const *CTFWeaponBaseMelee::GetShootSound( int iIndex ) const
 	}
 
 	return BaseClass::GetShootSound(iIndex);
+}
+
+//=============================================================================
+//
+// VR Physical Melee System
+//
+//=============================================================================
+
+//-----------------------------------------------------------------------------
+bool CTFWeaponBaseMelee::IsVRPhysicalMeleeWeapon()
+{
+	int id = GetWeaponID();
+	return ( id != TF_WEAPON_BUFF_ITEM &&
+			 id != TF_WEAPON_ROCKETPACK );
+}
+
+//-----------------------------------------------------------------------------
+bool CTFWeaponBaseMelee::IsOwnerInVR()
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	return ( pPlayer && pPlayer->IsInVRMode() );
+}
+
+//-----------------------------------------------------------------------------
+// Weapon bone world transform from the usercmd (single source of truth for
+// both client prediction and server simulation). The client packs weapon_bone
+// position + Y axis direction into rightControllerOrigin/Angles.
+//-----------------------------------------------------------------------------
+bool CTFWeaponBaseMelee::GetVRWeaponBoneTransform( Vector &outPos, QAngle &outAng )
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return false;
+
+	const CUserCmd *pCmd = pPlayer->GetCurrentUserCommand();
+	if ( !pCmd || pCmd->rightControllerOrigin == vec3_origin )
+		return false;
+
+	outPos = pCmd->rightControllerOrigin;
+	outAng = pCmd->rightControllerAngles;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Dynamic VR melee range: total reach (arm extension + trace) approximates
+// base melee range * multiplier. When the hand is extended, the trace
+// shortens; when tucked in, it lengthens. A minimum trace length is enforced
+// so there's always a hitbox beyond the weapon model.
+//-----------------------------------------------------------------------------
+float CTFWeaponBaseMelee::GetVRSwingRange( const Vector *pGripPos )
+{
+	float flMaxRange = GetSwingRange() * tfvr_melee_range_mult.GetFloat();
+
+	if ( !pGripPos )
+		return flMaxRange;
+
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return flMaxRange;
+
+	// Use the usercmd's eye position so both grip and body center come from the
+	// same client frame. pPlayer->EyePosition() is evaluated at prediction tick
+	// time and drifts relative to the usercmd grip position during locomotion.
+	const CUserCmd *pCmd = pPlayer->GetCurrentUserCommand();
+	Vector vecBody;
+	if ( pCmd && pCmd->clientEyePosition != vec3_origin )
+		vecBody = pCmd->clientEyePosition;
+	else
+		vecBody = pPlayer->EyePosition();
+
+	Vector vecToGrip = *pGripPos - vecBody;
+	vecToGrip.z = 0.0f;
+	float flArmExtension = vecToGrip.Length();
+
+	float flMinTrace = flMaxRange * 0.3f;
+	float flRange = flMaxRange - flArmExtension;
+	return MAX( flRange, flMinTrace );
+}
+
+//-----------------------------------------------------------------------------
+// Proportional damage when hitting faster than the weapon's fire rate.
+// Keeps DPS capped at base TF2 levels regardless of swing speed.
+//-----------------------------------------------------------------------------
+float CTFWeaponBaseMelee::CalcVRCooldownDamageMod()
+{
+	if ( m_flVRLastHitTime <= 0.0f )
+		return 1.0f;
+
+	float flElapsed = gpGlobals->curtime - m_flVRLastHitTime;
+	float flAttackInterval = m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeFireDelay;
+	flAttackInterval = ApplyFireDelay( flAttackInterval );
+
+	if ( flAttackInterval <= 0.0f )
+		return 1.0f;
+
+	if ( flElapsed >= flAttackInterval )
+		return 1.0f;
+
+	return flElapsed / flAttackInterval;
+}
+
+//-----------------------------------------------------------------------------
+// Hull trace from grip along weapon axis for VR melee collision.
+//-----------------------------------------------------------------------------
+bool CTFWeaponBaseMelee::DoVRSwingTrace( trace_t &trace )
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return false;
+
+	float fHullHalf = tfvr_melee_hull_width.GetFloat();
+
+	// Get the weapon bone transform from the VR hand
+	Vector vecStart;
+	QAngle angBone;
+	if ( !GetVRWeaponBoneTransform( vecStart, angBone ) )
+		return false;
+
+	float fSwingRange = GetVRSwingRange( &vecStart );
+
+	// Melee weapon models extend along the bone's forward axis from the grip
+	Vector vecWeaponFwd;
+	AngleVectors( angBone, &vecWeaponFwd );
+	Vector vecEnd = vecStart + vecWeaponFwd * fSwingRange;
+
+	Vector vecMins( -fHullHalf, -fHullHalf, -fHullHalf );
+	Vector vecMaxs( fHullHalf, fHullHalf, fHullHalf );
+
+	CTraceFilterSimple filter( pPlayer, COLLISION_GROUP_NONE );
+
+	UTIL_TraceLine( vecStart, vecEnd, MASK_SOLID, &filter, &trace );
+
+	if ( trace.fraction >= 1.0f )
+	{
+		UTIL_TraceHull( vecStart, vecEnd, vecMins, vecMaxs, MASK_SOLID, &filter, &trace );
+	}
+
+	return ( trace.fraction < 1.0f && trace.m_pEnt );
+}
+
+//-----------------------------------------------------------------------------
+// Per-frame VR melee update. Grip speed is pre-computed on the client in
+// tracking space and delivered via usercmd, so both sides always agree and
+// player locomotion is inherently excluded from the velocity measurement.
+//-----------------------------------------------------------------------------
+void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return;
+
+	const CUserCmd *pCmd = pPlayer->GetCurrentUserCommand();
+	if ( !pCmd )
+		return;
+
+	m_flVRGripSpeed = pCmd->vrMeleeGripSpeed;
+
+	// --- Swing state machine ---
+	// A swing starts when speed crosses above the threshold and ends when it
+	// drops below half the threshold (hysteresis). Only one hit per swing arc.
+	float flThreshold = tfvr_melee_swing_speed.GetFloat();
+
+	if ( m_bVRSwingActive )
+	{
+		if ( m_flVRGripSpeed < flThreshold * 0.25f )
+		{
+			m_bVRSwingActive = false;
+			m_bVRSwingHit = false;
+		}
+	}
+	else
+	{
+		if ( m_flVRGripSpeed >= flThreshold )
+		{
+			m_bVRSwingActive = true;
+			m_bVRSwingHit = false;
+
+			WeaponSound( MELEE_MISS );
+		}
+	}
+
+	// Debug visualization
+	if ( tfvr_melee_debug.GetInt() > 0 )
+	{
+		Vector vecBonePos;
+		QAngle angBone;
+		if ( GetVRWeaponBoneTransform( vecBonePos, angBone ) )
+		{
+			float fHullHalf = tfvr_melee_hull_width.GetFloat();
+			float fRange = GetVRSwingRange( &vecBonePos );
+			Vector vecWeaponFwd;
+			AngleVectors( angBone, &vecWeaponFwd );
+			Vector vecDbgEnd = vecBonePos + vecWeaponFwd * fRange;
+			Vector vecMins( -fHullHalf, -fHullHalf, -fHullHalf );
+			Vector vecMaxs( fHullHalf, fHullHalf, fHullHalf );
+
+			int r, g, b, a;
+			if ( m_bVRSwingHit )
+			{
+				r = 64; g = 64; b = 255; a = 60;
+			}
+			else if ( m_bVRSwingActive )
+			{
+				r = 255; g = 255; b = 0; a = 80;
+			}
+			else
+			{
+				r = 128; g = 128; b = 128; a = 40;
+			}
+
+			NDebugOverlay::SweptBox( vecBonePos, vecDbgEnd, vecMins, vecMaxs, angBone, r, g, b, a, 0.0f );
+			NDebugOverlay::Line( vecBonePos, vecDbgEnd, r, g, b, false, 0.0f );
+			NDebugOverlay::Cross3D( vecBonePos, 2.0f, 0, 255, 0, false, 0.0f );
+			NDebugOverlay::Cross3D( vecDbgEnd, 2.0f, 255, 0, 0, false, 0.0f );
+
+			if ( tfvr_melee_debug.GetInt() >= 2 )
+			{
+				char szSpeed[64];
+				V_snprintf( szSpeed, sizeof(szSpeed), "Speed: %.0f / %.0f%s",
+					m_flVRGripSpeed, flThreshold,
+					m_bVRSwingHit ? " [HIT]" : ( m_bVRSwingActive ? " [SWING]" : "" ) );
+				NDebugOverlay::EntityTextAtPosition( vecDbgEnd, 0, szSpeed, 0.0f,
+					r, g, b, 255 );
+			}
+		}
+	}
+
+	// Not in a swing, or already hit during this swing
+	if ( !m_bVRSwingActive || m_bVRSwingHit )
+		return;
+
+#if !defined( CLIENT_DLL )
+	lagcompensation->StartLagCompensation( pPlayer, pPlayer->GetCurrentCommand() );
+#endif
+
+	trace_t trace;
+	if ( DoVRSwingTrace( trace ) )
+	{
+		m_bVRSwingHit = true;
+
+		float flDamageMod = CalcVRCooldownDamageMod();
+		m_flVRLastHitTime = gpGlobals->curtime;
+
+		m_iWeaponMode = TF_WEAPON_PRIMARY_MODE;
+		m_bConnected = true;
+
+		CalcIsAttackCritical();
+
+		m_bCurrentAttackIsDuringDemoCharge = pPlayer->m_Shared.GetNextMeleeCrit() != MELEE_NOCRIT;
+		m_bMiniCrit = ( pPlayer->m_Shared.GetNextMeleeCrit() == MELEE_MINICRIT );
+
+		SendPlayerAnimEvent( pPlayer );
+
+#if !defined( CLIENT_DLL )
+		pPlayer->SpeakWeaponFire();
+		CTF_GameStats.Event_PlayerFiredWeapon( pPlayer, IsCurrentAttackACrit() );
+
+		if ( pPlayer->m_Shared.IsStealthed() && ShouldRemoveInvisibilityOnPrimaryAttack() )
+		{
+			pPlayer->RemoveInvisibility();
+		}
+#else
+		C_CTF_GameStats.Event_PlayerFiredWeapon( pPlayer, IsCurrentAttackACrit() );
+#endif
+
+		pPlayer->m_Shared.OnAttack();
+
+		OnSwingHit( trace, flDamageMod );
+
+		if ( tfvr_melee_debug.GetInt() > 0 )
+		{
+			NDebugOverlay::Cross3D( trace.endpos, 8.0f, 255, 0, 0, false, 0.5f );
+			if ( tfvr_melee_debug.GetInt() >= 2 )
+			{
+				char szHit[64];
+				V_snprintf( szHit, sizeof(szHit), "HIT dmg:%.0f%%", flDamageMod * 100.0f );
+				NDebugOverlay::EntityTextAtPosition( trace.endpos, 1, szHit, 0.5f, 255, 64, 64, 255 );
+			}
+		}
+
+		pPlayer->m_Shared.SetNextMeleeCrit( MELEE_NOCRIT );
+	}
+
+#if !defined( CLIENT_DLL )
+	lagcompensation->FinishLagCompensation( pPlayer );
+#endif
 }

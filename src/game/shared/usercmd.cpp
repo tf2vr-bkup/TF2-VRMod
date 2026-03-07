@@ -216,6 +216,16 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	WriteVec3Diff(buf, to->vrThrowAngles, from->vrThrowAngles);
 	WriteVec3Diff(buf, to->vrThrowAngVel, from->vrThrowAngVel);
 
+	if ( to->vrMeleeGripSpeed != from->vrMeleeGripSpeed )
+	{
+		buf->WriteOneBit( 1 );
+		buf->WriteFloat( to->vrMeleeGripSpeed );
+	}
+	else
+	{
+		buf->WriteOneBit( 0 );
+	}
+
 
 #if defined( HL2_CLIENT_DLL )
 	if ( to->entitygroundcontact.Count() != 0 )
@@ -365,6 +375,11 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	ReadVec3Diff(buf, move->vrThrowOrigin);
 	ReadVec3Diff(buf, move->vrThrowAngles);
 	ReadVec3Diff(buf, move->vrThrowAngVel);
+
+	if ( buf->ReadOneBit() )
+	{
+		move->vrMeleeGripSpeed = buf->ReadFloat();
+	}
 
 
 #if defined( HL2_DLL )

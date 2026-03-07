@@ -4859,20 +4859,40 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		weaponType = pTFWeapon->GetTFWpnData().m_iWeaponType;
 	}
 	
-	// MELEE WEAPONS: Use controller aim point for both position and direction
-	// This prevents the swing animation from moving the aim point
+	// MELEE WEAPONS: Use the weapon_bone transform for position and direction.
+	// Most weapons align along the Y axis (green in HLMV / column 1), but
+	// class-specific medic and sniper melees use the Z axis (blue / column 2).
+	// All-class melees (frying pan, saxxy, etc.) always use Y.
+	// tfvr_melee_bone_axis overrides auto-detection when >= 0.
 	if (weaponType == TF_WPN_TYPE_MELEE || weaponType == TF_WPN_TYPE_MELEE_ALLCLASS)
 	{
-		// Use the controller's pose directly (aim pose)
-		if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+		static ConVarRef s_meleeAxis("tfvr_melee_bone_axis");
+
+		matrix3x4_t matBone;
+		if (GetCachedWeaponBoneTransform(matBone))
 		{
-			VMatrix controllerPose;
-			if (g_pOpenXRManager->GetRightControllerPose(controllerPose))
+			MatrixGetColumn(matBone, 3, outPos);
+
+			int iAxis = 1;
+			if ( s_meleeAxis.IsValid() && s_meleeAxis.GetInt() >= 0 )
 			{
-				outPos = controllerPose.GetTranslation();
-				MatrixAngles(controllerPose.As3x4(), outAngles);
-				return true;
+				iAxis = clamp( s_meleeAxis.GetInt(), 0, 2 );
 			}
+			else if ( weaponType == TF_WPN_TYPE_MELEE )
+			{
+				C_TFPlayer *pOwnerPlayer = m_hOwnerPlayer.Get();
+				if ( pOwnerPlayer )
+				{
+					int iClass = pOwnerPlayer->GetPlayerClass()->GetClassIndex();
+					if ( iClass == TF_CLASS_MEDIC || iClass == TF_CLASS_SNIPER )
+						iAxis = 2;
+				}
+			}
+
+			Vector vecDir;
+			MatrixGetColumn(matBone, iAxis, vecDir);
+			VectorAngles(vecDir, outAngles);
+			return true;
 		}
 		// Fallback to cached hand position
 		outPos = m_vecLastValidPosition;
