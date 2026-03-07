@@ -51,4 +51,14 @@ float VRHandLayer_GetZFarOverride();
 // Set whether the hand pass is currently active (used internally by DrawVRHands).
 void VRHandLayer_SetHandPassActive(bool bActive);
 
+// Particle deferral: weapon/hand particles skip the world translucent pass
+// and render in the hand layer pass for correct depth ordering.
+class C_BaseEntity;
+void VRHandLayer_AddParticleOwner(C_BaseEntity *pEntity);
+bool VRHandLayer_IsParticleOwner(C_BaseEntity *pEntity);
+void VRHandLayer_AddDeferredParticle(IClientRenderable *pParticle);
+int VRHandLayer_GetDeferredParticleCount();
+IClientRenderable *VRHandLayer_GetDeferredParticle(int index);
+void VRHandLayer_ClearDeferredParticles();
+
 #endif // VR_HAND_RENDER_H

@@ -1305,6 +1305,20 @@ void CViewRender::DrawVRHands( const CViewSetup &viewRender )
 		}
 	}
 
+	// Draw weapon/hand particles that were deferred from the world translucent pass.
+	// DepthRange is still active so particle depth is remapped to world-projection
+	// space, giving correct depth-test against both hand geometry and the world.
+	int nParticles = VRHandLayer_GetDeferredParticleCount();
+	for (int i = 0; i < nParticles; i++)
+	{
+		IClientRenderable *pParticle = VRHandLayer_GetDeferredParticle(i);
+		if (pParticle)
+		{
+			pParticle->DrawModel( STUDIO_RENDER | STUDIO_TRANSPARENCY );
+		}
+	}
+	VRHandLayer_ClearDeferredParticles();
+
 	VRHandLayer_SetHandPassActive( false );
 	VRHandLayer_ClearRenderables();
 

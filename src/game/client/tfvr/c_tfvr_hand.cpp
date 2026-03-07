@@ -5834,16 +5834,28 @@ int C_TFVRHand::DrawModel(int flags)
 	if (VRHandLayer_ShouldSkipDraw())
 	{
 		VRHandLayer_AddRenderable(this);
+		VRHandLayer_AddParticleOwner(this);
 
-		// Also register the render weapon so it draws in the hand pass
 		if (m_hRenderWeapon.Get())
+		{
 			VRHandLayer_AddRenderable(m_hRenderWeapon.Get());
+			VRHandLayer_AddParticleOwner(m_hRenderWeapon.Get());
+		}
 
-		// Register left-hand attachables (spy watch, scout ball)
+		// Source weapon creates particles like loose cannon sparks
+		if (m_hHeldWeapon.Get())
+			VRHandLayer_AddParticleOwner(m_hHeldWeapon.Get());
+
 		if (m_hLeftHandWatch.Get())
+		{
 			VRHandLayer_AddRenderable(m_hLeftHandWatch.Get());
+			VRHandLayer_AddParticleOwner(m_hLeftHandWatch.Get());
+		}
 		if (m_hLeftHandBall.Get())
+		{
 			VRHandLayer_AddRenderable(m_hLeftHandBall.Get());
+			VRHandLayer_AddParticleOwner(m_hLeftHandBall.Get());
+		}
 
 		return 0;
 	}

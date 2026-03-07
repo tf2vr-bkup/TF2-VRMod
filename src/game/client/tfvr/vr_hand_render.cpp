@@ -20,12 +20,16 @@ static ConVar tfvr_hand_layer_zfar("tfvr_hand_layer_zfar", "0", FCVAR_ARCHIVE,
 static bool g_bWorldPassActive = false;
 static bool g_bHandPassActive = false;
 static CUtlVector<IClientRenderable*> g_HandLayerRenderables;
+static CUtlVector<C_BaseEntity*> g_ParticleOwners;
+static CUtlVector<IClientRenderable*> g_DeferredParticles;
 
 void VRHandLayer_BeginWorldPass()
 {
 	g_bWorldPassActive = true;
 	g_bHandPassActive = false;
 	g_HandLayerRenderables.RemoveAll();
+	g_ParticleOwners.RemoveAll();
+	g_DeferredParticles.RemoveAll();
 }
 
 void VRHandLayer_EndWorldPass()
@@ -86,4 +90,42 @@ float VRHandLayer_GetZFarOverride()
 void VRHandLayer_SetHandPassActive(bool bActive)
 {
 	g_bHandPassActive = bActive;
+}
+
+void VRHandLayer_AddParticleOwner(C_BaseEntity *pEntity)
+{
+	if (pEntity && g_ParticleOwners.Find(pEntity) == g_ParticleOwners.InvalidIndex())
+	{
+		g_ParticleOwners.AddToTail(pEntity);
+	}
+}
+
+bool VRHandLayer_IsParticleOwner(C_BaseEntity *pEntity)
+{
+	return pEntity && g_ParticleOwners.Find(pEntity) != g_ParticleOwners.InvalidIndex();
+}
+
+void VRHandLayer_AddDeferredParticle(IClientRenderable *pParticle)
+{
+	if (pParticle && g_DeferredParticles.Find(pParticle) == g_DeferredParticles.InvalidIndex())
+	{
+		g_DeferredParticles.AddToTail(pParticle);
+	}
+}
+
+int VRHandLayer_GetDeferredParticleCount()
+{
+	return g_DeferredParticles.Count();
+}
+
+IClientRenderable *VRHandLayer_GetDeferredParticle(int index)
+{
+	if (index >= 0 && index < g_DeferredParticles.Count())
+		return g_DeferredParticles[index];
+	return NULL;
+}
+
+void VRHandLayer_ClearDeferredParticles()
+{
+	g_DeferredParticles.RemoveAll();
 }
