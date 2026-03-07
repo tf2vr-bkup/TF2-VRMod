@@ -202,6 +202,15 @@ bool COpenXRInputManager::CreateActions()
     if (rightTrackpadForce.handle == XR_NULL_HANDLE) return false;
     m_actions["right_trackpad_force"] = rightTrackpadForce;
 
+    // WMR trackpad click + Y position for split-trackpad jump/duck
+    XrInputAction rightTrackpadClick = CreateBooleanAction("right_trackpad_click", "Right Trackpad Click");
+    if (rightTrackpadClick.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_trackpad_click"] = rightTrackpadClick;
+
+    XrInputAction rightTrackpadY = CreateFloatAction("right_trackpad_y", "Right Trackpad Y");
+    if (rightTrackpadY.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_trackpad_y"] = rightTrackpadY;
+
     return true;
 }
 
@@ -215,10 +224,15 @@ bool COpenXRInputManager::CreateInteractionProfiles()
     // Try to create Quest controller profile
     success |= CreateQuestControllerProfile();
     
+    // Try to create HP Reverb G2 controller profile
+    success |= CreateHPReverbControllerProfile();
+    
+    // Try to create standard WMR controller profile (Samsung Odyssey, Lenovo Explorer, etc.)
+    success |= CreateWMRControllerProfile();
+    
     // Try minimal Quest profile for debugging if full profile fails
     if (!success)
     {
-
         success |= CreateMinimalQuestControllerProfile();
     }
     
@@ -958,6 +972,600 @@ bool COpenXRInputManager::CreateMinimalQuestControllerProfile()
     return SuggestBindings(questProfilePath, suggestedBindings, "Quest Touch (Minimal)");
 }
 
+bool COpenXRInputManager::CreateWMRControllerProfile()
+{
+    XrPath wmrProfilePath;
+    
+    XrResult result = xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller", &wmrProfilePath);
+    if (!XR_SUCCEEDED(result)) 
+    {
+        DevMsg("Failed to create path for WMR controller profile: %d\n", result);
+        return false;
+    }
+
+    std::vector<XrActionSuggestedBinding> suggestedBindings;
+    
+    // Movement bindings (left thumbstick)
+    if (m_actions.find("move_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("move_y") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_y"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Turning (right thumbstick)
+    if (m_actions.find("turn_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["turn_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Primary attack (right trigger)
+    if (m_actions.find("primary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["primary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Secondary attack (left trigger)
+    if (m_actions.find("secondary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["secondary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Voice chat (left trigger)
+    if (m_actions.find("voice") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["voice"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right trackpad click + Y for split-trackpad: top half = jump, bottom half = duck
+    // Actual jump/duck routing is handled in PollInput() based on trackpad Y position
+    if (m_actions.find("right_trackpad_click") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_trackpad_click"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("right_trackpad_y") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_trackpad_y"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Menu (left menu button)
+    if (m_actions.find("menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left UI interaction (left trigger)
+    if (m_actions.find("left_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right UI interaction (right trigger)
+    if (m_actions.find("right_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left class menu (left trackpad click)
+    if (m_actions.find("left_class_menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_class_menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Weapon switching (right thumbstick y)
+    if (m_actions.find("weapon_switch") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_switch"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left grip (squeeze/click - auto-converts boolean to float 0/1)
+    if (m_actions.find("left_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right grip (squeeze/click)
+    if (m_actions.find("right_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("right_grip_value") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip_value"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Weapon select hold (right thumbstick click)
+    if (m_actions.find("weapon_select_hold") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_select_hold"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Scoreboard (left thumbstick click)
+    if (m_actions.find("scoreboard") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["scoreboard"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Pose bindings
+    if (m_actions.find("left_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("right_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("left_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("right_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    return SuggestBindings(wmrProfilePath, suggestedBindings, "WMR Motion Controller");
+}
+
+bool COpenXRInputManager::CreateHPReverbControllerProfile()
+{
+    XrPath hpProfilePath;
+    
+    XrResult result = xrStringToPath(m_instance, "/interaction_profiles/hp/mixed_reality_controller", &hpProfilePath);
+    if (!XR_SUCCEEDED(result)) 
+    {
+        DevMsg("Failed to create path for HP Reverb controller profile: %d\n", result);
+        return false;
+    }
+
+    std::vector<XrActionSuggestedBinding> suggestedBindings;
+    
+    // Movement bindings (left thumbstick)
+    if (m_actions.find("move_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("move_y") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["move_y"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Turning (right thumbstick)
+    if (m_actions.find("turn_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["turn_x"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Primary attack (right trigger)
+    if (m_actions.find("primary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["primary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Secondary attack (left trigger)
+    if (m_actions.find("secondary_attack") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["secondary_attack"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Voice chat (left trigger)
+    if (m_actions.find("voice") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["voice"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Jump (right B button)
+    if (m_actions.find("jump") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["jump"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Duck (right A button)
+    if (m_actions.find("duck") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["duck"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Menu (left Y button)
+    if (m_actions.find("menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/y/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left UI interaction (left trigger)
+    if (m_actions.find("left_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right UI interaction (right trigger)
+    if (m_actions.find("right_ui_interact") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_ui_interact"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left class menu (left X button)
+    if (m_actions.find("left_class_menu") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/x/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_class_menu"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Weapon switching (right thumbstick y)
+    if (m_actions.find("weapon_switch") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_switch"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Left grip (squeeze/value - G2 has analog squeeze)
+    if (m_actions.find("left_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Right grip (squeeze/value)
+    if (m_actions.find("right_grip") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("right_grip_value") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_grip_value"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Weapon select hold (right thumbstick click)
+    if (m_actions.find("weapon_select_hold") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["weapon_select_hold"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Scoreboard (left thumbstick click)
+    if (m_actions.find("scoreboard") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/click", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["scoreboard"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    // Pose bindings
+    if (m_actions.find("left_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("right_hand_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/aim/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("left_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["left_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+    
+    if (m_actions.find("right_hand_grip_pose") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_hand_grip_pose"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    return SuggestBindings(hpProfilePath, suggestedBindings, "HP Reverb G2");
+}
+
 bool COpenXRInputManager::CreateGenericControllerProfile()
 {
     XrPath genericProfilePath;
@@ -1402,6 +2010,33 @@ void COpenXRInputManager::PollInput()
         {
             // Trackpad force action is active - use it for weapon_select_hold
             m_currentButtonStates["weapon_select_hold"] = (state.currentState > TRACKPAD_FORCE_THRESHOLD);
+        }
+    }
+
+    // WMR split-trackpad: top half = jump, bottom half = duck
+    // Only active when right_trackpad_click has a valid binding (WMR controllers)
+    auto trackpadClickIt = m_actions.find("right_trackpad_click");
+    auto trackpadYIt = m_actions.find("right_trackpad_y");
+    if (trackpadClickIt != m_actions.end() && trackpadYIt != m_actions.end())
+    {
+        XrActionStateGetInfo clickGetInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
+        clickGetInfo.action = trackpadClickIt->second.handle;
+        XrActionStateBoolean clickState{ XR_TYPE_ACTION_STATE_BOOLEAN };
+
+        XrActionStateGetInfo yGetInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
+        yGetInfo.action = trackpadYIt->second.handle;
+        XrActionStateFloat yState{ XR_TYPE_ACTION_STATE_FLOAT };
+
+        if (XR_SUCCEEDED(xrGetActionStateBoolean(m_session, &clickGetInfo, &clickState)) && clickState.isActive &&
+            XR_SUCCEEDED(xrGetActionStateFloat(m_session, &yGetInfo, &yState)) && yState.isActive)
+        {
+            if (clickState.currentState)
+            {
+                if (yState.currentState > 0.0f)
+                    m_currentButtonStates["jump"] = true;
+                else
+                    m_currentButtonStates["duck"] = true;
+            }
         }
     }
 }
