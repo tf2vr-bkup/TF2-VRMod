@@ -3621,9 +3621,21 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 			}
 		}
+		else if (IsLeftHand())
+		{
+			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+			C_TFWeaponBase *pRightWeapon = pRightHand ? pRightHand->GetHeldWeapon() : NULL;
+			if (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_FISTS)
+			{
+				ApplyWeaponPose(pBoneToWorldOut, nMaxBones, pRightWeapon);
+			}
+			else
+			{
+				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+			}
+		}
 		else
 		{
-			// Use normal finger tracking
 			ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 		}
 		
@@ -5617,13 +5629,13 @@ const char* GetWeaponChargeAnimation2(int playerClass, const char *weaponClass, 
 // Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
 //        Samples finger bone rotations from the hand model's weapon animation
 //-----------------------------------------------------------------------------
-void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
+void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_TFWeaponBase *pWeaponOverride)
 {
 	CStudioHdr *pStudioHdr = GetModelPtr();
 	if (!pStudioHdr)
 		return;
 	
-	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	C_TFWeaponBase *pWeapon = pWeaponOverride ? pWeaponOverride : m_hHeldWeapon.Get();
 	if (!pWeapon)
 		return;
 	

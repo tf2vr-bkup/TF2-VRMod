@@ -93,6 +93,8 @@ void CTFWeaponBaseMelee::WeaponReset( void )
 	m_flVRLastHitTime = 0.0f;
 	m_bVRSwingActive = false;
 	m_bVRSwingHit = false;
+	m_bVRSwingActiveLeft = false;
+	m_bVRSwingHitLeft = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -1235,6 +1237,21 @@ bool CTFWeaponBaseMelee::GetVRWeaponBoneTransform( Vector &outPos, QAngle &outAn
 	return true;
 }
 
+bool CTFWeaponBaseMelee::GetVRWeaponBoneTransformLeft( Vector &outPos, QAngle &outAng )
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return false;
+
+	const CUserCmd *pCmd = pPlayer->GetCurrentUserCommand();
+	if ( !pCmd || pCmd->leftControllerOrigin == vec3_origin )
+		return false;
+
+	outPos = pCmd->leftControllerOrigin;
+	outAng = pCmd->leftControllerAngles;
+	return true;
+}
+
 //-----------------------------------------------------------------------------
 // Dynamic VR melee range: total reach (arm extension + trace) approximates
 // base melee range * multiplier. When the hand is extended, the trace
@@ -1294,25 +1311,17 @@ float CTFWeaponBaseMelee::CalcVRCooldownDamageMod()
 }
 
 //-----------------------------------------------------------------------------
-// Hull trace from grip along weapon axis for VR melee collision.
+// Shared hull trace from an arbitrary grip position/orientation.
 //-----------------------------------------------------------------------------
-bool CTFWeaponBaseMelee::DoVRSwingTrace( trace_t &trace )
+bool CTFWeaponBaseMelee::DoVRSwingTraceFromHand( trace_t &trace, const Vector &vecStart, const QAngle &angBone )
 {
 	CTFPlayer *pPlayer = GetTFPlayerOwner();
 	if ( !pPlayer )
 		return false;
 
 	float fHullHalf = tfvr_melee_hull_width.GetFloat();
-
-	// Get the weapon bone transform from the VR hand
-	Vector vecStart;
-	QAngle angBone;
-	if ( !GetVRWeaponBoneTransform( vecStart, angBone ) )
-		return false;
-
 	float fSwingRange = GetVRSwingRange( &vecStart );
 
-	// Melee weapon models extend along the bone's forward axis from the grip
 	Vector vecWeaponFwd;
 	AngleVectors( angBone, &vecWeaponFwd );
 	Vector vecEnd = vecStart + vecWeaponFwd * fSwingRange;
@@ -1333,6 +1342,19 @@ bool CTFWeaponBaseMelee::DoVRSwingTrace( trace_t &trace )
 }
 
 //-----------------------------------------------------------------------------
+// Hull trace from right-hand grip along weapon axis for VR melee collision.
+//-----------------------------------------------------------------------------
+bool CTFWeaponBaseMelee::DoVRSwingTrace( trace_t &trace )
+{
+	Vector vecStart;
+	QAngle angBone;
+	if ( !GetVRWeaponBoneTransform( vecStart, angBone ) )
+		return false;
+
+	return DoVRSwingTraceFromHand( trace, vecStart, angBone );
+}
+
+//-----------------------------------------------------------------------------
 // Per-frame VR melee update. Grip speed is pre-computed on the client in
 // tracking space and delivered via usercmd, so both sides always agree and
 // player locomotion is inherently excluded from the velocity measurement.
@@ -1347,16 +1369,19 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 	if ( !pCmd )
 		return;
 
-	m_flVRGripSpeed = pCmd->vrMeleeGripSpeed;
+	bool bIsFists = ( GetWeaponID() == TF_WEAPON_FISTS );
 
-	// --- Swing state machine ---
-	// A swing starts when speed crosses above the threshold and ends when it
-	// drops below half the threshold (hysteresis). Only one hit per swing arc.
+	float flRightGripSpeed = pCmd->vrMeleeGripSpeed;
+	float flLeftGripSpeed  = bIsFists ? pCmd->vrMeleeGripSpeedLeft : 0.0f;
+	m_flVRGripSpeed = MAX( flRightGripSpeed, flLeftGripSpeed );
+
 	float flThreshold = tfvr_melee_swing_speed.GetFloat();
+	float flResetThreshold = flThreshold * 0.25f;
 
+	// --- Right-hand swing state ---
 	if ( m_bVRSwingActive )
 	{
-		if ( m_flVRGripSpeed < flThreshold * 0.25f )
+		if ( flRightGripSpeed < flResetThreshold )
 		{
 			m_bVRSwingActive = false;
 			m_bVRSwingHit = false;
@@ -1364,63 +1389,114 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 	}
 	else
 	{
-		if ( m_flVRGripSpeed >= flThreshold )
+		if ( flRightGripSpeed >= flThreshold )
 		{
 			m_bVRSwingActive = true;
 			m_bVRSwingHit = false;
-
 			WeaponSound( MELEE_MISS );
+		}
+	}
+
+	// --- Left-hand swing state (fists only) ---
+	if ( bIsFists )
+	{
+		if ( m_bVRSwingActiveLeft )
+		{
+			if ( flLeftGripSpeed < flResetThreshold )
+			{
+				m_bVRSwingActiveLeft = false;
+				m_bVRSwingHitLeft = false;
+			}
+		}
+		else
+		{
+			if ( flLeftGripSpeed >= flThreshold )
+			{
+				m_bVRSwingActiveLeft = true;
+				m_bVRSwingHitLeft = false;
+				WeaponSound( MELEE_MISS );
+			}
 		}
 	}
 
 	// Debug visualization
 	if ( tfvr_melee_debug.GetInt() > 0 )
 	{
-		Vector vecBonePos;
-		QAngle angBone;
-		if ( GetVRWeaponBoneTransform( vecBonePos, angBone ) )
+		float fHullHalf = tfvr_melee_hull_width.GetFloat();
+		Vector vecMins( -fHullHalf, -fHullHalf, -fHullHalf );
+		Vector vecMaxs( fHullHalf, fHullHalf, fHullHalf );
+
+		// Right hand debug
 		{
-			float fHullHalf = tfvr_melee_hull_width.GetFloat();
-			float fRange = GetVRSwingRange( &vecBonePos );
-			Vector vecWeaponFwd;
-			AngleVectors( angBone, &vecWeaponFwd );
-			Vector vecDbgEnd = vecBonePos + vecWeaponFwd * fRange;
-			Vector vecMins( -fHullHalf, -fHullHalf, -fHullHalf );
-			Vector vecMaxs( fHullHalf, fHullHalf, fHullHalf );
-
 			int r, g, b, a;
-			if ( m_bVRSwingHit )
-			{
-				r = 64; g = 64; b = 255; a = 60;
-			}
-			else if ( m_bVRSwingActive )
-			{
-				r = 255; g = 255; b = 0; a = 80;
-			}
-			else
-			{
-				r = 128; g = 128; b = 128; a = 40;
-			}
+			if ( m_bVRSwingHit )             { r = 64;  g = 64;  b = 255; a = 60; }
+			else if ( m_bVRSwingActive )      { r = 255; g = 255; b = 0;   a = 80; }
+			else                              { r = 128; g = 128; b = 128; a = 40; }
 
-			NDebugOverlay::SweptBox( vecBonePos, vecDbgEnd, vecMins, vecMaxs, angBone, r, g, b, a, 0.0f );
-			NDebugOverlay::Line( vecBonePos, vecDbgEnd, r, g, b, false, 0.0f );
-			NDebugOverlay::Cross3D( vecBonePos, 2.0f, 0, 255, 0, false, 0.0f );
-			NDebugOverlay::Cross3D( vecDbgEnd, 2.0f, 255, 0, 0, false, 0.0f );
-
-			if ( tfvr_melee_debug.GetInt() >= 2 )
+			Vector vecBonePos;
+			QAngle angBone;
+			if ( GetVRWeaponBoneTransform( vecBonePos, angBone ) )
 			{
-				char szSpeed[64];
-				V_snprintf( szSpeed, sizeof(szSpeed), "Speed: %.0f / %.0f%s",
-					m_flVRGripSpeed, flThreshold,
-					m_bVRSwingHit ? " [HIT]" : ( m_bVRSwingActive ? " [SWING]" : "" ) );
-				NDebugOverlay::EntityTextAtPosition( vecDbgEnd, 0, szSpeed, 0.0f,
-					r, g, b, 255 );
+				float fRange = GetVRSwingRange( &vecBonePos );
+				Vector vecFwd;
+				AngleVectors( angBone, &vecFwd );
+				Vector vecEnd = vecBonePos + vecFwd * fRange;
+
+				NDebugOverlay::SweptBox( vecBonePos, vecEnd, vecMins, vecMaxs, angBone, r, g, b, a, 0.0f );
+				NDebugOverlay::Line( vecBonePos, vecEnd, r, g, b, false, 0.0f );
+				NDebugOverlay::Cross3D( vecBonePos, 2.0f, 0, 255, 0, false, 0.0f );
+				NDebugOverlay::Cross3D( vecEnd, 2.0f, 255, 0, 0, false, 0.0f );
+
+				if ( tfvr_melee_debug.GetInt() >= 2 )
+				{
+					char sz[64];
+					V_snprintf( sz, sizeof(sz), "R: %.0f / %.0f%s",
+						flRightGripSpeed, flThreshold,
+						m_bVRSwingHit ? " [HIT]" : ( m_bVRSwingActive ? " [SWING]" : "" ) );
+					NDebugOverlay::EntityTextAtPosition( vecEnd, 0, sz, 0.0f, r, g, b, 255 );
+				}
+			}
+		}
+
+		// Left hand debug (fists only)
+		if ( bIsFists )
+		{
+			int r, g, b, a;
+			if ( m_bVRSwingHitLeft )          { r = 64;  g = 64;  b = 255; a = 60; }
+			else if ( m_bVRSwingActiveLeft )   { r = 255; g = 255; b = 0;   a = 80; }
+			else                               { r = 128; g = 128; b = 128; a = 40; }
+
+			Vector vecLeftPos;
+			QAngle angLeft;
+			if ( GetVRWeaponBoneTransformLeft( vecLeftPos, angLeft ) )
+			{
+				float fRangeL = GetVRSwingRange( &vecLeftPos );
+				Vector vecLeftFwd;
+				AngleVectors( angLeft, &vecLeftFwd );
+				Vector vecEndL = vecLeftPos + vecLeftFwd * fRangeL;
+
+				NDebugOverlay::SweptBox( vecLeftPos, vecEndL, vecMins, vecMaxs, angLeft, r, g, b, a, 0.0f );
+				NDebugOverlay::Line( vecLeftPos, vecEndL, r, g, b, false, 0.0f );
+				NDebugOverlay::Cross3D( vecLeftPos, 2.0f, 0, 255, 0, false, 0.0f );
+				NDebugOverlay::Cross3D( vecEndL, 2.0f, 255, 0, 0, false, 0.0f );
+
+				if ( tfvr_melee_debug.GetInt() >= 2 )
+				{
+					char sz[64];
+					V_snprintf( sz, sizeof(sz), "L: %.0f / %.0f%s",
+						flLeftGripSpeed, flThreshold,
+						m_bVRSwingHitLeft ? " [HIT]" : ( m_bVRSwingActiveLeft ? " [SWING]" : "" ) );
+					NDebugOverlay::EntityTextAtPosition( vecEndL, 0, sz, 0.0f, r, g, b, 255 );
+				}
 			}
 		}
 	}
 
-	// Not in a swing, or already hit during this swing
-	if ( !m_bVRSwingActive || m_bVRSwingHit )
+	// Check if either hand can hit
+	bool bRightCanHit = m_bVRSwingActive && !m_bVRSwingHit;
+	bool bLeftCanHit  = bIsFists && m_bVRSwingActiveLeft && !m_bVRSwingHitLeft;
+
+	if ( !bRightCanHit && !bLeftCanHit )
 		return;
 
 #if !defined( CLIENT_DLL )
@@ -1428,9 +1504,32 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 #endif
 
 	trace_t trace;
-	if ( DoVRSwingTrace( trace ) )
+	bool bHit = false;
+	bool bHitFromLeft = false;
+
+	if ( bRightCanHit )
 	{
-		m_bVRSwingHit = true;
+		bHit = DoVRSwingTrace( trace );
+	}
+
+	if ( !bHit && bLeftCanHit )
+	{
+		Vector vecLeftStart;
+		QAngle angLeftBone;
+		if ( GetVRWeaponBoneTransformLeft( vecLeftStart, angLeftBone ) )
+		{
+			bHit = DoVRSwingTraceFromHand( trace, vecLeftStart, angLeftBone );
+			if ( bHit )
+				bHitFromLeft = true;
+		}
+	}
+
+	if ( bHit )
+	{
+		if ( bHitFromLeft )
+			m_bVRSwingHitLeft = true;
+		else
+			m_bVRSwingHit = true;
 
 		float flDamageMod = CalcVRCooldownDamageMod();
 		m_flVRLastHitTime = gpGlobals->curtime;

@@ -110,13 +110,17 @@ public:
 protected:
 	void			VRPhysicalMeleeUpdate();
 	bool			DoVRSwingTrace( trace_t &trace );
+	bool			DoVRSwingTraceFromHand( trace_t &trace, const Vector &vecStart, const QAngle &angBone );
 	float			CalcVRCooldownDamageMod();
 	bool			GetVRWeaponBoneTransform( Vector &outPos, QAngle &outAng );
+	bool			GetVRWeaponBoneTransformLeft( Vector &outPos, QAngle &outAng );
 
 	float	m_flVRGripSpeed;
-	float	m_flVRLastHitTime;
-	bool	m_bVRSwingActive;		// true while hand is above swing threshold
-	bool	m_bVRSwingHit;			// true once a hit registers during this swing arc
+	float	m_flVRLastHitTime;		// shared between both hands for damage cooldown
+	bool	m_bVRSwingActive;		// right hand: above swing threshold
+	bool	m_bVRSwingHit;			// right hand: hit registered this swing arc
+	bool	m_bVRSwingActiveLeft;	// left hand (fists only)
+	bool	m_bVRSwingHitLeft;		// left hand (fists only)
 
 private:
 	CTFWeaponBaseMelee( const CTFWeaponBaseMelee & ) {}

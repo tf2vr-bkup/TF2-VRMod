@@ -226,6 +226,16 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 		buf->WriteOneBit( 0 );
 	}
 
+	if ( to->vrMeleeGripSpeedLeft != from->vrMeleeGripSpeedLeft )
+	{
+		buf->WriteOneBit( 1 );
+		buf->WriteFloat( to->vrMeleeGripSpeedLeft );
+	}
+	else
+	{
+		buf->WriteOneBit( 0 );
+	}
+
 
 #if defined( HL2_CLIENT_DLL )
 	if ( to->entitygroundcontact.Count() != 0 )
@@ -379,6 +389,11 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	if ( buf->ReadOneBit() )
 	{
 		move->vrMeleeGripSpeed = buf->ReadFloat();
+	}
+
+	if ( buf->ReadOneBit() )
+	{
+		move->vrMeleeGripSpeedLeft = buf->ReadFloat();
 	}
 
 

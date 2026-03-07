@@ -121,7 +121,7 @@ public:
 	bool GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const;
 	
 	// Weapon pose override
-	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones);
+	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_TFWeaponBase *pWeaponOverride = NULL);
 	
 	// Fire animation - trigger weapon fire animation
 	void PlayWeaponFireAnimation();

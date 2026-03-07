@@ -177,6 +177,9 @@ void CTFKnife::PrimaryAttack( void )
 {
 	CTFPlayer *pPlayer = ToTFPlayer( GetPlayerOwner() );
 
+	if ( pPlayer && pPlayer->IsInVRMode() && IsVRPhysicalMeleeWeapon() )
+		return;
+
 	if ( !CanAttack() )
 		return;
 
