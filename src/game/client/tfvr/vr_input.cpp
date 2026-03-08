@@ -825,9 +825,14 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
         if (pRightHand && pRightHand->GetHeldWeapon())
         {
+            // All fist/glove weapons use raw controller pose so the hitbox
+            // orientation is consistent regardless of glove model.
+            C_TFWeaponBase *pHeldWeapon = pRightHand->GetHeldWeapon();
+            bool bIsFists = (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_FISTS);
+
             Vector muzzlePos;
             QAngle muzzleAngles;
-            if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+            if (!bIsFists && pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
             {
                 cmd->rightControllerOrigin = muzzlePos;
                 cmd->rightControllerAngles = muzzleAngles;
@@ -841,7 +846,6 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             }
             else
             {
-                // No muzzle found (e.g. fists) -- use raw controller pose
                 cmd->rightControllerOrigin = rightPos;
                 cmd->rightControllerAngles = rightAngles;
             }
@@ -850,8 +854,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             // including those without weapon models (fists).
             // Only during real CreateMove (command_number > 0) to avoid
             // ExtraMouseSample clobbering the statics.
-            C_TFWeaponBase *pWeapon = pRightHand->GetHeldWeapon();
-            int wtype = pWeapon->GetTFWpnData().m_iWeaponType;
+            int wtype = pHeldWeapon->GetTFWpnData().m_iWeaponType;
             if ( cmd->command_number != 0 &&
                  ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS ) )
             {
@@ -877,7 +880,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
                     s_flPrevTrackingTime = flNow;
                 }
 
-                if ( pWeapon->GetWeaponID() == TF_WEAPON_FISTS )
+                if ( bIsFists )
                 {
                     VMatrix matLeftPose;
                     if ( g_pOpenXRManager->GetLeftControllerPoseRaw( matLeftPose ) )

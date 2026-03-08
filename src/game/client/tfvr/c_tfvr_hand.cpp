@@ -484,6 +484,9 @@ private:
 	MedigunFireState m_eMedigunFireState;
 };
 
+// Forward declarations
+static const char* GetFistsIdleAnimName(C_TFWeaponBase *pWeapon);
+
 // ConVars for debugging and control
 ConVar tfvr_hands_enabled("tfvr_hands_enabled", "1", FCVAR_ARCHIVE, "Enable VR hand rendering");
 ConVar tfvr_hands_debug("tfvr_hands_debug", "0", FCVAR_NONE, "Show debug info for VR hands");
@@ -1890,8 +1893,13 @@ void C_TFVRHand::Update()
 			if (pWeapon)
 			{
 				int iWeaponID = pWeapon->GetWeaponID();
+				// Heavy fists/gloves - left hand does its own melee
+				if (iWeaponID == TF_WEAPON_FISTS)
+				{
+					bSkipTwoHand = true;
+				}
 				// Scout melee weapons - no off-hand grip
-				if (iWeaponID == TF_WEAPON_BAT ||
+				else if (iWeaponID == TF_WEAPON_BAT ||
 					iWeaponID == TF_WEAPON_BAT_WOOD ||      // Sandman
 					iWeaponID == TF_WEAPON_BAT_GIFTWRAP ||  // Wrap Assassin
 					iWeaponID == TF_WEAPON_BAT_FISH)        // Holy Mackerel, etc.
@@ -3030,11 +3038,22 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
 				if (pLeftHand && IsWeaponMedigun(pLeftHand->GetHeldWeapon()))
 				{
-					// Use "idle" animation for grip pose
 					seqToSample = LookupSequence("idle");
 				}
 			}
-			
+
+			// Left hand with fists: use the correct fist idle so vm_weapon_bone
+			// chain is in the right configuration for glove bone merging
+			if (seqToSample < 0 && IsLeftHand())
+			{
+				C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+				C_TFWeaponBase *pRightWeapon = pRightHand ? pRightHand->GetHeldWeapon() : NULL;
+				if (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_FISTS)
+				{
+					seqToSample = LookupSequence(GetFistsIdleAnimName(pRightWeapon));
+				}
+			}
+
 			if (seqToSample < 0)
 				seqToSample = 0;  // Fallback to first sequence
 		}
@@ -4477,16 +4496,11 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 //-----------------------------------------------------------------------------
 void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones)
 {
-	// Position the RENDER weapon based on hand's weapon_bone
-	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
-	if (!pRenderWeapon || !pBoneToWorldOut)
+	if (!pBoneToWorldOut)
 		return;
-	
-	Vector weaponPos;
-	QAngle weaponAng;
-	
-	// Get the hand's weapon_bone world transform
-	// For left-hand medigun, use weapon_bone_L to match the weapon's bone
+
+	// Always cache the hand's weapon_bone transform for overlays (HUD compositor etc.),
+	// even when there is no render weapon (e.g. bare fists).
 	int handWeaponBone = -1;
 	if (IsLeftHand() && IsWeaponMedigun(m_hHeldWeapon.Get()))
 	{
@@ -4496,29 +4510,41 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	{
 		handWeaponBone = LookupBone("weapon_bone");
 	}
-	
+
 	if (handWeaponBone >= 0 && handWeaponBone < nMaxBones)
 	{
-		// Get weapon_bone transform from the computed bone matrices
+		MatrixCopy(pBoneToWorldOut[handWeaponBone], m_matWeaponBoneWorld);
+		m_bWeaponBoneWorldValid = true;
+	}
+
+	// Position the RENDER weapon based on hand's weapon_bone
+	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+	if (!pRenderWeapon)
+		return;
+
+	Vector weaponPos;
+	QAngle weaponAng;
+
+	C_TFWeaponBase *pAlignWeapon = m_hHeldWeapon.Get();
+	bool bIsFistWeapon = pAlignWeapon && pAlignWeapon->GetWeaponID() == TF_WEAPON_FISTS;
+	int weaponWeaponBone = -1;
+
+	if (handWeaponBone >= 0 && handWeaponBone < nMaxBones)
+	{
 		matrix3x4_t handWeaponBoneMatrix;
 		MatrixCopy(pBoneToWorldOut[handWeaponBone], handWeaponBoneMatrix);
-		
-		// Cache this transform for overlays to use (avoids bone cache timing issues)
-		MatrixCopy(handWeaponBoneMatrix, m_matWeaponBoneWorld);
-		m_bWeaponBoneWorldValid = true;
 		
 		// Extract position and angles
 		Vector bonePos;
 		QAngle boneAng;
 		MatrixAngles(handWeaponBoneMatrix, boneAng, bonePos);
 		
-		// Check if weapon has a weapon_bone we need to align
-		// For left-hand medigun, use weapon_bone_L instead of weapon_bone
-		int weaponWeaponBone = -1;
-		if (IsLeftHand() && IsWeaponMedigun(m_hHeldWeapon.Get()))
+		// Determine which bone on the weapon model to align to the hand's weapon_bone.
+		if (IsLeftHand() && IsWeaponMedigun(pAlignWeapon))
 		{
 			weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone_L");
 		}
+
 		if (weaponWeaponBone < 0)
 		{
 			weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone");
@@ -4675,10 +4701,128 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	
 	// Force weapon to setup bones so we can modify them
 	pRenderWeapon->SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+
+	// For fist/glove weapons, do a full bone merge like HLMV: copy ALL matching
+	// bones from the VR hand models to the glove model. The glove has no
+	// animation of its own - its bones are entirely driven by the arm model.
+	// Right-hand bones come from this hand's pBoneToWorldOut, left-hand bones
+	// come from the left VR hand.
+	if (bIsFistWeapon)
+	{
+		CStudioHdr *pGloveHdr = pRenderWeapon->GetModelPtr();
+		if (pGloveHdr)
+		{
+			int boneCount = pGloveHdr->numbones();
+
+			// Get left VR hand bones (must pass real buffer for VR positioning)
+			C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+			matrix3x4_t leftHandBones[MAXSTUDIOBONES];
+			bool bLeftValid = false;
+			if (pLeftHand)
+				bLeftValid = pLeftHand->SetupBones(leftHandBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+
+			// Identify which glove bones belong to the left hierarchy
+			// so we route them to the left VR hand, not the right.
+			int gloveBipL = pRenderWeapon->LookupBone("bip_hand_L");
+			bool bIsLeftSide[MAXSTUDIOBONES];
+			memset(bIsLeftSide, 0, sizeof(bIsLeftSide));
+			if (gloveBipL >= 0)
+			{
+				bIsLeftSide[gloveBipL] = true;
+				for (int i = 0; i < boneCount && i < MAXSTUDIOBONES; i++)
+				{
+					const mstudiobone_t *pBone = pGloveHdr->pBone(i);
+					if (pBone && pBone->parent >= 0 && bIsLeftSide[pBone->parent])
+						bIsLeftSide[i] = true;
+				}
+			}
+
+			// Save originals and track which bones get overwritten
+			bool bCopied[MAXSTUDIOBONES];
+			memset(bCopied, 0, sizeof(bCopied));
+			matrix3x4_t origBones[MAXSTUDIOBONES];
+
+			// First pass: copy matching bones from the correct VR hand
+			for (int i = 0; i < boneCount && i < MAXSTUDIOBONES; i++)
+			{
+				const mstudiobone_t *pBone = pGloveHdr->pBone(i);
+				if (!pBone) continue;
+				const char *szName = pBone->pszName();
+
+				MatrixCopy(pRenderWeapon->GetBone(i), origBones[i]);
+
+				if (bIsLeftSide[i])
+				{
+					// Left-side bone: look up on left VR hand only.
+					// Try exact name first, then strip _L suffix since the left
+					// hand model uses unsuffixed names (e.g. vm_weapon_bone).
+					if (!bLeftValid || !pLeftHand)
+						continue;
+
+					int vrBone = pLeftHand->LookupBone(szName);
+					if (vrBone < 0)
+					{
+						int len = Q_strlen(szName);
+						if (len > 2 && szName[len-2] == '_' && szName[len-1] == 'L')
+						{
+							char strippedName[128];
+							V_strncpy(strippedName, szName, sizeof(strippedName));
+							strippedName[len-2] = '\0';
+							vrBone = pLeftHand->LookupBone(strippedName);
+						}
+					}
+
+					if (vrBone >= 0 && vrBone < MAXSTUDIOBONES)
+					{
+						MatrixCopy(leftHandBones[vrBone], pRenderWeapon->GetBoneForWrite(i));
+						bCopied[i] = true;
+					}
+				}
+				else
+				{
+					// Right-side bone: look up on right VR hand
+					int vrBone = LookupBone(szName);
+					if (vrBone >= 0 && vrBone < nMaxBones)
+					{
+						MatrixCopy(pBoneToWorldOut[vrBone], pRenderWeapon->GetBoneForWrite(i));
+						bCopied[i] = true;
+					}
+				}
+			}
+
+			// Second pass: rebuild non-copied children of copied bones
+			// using their local transforms from the original animation
+			for (int i = 0; i < boneCount && i < MAXSTUDIOBONES; i++)
+			{
+				if (bCopied[i]) continue;
+				const mstudiobone_t *pBone = pGloveHdr->pBone(i);
+				if (!pBone || pBone->parent < 0 || !bCopied[pBone->parent])
+					continue;
+
+				matrix3x4_t invOrigParent;
+				MatrixInvert(origBones[pBone->parent], invOrigParent);
+
+				matrix3x4_t localTransform;
+				ConcatTransforms(invOrigParent, origBones[i], localTransform);
+
+				matrix3x4_t &newParent = pRenderWeapon->GetBoneForWrite(pBone->parent);
+				matrix3x4_t &childBone = pRenderWeapon->GetBoneForWrite(i);
+				ConcatTransforms(newParent, localTransform, childBone);
+
+				bCopied[i] = true;
+			}
+		}
+	}
 	
-	// Now copy animated bone transforms from hand to weapon
+	// Now copy animated bone transforms from hand to weapon.
+	// Skip for fist/glove weapons - these are rigid models positioned via
+	// vm_weapon_bone alignment. Merging vm_weapon_bone chain transforms from
+	// the VR hand model would distort the glove mesh.
+	C_TFWeaponBase *pMergeWeapon = m_hHeldWeapon.Get();
+	bool bSkipBoneMerge = pMergeWeapon && pMergeWeapon->GetWeaponID() == TF_WEAPON_FISTS;
+
 	CStudioHdr *pWeaponHdr = pRenderWeapon->GetModelPtr();
-	if (pWeaponHdr && pBoneToWorldOut)
+	if (pWeaponHdr && pBoneToWorldOut && !bSkipBoneMerge)
 	{
 		extern ConVar tfvr_weapon_fire_anim_debug;
 		static int lastCopiedCount = -1;
@@ -5111,6 +5255,30 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Determine the correct idle animation for Heavy fist weapons.
+//          Gloved variants use bg_idle, bare-fist variants use f_idle.
+//-----------------------------------------------------------------------------
+static const char* GetFistsIdleAnimName(C_TFWeaponBase *pWeapon)
+{
+	if (pWeapon)
+	{
+		const char *worldModel = pWeapon->GetWorldModel();
+		if (worldModel)
+		{
+			if (V_stristr(worldModel, "boxing_gloves") ||
+				V_stristr(worldModel, "gru") ||
+				V_stristr(worldModel, "fists_of_steel") ||
+				V_stristr(worldModel, "xms_gloves") ||
+				V_stristr(worldModel, "breadmonster"))
+			{
+				return "bg_idle";
+			}
+		}
+	}
+	return "f_idle";
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Get the appropriate hand animation name for a weapon
 //-----------------------------------------------------------------------------
 const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
@@ -5221,8 +5389,7 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 			// Heavy: m_idle, idle, f_idle, bg_idle, sw_idle, throw_idle, breadglove_idle_*
 			if (V_stristr(weaponClass, "minigun")) return "m_idle";
 			if (V_stristr(weaponClass, "shotgun")) return "idle";
-			if (V_stristr(weaponClass, "fists")) return "f_idle";
-			if (V_stristr(weaponClass, "gloves")) return "bg_idle"; // KGB, GRU, Warrior's Spirit, etc.
+			if (V_stristr(weaponClass, "fists")) return GetFistsIdleAnimName(pWeapon);
 			if (V_stristr(weaponClass, "steak")) return "sw_idle"; // Buffalo Steak Sandvich
 			if (V_stristr(weaponClass, "lunchbox")) return "sw_idle"; // Sandvich, Dalokohs Bar, etc.
 			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
@@ -6241,6 +6408,21 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Set up idle animations for the weapon model
 	pRenderWeapon->SetupAnimations();
+
+	// For fist/glove weapons, override with the correct idle pose so the
+	// vm_weapon_bone chain positions the mesh correctly.
+	if (pWeapon->GetWeaponID() == TF_WEAPON_FISTS)
+	{
+		const char *fistsAnim = GetFistsIdleAnimName(pWeapon);
+		int gloveIdleSeq = pRenderWeapon->LookupSequence(fistsAnim);
+		if (gloveIdleSeq >= 0)
+		{
+			pRenderWeapon->SetSequence(gloveIdleSeq);
+			pRenderWeapon->SetCycle(0.0f);
+			pRenderWeapon->SetPlaybackRate(0.0f);
+			DevMsg("VR: Fist idle sequence '%s' set to %d\n", fistsAnim, gloveIdleSeq);
+		}
+	}
 
 	// Sync broken bodygroup for breakable melee weapons (bottle, sign, etc.)
 	// so re-equipping an already-broken weapon shows the correct model
