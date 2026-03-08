@@ -98,6 +98,22 @@ bool CHudTFCrosshair::ShouldDraw( void )
 				}
 			}
 		}
+
+		// VR: hide crosshair on melee weapons (physical melee is always active)
+		if ( pPlayer->IsInVRMode() )
+		{
+			CTFWeaponBase *pWeapon = pPlayer->GetActiveTFWeapon();
+			if ( pWeapon )
+			{
+				int wtype = pWeapon->GetTFWpnData().m_iWeaponType;
+				if ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS )
+				{
+					int wid = pWeapon->GetWeaponID();
+					if ( wid != TF_WEAPON_BUFF_ITEM && wid != TF_WEAPON_ROCKETPACK )
+						return false;
+				}
+			}
+		}
 	}
 
 	if ( m_flTimeToHideUntil > gpGlobals->curtime )
