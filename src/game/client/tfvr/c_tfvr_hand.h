@@ -73,6 +73,11 @@ public:
 	// Bone setup override to position hand bones
 	virtual bool SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int boneMask, float currentTime) override;
 
+	// Suppress animation events - the hand model is only used for bone poses,
+	// sounds and effects should come from the render weapon instead.
+	virtual void FireEvent( const Vector& origin, const QAngle& angles, int event, const char *options ) override {}
+	virtual void DoAnimationEvents( CStudioHdr *pStudio ) override {}
+
 	// Rendering control
 	virtual bool ShouldDraw() override;
 	virtual int DrawModel(int flags) override;
@@ -157,6 +162,7 @@ public:
 	// Animation state getters (for cross-hand animation sampling)
 	int GetIdleSequenceIndex() const { return m_iIdleSequence; }
 	bool IsPlayingFireAnim() const { return m_bPlayingFireAnim; }
+	bool ShouldAnimateIdle() const { return m_bAnimateIdle; }
 	int GetOffHandBoneIndex() const { return m_iOffHandBone; }
 
 private:
@@ -201,6 +207,7 @@ private:
 	int m_iFireSequence;           // Fire animation sequence index (fire_loop for medigun)
 	int m_iAltFireSequence;        // Alt-fire (secondary attack) animation sequence index
 	int m_iIdleSequence;           // Idle animation sequence to return to
+	bool m_bAnimateIdle;           // Idle animation should play (e.g. bread creature on Mutated Milk)
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
 	

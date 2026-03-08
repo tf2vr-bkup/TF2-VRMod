@@ -11,6 +11,10 @@
 
 #ifdef CLIENT_DLL
 #include "c_tf_player.h"
+#include "tfvr/c_tfvr_hand.h"
+#include "cl_animevent.h"
+#include "eventlist.h"
+#include "engine/IEngineSound.h"
 
 // for spy material proxy
 #include "tf_proxyentity.h"
@@ -22,6 +26,13 @@
 #endif
 
 #include "bone_setup.h"	//temp
+
+#ifdef CLIENT_DLL
+ConVar tfvr_sound_level( "tfvr_sound_level", "80", FCVAR_NONE,
+	"Soundlevel (attenuation) for first-person VR weapon sounds. Higher = less falloff. 140 = gunfire, 80 = default, 75 = normal, 0 = no spatial" );
+ConVar tfvr_sound_volume( "tfvr_sound_volume", "1.0", FCVAR_NONE,
+	"Volume scale for first-person VR weapon sounds (0.0 - 1.0)." );
+#endif
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -639,5 +650,40 @@ void CInvisProxy::OnBind( C_BaseEntity *pC_BaseEntity )
 //	Makes the vm_invis & weapon_invis proxies obsolete, do not use them.
 EXPOSE_INTERFACE( CInvisProxy, IMaterialProxy, "invis" IMATERIAL_PROXY_INTERFACE_VERSION );
 
+//-----------------------------------------------------------------------------
+// Purpose: In VR, redirect viewmodel sound events (draw, reload, pump, idle)
+//          to the VR render weapon's position via enginesound with custom
+//          soundlevel/volume from ConVars. Non-sound events are suppressed
+//          since the viewmodel is invisible in VR.
+//-----------------------------------------------------------------------------
+void CTFViewModel::FireEvent( const Vector& origin, const QAngle& angles, int event, const char *options )
+{
+	CTFWeaponBase *pTFWeapon = dynamic_cast<CTFWeaponBase*>( GetWeapon() );
+	if ( pTFWeapon && pTFWeapon->IsHeldByVRHand() )
+	{
+		if ( event == AE_CL_PLAYSOUND || event == CL_EVENT_SOUND )
+		{
+			CSoundParameters params;
+			if ( CBaseEntity::GetParametersForSound( options, params, NULL ) )
+			{
+				C_TFVRHand *pHand = GetLocalPlayerRightHand();
+				C_BaseAnimating *pRenderWeapon = pHand ? pHand->GetRenderWeapon() : NULL;
+				int iEntIndex = pRenderWeapon ? pRenderWeapon->GetSoundSourceIndex()
+					: ( GetOwner() ? GetOwner()->GetSoundSourceIndex() : -1 );
+				Vector vecOrigin = pRenderWeapon ? pRenderWeapon->GetAbsOrigin() : GetAbsOrigin();
+
+				CLocalPlayerFilter filter;
+				enginesound->EmitSound(
+					filter, iEntIndex, params.channel, params.soundname,
+					params.volume * tfvr_sound_volume.GetFloat(),
+					(soundlevel_t)tfvr_sound_level.GetInt(),
+					0, params.pitch, 0, &vecOrigin );
+			}
+		}
+		return;
+	}
+
+	BaseClass::FireEvent( origin, angles, event, options );
+}
 
 #endif // CLIENT_DLL

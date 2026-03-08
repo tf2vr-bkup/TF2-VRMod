@@ -16,6 +16,7 @@
 #ifdef CLIENT_DLL
 #include "tfvr/c_tfvr_hand.h"
 #include "debugoverlay_shared.h"
+#include "engine/IEngineSound.h"
 #endif
 
 #include "gcsdk/gcmsg.h"
@@ -4635,13 +4636,12 @@ CTFPlayer *CTFWeaponBase::GetTFPlayerOwner() const
 }
 
 // -----------------------------------------------------------------------------
-// Purpose: Override to emit sounds from weapon muzzle position in VR
+// Purpose: In VR, emit weapon sounds (fire, deploy, etc.) from the muzzle
+//          position via enginesound with custom soundlevel/volume from ConVars.
 // -----------------------------------------------------------------------------
 void CTFWeaponBase::WeaponSound( WeaponSound_t sound_type, float soundtime /* = 0.0f */ )
 {
 #ifdef CLIENT_DLL
-	// VR FIX: For VR weapons, update weapon position to muzzle and emit from weapon entity
-	// This gives proper spatialization and tracking (weapon has valid server entindex)
 	if ( m_bHeldByVRHand )
 	{
 		const char *shootsound = GetShootSound( sound_type );
@@ -4656,23 +4656,25 @@ void CTFWeaponBase::WeaponSound( WeaponSound_t sound_type, float soundtime /* = 
 		
 		if ( pRightHand )
 		{
-			// Get muzzle position and update weapon entity position for sound tracking
 			Vector muzzlePos;
 			QAngle muzzleAngles;
 			if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
 			{
-				// Update weapon entity position to muzzle so sounds track correctly
 				SetAbsOrigin( muzzlePos );
-				
-				// Use PAS filter centered on muzzle position
+
 				CPASAttenuationFilter filter( muzzlePos, params.soundlevel );
 				if ( IsPredicted() && CBaseEntity::GetPredictionPlayer() )
 				{
 					filter.UsePredictionRules();
 				}
-				
-				// Emit from weapon entity (has valid server entindex) - sound will track weapon movement
-				EmitSound( filter, entindex(), shootsound, NULL, soundtime );
+
+				extern ConVar tfvr_sound_level;
+				extern ConVar tfvr_sound_volume;
+				enginesound->EmitSound(
+					filter, entindex(), params.channel, params.soundname,
+					params.volume * tfvr_sound_volume.GetFloat(),
+					(soundlevel_t)tfvr_sound_level.GetInt(),
+					0, params.pitch, 0, &muzzlePos, NULL, NULL, true, soundtime );
 				return;
 			}
 		}

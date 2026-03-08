@@ -24,6 +24,8 @@
 #include "filesystem.h"
 #include "econ/ihasowner.h"
 #include "tfvr/vr_hand_render.h"
+#include "cl_animevent.h"
+#include "eventlist.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -76,6 +78,16 @@ public:
 		return BaseClass::SetupBones(pBoneToWorldOut, nMaxBones, boneMask, currentTime);
 	}
 	
+	// Suppress sound events on the render weapon -- the viewmodel's FireEvent
+	// redirects all weapon sounds (draw, reload, idle, etc.) to this entity's
+	// position already, so letting them through here would cause duplication.
+	virtual void FireEvent( const Vector& origin, const QAngle& angles, int event, const char *options ) OVERRIDE
+	{
+		if ( event == AE_CL_PLAYSOUND || event == CL_EVENT_SOUND )
+			return;
+		BaseClass::FireEvent( origin, angles, event, options );
+	}
+
 	// IHasOwner interface
 	virtual CBaseEntity *GetOwnerViaInterface(void) OVERRIDE
 	{
@@ -1269,6 +1281,7 @@ C_TFVRHand::C_TFVRHand()
 	m_iFireSequence = -1;
 	m_iAltFireSequence = -1;
 	m_iIdleSequence = -1;
+	m_bAnimateIdle = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
 	m_iChargeSequence = -1;
@@ -1380,6 +1393,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_iFireSequence = -1;
 	m_iAltFireSequence = -1;
 	m_iIdleSequence = -1;
+	m_bAnimateIdle = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
 	m_iChargeSequence = -1;
@@ -1748,6 +1762,7 @@ void C_TFVRHand::ClientThink()
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
+				SetPlaybackRate(0.0f);
 			}
 			m_bPlayingFireAnim = false;
 			
@@ -1828,6 +1843,7 @@ void C_TFVRHand::Update()
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
+				SetPlaybackRate(0.0f);
 			}
 			m_bPlayingFireAnim = false;
 			
@@ -4851,6 +4867,12 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 				Q_strcmp(szBoneName, "weapon_bone_L") == 0 ||
 				Q_strcmp(szBoneName, "weapon_bone_R") == 0)
 				continue;
+
+			// For weapons with animated idles (e.g. Mutated Milk bread creature),
+			// don't overwrite vm_weapon bones - let the weapon model's own
+			// animation drive them so the creature visually animates.
+			if (m_bAnimateIdle && Q_strncmp(szBoneName, "vm_weapon", 9) == 0)
+				continue;
 			
 			// Skip hand/arm bones - these exist in c_models but should NOT be
 			// merged from the hand model. The weapon model's own hand bones
@@ -5339,7 +5361,13 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 			if (V_stristr(weaponClass, "lunchbox_drink")) return "ed_idle"; // Bonk/Crit-a-Cola
 			// Use weapon ID to distinguish throwables - cleaver vs jars
 			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_CLEAVER) return "cleave_idle"; // Flying Guillotine
-			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK) return "ed_idle"; // Mad Milk
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
+					return "bm_idle"; // Mutated Milk (bread monster)
+				return "ed_idle"; // Mad Milk
+			}
 			if (V_stristr(weaponClass, "jar")) return "ed_idle"; // Jarate and other jars
 			if (V_stristr(weaponClass, "throwable")) return "throw_idle"; // Generic throwables
 			if (V_stristr(weaponClass, "spellbook")) return "bm_idle";
@@ -6310,6 +6338,16 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 					idleAnimName, m_iIdleSequence, GetModelName());
 			}
 		}
+
+		// Mutated Milk (item def 1121) has an animated bread creature driven by
+		// the weapon model's own idle. Skip vm_weapon bone merge so it can play.
+		m_bAnimateIdle = false;
+		if (pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
+		{
+			CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+			if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
+				m_bAnimateIdle = true;
+		}
 		
 		// Look up alt-fire (secondary attack) animation if one exists
 		m_iAltFireSequence = -1;
@@ -6566,7 +6604,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	{
 		SetSequence(m_iIdleSequence);
 		SetCycle(0.0f);
-		SetPlaybackRate(0.0f);  // Don't animate - just hold the pose
+		SetPlaybackRate(0.0f);
 	}
 	
 	// Force snap to new pose - disable all interpolation
@@ -6662,6 +6700,7 @@ void C_TFVRHand::UnequipWeapon()
 	
 	// Reset animation state so next weapon/grip uses fresh lookups
 	m_iIdleSequence = -1;
+	m_bAnimateIdle = false;
 	m_iFireSequence = -1;
 	m_iAltFireSequence = -1;
 	m_iChargeSequence = -1;
@@ -6937,6 +6976,7 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
+				SetPlaybackRate(0.0f);
 			}
 		}
 		return;
@@ -7016,6 +7056,7 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 				{
 					SetSequence(m_iIdleSequence);
 					SetCycle(0.0f);
+					SetPlaybackRate(0.0f);
 				}
 				m_bPlayingFireAnim = false;
 				m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
@@ -7074,6 +7115,7 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 				{
 					SetSequence(m_iIdleSequence);
 					SetCycle(0.0f);
+					SetPlaybackRate(0.0f);
 				}
 				m_bPlayingFireAnim = false;
 				m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
@@ -7129,6 +7171,7 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
+				SetPlaybackRate(0.0f);
 			}
 			m_bPlayingFireAnim = false;
 			m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
@@ -7170,6 +7213,7 @@ void C_TFVRHand::UpdateFlamethrowerFireAnimation()
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
+				SetPlaybackRate(0.0f);
 			}
 		}
 		return;
@@ -7503,6 +7547,7 @@ void C_TFVRHand::StopWeaponChargeAnimation()
 	{
 		SetSequence(m_iIdleSequence);
 		SetCycle(0.0f);
+		SetPlaybackRate(0.0f);
 	}
 
 	InvalidateBoneCache();
