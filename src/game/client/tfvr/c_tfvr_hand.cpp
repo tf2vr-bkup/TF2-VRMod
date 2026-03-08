@@ -11,6 +11,7 @@
 #include "tf/tf_weapon_grenadelauncher.h"
 #include "tf/tf_weapon_flamethrower.h"
 #include "tf/tf_weapon_bat.h"
+#include "tf/tf_weapon_knife.h"
 #include "tf/tf_item_wearable.h"
 #include "econ/econ_entity.h"
 #include "econ/econ_item_schema.h"
@@ -550,6 +551,9 @@ ConVar tfvr_hands_left_offset_roll("tfvr_hands_left_offset_roll", "0", FCVAR_ARC
 ConVar tfvr_hands_right_offset_pitch("tfvr_hands_right_offset_pitch", "110", FCVAR_ARCHIVE, "Pitch offset for right VR hand (degrees)");
 ConVar tfvr_hands_right_offset_yaw("tfvr_hands_right_offset_yaw", "-125", FCVAR_ARCHIVE, "Yaw offset for right VR hand (degrees)");
 ConVar tfvr_hands_right_offset_roll("tfvr_hands_right_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for right VR hand (degrees)");
+ConVar tfvr_backstab_debug("tfvr_backstab_debug", "0", FCVAR_NONE, "Force backstab-ready visual on for testing");
+ConVar tfvr_backstab_speed("tfvr_backstab_speed", "1.0", FCVAR_NONE, "Backstab raise/lower animation speed multiplier");
+ConVar tfvr_backstab_duration("tfvr_backstab_duration", "0.35", FCVAR_NONE, "Minimum backstab transition duration in seconds (overrides animation length if shorter)");
 
 // Per-class offset enable - when enabled, class-specific offsets override global offsets
 ConVar tfvr_hands_perclass_offsets("tfvr_hands_perclass_offsets", "0", FCVAR_ARCHIVE, "Enable per-class hand offsets (0=use global, 1=use per-class)");
@@ -1339,6 +1343,21 @@ C_TFVRHand::C_TFVRHand()
 	m_szMeleeSwingBase[0] = '\0';
 	m_iMeleeSwingCount = 0;
 	
+	// Backstab ready animation
+	m_iBackstabUpSequence = -1;
+	m_iBackstabDownSequence = -1;
+	m_iBackstabIdleSequence = -1;
+	m_iBackstabAttackSequence = -1;
+	m_bBackstabReady = false;
+	m_bBackstabAttacking = false;
+	m_flBackstabCycle = 0.0f;
+	m_bBackstabRaising = false;
+	m_bBackstabLowering = false;
+	m_flLastBackstabUpdateTime = 0.0f;
+	m_bHasIdleWeaponBone = false;
+	SetIdentityMatrix( m_matIdleWeaponBoneLocal );
+	SetIdentityMatrix( m_matIdleWeaponBoneWorld );
+
 	// Left hand wearables
 	m_hLeftHandWatch = NULL;
 	m_bOwnWatchModel = false;
@@ -1859,6 +1878,33 @@ void C_TFVRHand::Update()
 	
 	// Update flamethrower fire animation (driven by weapon fire state)
 	UpdateFlamethrowerFireAnimation();
+	
+	// Update backstab ready state (spy knife only).
+	// SetupBones uses this to drive the up/down/idle transition animations.
+	if (m_iBackstabUpSequence >= 0 && IsRightHand())
+	{
+		C_TFKnife *pKnife = dynamic_cast<C_TFKnife*>(m_hHeldWeapon.Get());
+		m_bBackstabReady = pKnife && pKnife->IsReadyToBackstab();
+
+		bool bInCooldown = pKnife && pKnife->IsInBackstabCooldown();
+		if (bInCooldown && !m_bBackstabAttacking)
+		{
+			m_bBackstabAttacking = true;
+			m_bBackstabRaising = false;
+			m_bBackstabLowering = false;
+			m_bBackstabReady = false;
+			m_flBackstabCycle = 0.0f;
+		}
+		else if (!bInCooldown && m_bBackstabAttacking)
+		{
+			m_bBackstabAttacking = false;
+			m_flBackstabCycle = 0.0f;
+		}
+
+		extern ConVar tfvr_backstab_debug;
+		if (tfvr_backstab_debug.GetBool())
+			m_bBackstabReady = true;
+	}
 	
 	// Check if player class has changed - if so, hide hands temporarily to avoid crash
 	int currentClass = pOwner->GetPlayerClass()->GetClassIndex();
@@ -3042,9 +3088,134 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// so the hand bone movement produces visible position offset on the weapon.
 		// Otherwise use idle sequence for the weapon pose.
 		bool bUseCurrentAnim = m_bPlayingFireAnim || m_bPlayingChargeAnim;
-		int seqToSample = bUseCurrentAnim ? currentSeq : m_iIdleSequence;
-		float cycleToSample = bUseCurrentAnim ? currentCycle : 0.0f;
-		
+		int seqToSample;
+		float cycleToSample;
+		if (bUseCurrentAnim)
+		{
+			seqToSample = currentSeq;
+			cycleToSample = currentCycle;
+		}
+		else
+		{
+			seqToSample = m_iIdleSequence;
+			cycleToSample = 0.0f;
+		}
+
+		// Backstab transition state machine:
+		//   RAISING    (m_bBackstabReady becomes true):   knife_backstab_up    cycle 0→1
+		//   HOLDING    (raising finished):                knife_backstab_idle  cycle 0
+		//   LOWERING   (m_bBackstabReady becomes false):  knife_backstab_down  cycle 0→1
+		//   ATTACKING  (backstab cooldown active):        knife_backstab       cycle 0→1
+		//   IDLE       (lowering/attack finished):        normal weapon idle
+		bool bWantsBackstab = m_bBackstabReady && m_iBackstabUpSequence >= 0 && !bUseCurrentAnim;
+
+		// Advance the backstab state machine only once per game frame.
+		float flCurTime = gpGlobals->curtime;
+		if (flCurTime != m_flLastBackstabUpdateTime)
+		{
+			m_flLastBackstabUpdateTime = flCurTime;
+			float flDt = gpGlobals->frametime;
+
+			if (m_bBackstabAttacking)
+			{
+				if (m_iBackstabAttackSequence >= 0 && flDt > 0.0f)
+				{
+					float flSeqDuration = SequenceDuration(pStudioHdr, m_iBackstabAttackSequence);
+					if (flSeqDuration > 0.0f)
+						m_flBackstabCycle = MIN(m_flBackstabCycle + flDt / flSeqDuration, 1.0f);
+					else
+						m_flBackstabCycle = 1.0f;
+				}
+				else
+				{
+					m_flBackstabCycle = 1.0f;
+				}
+			}
+			else
+			{
+				bool bMidTransition = m_flBackstabCycle > 0.0f && m_flBackstabCycle < 1.0f;
+
+				if (!bMidTransition)
+				{
+					if (bWantsBackstab && !m_bBackstabRaising)
+					{
+						m_bBackstabRaising = true;
+						m_bBackstabLowering = false;
+						m_flBackstabCycle = 0.0f;
+					}
+					else if (!bWantsBackstab && (m_bBackstabRaising || (!m_bBackstabLowering && m_flBackstabCycle >= 1.0f)))
+					{
+						m_bBackstabRaising = false;
+						m_bBackstabLowering = true;
+						m_flBackstabCycle = 0.0f;
+					}
+				}
+
+				if (m_bBackstabRaising || m_bBackstabLowering)
+				{
+					extern ConVar tfvr_backstab_speed;
+					float flSpeed = MAX(tfvr_backstab_speed.GetFloat(), 0.01f);
+					int transSeq = m_bBackstabRaising ? m_iBackstabUpSequence : m_iBackstabDownSequence;
+					if (transSeq >= 0 && flDt > 0.0f)
+					{
+						extern ConVar tfvr_backstab_duration;
+						float flSeqDuration = SequenceDuration(pStudioHdr, transSeq);
+						float flMinDuration = tfvr_backstab_duration.GetFloat();
+						float flDuration = MAX(flSeqDuration, flMinDuration);
+
+						if (flDuration > 0.0f)
+							m_flBackstabCycle = MIN(m_flBackstabCycle + (flDt * flSpeed) / flDuration, 1.0f);
+						else
+							m_flBackstabCycle = 1.0f;
+					}
+					else
+					{
+						m_flBackstabCycle = 1.0f;
+					}
+
+					if (m_bBackstabLowering && m_flBackstabCycle >= 1.0f)
+					{
+						m_bBackstabLowering = false;
+						m_flBackstabCycle = 0.0f;
+					}
+				}
+			}
+		}
+
+		bool bBackstabPose = m_bBackstabAttacking || m_bBackstabRaising || m_bBackstabLowering;
+
+		int backstabSeqForSample = -1;
+		float backstabCycleForSample = 0.0f;
+		if (bBackstabPose)
+		{
+			if (m_bBackstabAttacking && m_iBackstabAttackSequence >= 0)
+			{
+				backstabSeqForSample = m_iBackstabAttackSequence;
+				backstabCycleForSample = m_flBackstabCycle;
+			}
+			else if (m_bBackstabRaising && m_flBackstabCycle >= 1.0f && m_iBackstabIdleSequence >= 0)
+			{
+				backstabSeqForSample = m_iBackstabIdleSequence;
+				backstabCycleForSample = 0.0f;
+			}
+			else if (m_bBackstabRaising && m_iBackstabUpSequence >= 0)
+			{
+				backstabSeqForSample = m_iBackstabUpSequence;
+				backstabCycleForSample = m_flBackstabCycle;
+			}
+			else if (m_bBackstabLowering && m_iBackstabDownSequence >= 0)
+			{
+				backstabSeqForSample = m_iBackstabDownSequence;
+				backstabCycleForSample = m_flBackstabCycle;
+			}
+
+			if (backstabSeqForSample >= 0)
+			{
+				seqToSample = backstabSeqForSample;
+				cycleToSample = backstabCycleForSample;
+			}
+		}
+
 		if (seqToSample < 0)
 		{
 			// No idle sequence set - check if we're gripping the medigun
@@ -3089,7 +3260,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		}
 		boneSetup.InitPose(posAnim, qAnim);
 		boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
-		
+
 		// Flamethrower blend: smoothly lerp between idle and fire poses using
 		// m_flFlamethrowerFireBlend (ramped in UpdateFlamethrowerFireAnimation).
 		// This handles both ease-in (starting fire) and ease-out (stopping fire).
@@ -3290,13 +3461,20 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			}
 		}
 		
-		// Calculate anchor delta from cached idle hand bone to controller
-		// anchorDelta = controller * inverse(idleHandBone)
-		// Position suppression for medigun fire is handled above by overriding
-		// the hand bone's local position in the animation data before building the hierarchy.
+		// Calculate anchor delta from hand bone to controller
+		// anchorDelta = controller * inverse(handBone)
+		// When backstab is active the sampled animation differs from idle,
+		// so use the current frame's sampled hand bone to keep the hand
+		// pinned to the controller regardless of which animation is playing.
 		matrix3x4_t anchorDelta;
 		
-		if (m_bHandBoneOffsetValid)
+		if (bBackstabPose)
+		{
+			matrix3x4_t invSampledHand;
+			MatrixInvert(sampledBones[m_iHandBone], invSampledHand);
+			ConcatTransforms(controllerTransform, invSampledHand, anchorDelta);
+		}
+		else if (m_bHandBoneOffsetValid)
 		{
 			matrix3x4_t invIdleHandBone;
 			MatrixInvert(m_matIdleHandBoneTransform, invIdleHandBone);
@@ -3340,8 +3518,36 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// Apply finger tracking or weapon pose to this hand
 		if (m_hHeldWeapon.Get())
 		{
-			// Override finger tracking with weapon grip pose
-			ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
+			if (!bBackstabPose)
+			{
+				// Normal idle: overlay the weapon grip pose onto fingers + weapon_bone
+				ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
+			}
+			// When bBackstabPose is true, the main AccumulatePose already
+			// sampled the backstab animation, so the full skeleton
+			// (fingers, weapon_bone, everything) already has backstab
+			// transforms through the normal hierarchy build.
+
+			// Cache weapon_bone LOCAL to hand bone for knife hitbox only.
+			// Done from the idle path only so the hitbox stays stable.
+			if (!bBackstabPose && m_iBackstabUpSequence >= 0)
+			{
+				int wpnBone = LookupBone("weapon_bone");
+				if (wpnBone >= 0 && wpnBone < nMaxBones && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+				{
+					matrix3x4_t invHand;
+					MatrixInvert(pBoneToWorldOut[m_iHandBone], invHand);
+					ConcatTransforms(invHand, pBoneToWorldOut[wpnBone], m_matIdleWeaponBoneLocal);
+					m_bHasIdleWeaponBone = true;
+				}
+			}
+
+			// Reconstruct the idle weapon_bone world transform every frame
+			// so vr_input always has a fresh position for the knife hitbox.
+			if (m_bHasIdleWeaponBone && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+			{
+				ConcatTransforms(pBoneToWorldOut[m_iHandBone], m_matIdleWeaponBoneLocal, m_matIdleWeaponBoneWorld);
+			}
 			
 			// Position weapon from current bones (position offset applied later)
 			PositionWeaponFromBones(pBoneToWorldOut, nMaxBones);
@@ -4529,7 +4735,10 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 
 	if (handWeaponBone >= 0 && handWeaponBone < nMaxBones)
 	{
-		MatrixCopy(pBoneToWorldOut[handWeaponBone], m_matWeaponBoneWorld);
+		if (m_bHasIdleWeaponBone)
+			MatrixCopy(m_matIdleWeaponBoneWorld, m_matWeaponBoneWorld);
+		else
+			MatrixCopy(pBoneToWorldOut[handWeaponBone], m_matWeaponBoneWorld);
 		m_bWeaponBoneWorldValid = true;
 	}
 
@@ -5824,7 +6033,7 @@ const char* GetWeaponChargeAnimation2(int playerClass, const char *weaponClass, 
 // Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
 //        Samples finger bone rotations from the hand model's weapon animation
 //-----------------------------------------------------------------------------
-void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_TFWeaponBase *pWeaponOverride)
+void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_TFWeaponBase *pWeaponOverride, int seqOverride, float cycleOverride)
 {
 	CStudioHdr *pStudioHdr = GetModelPtr();
 	if (!pStudioHdr)
@@ -5842,13 +6051,18 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 	int playerClass = pOwner->GetPlayerClass()->GetClassIndex();
 	const char *weaponClass = pWeapon->GetClassname();
 	
-	// When a charge animation is active, sample from it instead of the idle pose
-	// so weapon_bone (and fingers) reflect the charge animation's movement
+	// Explicit sequence override (e.g. backstab transition animations)
 	int sequence = -1;
 	const char *usedName = NULL;
 	float cycle = 0.0f;
 
-	if (m_bPlayingChargeAnim || m_bPlayingFireAnim)
+	if (seqOverride >= 0)
+	{
+		sequence = seqOverride;
+		cycle = cycleOverride;
+		usedName = "seqOverride";
+	}
+	else if (m_bPlayingChargeAnim || m_bPlayingFireAnim)
 	{
 		int activeSeq = GetSequence();
 		if (activeSeq >= 0)
@@ -5861,18 +6075,20 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 
 	if (sequence < 0)
 	{
-		// Default: use idle pose animation
-		const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass, pWeapon);
-
-		char vrAnimName[128];
-		Q_snprintf(vrAnimName, sizeof(vrAnimName), "vr_%s", animName);
-		sequence = LookupSequence(vrAnimName);
-
-		usedName = vrAnimName;
-		if (sequence < 0)
 		{
-			usedName = animName;
-			sequence = LookupSequence(animName);
+			// Default: use idle pose animation
+			const char *animName = GetWeaponPoseAnimation(playerClass, weaponClass, pWeapon);
+
+			char vrAnimName[128];
+			Q_snprintf(vrAnimName, sizeof(vrAnimName), "vr_%s", animName);
+			sequence = LookupSequence(vrAnimName);
+
+			usedName = vrAnimName;
+			if (sequence < 0)
+			{
+				usedName = animName;
+				sequence = LookupSequence(animName);
+			}
 		}
 		if (sequence < 0)
 		{
@@ -5952,7 +6168,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		"bip_middle_0", "bip_middle_1", "bip_middle_2",
 		"bip_ring_0", "bip_ring_1", "bip_ring_2",
 		"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
-		"weapon_bone",  // IMPORTANT: Also apply pose to weapon bone!
+		"weapon_bone",
 	};
 	
 	for (int i = 0; i < ARRAYSIZE(fingerBones); i++)
@@ -5996,6 +6212,40 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		// Transform by parent to get world-space transform
 		ConcatTransforms(pBoneToWorldOut[parentIndex], localBoneMatrix, pBoneToWorldOut[boneIndex]);
 	}
+
+	// Ensure the unsuffixed "weapon_bone" is always updated, since
+	// PositionWeaponFromBones reads it by that exact name.  The loop
+	// above may have found "weapon_bone_R" first and written to a
+	// different bone index, leaving the unsuffixed one at its idle pose.
+	int wpnUnsuffixed = LookupBone("weapon_bone");
+	if (wpnUnsuffixed >= 0 && wpnUnsuffixed < nMaxBones)
+	{
+		const mstudiobone_t *pBone = pStudioHdr->pBone(wpnUnsuffixed);
+		if (pBone && pBone->parent >= 0 && pBone->parent < nMaxBones)
+		{
+			matrix3x4_t localBoneMatrix;
+			QuaternionMatrix(q[wpnUnsuffixed], pos[wpnUnsuffixed], localBoneMatrix);
+			ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[wpnUnsuffixed]);
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Return the idle weapon_bone position and direction, reconstructed
+//          each frame in SetupBones from the cached local offset + current hand.
+//          Direction uses the Y axis (column 1) to match the melee weapon_bone
+//          convention used by GetWeaponMuzzlePositionAndAngles.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetIdleWeaponBoneTransform( Vector &outPos, QAngle &outAng ) const
+{
+	if ( !m_bHasIdleWeaponBone )
+		return false;
+
+	MatrixGetColumn( m_matIdleWeaponBoneWorld, 3, outPos );
+	Vector vecDir;
+	MatrixGetColumn( m_matIdleWeaponBoneWorld, 1, vecDir );
+	VectorAngles( vecDir, outAng );
+	return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -6336,6 +6586,34 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				m_iIdleSequence = LookupSequence(idleAnimName);
 				DevMsg("VR: Idle sequence fallback to '%s' (seq %d) on model '%s'\n",
 					idleAnimName, m_iIdleSequence, GetModelName());
+			}
+		}
+
+		// Spy knife backstab animations: up (raise), idle (hold), down (lower), attack (stab).
+		m_iBackstabUpSequence = -1;
+		m_iBackstabDownSequence = -1;
+		m_iBackstabIdleSequence = -1;
+		m_iBackstabAttackSequence = -1;
+		m_bBackstabReady = false;
+		m_bBackstabAttacking = false;
+		m_flBackstabCycle = 0.0f;
+		m_bBackstabRaising = false;
+		m_bBackstabLowering = false;
+		m_flLastBackstabUpdateTime = 0.0f;
+		m_bHasIdleWeaponBone = false;
+		if (playerClass == TF_CLASS_SPY && V_stristr(weaponClass, "knife"))
+		{
+			m_iBackstabUpSequence = LookupSequence("knife_backstab_up");
+			m_iBackstabDownSequence = LookupSequence("knife_backstab_down");
+			m_iBackstabIdleSequence = LookupSequence("knife_backstab_idle");
+			m_iBackstabAttackSequence = LookupSequence("knife_backstab");
+
+			extern ConVar tfvr_backstab_debug;
+			if (tfvr_backstab_debug.GetBool())
+			{
+				DevMsg("VR: Backstab sequences: up=%d down=%d idle=%d attack=%d on '%s'\n",
+					m_iBackstabUpSequence, m_iBackstabDownSequence,
+					m_iBackstabIdleSequence, m_iBackstabAttackSequence, GetModelName());
 			}
 		}
 

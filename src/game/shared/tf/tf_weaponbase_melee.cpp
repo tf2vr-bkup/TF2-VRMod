@@ -1369,6 +1369,16 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 	if ( !pCmd )
 		return;
 
+	// Block melee while cloaked or uncloaking to preserve game balance.
+	// IsStealthed covers the cloaked state; the visibility check also
+	// blocks during the fade-in transition that vanilla prevents via
+	// the normal attack lockout.
+	if ( pPlayer->m_Shared.IsStealthed() || pPlayer->m_Shared.GetPercentInvisible() > 0.0f )
+		return;
+
+	if ( IsVRMeleeBlocked() )
+		return;
+
 	bool bIsFists = ( GetWeaponID() == TF_WEAPON_FISTS );
 
 	float flRightGripSpeed = pCmd->vrMeleeGripSpeed;
@@ -1537,6 +1547,8 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 		m_iWeaponMode = TF_WEAPON_PRIMARY_MODE;
 		m_bConnected = true;
 
+		OnVRPreMeleeHit( trace );
+
 		CalcIsAttackCritical();
 
 		m_bCurrentAttackIsDuringDemoCharge = pPlayer->m_Shared.GetNextMeleeCrit() != MELEE_NOCRIT;
@@ -1559,6 +1571,8 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 		pPlayer->m_Shared.OnAttack();
 
 		OnSwingHit( trace, flDamageMod );
+
+		OnVRPostMeleeHit( trace );
 
 		if ( tfvr_melee_debug.GetInt() > 0 )
 		{

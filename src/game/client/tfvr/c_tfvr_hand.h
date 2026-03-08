@@ -126,7 +126,7 @@ public:
 	bool GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const;
 	
 	// Weapon pose override
-	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_TFWeaponBase *pWeaponOverride = NULL);
+	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_TFWeaponBase *pWeaponOverride = NULL, int seqOverride = -1, float cycleOverride = 0.0f);
 	
 	// Fire animation - trigger weapon fire animation
 	void PlayWeaponFireAnimation();
@@ -230,6 +230,24 @@ private:
 	int m_iMeleeSwingIndex;        // Current swing variant (0=a, 1=b, 2=c)
 	char m_szMeleeSwingBase[64];   // Base swing animation name (e.g., "b_swing_")
 	int m_iMeleeSwingCount;        // Number of swing variants available (usually 3)
+	
+	// Backstab ready animation (spy knife only)
+	int m_iBackstabUpSequence;          // knife_backstab_up (raise transition)
+	int m_iBackstabDownSequence;        // knife_backstab_down (lower transition)
+	int m_iBackstabIdleSequence;        // knife_backstab_idle (hold pose)
+	int m_iBackstabAttackSequence;      // knife_backstab (the actual stab attack)
+	bool m_bBackstabReady;
+	bool m_bBackstabAttacking;          // true = playing the backstab attack animation (cooldown)
+	float m_flBackstabCycle;            // 0→1 through up/down anims
+	bool m_bBackstabRaising;            // true = playing knife_backstab_up / holding idle
+	bool m_bBackstabLowering;           // true = playing knife_backstab_down
+	float m_flLastBackstabUpdateTime;   // per-instance guard so SetupBones multi-calls don't multiply cycle
+	matrix3x4_t m_matIdleWeaponBoneLocal;
+	matrix3x4_t m_matIdleWeaponBoneWorld;
+	bool m_bHasIdleWeaponBone;
+public:
+	bool IsBackstabReady() const { return m_bBackstabReady; }
+	bool GetIdleWeaponBoneTransform( Vector &outPos, QAngle &outAng ) const;
 	
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose (model space)

@@ -830,9 +830,20 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             C_TFWeaponBase *pHeldWeapon = pRightHand->GetHeldWeapon();
             bool bIsFists = (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_FISTS);
 
+            // If we have a cached idle weapon_bone offset, always use it.
+            // This keeps the hitbox stable regardless of visual animations
+            // (backstab raise, fire anims, etc.).
+            Vector idleWpnPos;
+            QAngle idleWpnAng;
+
             Vector muzzlePos;
             QAngle muzzleAngles;
-            if (!bIsFists && pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+            if (pRightHand->GetIdleWeaponBoneTransform( idleWpnPos, idleWpnAng ))
+            {
+                cmd->rightControllerOrigin = idleWpnPos;
+                cmd->rightControllerAngles = idleWpnAng;
+            }
+            else if (!bIsFists && pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
             {
                 cmd->rightControllerOrigin = muzzlePos;
                 cmd->rightControllerAngles = muzzleAngles;
