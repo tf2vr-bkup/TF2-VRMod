@@ -825,10 +825,16 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
         if (pRightHand && pRightHand->GetHeldWeapon())
         {
-            // All fist/glove weapons use raw controller pose so the hitbox
-            // orientation is consistent regardless of glove model.
+            // Weapons that use raw controller pose instead of muzzle/weapon_bone aiming
             C_TFWeaponBase *pHeldWeapon = pRightHand->GetHeldWeapon();
             bool bIsFists = (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_FISTS);
+            bool bUseRawController = bIsFists;
+            if (pHeldWeapon)
+            {
+                const char *cls = pHeldWeapon->GetClassname();
+                if (cls && (V_stristr(cls, "sapper") || V_stristr(cls, "builder")))
+                    bUseRawController = true;
+            }
 
             // If we have a cached idle weapon_bone offset, always use it.
             // This keeps the hitbox stable regardless of visual animations
@@ -843,7 +849,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
                 cmd->rightControllerOrigin = idleWpnPos;
                 cmd->rightControllerAngles = idleWpnAng;
             }
-            else if (!bIsFists && pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+            else if (!bUseRawController && pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
             {
                 cmd->rightControllerOrigin = muzzlePos;
                 cmd->rightControllerAngles = muzzleAngles;

@@ -1320,6 +1320,7 @@ C_TFVRHand::C_TFVRHand()
 	m_iAltFireSequence = -1;
 	m_iIdleSequence = -1;
 	m_bAnimateIdle = false;
+	m_bLoopIdleOnHand = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
 	m_iDrawSequence = -1;
@@ -1451,6 +1452,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_iAltFireSequence = -1;
 	m_iIdleSequence = -1;
 	m_bAnimateIdle = false;
+	m_bLoopIdleOnHand = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
 	m_iDrawSequence = -1;
@@ -2090,6 +2092,11 @@ void C_TFVRHand::Update()
 						 iWeaponID == TF_WEAPON_CLEAVER ||
 						 iWeaponID == TF_WEAPON_JAR_GAS ||
 						 iWeaponID == TF_WEAPON_THROWABLE)
+				{
+					bSkipTwoHand = true;
+				}
+				// Sapper/builder - one-handed placement tool
+				else if (iWeaponID == TF_WEAPON_BUILDER)
 				{
 					bSkipTwoHand = true;
 				}
@@ -3217,7 +3224,16 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		else
 		{
 			seqToSample = m_iIdleSequence;
-			cycleToSample = 0.0f;
+			if (m_bLoopIdleOnHand && m_iIdleSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				float duration = pHdr ? SequenceDuration(pHdr, m_iIdleSequence) : 1.0f;
+				cycleToSample = (duration > 0.0f) ? fmod(gpGlobals->curtime / duration, 1.0f) : 0.0f;
+			}
+			else
+			{
+				cycleToSample = 0.0f;
+			}
 		}
 
 		// Backstab transition state machine:
@@ -5865,7 +5881,7 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 				V_snprintf(s_szSpyKnifeIdle, sizeof(s_szSpyKnifeIdle), "%s_idle", GetSpyKnifeAnimPrefix(pWeapon));
 				return s_szSpyKnifeIdle;
 			}
-			if (V_stristr(weaponClass, "sapper")) return "c_sapper_idle";
+			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")) return "c_sapper_idle";
 			if (V_stristr(weaponClass, "pda_spy")) return "offhand_idle"; // Disguise kit
 			if (V_stristr(weaponClass, "invis")) return "offhand_idle"; // Invis watch
 			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
@@ -6274,7 +6290,13 @@ const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_T
 			if (V_stristr(weaponClass, "pistol")) return "p_draw";
 			if (V_stristr(weaponClass, "bat")) return "b_draw";
 			if (V_stristr(weaponClass, "lunchbox_drink")) return "ed_draw"; // Bonk, Crit-a-Cola
-			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK) return "ed_draw"; // Mad Milk
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
+					return "bm_draw"; // Mutated Milk (bread monster)
+				return "ed_draw"; // Mad Milk
+			}
 			break;
 
 		case TF_CLASS_SOLDIER:
@@ -6344,6 +6366,7 @@ const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_T
 				V_snprintf(s_szSpyKnifeDraw, sizeof(s_szSpyKnifeDraw), "%s_draw", GetSpyKnifeAnimPrefix(pWeapon));
 				return s_szSpyKnifeDraw;
 			}
+			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")) return "c_sapper_draw";
 			break;
 	}
 
@@ -6401,7 +6424,13 @@ VRDrawAnimScope GetWeaponDrawAnimScope(int playerClass, const char *weaponClass,
 			if (V_stristr(weaponClass, "pistol")) return VR_DRAW_ANIM_NONE;
 			if (V_stristr(weaponClass, "bat")) return VR_DRAW_ANIM_WRIST;
 			if (V_stristr(weaponClass, "lunchbox_drink")) return VR_DRAW_ANIM_WRIST;
-			if (V_stristr(weaponClass, "jar_milk")) return VR_DRAW_ANIM_WRIST;
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
+					return VR_DRAW_ANIM_NONE; // Mutated Milk
+				return VR_DRAW_ANIM_WRIST; // Mad Milk
+			}
 			break;
 
 		case TF_CLASS_SOLDIER:
@@ -6466,6 +6495,7 @@ VRDrawAnimScope GetWeaponDrawAnimScope(int playerClass, const char *weaponClass,
 		case TF_CLASS_SPY:
 			if (V_stristr(weaponClass, "revolver")) return VR_DRAW_ANIM_NONE;
 			if (V_stristr(weaponClass, "knife")) return VR_DRAW_ANIM_WRIST;
+			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")) return VR_DRAW_ANIM_NONE;
 			break;
 	}
 
@@ -6721,12 +6751,15 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 //          each frame in SetupBones from the cached local offset + current hand.
 //          Direction uses the Y axis (column 1) to match the melee weapon_bone
 //          convention used by GetWeaponMuzzlePositionAndAngles.
-//          Only returns true for spy knives (backstab hitbox stability);
-//          other weapons should use the muzzle for aiming/projectiles.
+//          Returns true for weapons that aim along the weapon_bone (spy knife,
+//          sapper) rather than a muzzle attachment.
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::GetIdleWeaponBoneTransform( Vector &outPos, QAngle &outAng ) const
 {
-	if ( !m_bHasIdleWeaponBone || m_iBackstabUpSequence < 0 )
+	if ( !m_bHasIdleWeaponBone )
+		return false;
+
+	if ( m_iBackstabUpSequence < 0 )
 		return false;
 
 	MatrixGetColumn( m_matIdleWeaponBoneWorld, 3, outPos );
@@ -7118,12 +7151,23 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		// Mutated Milk (item def 1121) has an animated bread creature driven by
 		// the weapon model's own idle. Skip vm_weapon bone merge so it can play.
 		m_bAnimateIdle = false;
+		m_bLoopIdleOnHand = false;
 		if (pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
 		{
 			CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
 			if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
 				m_bAnimateIdle = true;
 		}
+
+		// Sapper: the animation lives on the hand model, not the weapon model.
+		// Advance the hand's idle cycle so bone merge copies the animated
+		// vm_weapon transforms to the weapon each frame.
+		if (playerClass == TF_CLASS_SPY &&
+			(V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")))
+		{
+			m_bLoopIdleOnHand = true;
+		}
+
 		
 		// Look up alt-fire (secondary attack) animation if one exists
 		m_iAltFireSequence = -1;
@@ -7270,6 +7314,20 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			pRenderWeapon->SetCycle(0.0f);
 			pRenderWeapon->SetPlaybackRate(0.0f);
 			DevMsg("VR: Fist idle sequence '%s' set to %d\n", fistsAnim, gloveIdleSeq);
+		}
+	}
+
+	// Animated idle weapons (sapper, Mutated Milk): play idle on the weapon model
+	if (m_bAnimateIdle)
+	{
+		int weaponIdleSeq = pRenderWeapon->LookupSequence("c_sapper_idle");
+		if (weaponIdleSeq < 0)
+			weaponIdleSeq = pRenderWeapon->LookupSequence("idle");
+		if (weaponIdleSeq >= 0)
+		{
+			pRenderWeapon->SetSequence(weaponIdleSeq);
+			pRenderWeapon->SetCycle(0.0f);
+			pRenderWeapon->SetPlaybackRate(1.0f);
 		}
 	}
 
@@ -7531,6 +7589,7 @@ void C_TFVRHand::UnequipWeapon()
 	// Reset animation state so next weapon/grip uses fresh lookups
 	m_iIdleSequence = -1;
 	m_bAnimateIdle = false;
+	m_bLoopIdleOnHand = false;
 	m_iFireSequence = -1;
 	m_iAltFireSequence = -1;
 	m_iChargeSequence = -1;

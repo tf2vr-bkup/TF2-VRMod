@@ -221,7 +221,8 @@ private:
 	int m_iFireSequence;           // Fire animation sequence index (fire_loop for medigun)
 	int m_iAltFireSequence;        // Alt-fire (secondary attack) animation sequence index
 	int m_iIdleSequence;           // Idle animation sequence to return to
-	bool m_bAnimateIdle;           // Idle animation should play (e.g. bread creature on Mutated Milk)
+	bool m_bAnimateIdle;           // Weapon model drives its own vm_weapon idle (skip bone merge for those)
+	bool m_bLoopIdleOnHand;        // Hand idle animation should advance (e.g. sapper screen animation)
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
 	

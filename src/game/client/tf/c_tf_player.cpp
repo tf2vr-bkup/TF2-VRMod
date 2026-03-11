@@ -4209,14 +4209,22 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 			pWeaponHand = GetLocalPlayerRightHand();
 		}
 		
-		// CRITICAL: Use weapon muzzle position from VR hand, NOT controller position!
 		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
-			Vector muzzlePos;
-			QAngle muzzleAngles;
-			if (pWeaponHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+			C_TFWeaponBase *pWeapon = pWeaponHand->GetHeldWeapon();
+			const char *cls = pWeapon->GetClassname();
+			bool bUseRawController = (pWeapon->GetWeaponID() == TF_WEAPON_FISTS);
+			if (cls && (V_stristr(cls, "sapper") || V_stristr(cls, "builder")))
+				bUseRawController = true;
+
+			if (!bUseRawController)
 			{
-				return muzzlePos;
+				Vector muzzlePos;
+				QAngle muzzleAngles;
+				if (pWeaponHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+				{
+					return muzzlePos;
+				}
 			}
 		}
 		
@@ -4265,12 +4273,14 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 		
 		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
-			// For melee weapons, use raw controller forward direction
-			// Melee weapons don't have meaningful "muzzle" attachments
 			C_TFWeaponBase* pWeapon = pWeaponHand->GetHeldWeapon();
-			if (pWeapon && pWeapon->GetTFWpnData().m_iWeaponType == TF_WPN_TYPE_MELEE)
+			const char *cls = pWeapon->GetClassname();
+			bool bUseRawController = (pWeapon->GetTFWpnData().m_iWeaponType == TF_WPN_TYPE_MELEE);
+			if (cls && (V_stristr(cls, "sapper") || V_stristr(cls, "builder")))
+				bUseRawController = true;
+
+			if (bUseRawController)
 			{
-				// Use controller angles directly for melee (always right hand for melee)
 				VMatrix rightControllerPose;
 				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
 				{
@@ -4280,7 +4290,6 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 				}
 			}
 			
-			// For ranged weapons (including medigun), use weapon muzzle angles
 			Vector muzzlePos;
 			QAngle muzzleAngles;
 			if (pWeaponHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
