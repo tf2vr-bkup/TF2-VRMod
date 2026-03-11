@@ -31,6 +31,16 @@ enum MedigunFireState
 	MEDIGUN_FIRE_OFF,
 };
 
+// Draw animation scope - controls which bones are driven by the draw animation
+// Higher values animate more of the arm chain
+enum VRDrawAnimScope
+{
+	VR_DRAW_ANIM_NONE = 0,        // No draw animation
+	VR_DRAW_ANIM_WEAPON_BONE,     // Only weapon_bone (weapon shifts/rotates, hand stays idle)
+	VR_DRAW_ANIM_WRIST,           // Wrist rotation + fingers + weapon_bone (hand pinned to controller)
+	VR_DRAW_ANIM_FULL_ARM,        // Full arm chain follows the animation (hand can displace from controller)
+};
+
 //-----------------------------------------------------------------------------
 // Purpose: Client-side VR hand entity that renders a single animated hand
 //          driven by OpenXR hand tracking data
@@ -132,6 +142,10 @@ public:
 	void PlayWeaponFireAnimation();
 	void PlayWeaponAltFireAnimation();
 	
+	// Draw animation - played when weapon is equipped (deploy/holster)
+	void PlayWeaponDrawAnimation();
+	bool IsPlayingDrawAnim() const { return m_bPlayingDrawAnim; }
+	
 	// Charge animation - played while holding attack to charge (sticky launcher, huntsman, etc.)
 	// Some weapons have two phases (e.g. huntsman: bw_charge -> bw_shake at max charge)
 	void PlayWeaponChargeAnimation();
@@ -210,6 +224,12 @@ private:
 	bool m_bAnimateIdle;           // Idle animation should play (e.g. bread creature on Mutated Milk)
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
+	
+	// Draw animation (played on weapon equip/deploy)
+	int m_iDrawSequence;              // Draw animation sequence index on hand model
+	bool m_bPlayingDrawAnim;          // Currently playing draw animation
+	float m_flDrawAnimStartTime;      // When draw animation started
+	VRDrawAnimScope m_eDrawAnimScope; // Which bones the draw animation drives
 	
 	// Charge animation (sticky launcher, huntsman, loose cannon, etc.)
 	int m_iChargeSequence;         // Charge/pullback animation sequence index

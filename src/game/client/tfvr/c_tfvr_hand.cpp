@@ -260,6 +260,36 @@ public:
 	
 	bool HasFireAnimation() const { return m_iFireSequence >= 0; }
 	
+	void PlayDrawAnimation()
+	{
+		extern ConVar tfvr_weapon_draw_anim;
+		extern ConVar tfvr_weapon_draw_anim_debug;
+		
+		if (!tfvr_weapon_draw_anim.GetBool())
+			return;
+		
+		int drawSeq = LookupSequence("draw");
+		if (drawSeq < 0)
+			drawSeq = LookupSequence("deploy");
+		
+		if (drawSeq >= 0)
+		{
+			SetSequence(drawSeq);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+			m_bPlayingFireAnim = true;
+			
+			if (tfvr_weapon_draw_anim_debug.GetBool())
+			{
+				DevMsg("VR: Playing weapon model draw animation (sequence %d)\n", drawSeq);
+			}
+		}
+		else if (tfvr_weapon_draw_anim_debug.GetBool())
+		{
+			DevMsg("VR: No draw animation found on weapon model\n");
+		}
+	}
+	
 	// Copy attached models (festivizers, etc.) from the source weapon
 	void CopyAttachedModels(C_TFWeaponBase *pSourceWeapon)
 	{
@@ -986,6 +1016,10 @@ ConVar tfvr_weapon_fire_anim_roll_scale("tfvr_weapon_fire_anim_roll_scale", "1.0
 ConVar tfvr_weapon_fire_anim_pos_rotation("tfvr_weapon_fire_anim_pos_rotation", "90", FCVAR_ARCHIVE, "Rotation correction for position vector (degrees around Z axis)");
 ConVar tfvr_weapon_fire_anim_angle_rotation("tfvr_weapon_fire_anim_angle_rotation", "180", FCVAR_ARCHIVE, "Coordinate space rotation for fire animation (degrees around Z axis)");
 
+// Weapon draw animation convars
+ConVar tfvr_weapon_draw_anim("tfvr_weapon_draw_anim", "1", FCVAR_ARCHIVE, "Enable draw animations on VR-held weapons when switching");
+ConVar tfvr_weapon_draw_anim_debug("tfvr_weapon_draw_anim_debug", "0", FCVAR_NONE, "Debug draw animation triggering");
+
 // Weapon-specific aim angle corrections (for weapons with incorrect muzzle attachment orientation)
 // These are applied as LOCAL rotations relative to the muzzle attachment frame
 ConVar tfvr_aim_grenadelauncher_pitch("tfvr_aim_grenadelauncher_pitch", "0", FCVAR_ARCHIVE, "Pitch correction for grenade launcher aim (degrees, local space)");
@@ -1288,6 +1322,10 @@ C_TFVRHand::C_TFVRHand()
 	m_bAnimateIdle = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_iDrawSequence = -1;
+	m_bPlayingDrawAnim = false;
+	m_flDrawAnimStartTime = 0.0f;
+	m_eDrawAnimScope = VR_DRAW_ANIM_NONE;
 	m_iChargeSequence = -1;
 	m_iChargeSequence2 = -1;
 	m_bPlayingChargeAnim = false;
@@ -1415,6 +1453,10 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bAnimateIdle = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_iDrawSequence = -1;
+	m_bPlayingDrawAnim = false;
+	m_flDrawAnimStartTime = 0.0f;
+	m_eDrawAnimScope = VR_DRAW_ANIM_NONE;
 	m_iChargeSequence = -1;
 	m_iChargeSequence2 = -1;
 	m_bPlayingChargeAnim = false;
@@ -1792,6 +1834,44 @@ void C_TFVRHand::ClientThink()
 		}
 	}
 	
+	// Check if draw animation has completed and return to idle
+	if (m_bPlayingDrawAnim)
+	{
+		bool bDrawComplete = false;
+		if (m_eDrawAnimScope == VR_DRAW_ANIM_WEAPON_BONE)
+		{
+			// WEAPON_BONE scope: the entity sequence stays at idle, so check
+			// elapsed time against the draw sequence duration.
+			CStudioHdr *pHdr = GetModelPtr();
+			float flDuration = pHdr ? SequenceDuration(pHdr, m_iDrawSequence) : 0.0f;
+			bDrawComplete = (gpGlobals->curtime - m_flDrawAnimStartTime) >= flDuration
+				|| (gpGlobals->curtime - m_flDrawAnimStartTime) > 2.0f;
+		}
+		else
+		{
+			bDrawComplete = GetCycle() >= 1.0f
+				|| (gpGlobals->curtime - m_flDrawAnimStartTime) > 2.0f;
+		}
+
+		if (bDrawComplete)
+		{
+			if (m_iIdleSequence >= 0)
+			{
+				SetSequence(m_iIdleSequence);
+				SetCycle(0.0f);
+				SetPlaybackRate(0.0f);
+			}
+			m_bPlayingDrawAnim = false;
+			InvalidateBoneCache();
+
+			extern ConVar tfvr_weapon_draw_anim_debug;
+			if (tfvr_weapon_draw_anim_debug.GetBool())
+			{
+				DevMsg("VR: Draw animation completed, returning to idle (seq %d)\n", m_iIdleSequence);
+			}
+		}
+	}
+	
 	// VR: Update weapon position every frame with fresh tracking
 	if (m_hRenderWeapon.Get())
 	{
@@ -1869,6 +1949,42 @@ void C_TFVRHand::Update()
 			if (tfvr_weapon_fire_anim_debug.GetBool())
 			{
 				DevMsg("VR: Fire animation completed, returning to idle (seq %d)\n", m_iIdleSequence);
+			}
+		}
+	}
+
+	// Check if draw animation has completed and return to idle
+	if (m_bPlayingDrawAnim)
+	{
+		bool bDrawComplete = false;
+		if (m_eDrawAnimScope == VR_DRAW_ANIM_WEAPON_BONE)
+		{
+			CStudioHdr *pHdr = GetModelPtr();
+			float flDuration = pHdr ? SequenceDuration(pHdr, m_iDrawSequence) : 0.0f;
+			bDrawComplete = (gpGlobals->curtime - m_flDrawAnimStartTime) >= flDuration
+				|| (gpGlobals->curtime - m_flDrawAnimStartTime) > 2.0f;
+		}
+		else
+		{
+			bDrawComplete = GetCycle() >= 1.0f
+				|| (gpGlobals->curtime - m_flDrawAnimStartTime) > 2.0f;
+		}
+
+		if (bDrawComplete)
+		{
+			if (m_iIdleSequence >= 0)
+			{
+				SetSequence(m_iIdleSequence);
+				SetCycle(0.0f);
+				SetPlaybackRate(0.0f);
+			}
+			m_bPlayingDrawAnim = false;
+			InvalidateBoneCache();
+
+			extern ConVar tfvr_weapon_draw_anim_debug;
+			if (tfvr_weapon_draw_anim_debug.GetBool())
+			{
+				DevMsg("VR: Draw animation completed, returning to idle (seq %d)\n", m_iIdleSequence);
 			}
 		}
 	}
@@ -3086,8 +3202,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		
 		// If fire or charge animation is playing, use the actual current sequence
 		// so the hand bone movement produces visible position offset on the weapon.
-		// Otherwise use idle sequence for the weapon pose.
-		bool bUseCurrentAnim = m_bPlayingFireAnim || m_bPlayingChargeAnim;
+		// Draw animations with WRIST or FULL_ARM scope also drive the skeleton.
+		// WEAPON_BONE scope draw anims leave the skeleton at idle (weapon_bone
+		// is handled separately in ApplyWeaponPose).
+		bool bUseCurrentAnim = m_bPlayingFireAnim || m_bPlayingChargeAnim
+			|| (m_bPlayingDrawAnim && m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST);
 		int seqToSample;
 		float cycleToSample;
 		if (bUseCurrentAnim)
@@ -3492,6 +3611,31 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		{
 			ConcatTransforms(anchorDelta, sampledBones[i], pBoneToWorldOut[i]);
 		}
+
+		// WRIST scope draw animation: the idle anchor preserves correct motion
+		// directions but lets the hand bone displace from the controller (like
+		// FULL_ARM). Correct this by translating the entire skeleton so the
+		// hand bone snaps back to the controller position.  Rotations are kept
+		// so wrist twist and all child-bone motion stay oriented properly.
+		if (m_bPlayingDrawAnim && m_eDrawAnimScope == VR_DRAW_ANIM_WRIST
+			&& m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+		{
+			Vector handWorldPos;
+			MatrixGetColumn(pBoneToWorldOut[m_iHandBone], 3, handWorldPos);
+
+			Vector controllerPos;
+			MatrixGetColumn(controllerTransform, 3, controllerPos);
+
+			Vector correction = controllerPos - handWorldPos;
+
+			for (int i = 0; i < numBones && i < nMaxBones; i++)
+			{
+				Vector bonePos;
+				MatrixGetColumn(pBoneToWorldOut[i], 3, bonePos);
+				bonePos += correction;
+				MatrixSetColumn(bonePos, 3, pBoneToWorldOut[i]);
+			}
+		}
 		
 		// Calculate position offset for this hand (will be applied at different times for left vs right)
 		// Position is palm-relative: X=toward fingers, Y=out of palm, Z=toward thumb
@@ -3528,9 +3672,13 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			// (fingers, weapon_bone, everything) already has backstab
 			// transforms through the normal hierarchy build.
 
-			// Cache weapon_bone LOCAL to hand bone for knife hitbox only.
-			// Done from the idle path only so the hitbox stays stable.
-			if (!bBackstabPose && m_iBackstabUpSequence >= 0)
+			// Cache weapon_bone LOCAL to hand bone so HUD elements stay stable
+			// during backstab and draw animations.  Only capture from the
+			// idle path -- when an animation is actively playing, reconstruct
+			// the world transform from the cached local offset + current hand.
+			bool bNeedsStableWeaponBone = (m_iBackstabUpSequence >= 0) || m_bPlayingDrawAnim;
+			bool bAnimPlaying = bBackstabPose || m_bPlayingDrawAnim;
+			if (!bAnimPlaying && bNeedsStableWeaponBone)
 			{
 				int wpnBone = LookupBone("weapon_bone");
 				if (wpnBone >= 0 && wpnBone < nMaxBones && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
@@ -3543,7 +3691,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			}
 
 			// Reconstruct the idle weapon_bone world transform every frame
-			// so vr_input always has a fresh position for the knife hitbox.
+			// from the cached local offset so HUD elements and hitboxes
+			// remain stable while animations play.
 			if (m_bHasIdleWeaponBone && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
 			{
 				ConcatTransforms(pBoneToWorldOut[m_iHandBone], m_matIdleWeaponBoneLocal, m_matIdleWeaponBoneWorld);
@@ -5310,8 +5459,8 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 				m_iCachedMuzzleWeaponID = weaponID;
 			}
 			
-			// Cache idle muzzle when NOT playing fire animation
-			if (!m_bIdleMuzzleOffsetValid && !m_bPlayingFireAnim)
+			// Cache idle muzzle when NOT playing any animation
+			if (!m_bIdleMuzzleOffsetValid && !m_bPlayingFireAnim && !m_bPlayingDrawAnim)
 			{
 				// Update bones to get idle pose transforms
 				matrix3x4_t boneArray[MAXSTUDIOBONES];
@@ -5510,6 +5659,41 @@ static const char* GetFistsIdleAnimName(C_TFWeaponBase *pWeapon)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Determine which spy knife animation prefix to use based on the
+//          weapon's world model.  Returns "knife", "eternal", or "acr".
+//            knife_*    -- standard butterfly knife (default + most reskins)
+//            eternal_*  -- Your Eternal Reward / Wanga Prick
+//            acr_*      -- Sharp Dresser (wrist blade)
+//-----------------------------------------------------------------------------
+const char* GetSpyKnifeAnimPrefix(C_TFWeaponBase *pWeapon)
+{
+	if (pWeapon)
+	{
+		const char *worldModel = pWeapon->GetWorldModel();
+		if (worldModel)
+		{
+			// Standard butterfly knife is the only one that uses knife_*
+			if (V_stristr(worldModel, "c_knife"))
+				return "knife";
+			if (V_stristr(worldModel, "sharp_dresser"))
+				return "acr";
+		}
+
+		CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+		if (pItem && pItem->IsValid())
+		{
+			int iDef = pItem->GetItemDefIndex();
+			if (iDef == 4 || iDef == 194)     // Knife, Golden Frying Pan uses knife too? Check stock
+				return "knife";
+			if (iDef == 638)                   // Sharp Dresser
+				return "acr";
+		}
+	}
+	// Default: most knife variants use eternal_* animations
+	return "eternal";
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Get the appropriate hand animation name for a weapon
 //-----------------------------------------------------------------------------
 const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
@@ -5673,9 +5857,14 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 			break;
 			
 		case TF_CLASS_SPY:
-			// Spy: idle, knife_idle, c_sapper_idle, offhand_idle, eternal_idle, acr_idle, throw_idle, c_dart_gun_idle
+			// Spy: idle, knife_idle/eternal_idle/acr_idle, c_sapper_idle, offhand_idle, throw_idle
 			if (V_stristr(weaponClass, "revolver")) return "idle";
-			if (V_stristr(weaponClass, "knife")) return "knife_idle";
+			if (V_stristr(weaponClass, "knife"))
+			{
+				static char s_szSpyKnifeIdle[64];
+				V_snprintf(s_szSpyKnifeIdle, sizeof(s_szSpyKnifeIdle), "%s_idle", GetSpyKnifeAnimPrefix(pWeapon));
+				return s_szSpyKnifeIdle;
+			}
 			if (V_stristr(weaponClass, "sapper")) return "c_sapper_idle";
 			if (V_stristr(weaponClass, "pda_spy")) return "offhand_idle"; // Disguise kit
 			if (V_stristr(weaponClass, "invis")) return "offhand_idle"; // Invis watch
@@ -5819,7 +6008,9 @@ const char* GetMeleeSwingBaseName(int playerClass, const char *weaponClass, C_TF
 			if (V_stristr(weaponClass, "knife"))
 			{
 				outSwingCount = 3;
-				return "knife_stab_";
+				static char s_szSpySwingBase[64];
+				V_snprintf(s_szSpySwingBase, sizeof(s_szSpySwingBase), "%s_stab_", GetSpyKnifeAnimPrefix(pWeapon));
+				return s_szSpySwingBase;
 			}
 			break;
 	}
@@ -5973,9 +6164,14 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			break;
 			
 		case TF_CLASS_SPY:
-			// Spy: fire (revolver), knife_stab_a (knife)
+			// Spy: fire (revolver), knife_stab_a/eternal_stab_a/acr_stab_a (knife)
 			if (V_stristr(weaponClass, "revolver")) return "fire";
-			if (V_stristr(weaponClass, "knife")) return "knife_stab_a";
+			if (V_stristr(weaponClass, "knife"))
+			{
+				static char s_szSpyKnifeFire[64];
+				V_snprintf(s_szSpyKnifeFire, sizeof(s_szSpyKnifeFire), "%s_stab_a", GetSpyKnifeAnimPrefix(pWeapon));
+				return s_szSpyKnifeFire;
+			}
 			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
 			break;
 	}
@@ -6030,6 +6226,253 @@ const char* GetWeaponChargeAnimation2(int playerClass, const char *weaponClass, 
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Get the draw animation name for a weapon (played when equipping)
+//          Returns NULL if no draw animation should play for this weapon.
+//          Animation names follow the same convention as fire/idle
+//          (e.g. "sg_draw" for scattergun, "m_draw" for minigun).
+//-----------------------------------------------------------------------------
+const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
+{
+	bool bIsAllClassMelee = false;
+	if (pWeapon)
+	{
+		const char *worldModel = pWeapon->GetWorldModel();
+		if (worldModel)
+		{
+			if (V_stristr(worldModel, "frying_pan") ||
+				V_stristr(worldModel, "saxxy") ||
+				V_stristr(worldModel, "golden_wrench") ||
+				V_stristr(worldModel, "necro_smasher") ||
+				V_stristr(worldModel, "crossing_guard") ||
+				V_stristr(worldModel, "freedom_staff") ||
+				V_stristr(worldModel, "ham_shank") ||
+				V_stristr(worldModel, "memory_maker") ||
+				V_stristr(worldModel, "prinny_machete") ||
+				V_stristr(worldModel, "conscientious"))
+			{
+				bIsAllClassMelee = true;
+			}
+		}
+	}
+
+	if (bIsAllClassMelee)
+		return "melee_allclass_draw";
+
+	switch (playerClass)
+	{
+		case TF_CLASS_SCOUT:
+			if (V_stristr(weaponClass, "soda_popper")) return "db_draw";
+			if (V_stristr(weaponClass, "pep_brawler_blaster")) return "sg_draw";
+			if (V_stristr(weaponClass, "scattergun") && pWeapon)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 45)
+					return "db_draw";
+			}
+			if (V_stristr(weaponClass, "scattergun")) return "sg_draw";
+			if (V_stristr(weaponClass, "handgun_scout")) return "ss_draw";
+			if (V_stristr(weaponClass, "pistol")) return "p_draw";
+			if (V_stristr(weaponClass, "bat")) return "b_draw";
+			if (V_stristr(weaponClass, "lunchbox_drink")) return "ed_draw"; // Bonk, Crit-a-Cola
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK) return "ed_draw"; // Mad Milk
+			break;
+
+		case TF_CLASS_SOLDIER:
+			if (V_stristr(weaponClass, "rocketlauncher")) return "dh_draw";
+			if (V_stristr(weaponClass, "particle_cannon")) return "dh_draw";
+			if (V_stristr(weaponClass, "shotgun")) return "draw";
+			if (V_stristr(weaponClass, "katana")) return "s_draw";
+			if (V_stristr(weaponClass, "sword")) return "s_draw";
+			if (V_stristr(weaponClass, "shovel")) return "s_draw";
+			if (V_stristr(weaponClass, "pickaxe")) return "s_draw";
+			break;
+
+		case TF_CLASS_PYRO:
+			if (V_stristr(weaponClass, "flamethrower")) return "ft_draw";
+			if (V_stristr(weaponClass, "rocketlauncher_fireball")) return "ft_draw";
+			if (V_stristr(weaponClass, "flaregun")) return "fg_draw";
+			if (V_stristr(weaponClass, "shotgun")) return "draw";
+			if (V_stristr(weaponClass, "fireaxe")) return "fa_draw";
+			if (V_stristr(weaponClass, "slap")) return "fa_draw";
+			break;
+
+		case TF_CLASS_DEMOMAN:
+			if (V_stristr(weaponClass, "grenadelauncher")) return "g_draw";
+			if (V_stristr(weaponClass, "cannon")) return "g_draw";
+			if (V_stristr(weaponClass, "pipebomblauncher")) return "sb_draw";
+			if (V_stristr(weaponClass, "bottle")) return "b_draw";
+			if (V_stristr(weaponClass, "sword")) return "cm_draw";
+			if (V_stristr(weaponClass, "katana")) return "cm_draw";
+			break;
+
+		case TF_CLASS_HEAVYWEAPONS:
+			if (V_stristr(weaponClass, "minigun")) return "m_draw";
+			if (V_stristr(weaponClass, "shotgun")) return "draw";
+			if (V_stristr(weaponClass, "fists")) return "f_draw";
+			break;
+
+		case TF_CLASS_ENGINEER:
+			if (V_stristr(weaponClass, "sentry_revenge")) return "fj_draw";
+			if (V_stristr(weaponClass, "shotgun")) return "fj_draw";
+			if (V_stristr(weaponClass, "pistol")) return "pstl_draw";
+			if (V_stristr(weaponClass, "wrench")) return "pdq_draw";
+			if (V_stristr(weaponClass, "robot_arm")) return "gun_draw";
+			if (V_stristr(weaponClass, "drg_pomson")) return "pomson_draw";
+			if (V_stristr(weaponClass, "raygun")) return "pomson_draw";
+			break;
+
+		case TF_CLASS_MEDIC:
+			if (V_stristr(weaponClass, "syringegun")) return "sg_draw";
+			if (V_stristr(weaponClass, "crossbow")) return "sg_draw";
+			if (V_stristr(weaponClass, "medigun")) return "draw";
+			if (V_stristr(weaponClass, "bonesaw")) return "bs_draw";
+			break;
+
+		case TF_CLASS_SNIPER:
+			if (V_stristr(weaponClass, "sniperrifle")) return "draw";
+			if (V_stristr(weaponClass, "compound_bow")) return "bw_draw";
+			if (V_stristr(weaponClass, "smg")) return "smg_draw";
+			if (V_stristr(weaponClass, "club")) return "m_draw";
+			if (V_stristr(weaponClass, "sword")) return "m_draw";
+			break;
+
+		case TF_CLASS_SPY:
+			if (V_stristr(weaponClass, "revolver")) return "draw";
+			if (V_stristr(weaponClass, "knife"))
+			{
+				static char s_szSpyKnifeDraw[64];
+				V_snprintf(s_szSpyKnifeDraw, sizeof(s_szSpyKnifeDraw), "%s_draw", GetSpyKnifeAnimPrefix(pWeapon));
+				return s_szSpyKnifeDraw;
+			}
+			break;
+	}
+
+	return NULL;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Get the draw animation scope for a weapon.
+//          Determines how much of the arm chain the draw animation drives.
+//          FULL_ARM: entire arm moves (dramatic draws, pumps with arm motion)
+//          WRIST: wrist rotation + fingers + weapon_bone (hand pinned to controller)
+//          WEAPON_BONE: only the weapon itself animates (subtle weapon motion)
+//          NONE: no draw animation
+//-----------------------------------------------------------------------------
+VRDrawAnimScope GetWeaponDrawAnimScope(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
+{
+	// Per-weapon draw animation scope.
+	// VR_DRAW_ANIM_WRIST      - hand pinned to controller, all motion from wrist down
+	// VR_DRAW_ANIM_FULL_ARM   - hand can displace from controller (dramatic draws)
+	// VR_DRAW_ANIM_WEAPON_BONE - only weapon_bone animates, hand stays at idle
+	// VR_DRAW_ANIM_NONE       - no draw animation at all
+
+	bool bIsAllClassMelee = false;
+	if (pWeapon)
+	{
+		const char *worldModel = pWeapon->GetWorldModel();
+		if (worldModel)
+		{
+			if (V_stristr(worldModel, "frying_pan") ||
+				V_stristr(worldModel, "saxxy") ||
+				V_stristr(worldModel, "golden_wrench") ||
+				V_stristr(worldModel, "necro_smasher") ||
+				V_stristr(worldModel, "crossing_guard") ||
+				V_stristr(worldModel, "freedom_staff") ||
+				V_stristr(worldModel, "ham_shank") ||
+				V_stristr(worldModel, "memory_maker") ||
+				V_stristr(worldModel, "prinny_machete") ||
+				V_stristr(worldModel, "conscientious"))
+			{
+				bIsAllClassMelee = true;
+			}
+		}
+	}
+
+	if (bIsAllClassMelee)
+		return VR_DRAW_ANIM_NONE;
+
+	switch (playerClass)
+	{
+		case TF_CLASS_SCOUT:
+			if (V_stristr(weaponClass, "soda_popper")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "pep_brawler_blaster")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "scattergun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "handgun_scout")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "pistol")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "bat")) return VR_DRAW_ANIM_WRIST;
+			if (V_stristr(weaponClass, "lunchbox_drink")) return VR_DRAW_ANIM_WRIST;
+			if (V_stristr(weaponClass, "jar_milk")) return VR_DRAW_ANIM_WRIST;
+			break;
+
+		case TF_CLASS_SOLDIER:
+			if (V_stristr(weaponClass, "rocketlauncher")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "particle_cannon")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "shotgun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "katana")) return VR_DRAW_ANIM_WRIST;
+			if (V_stristr(weaponClass, "sword")) return VR_DRAW_ANIM_WRIST;
+			if (V_stristr(weaponClass, "shovel")) return VR_DRAW_ANIM_WRIST;
+			if (V_stristr(weaponClass, "pickaxe")) return VR_DRAW_ANIM_WRIST;
+			break;
+
+		case TF_CLASS_PYRO:
+			if (V_stristr(weaponClass, "flamethrower")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "rocketlauncher_fireball")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "flaregun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "shotgun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "fireaxe")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "slap")) return VR_DRAW_ANIM_NONE;
+			break;
+
+		case TF_CLASS_DEMOMAN:
+			if (V_stristr(weaponClass, "grenadelauncher")) return VR_DRAW_ANIM_WEAPON_BONE;
+			if (V_stristr(weaponClass, "cannon")) return VR_DRAW_ANIM_WEAPON_BONE;
+			if (V_stristr(weaponClass, "pipebomblauncher")) return VR_DRAW_ANIM_WEAPON_BONE;
+			if (V_stristr(weaponClass, "bottle")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "sword")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "katana")) return VR_DRAW_ANIM_NONE;
+			break;
+
+		case TF_CLASS_HEAVYWEAPONS:
+			if (V_stristr(weaponClass, "minigun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "shotgun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "fists")) return VR_DRAW_ANIM_NONE;
+			break;
+
+		case TF_CLASS_ENGINEER:
+			if (V_stristr(weaponClass, "sentry_revenge")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "shotgun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "pistol")) return VR_DRAW_ANIM_WRIST;
+			if (V_stristr(weaponClass, "wrench")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "robot_arm")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "drg_pomson")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "raygun")) return VR_DRAW_ANIM_NONE;
+			break;
+
+		case TF_CLASS_MEDIC:
+			if (V_stristr(weaponClass, "syringegun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "crossbow")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "medigun")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "bonesaw")) return VR_DRAW_ANIM_NONE;
+			break;
+
+		case TF_CLASS_SNIPER:
+			if (V_stristr(weaponClass, "sniperrifle")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "compound_bow")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "smg")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "club")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "sword")) return VR_DRAW_ANIM_NONE;
+			break;
+
+		case TF_CLASS_SPY:
+			if (V_stristr(weaponClass, "revolver")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "knife")) return VR_DRAW_ANIM_WRIST;
+			break;
+	}
+
+	return VR_DRAW_ANIM_WRIST;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Apply weapon grip pose to fingers (overrides finger tracking)
 //        Samples finger bone rotations from the hand model's weapon animation
 //-----------------------------------------------------------------------------
@@ -6056,20 +6499,25 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 	const char *usedName = NULL;
 	float cycle = 0.0f;
 
+	// Track whether draw animation drives only weapon_bone (not fingers)
+	bool bDrawWeaponBoneOnly = m_bPlayingDrawAnim && m_eDrawAnimScope == VR_DRAW_ANIM_WEAPON_BONE;
+
 	if (seqOverride >= 0)
 	{
 		sequence = seqOverride;
 		cycle = cycleOverride;
 		usedName = "seqOverride";
 	}
-	else if (m_bPlayingChargeAnim || m_bPlayingFireAnim)
+	else if (m_bPlayingChargeAnim || m_bPlayingFireAnim
+		|| (m_bPlayingDrawAnim && m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST))
 	{
 		int activeSeq = GetSequence();
 		if (activeSeq >= 0)
 		{
 			sequence = activeSeq;
 			cycle = GetCycle();
-			usedName = m_bPlayingChargeAnim ? "charge_anim" : "fire_anim";
+			usedName = m_bPlayingChargeAnim ? "charge_anim"
+				: m_bPlayingDrawAnim ? "draw_anim" : "fire_anim";
 		}
 	}
 
@@ -6228,6 +6676,44 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 			ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[wpnUnsuffixed]);
 		}
 	}
+
+	// WEAPON_BONE scope draw animation: the idle pose was applied to fingers
+	// above, now override weapon_bone with the draw animation's transform.
+	// Since the entity sequence stays at idle for this scope, compute the
+	// draw cycle from elapsed time rather than using GetCycle().
+	if (bDrawWeaponBoneOnly && m_iDrawSequence >= 0)
+	{
+		float flDrawDuration = SequenceDuration(pStudioHdr, m_iDrawSequence);
+		float flElapsed = gpGlobals->curtime - m_flDrawAnimStartTime;
+		float flDrawCycle = (flDrawDuration > 0.0f) ? clamp(flElapsed / flDrawDuration, 0.0f, 1.0f) : 1.0f;
+
+		Vector drawPos[MAXSTUDIOBONES];
+		Quaternion drawQ[MAXSTUDIOBONES];
+		
+		float drawPoseParams[MAXSTUDIOPOSEPARAM];
+		for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+			drawPoseParams[i] = 0.0f;
+		
+		IBoneSetup drawBoneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, drawPoseParams);
+		drawBoneSetup.InitPose(drawPos, drawQ);
+		drawBoneSetup.AccumulatePose(drawPos, drawQ, m_iDrawSequence, flDrawCycle, 1.0f, gpGlobals->curtime, NULL);
+		
+		// Apply draw animation to weapon_bone only (both suffixed and unsuffixed)
+		const char *wpnBoneNames[] = { "weapon_bone_R", "weapon_bone_L", "weapon_bone" };
+		for (int n = 0; n < ARRAYSIZE(wpnBoneNames); n++)
+		{
+			int wpnIdx = LookupBone(wpnBoneNames[n]);
+			if (wpnIdx < 0 || wpnIdx >= nMaxBones)
+				continue;
+			const mstudiobone_t *pWpnBone = pStudioHdr->pBone(wpnIdx);
+			if (!pWpnBone || pWpnBone->parent < 0 || pWpnBone->parent >= nMaxBones)
+				continue;
+			
+			matrix3x4_t drawLocalMatrix;
+			QuaternionMatrix(drawQ[wpnIdx], drawPos[wpnIdx], drawLocalMatrix);
+			ConcatTransforms(pBoneToWorldOut[pWpnBone->parent], drawLocalMatrix, pBoneToWorldOut[wpnIdx]);
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -6235,10 +6721,12 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 //          each frame in SetupBones from the cached local offset + current hand.
 //          Direction uses the Y axis (column 1) to match the melee weapon_bone
 //          convention used by GetWeaponMuzzlePositionAndAngles.
+//          Only returns true for spy knives (backstab hitbox stability);
+//          other weapons should use the muzzle for aiming/projectiles.
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::GetIdleWeaponBoneTransform( Vector &outPos, QAngle &outAng ) const
 {
-	if ( !m_bHasIdleWeaponBone )
+	if ( !m_bHasIdleWeaponBone || m_iBackstabUpSequence < 0 )
 		return false;
 
 	MatrixGetColumn( m_matIdleWeaponBoneWorld, 3, outPos );
@@ -6603,16 +7091,26 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		m_bHasIdleWeaponBone = false;
 		if (playerClass == TF_CLASS_SPY && V_stristr(weaponClass, "knife"))
 		{
-			m_iBackstabUpSequence = LookupSequence("knife_backstab_up");
-			m_iBackstabDownSequence = LookupSequence("knife_backstab_down");
-			m_iBackstabIdleSequence = LookupSequence("knife_backstab_idle");
-			m_iBackstabAttackSequence = LookupSequence("knife_backstab");
+			const char *knifePrefix = GetSpyKnifeAnimPrefix(pWeapon);
+			char bsName[64];
+
+			V_snprintf(bsName, sizeof(bsName), "%s_backstab_up", knifePrefix);
+			m_iBackstabUpSequence = LookupSequence(bsName);
+
+			V_snprintf(bsName, sizeof(bsName), "%s_backstab_down", knifePrefix);
+			m_iBackstabDownSequence = LookupSequence(bsName);
+
+			V_snprintf(bsName, sizeof(bsName), "%s_backstab_idle", knifePrefix);
+			m_iBackstabIdleSequence = LookupSequence(bsName);
+
+			V_snprintf(bsName, sizeof(bsName), "%s_backstab", knifePrefix);
+			m_iBackstabAttackSequence = LookupSequence(bsName);
 
 			extern ConVar tfvr_backstab_debug;
 			if (tfvr_backstab_debug.GetBool())
 			{
-				DevMsg("VR: Backstab sequences: up=%d down=%d idle=%d attack=%d on '%s'\n",
-					m_iBackstabUpSequence, m_iBackstabDownSequence,
+				DevMsg("VR: Backstab sequences (%s): up=%d down=%d idle=%d attack=%d on '%s'\n",
+					knifePrefix, m_iBackstabUpSequence, m_iBackstabDownSequence,
 					m_iBackstabIdleSequence, m_iBackstabAttackSequence, GetModelName());
 			}
 		}
@@ -6686,6 +7184,41 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				DevMsg("VR: Charge sequence 2 '%s' (seq %d) on model '%s'\n",
 					chargeAnimName2, m_iChargeSequence2, GetModelName());
 			}
+		}
+
+		// Look up draw/deploy animation and scope
+		m_iDrawSequence = -1;
+		m_bPlayingDrawAnim = false;
+		m_eDrawAnimScope = VR_DRAW_ANIM_NONE;
+		const char *drawAnimName = GetWeaponDrawAnimation(playerClass, weaponClass, pWeapon);
+		VRDrawAnimScope drawScope = GetWeaponDrawAnimScope(playerClass, weaponClass, pWeapon);
+		if (drawAnimName && drawAnimName[0] && drawScope != VR_DRAW_ANIM_NONE)
+		{
+			extern ConVar tfvr_weapon_draw_anim_debug;
+
+			char vrDrawName[128];
+			Q_snprintf(vrDrawName, sizeof(vrDrawName), "vr_%s", drawAnimName);
+			m_iDrawSequence = LookupSequence(vrDrawName);
+
+			if (m_iDrawSequence >= 0)
+			{
+				if (tfvr_weapon_draw_anim_debug.GetBool())
+				{
+					DevMsg("VR: Draw sequence using VR override '%s' (seq %d) on model '%s'\n",
+						vrDrawName, m_iDrawSequence, GetModelName());
+				}
+			}
+			else
+			{
+				m_iDrawSequence = LookupSequence(drawAnimName);
+				if (tfvr_weapon_draw_anim_debug.GetBool())
+				{
+					DevMsg("VR: Draw sequence fallback to '%s' (seq %d) on model '%s'\n",
+						drawAnimName, m_iDrawSequence, GetModelName());
+				}
+			}
+
+			m_eDrawAnimScope = drawScope;
 		}
 
 		// Also pass fire sequence to render weapon (in case it has its own animations)
@@ -6953,6 +7486,17 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			MatrixCopy(boneToWorld[m_iHandBone], m_matIdleHandBoneTransform);
 			m_bHandBoneOffsetValid = true;
 			
+			// Cache the idle weapon_bone transform relative to hand bone.
+			// This keeps HUD elements stable during draw and backstab animations.
+			int wpnBone = LookupBone("weapon_bone");
+			if (wpnBone >= 0 && wpnBone < numBones)
+			{
+				matrix3x4_t invHand;
+				MatrixInvert(boneToWorld[m_iHandBone], invHand);
+				ConcatTransforms(invHand, boneToWorld[wpnBone], m_matIdleWeaponBoneLocal);
+				m_bHasIdleWeaponBone = true;
+			}
+
 			if (tfvr_hands_debug.GetBool())
 			{
 				Vector pos;
@@ -6961,6 +7505,14 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				DevMsg("VR Hand: Sampled idle pose directly - hand bone pos: (%.1f, %.1f, %.1f)\n", pos.x, pos.y, pos.z);
 			}
 		}
+	}
+
+	// Trigger draw animation after all weapon setup is complete.
+	// This must come AFTER the idle hand bone offset is cached so that
+	// FULL_ARM scope has a valid anchor to compute displacement from.
+	if (m_iDrawSequence >= 0 && m_eDrawAnimScope != VR_DRAW_ANIM_NONE)
+	{
+		PlayWeaponDrawAnimation();
 	}
 }
 
@@ -6983,9 +7535,13 @@ void C_TFVRHand::UnequipWeapon()
 	m_iAltFireSequence = -1;
 	m_iChargeSequence = -1;
 	m_iChargeSequence2 = -1;
+	m_iDrawSequence = -1;
 	m_bPlayingFireAnim = false;
 	m_bPlayingChargeAnim = false;
+	m_bPlayingDrawAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_flDrawAnimStartTime = 0.0f;
+	m_eDrawAnimScope = VR_DRAW_ANIM_NONE;
 	m_bHandBoneOffsetValid = false;
 	m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
 	m_iFireOnSequence = -1;
@@ -7277,6 +7833,7 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 	case MEDIGUN_FIRE_IDLE:
 		if (bIsHealing)
 		{
+			m_bPlayingDrawAnim = false;
 			if (m_iFireOnSequence >= 0)
 			{
 				SetSequence(m_iFireOnSequence);
@@ -7518,6 +8075,7 @@ void C_TFVRHand::UpdateFlamethrowerFireAnimation()
 			SetCycle(0.0f);
 			SetPlaybackRate(1.0f);
 			m_bPlayingFireAnim = true;
+			m_bPlayingDrawAnim = false;
 			m_flFireAnimStartTime = gpGlobals->curtime;
 			InvalidateBoneCache();
 
@@ -7678,8 +8236,9 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 		return;
 	}
 	
-	// Play the fire animation on the HAND model (stops any active charge anim)
+	// Play the fire animation on the HAND model (stops any active charge or draw anim)
 	m_bPlayingChargeAnim = false;
+	m_bPlayingDrawAnim = false;
 	SetSequence(sequenceToPlay);
 	SetCycle(0.0f);
 	SetPlaybackRate(1.0f);
@@ -7729,6 +8288,7 @@ void C_TFVRHand::PlayWeaponAltFireAnimation()
 	SetCycle(0.0f);
 	SetPlaybackRate(1.0f);
 	m_bPlayingFireAnim = true;
+	m_bPlayingDrawAnim = false;
 	m_flFireAnimStartTime = gpGlobals->curtime;
 
 	InvalidateBoneCache();
@@ -7774,6 +8334,7 @@ void C_TFVRHand::PlayWeaponChargeAnimation()
 	SetPlaybackRate(1.0f);
 	m_bPlayingChargeAnim = true;
 	m_bPlayingFireAnim = false;
+	m_bPlayingDrawAnim = false;
 
 	InvalidateBoneCache();
 
@@ -7802,6 +8363,7 @@ void C_TFVRHand::PlayWeaponChargeAnimation2()
 	SetPlaybackRate(1.0f);
 	m_bPlayingChargeAnim = true;
 	m_bPlayingFireAnim = false;
+	m_bPlayingDrawAnim = false;
 
 	InvalidateBoneCache();
 
@@ -7834,6 +8396,61 @@ void C_TFVRHand::StopWeaponChargeAnimation()
 	if (tfvr_weapon_fire_anim_debug.GetBool())
 	{
 		DevMsg("VR: Stopped charge animation, returning to idle\n");
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Play the draw/deploy animation on the hand when a weapon is equipped.
+//          The draw animation scope (set via m_eDrawAnimScope) determines which
+//          bones are driven: FULL_ARM, WRIST, or WEAPON_BONE only.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::PlayWeaponDrawAnimation()
+{
+	extern ConVar tfvr_weapon_draw_anim;
+	extern ConVar tfvr_weapon_draw_anim_debug;
+
+	if (!tfvr_weapon_draw_anim.GetBool())
+		return;
+
+	if (m_iDrawSequence < 0 || m_eDrawAnimScope == VR_DRAW_ANIM_NONE)
+	{
+		if (tfvr_weapon_draw_anim_debug.GetBool())
+		{
+			DevMsg("VR: No draw animation for this weapon (seq %d, scope %d)\n",
+				m_iDrawSequence, (int)m_eDrawAnimScope);
+		}
+		return;
+	}
+
+	// For WEAPON_BONE scope, the main skeleton stays at idle and we only
+	// sample the draw animation for weapon_bone in ApplyWeaponPose.
+	// For WRIST and FULL_ARM, the draw animation drives the entity sequence.
+	if (m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST)
+	{
+		SetSequence(m_iDrawSequence);
+		SetCycle(0.0f);
+		SetPlaybackRate(1.0f);
+	}
+
+	m_bPlayingDrawAnim = true;
+	m_bPlayingFireAnim = false;
+	m_bPlayingChargeAnim = false;
+	m_flDrawAnimStartTime = gpGlobals->curtime;
+
+	InvalidateBoneCache();
+
+	if (tfvr_weapon_draw_anim_debug.GetBool())
+	{
+		const char *scopeNames[] = { "NONE", "WEAPON_BONE", "WRIST", "FULL_ARM" };
+		DevMsg("VR: Playing draw animation on hand (sequence %d, scope %s) at time %.2f\n",
+			m_iDrawSequence, scopeNames[m_eDrawAnimScope], gpGlobals->curtime);
+	}
+
+	// Also trigger draw animation on the render weapon model
+	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+	if (pRenderWeapon)
+	{
+		pRenderWeapon->PlayDrawAnimation();
 	}
 }
 
