@@ -491,6 +491,33 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 	Assert ( pAimOrigin != NULL );
 	Assert ( pAimDirection != NULL );
 
+	// VR ball aim: use offhand (left) controller for crosshair when aiming a ball
+	extern bool g_bVRBallAimActive;
+	extern Vector g_vecVRBallAimOrigin;
+	extern QAngle g_angVRBallAimAngles;
+
+	if (g_bVRBallAimActive && g_vecVRBallAimOrigin != vec3_origin)
+	{
+		*pAimOrigin = g_vecVRBallAimOrigin;
+
+		Vector forward;
+		AngleVectors( g_angVRBallAimAngles, &forward );
+		*pAimDirection = forward;
+
+		extern ConVar tfvr_crosshair_follow_controller_roll;
+		if (tfvr_crosshair_follow_controller_roll.GetBool())
+		{
+			m_flCrosshairRollAngle = g_angVRBallAimAngles.z - 90.0f;
+			m_bCrosshairRollValid = true;
+		}
+		else
+		{
+			m_bCrosshairRollValid = false;
+		}
+
+		return true;
+	}
+
 	// Use the player's weapon shooting position and angles for crosshair (controller-based in VR)
 	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
 	if ( pPlayer )

@@ -1197,6 +1197,9 @@ void CViewRender::DrawViewModels( const CViewSetup &viewRender, bool drawViewmod
 }
 
 
+static ConVar tfvr_hands_over_hud("tfvr_hands_over_hud", "1", FCVAR_ARCHIVE,
+	"Render VR hands/weapons in front of popup HUD elements (stencil masking)");
+
 //-----------------------------------------------------------------------------
 // Purpose: Draw VR hands/weapons on a separate layer from the world.
 //          Uses the world's depth buffer for occlusion (no depth clear).
@@ -1294,6 +1297,19 @@ void CViewRender::DrawVRHands( const CViewSetup &viewRender )
 	render->SetColorModulation( one );
 	render->SetBlend( 1.0f );
 
+	bool bMaskForHUD = tfvr_hands_over_hud.GetBool();
+	if (bMaskForHUD)
+	{
+		pRenderContext->SetStencilEnable(true);
+		pRenderContext->SetStencilReferenceValue(0x80);
+		pRenderContext->SetStencilTestMask(0x80);
+		pRenderContext->SetStencilWriteMask(0x80);
+		pRenderContext->SetStencilCompareFunction(STENCILCOMPARISONFUNCTION_ALWAYS);
+		pRenderContext->SetStencilPassOperation(STENCILOPERATION_REPLACE);
+		pRenderContext->SetStencilFailOperation(STENCILOPERATION_KEEP);
+		pRenderContext->SetStencilZFailOperation(STENCILOPERATION_KEEP);
+	}
+
 	VRHandLayer_SetHandPassActive( true );
 
 	for (int i = 0; i < nRenderables; i++)
@@ -1303,6 +1319,14 @@ void CViewRender::DrawVRHands( const CViewSetup &viewRender )
 		{
 			pRenderable->DrawModel( STUDIO_RENDER );
 		}
+	}
+
+	// Stop writing stencil before particles so translucent effects
+	// (muzzle flashes, trails, etc.) don't fully mask the HUD.
+	// Opaque hand/weapon geometry already wrote the stencil mask above.
+	if (bMaskForHUD)
+	{
+		pRenderContext->SetStencilEnable(false);
 	}
 
 	// Draw weapon/hand particles that were deferred from the world translucent pass.
@@ -2505,10 +2529,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 			viewFramebufferX = viewRender.m_nUnscaledWidth;
 		g_pMatSystemSurface->SetFullscreenViewportAndRenderTarget(viewFramebufferX, 0, viewRender.m_nUnscaledWidth, viewRender.m_nUnscaledHeight, saveRenderTarget);
 
-		// clear the depth buffer for both eyes before drawing HUD
-		// not doing so can corrupt glow effects in one eye, for some reason
+		// Clear depth for both eyes before drawing HUD (prevents glow corruption).
+		// Preserve stencil when hands-over-HUD is active so the hand mask survives
+		// into the VR HUD block where it prevents panels from drawing over hands.
 		pRenderContext = materials->GetRenderContext();
-		pRenderContext->ClearBuffers(false, true, true);
+		bool bKeepStencil = VRHandLayer_IsEnabled() && tfvr_hands_over_hud.GetBool();
+		pRenderContext->ClearBuffers(false, true, !bKeepStencil);
 		pRenderContext.SafeRelease();
 
 		RenderHUD(viewRender);
@@ -2641,11 +2667,27 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 				int ClearFlags = 0;
 				SetupMain3DView( viewRender, ClearFlags );
 
-				// Material selection (translucent vs opaque) is now handled automatically
-				// based on whether HUD is attached to face or positioned in world space
-				// ConVar to control VR HUD quad rendering behavior (doesn't affect 2D screen HUD)
-				static ConVar tfvr_hud_only_in_menus("tfvr_hud_only_in_menus", "1", FCVAR_ARCHIVE, "Only render main VR HUD quad when in menus (0=always, 1=menus only). 2D screen HUD always renders.");
-				static ConVar tfvr_disable_hud("tfvr_disable_hud", "0", FCVAR_ARCHIVE, "Completely disable VR HUD rendering for performance testing (0=enabled, 1=disabled)");
+			// Activate stencil test so VR HUD panels don't draw over hand pixels
+			bool bHandsOverHUD = VRHandLayer_IsEnabled() && tfvr_hands_over_hud.GetBool();
+			if (bHandsOverHUD)
+			{
+				pRenderContext = materials->GetRenderContext();
+				pRenderContext->SetStencilEnable(true);
+				pRenderContext->SetStencilReferenceValue(0x80);
+				pRenderContext->SetStencilTestMask(0x80);
+				pRenderContext->SetStencilWriteMask(0x00);
+				pRenderContext->SetStencilCompareFunction(STENCILCOMPARISONFUNCTION_NOTEQUAL);
+				pRenderContext->SetStencilPassOperation(STENCILOPERATION_KEEP);
+				pRenderContext->SetStencilFailOperation(STENCILOPERATION_KEEP);
+				pRenderContext->SetStencilZFailOperation(STENCILOPERATION_KEEP);
+				pRenderContext.SafeRelease();
+			}
+
+			// Material selection (translucent vs opaque) is now handled automatically
+			// based on whether HUD is attached to face or positioned in world space
+			// ConVar to control VR HUD quad rendering behavior (doesn't affect 2D screen HUD)
+			static ConVar tfvr_hud_only_in_menus("tfvr_hud_only_in_menus", "1", FCVAR_ARCHIVE, "Only render main VR HUD quad when in menus (0=always, 1=menus only). 2D screen HUD always renders.");
+			static ConVar tfvr_disable_hud("tfvr_disable_hud", "0", FCVAR_ARCHIVE, "Completely disable VR HUD rendering for performance testing (0=enabled, 1=disabled)");
 				
 				bool bShouldRenderVRQuad = true;
 				
@@ -2717,25 +2759,10 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 					g_pVRWorldUIQueue->BeginFrame(headPos);
 				}
 				
-				// Render VR Controller Models (during preamble/death)
-				if (g_pVRControllerModelManager)
-				{
-					g_pVRControllerModelManager->Render();
-				}
-				
-				// Render VR Status HUD (left hand: health, objectives)
-				if (g_pVRStatusHUDManager)
-				{
-					g_pVRStatusHUDManager->Render();
-				}
-				
-				// Render VR Weapon HUD (right hand: ammo, meters, charges)
-				if (g_pVRWeaponHUDManager)
-				{
-					g_pVRWeaponHUDManager->Render();
-				}
-				
-				// Render VR Spring HUD (head-relative: kill feed)
+			// NOTE: Controller models, Status HUD, and Weapon HUD are rendered
+			// after stencil is disabled so they aren't masked by the hands.
+
+			// Render VR Spring HUD (head-relative: kill feed)
 				if (g_pVRSpringHUDManager)
 				{
 					g_pVRSpringHUDManager->Render();
@@ -2784,14 +2811,41 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 					g_pVRWeaponSelectManager->Render();
 				}
 				
-				// Flush the VR World UI queue - renders all panels sorted by distance
-				if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
-				{
-					g_pVRWorldUIQueue->FlushRenderQueue();
-				}
-				
-				// Render VR laser pointer on top of HUD/menus (always last)
-				if (g_pVRLaserPointer)
+			// Flush the VR World UI queue - renders all panels sorted by distance
+			if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+			{
+				g_pVRWorldUIQueue->FlushRenderQueue();
+			}
+			
+			// Done with stencil-masked HUD panels - disable hand stencil mask
+			if (bHandsOverHUD)
+			{
+				pRenderContext = materials->GetRenderContext();
+				pRenderContext->SetStencilEnable(false);
+				pRenderContext.SafeRelease();
+			}
+
+			// Controller models and hand-attached HUDs render after stencil
+			// is disabled so they aren't masked by the hand geometry.
+			if (g_pVRControllerModelManager)
+			{
+				g_pVRControllerModelManager->Render();
+			}
+			if (g_pVRStatusHUDManager)
+			{
+				g_pVRStatusHUDManager->Render();
+			}
+			if (g_pVRWeaponHUDManager)
+			{
+				g_pVRWeaponHUDManager->Render();
+			}
+			if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
+			{
+				g_pVRWorldUIQueue->FlushRenderQueue();
+			}
+
+			// Render VR laser pointer on top of HUD/menus (always last)
+			if (g_pVRLaserPointer)
 				{
 					g_pVRLaserPointer->RenderLaserOnTop();
 				}

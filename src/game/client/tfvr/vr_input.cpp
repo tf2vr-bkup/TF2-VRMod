@@ -50,6 +50,7 @@ ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE,
 
 // Physical throw ConVars
 ConVar tfvr_physical_throw( "tfvr_physical_throw", "1", FCVAR_ARCHIVE, "Enable physical throwing for throwable weapons (0=classic aim-based throw, 1=gesture-based throw)" );
+ConVar tfvr_physical_ball( "tfvr_physical_ball", "1", FCVAR_ARCHIVE, "Enable physical ball launch for Sandman/Wrap Assassin (0=trigger launches ball, 1=offhand aim + swing)" );
 ConVar tfvr_physical_throw_debug( "tfvr_physical_throw_debug", "0", FCVAR_ARCHIVE, "Show debug output for physical throw gesture detection" );
 ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", "0.4", FCVAR_ARCHIVE, "Grip force threshold to start throw hold (0.0-1.0, release uses grip value)" );
 
@@ -63,6 +64,11 @@ ConVar tfvr_mouth_debug_draw( "tfvr_mouth_debug_draw", "0", FCVAR_ARCHIVE, "Draw
 
 // Voice gesture state - used to suppress offhand attack when voice is active
 static bool s_bVoiceGestureActive = false;
+
+// VR ball aim state - offhand aiming for Sandman/Wrap Assassin ball launch
+bool g_bVRBallAimActive = false;
+Vector g_vecVRBallAimOrigin;
+QAngle g_angVRBallAimAngles;
 
 // Left thumbstick click or trackpad press: quick press = medic call, long hold = scoreboard
 ConVar tfvr_medic_hold_threshold( "tfvr_medic_hold_threshold", "0.3", FCVAR_ARCHIVE, "Hold time in seconds before scoreboard shows (shorter = medic call)" );
@@ -484,8 +490,53 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     // Secondary attack - suppress if voice gesture is active AND left hand is offhand
     bool bSecondaryAttack = g_pOpenXRManager->GetAnalogValue("secondary_attack") > 0.5f;
     bool bSuppressSecondary = s_bVoiceGestureActive && bLeftIsOffhand; // Left is offhand, uses secondary_attack
-    if (bSecondaryAttack && !bSuppressSecondary)
-        cmd->buttons |= IN_ATTACK2;
+
+    // VR ball aim: intercept secondary attack for ball-launching bats (Sandman, Wrap Assassin).
+    // Holding the offhand trigger enters aiming mode instead of immediately firing the ball.
+    // Note: cmd->leftControllerOrigin is not yet populated at this point (tracking runs later),
+    // so we fetch the left controller pose directly from OpenXR for the crosshair globals.
+    bool bBallAimConsumed = false;
+    if (tfvr_physical_ball.GetBool() && bSecondaryAttack && !bSuppressSecondary)
+    {
+        C_TFPlayer *pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+        if (pLocalPlayer)
+        {
+            CTFWeaponBase *pActiveWeapon = pLocalPlayer->GetActiveTFWeapon();
+            if (pActiveWeapon)
+            {
+                int iWpnID = pActiveWeapon->GetWeaponID();
+                if (iWpnID == TF_WEAPON_BAT_WOOD || iWpnID == TF_WEAPON_BAT_GIFTWRAP)
+                {
+                    // Always consume IN_ATTACK2 for ball bats so the normal
+                    // SecondaryAttack path never fires.  Without this, holding
+                    // the trigger while ammo is empty sends IN_ATTACK2 every
+                    // frame and the ball auto-fires the instant ammo recharges.
+                    bBallAimConsumed = true;
+
+                    int iBallAmmo = pLocalPlayer->GetAmmoCount(TF_AMMO_GRENADES1);
+                    if (iBallAmmo > 0)
+                    {
+                        cmd->vrBallAimActive = true;
+                        g_bVRBallAimActive = true;
+
+                        VMatrix leftPose;
+                        if (g_pOpenXRManager->GetLeftControllerPose(leftPose))
+                        {
+                            g_vecVRBallAimOrigin = leftPose.GetTranslation();
+                            MatrixAngles(leftPose.As3x4(), g_angVRBallAimAngles);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!bBallAimConsumed)
+    {
+        g_bVRBallAimActive = false;
+        if (bSecondaryAttack && !bSuppressSecondary)
+            cmd->buttons |= IN_ATTACK2;
+    }
 
     // Mouth proximity gate for lunchbox items and soldier horns:
     // Suppress primary attack unless the weapon is held near the player's mouth.

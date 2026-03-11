@@ -6849,9 +6849,8 @@ int C_TFVRHand::DrawModel(int flags)
 			VRHandLayer_AddRenderable(m_hLeftHandWatch.Get());
 			VRHandLayer_AddParticleOwner(m_hLeftHandWatch.Get());
 		}
-		if (m_hLeftHandBall.Get())
+		if (m_hLeftHandBall.Get() && m_iLastBallAmmo > 0)
 		{
-			VRHandLayer_AddRenderable(m_hLeftHandBall.Get());
 			VRHandLayer_AddParticleOwner(m_hLeftHandBall.Get());
 		}
 
@@ -6888,7 +6887,18 @@ int C_TFVRHand::DrawModel(int flags)
 	{
 		modelrender->ForcedMaterialOverride(NULL);
 	}
-	
+
+	// Draw the ball right after the hand so SetupBones has already
+	// positioned it at weapon_bone_L.  The ball has permanent EF_NODRAW
+	// to prevent stale-position draws during the world pass, so we
+	// temporarily clear it here for the actual draw.
+	if (m_hLeftHandBall.Get() && m_iLastBallAmmo > 0)
+	{
+		m_hLeftHandBall->RemoveEffects(EF_NODRAW);
+		m_hLeftHandBall->DrawModel(flags);
+		m_hLeftHandBall->AddEffects(EF_NODRAW);
+	}
+
 	return ret;
 }
 
@@ -8902,9 +8912,11 @@ void C_TFVRHand::AttachBallToLeftHand(const char *pszBallModel)
 		pBall->SetOwnerEntity(pOwner);
 	}
 	
-	// Use FollowEntity with bone merge
-	pBall->FollowEntity(this, true);
-	pBall->AddEffects(EF_BONEMERGE | EF_BONEMERGE_FASTCULL);
+	// Position is driven entirely by the hand's SetupBones (weapon_bone_L).
+	// Keep EF_NODRAW so the engine never draws the ball during the world
+	// pass (where it would use a stale position).  The hand's DrawModel
+	// draws the ball explicitly after SetupBones has positioned it.
+	pBall->AddEffects(EF_NODRAW);
 	pBall->SetMoveType(MOVETYPE_NONE);
 	pBall->AddSolidFlags(FSOLID_NOT_SOLID);
 	
@@ -8963,19 +8975,12 @@ void C_TFVRHand::UpdateLeftHandBall()
 	
 	// Check ammo (TF_AMMO_GRENADES1 is used for the ball)
 	int iBallAmmo = pOwner->GetAmmoCount(TF_AMMO_GRENADES1);
-	
-	// Only update if ammo changed
-	if (iBallAmmo == m_iLastBallAmmo)
-		return;
-	
 	m_iLastBallAmmo = iBallAmmo;
 	
 	if (iBallAmmo > 0)
 	{
-		// Has ball - make sure it's visible
 		if (!m_hLeftHandBall.Get())
 		{
-			// Create the ball from weapon's model
 			CTFBat_Wood *pBat = dynamic_cast<CTFBat_Wood*>(pWeapon);
 			if (pBat)
 			{
@@ -8985,18 +8990,6 @@ void C_TFVRHand::UpdateLeftHandBall()
 					AttachBallToLeftHand(pszBallModel);
 				}
 			}
-		}
-		else
-		{
-			m_hLeftHandBall->RemoveEffects(EF_NODRAW);
-		}
-	}
-	else
-	{
-		// No ball - hide it
-		if (m_hLeftHandBall.Get())
-		{
-			m_hLeftHandBall->AddEffects(EF_NODRAW);
 		}
 	}
 }

@@ -100,6 +100,7 @@ bool CHudTFCrosshair::ShouldDraw( void )
 		}
 
 		// VR: hide crosshair on melee weapons (physical melee is always active)
+		// Exception: ball-launching bats show the crosshair during ball aim mode
 		if ( pPlayer->IsInVRMode() )
 		{
 			CTFWeaponBase *pWeapon = pPlayer->GetActiveTFWeapon();
@@ -109,8 +110,17 @@ bool CHudTFCrosshair::ShouldDraw( void )
 				if ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS )
 				{
 					int wid = pWeapon->GetWeaponID();
-					if ( wid != TF_WEAPON_BUFF_ITEM && wid != TF_WEAPON_ROCKETPACK )
+
+					extern bool g_bVRBallAimActive;
+					if ( g_bVRBallAimActive &&
+						 ( wid == TF_WEAPON_BAT_WOOD || wid == TF_WEAPON_BAT_GIFTWRAP ) )
+					{
+						// Allow crosshair - ball aim is active on offhand
+					}
+					else if ( wid != TF_WEAPON_BUFF_ITEM && wid != TF_WEAPON_ROCKETPACK )
+					{
 						return false;
+					}
 				}
 			}
 		}

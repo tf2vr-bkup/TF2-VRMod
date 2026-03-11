@@ -6,6 +6,7 @@
 
 #include "cbase.h"
 #include "tf_weaponbase_melee.h"
+#include "tf_weapon_bat.h"
 #include "effect_dispatch_data.h"
 #include "tf_gamerules.h"
 #include "debugoverlay_shared.h"
@@ -1401,6 +1402,24 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 	{
 		if ( flRightGripSpeed >= flThreshold )
 		{
+			// VR ball aim: a swing while the offhand trigger is held launches
+			// the ball from the offhand aim point instead of doing a melee hit.
+			if ( pCmd->vrBallAimActive )
+			{
+				CTFBat_Wood *pBatWood = dynamic_cast<CTFBat_Wood *>( this );
+				if ( pBatWood )
+				{
+#if !defined( CLIENT_DLL )
+					pBatWood->VRBallAimLaunch();
+#else
+					WeaponSound( SPECIAL2 );
+#endif
+					m_bVRSwingActive = true;
+					m_bVRSwingHit = true;
+					return;
+				}
+			}
+
 			m_bVRSwingActive = true;
 			m_bVRSwingHit = false;
 			WeaponSound( MELEE_MISS );
