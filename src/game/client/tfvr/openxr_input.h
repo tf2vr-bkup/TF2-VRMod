@@ -56,6 +56,7 @@ private:
     bool CreateQuestControllerProfile();
     bool CreateMinimalQuestControllerProfile();
     bool CreateWMRControllerProfile();
+    bool CreateViveControllerProfile();
     bool CreateHPReverbControllerProfile();
     bool CreateGenericControllerProfile();
     bool SuggestBindings(XrPath profilePath, const std::vector<XrActionSuggestedBinding>& bindings, const char* profileName);
