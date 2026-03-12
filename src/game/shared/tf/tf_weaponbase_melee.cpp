@@ -65,6 +65,11 @@ ConVar tfvr_melee_hull_width( "tfvr_melee_hull_width", "3.0", FCVAR_REPLICATED, 
 ConVar tfvr_melee_debug( "tfvr_melee_debug", "0", FCVAR_REPLICATED | FCVAR_CHEAT, "Draw VR melee collision debug. 1=hull, 2=hull+velocity" );
 ConVar tfvr_melee_bone_axis( "tfvr_melee_bone_axis", "-1", FCVAR_ARCHIVE, "Weapon bone axis for melee direction. -1=auto, 0=X(red), 1=Y(green), 2=Z(blue) in HLMV" );
 
+// Hard minimum time between VR melee hits. Just under the fastest vanilla melee
+// fire rate (Eviction Notice @ 0.48s) to prevent double-hits from controller
+// jitter or rapid swing reversals. Per-weapon damage scaling still applies above this.
+#define VR_MELEE_MIN_COOLDOWN 0.4f
+
 //=============================================================================
 //
 // TFWeaponBase Melee functions.
@@ -1522,9 +1527,13 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 		}
 	}
 
-	// Check if either hand can hit
-	bool bRightCanHit = m_bVRSwingActive && !m_bVRSwingHit;
-	bool bLeftCanHit  = bIsFists && m_bVRSwingActiveLeft && !m_bVRSwingHitLeft;
+	// Hard cooldown: suppress hit detection entirely until the minimum
+	// interval has elapsed since the last registered hit.
+	bool bOnCooldown = ( m_flVRLastHitTime > 0.0f &&
+		( gpGlobals->curtime - m_flVRLastHitTime ) < VR_MELEE_MIN_COOLDOWN );
+
+	bool bRightCanHit = m_bVRSwingActive && !m_bVRSwingHit && !bOnCooldown;
+	bool bLeftCanHit  = bIsFists && m_bVRSwingActiveLeft && !m_bVRSwingHitLeft && !bOnCooldown;
 
 	if ( !bRightCanHit && !bLeftCanHit )
 		return;
