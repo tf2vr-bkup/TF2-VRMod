@@ -1095,6 +1095,7 @@ CTFPlayer::CTFPlayer()
 	m_bInVRMode = false;
 	
 	m_lastTimeHeadCleared = 0.0f;
+	m_flLastRecalibrateTime = 0.0f;
 	m_bHeadCollisionWarning = false;
 	m_clientEyePosition.Init();
 
@@ -23426,6 +23427,7 @@ void CTFPlayer::RecalibrateView()
 	m_headInPlayerA[YAW] = 0;
 
 	m_roomscaleOffset = vec3_origin;
+	m_flLastRecalibrateTime = gpGlobals->curtime;
 
 	// engine->ClientCommand(edict(), "tfvr_cl_recalibrate_view\n");
 
@@ -23487,6 +23489,12 @@ void CTFPlayer::CheckForHeadCollisions()
 	if (!IsReadyToPlay())
 		return;
 
+	// Grace period after spawn or recalibration so transient eye positions
+	// don't trigger a false fade.
+	float graceCutoff = Max(m_flSpawnTime, m_flLastRecalibrateTime) + 0.5f;
+	if (gpGlobals->curtime < graceCutoff)
+		return;
+
 	// Use client's EyePosition for collision detection (we know this works correctly)
 	Vector clientHeadPosition = m_clientEyePosition;
 	if (clientHeadPosition == vec3_origin)
@@ -23517,15 +23525,21 @@ void CTFPlayer::CheckForHeadCollisions()
 		// VIEW_NEARZ is 7 units -- anything closer gets clipped and the
 		// player can see through geometry.  Inner hull = zNear + buffer
 		// so the fade reaches full opacity before clipping occurs.
+		//
+		// The upward extent is reduced because ceiling geometry rarely
+		// causes visible clipping -- the near plane only matters for
+		// surfaces roughly in front of the camera, not directly above.
 		const float zNear = 7.f;
 		const float buffer = 5.f;
-		Vector headHalfSize(zNear + buffer, zNear + buffer, zNear + buffer);
+		const float sideHalf = zNear + buffer;   // 12 units horizontally / down
+		const float upHalf   = zNear * 0.5f;     // 3.5 units above the eye
 		float maxDist = 4.f;
 
 		for (float closeness = 0.01f; closeness <= maxDist; closeness += 0.1f)
 		{
-			Vector curSize = headHalfSize + closeness * Vector(1.f, 1.f, 1.f);
-			UTIL_TraceHull(headPosition, headPosition, -curSize, curSize, mask, &filter, &pm);
+			Vector mins(-sideHalf - closeness, -sideHalf - closeness, -sideHalf - closeness);
+			Vector maxs( sideHalf + closeness,  sideHalf + closeness,  upHalf   + closeness);
+			UTIL_TraceHull(headPosition, headPosition, mins, maxs, mask, &filter, &pm);
 			
 			if (pm.DidHit())
 			{

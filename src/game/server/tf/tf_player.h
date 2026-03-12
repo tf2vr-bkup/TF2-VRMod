@@ -1644,6 +1644,7 @@ public:
 
 private:
 	float					m_lastTimeHeadCleared;
+	float					m_flLastRecalibrateTime;
 };
 
 //-----------------------------------------------------------------------------
