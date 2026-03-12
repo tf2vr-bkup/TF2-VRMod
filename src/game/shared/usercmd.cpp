@@ -237,6 +237,7 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	}
 
 	buf->WriteOneBit( to->vrBallAimActive ? 1 : 0 );
+	buf->WriteOneBit( to->vrPhysicalCrouch ? 1 : 0 );
 
 #if defined( HL2_CLIENT_DLL )
 	if ( to->entitygroundcontact.Count() != 0 )
@@ -398,6 +399,7 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	}
 
 	move->vrBallAimActive = buf->ReadOneBit() ? true : false;
+	move->vrPhysicalCrouch = buf->ReadOneBit() ? true : false;
 
 #if defined( HL2_DLL )
 	if ( buf->ReadOneBit() )

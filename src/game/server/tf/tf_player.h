@@ -1617,6 +1617,8 @@ public:
 public:
 	Vector 					m_headInPlayerO;
 	QAngle                  m_headInPlayerA;
+	bool					m_bPhysicalCrouch;
+	bool					m_bDuckWasPhysical;
 	
 	// VR Head collision detection
 	void					CheckForHeadCollisions( void );

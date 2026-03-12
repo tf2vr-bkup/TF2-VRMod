@@ -614,6 +614,8 @@ public:
 	CInterpolatedVar<Vector> m_iv_roomscaleOffset;
 	Vector				m_headInPlayerO;
 	QAngle				m_headInPlayerA;
+	bool				m_bPhysicalCrouch;
+	bool				m_bDuckWasPhysical;
 
 	QAngle				m_cachedEyeAngles;
 

@@ -3249,6 +3249,11 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
 
 	m_headInPlayerA = ucmd->playerToHmdAngles;
     m_headInPlayerO = ucmd->playerToHmdOrigin;
+	m_bPhysicalCrouch = ucmd->vrPhysicalCrouch;
+	if ( ucmd->vrPhysicalCrouch )
+		m_bDuckWasPhysical = true;
+	else if ( ucmd->buttons & IN_DUCK )
+		m_bDuckWasPhysical = false;
 	m_clientEyePosition = ucmd->clientEyePosition;
     // Store VR controller positions for weapon shooting (only when client is using VR)
     if (ucmd->playerToHmdOrigin != vec3_origin)
@@ -3380,6 +3385,8 @@ void CTFPlayer::InitialSpawn( void )
 	if ( IsInVRMode() && !IsFakeClient() )
 	{
 		m_headInPlayerO = vec3_origin;
+		m_bPhysicalCrouch = false;
+		m_bDuckWasPhysical = false;
 		m_roomscaleOffset = vec3_origin;
 		
 		// Send ForcePlayerViewAngles with the initial spawn angles for VR rotation calibration
@@ -3705,6 +3712,8 @@ void CTFPlayer::Spawn()
 	if ( IsInVRMode() && !IsFakeClient() )
 	{
 		m_headInPlayerO = vec3_origin;
+		m_bPhysicalCrouch = false;
+		m_bDuckWasPhysical = false;
 		m_roomscaleOffset = vec3_origin;
 		
 		// Send ForcePlayerViewAngles with the spawn point angles

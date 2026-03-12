@@ -4035,6 +4035,8 @@ C_TFPlayer::C_TFPlayer() :
 
 	m_headInPlayerO = vec3_origin;
     m_headInPlayerA = vec3_angle;
+	m_bPhysicalCrouch = false;
+	m_bDuckWasPhysical = false;
 	m_roomscaleOffset = vec3_origin;
 	m_localRoomscaleOffset = vec3_origin;
 

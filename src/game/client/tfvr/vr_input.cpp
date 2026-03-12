@@ -58,6 +58,12 @@ ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", "0.4", FCVAR_ARCH
 ConVar tfvr_mouth_activate_enabled( "tfvr_mouth_activate_enabled", "1", FCVAR_ARCHIVE, "Require holding lunchbox/horn items near mouth to activate" );
 ConVar tfvr_mouth_radius( "tfvr_mouth_radius", "14.0", FCVAR_ARCHIVE, "Radius around mouth for item activation (game units)" );
 ConVar tfvr_mouth_forward_offset( "tfvr_mouth_forward_offset", "6.0", FCVAR_ARCHIVE, "Forward offset from head center to mouth (game units)" );
+
+// Physical crouching ConVars
+ConVar tfvr_physical_crouch( "tfvr_physical_crouch", "1", FCVAR_ARCHIVE, "Enable physical crouching by lowering your head in VR" );
+ConVar tfvr_physical_crouch_threshold( "tfvr_physical_crouch_threshold", "0.75", FCVAR_ARCHIVE, "Fraction of standing height below which physical crouch triggers (0.0-1.0)" );
+ConVar tfvr_physical_crouch_hysteresis( "tfvr_physical_crouch_hysteresis", "0.04", FCVAR_ARCHIVE, "Height ratio band above threshold to exit physical crouch (prevents flickering)" );
+ConVar tfvr_physical_crouch_debug( "tfvr_physical_crouch_debug", "0", FCVAR_ARCHIVE, "Show debug output for physical crouch detection" );
 ConVar tfvr_mouth_down_offset( "tfvr_mouth_down_offset", "4.0", FCVAR_ARCHIVE, "Downward offset from head center to mouth (game units)" );
 ConVar tfvr_mouth_activate_debug( "tfvr_mouth_activate_debug", "0", FCVAR_ARCHIVE, "Show debug output for mouth proximity activation" );
 ConVar tfvr_mouth_debug_draw( "tfvr_mouth_debug_draw", "0", FCVAR_ARCHIVE, "Draw wireframe sphere at the mouth detection zone" );
@@ -571,10 +577,89 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     if (bUse)
         cmd->buttons |= IN_USE;
 
-    // Duck
+    // Duck (button + physical crouch)
     bool bDuck = g_pOpenXRManager->IsButtonPressed("duck");
     if (bDuck)
         cmd->buttons |= IN_DUCK;
+
+    // Physical crouch detection: compare HMD height to calibrated standing height
+    // Disabled in seated mode — HMD height is unreliable when sitting.
+    static ConVar *pSeatedMode = cvar->FindVar( "tfvr_seated_mode" );
+    bool bSeated = pSeatedMode && pSeatedMode->GetBool();
+    static bool s_bPhysicallyCrouching = false;
+    if ( tfvr_physical_crouch.GetBool() && g_pOpenXRManager->IsActive() && !bSeated )
+    {
+
+        Vector rawHmdPos = g_pOpenXRManager->GetRawHMDPosition();
+        float currentHmdHeight = rawHmdPos.y; // meters above floor (OpenXR Y-up)
+
+        static ConVar *pPlayerHeight = cvar->FindVar( "tfvr_player_height" );
+        float playerHeightInches = pPlayerHeight ? pPlayerHeight->GetFloat() : 67.0f;
+
+        // Standing HMD height ≈ player height minus head-top-to-eye offset (~4 inches)
+        float standingHmdMeters = ( playerHeightInches - 4.0f ) / 39.3701f;
+
+        if ( standingHmdMeters > 0.1f )
+        {
+            float heightRatio = currentHmdHeight / standingHmdMeters;
+
+            float threshold = tfvr_physical_crouch_threshold.GetFloat();
+            float hysteresis = tfvr_physical_crouch_hysteresis.GetFloat();
+
+            if ( s_bPhysicallyCrouching )
+            {
+                if ( heightRatio > threshold + hysteresis )
+                    s_bPhysicallyCrouching = false;
+            }
+            else
+            {
+                if ( heightRatio < threshold )
+                    s_bPhysicallyCrouching = true;
+            }
+
+            if ( tfvr_physical_crouch_debug.GetBool() )
+            {
+                static float s_flLastDebugTime = 0.0f;
+                if ( gpGlobals->curtime - s_flLastDebugTime > 0.5f )
+                {
+                    DevMsg( "PhysCrouch: ratio=%.3f thresh=%.3f hyst=%.3f crouching=%d hmd=%.3fm standing=%.3fm\n",
+                            heightRatio, threshold, hysteresis, s_bPhysicallyCrouching ? 1 : 0,
+                            currentHmdHeight, standingHmdMeters );
+                    s_flLastDebugTime = gpGlobals->curtime;
+                }
+            }
+        }
+
+        if ( s_bPhysicallyCrouching )
+        {
+            cmd->buttons |= IN_DUCK;
+            cmd->vrPhysicalCrouch = true;
+        }
+
+        C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+        if ( pPlayer )
+        {
+            pPlayer->m_bPhysicalCrouch = s_bPhysicallyCrouching;
+            if ( s_bPhysicallyCrouching )
+                pPlayer->m_bDuckWasPhysical = true;
+        }
+    }
+    else if ( s_bPhysicallyCrouching )
+    {
+        s_bPhysicallyCrouching = false;
+        C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+        if ( pPlayer )
+            pPlayer->m_bPhysicalCrouch = false;
+    }
+
+    // Button duck while standing clears the physical-duck flag so the
+    // artificial offset applies normally for button-initiated crouches.
+    if ( bDuck && !s_bPhysicallyCrouching )
+    {
+        C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+        if ( pPlayer )
+            pPlayer->m_bDuckWasPhysical = false;
+    }
 
     // Jump
     bool bJump = g_pOpenXRManager->IsButtonPressed("jump");

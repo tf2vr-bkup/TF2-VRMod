@@ -14824,6 +14824,24 @@ Vector CTFPlayer::EyePosition()
 	float vecViewOffsetZ = GetViewOffset().z;
 	float crouchDelta = vecViewZ - vecViewOffsetZ;
 	
+	// Physical crouch suppression: strip the duck offset from crouchDelta
+	// but preserve the class-height component (VEC_VIEW.z - classEyeHeight)
+	// so that the downstream class scaling produces the same result as
+	// standing.  Setting crouchDelta to the standing value instead of 0
+	// avoids an offset mismatch between physical and button crouching.
+	float standingCrouchDelta = vecViewZ - GetClassEyeHeight().z;
+	if ( m_bPhysicalCrouch )
+	{
+		crouchDelta = standingCrouchDelta;
+	}
+	else if ( m_bDuckWasPhysical )
+	{
+		if ( fabsf( crouchDelta - standingCrouchDelta ) < 1.0f )
+			m_bDuckWasPhysical = false;
+		else
+			crouchDelta = standingCrouchDelta;
+	}
+	
 	// Handle seated mode - add height offset to simulate standing position
 	bool seatedMode = false;
 	float seatedHeightOffset = 0.0f;
