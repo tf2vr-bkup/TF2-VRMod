@@ -823,6 +823,23 @@ void CTFKnife::VRBackstabThink( void )
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Called when a VR physical melee swing begins (speed threshold exceeded).
+//          Removes spy disguise on swing, matching vanilla behavior where any
+//          knife attack breaks disguise regardless of whether it connects.
+//-----------------------------------------------------------------------------
+void CTFKnife::OnVRSwingStart()
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return;
+
+	if ( pPlayer->m_Shared.InCond( TF_COND_DISGUISED ) )
+	{
+		pPlayer->RemoveDisguise();
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Called by VRPhysicalMeleeUpdate right before hit processing.
 //          Sets m_hBackstabVictim so GetMeleeDamage and CalcIsAttackCritical
 //          can detect the backstab.

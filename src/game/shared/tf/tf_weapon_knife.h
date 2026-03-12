@@ -62,6 +62,7 @@ public:
 	void				ProcessDisguiseImpulse();
 
 	// VR backstab support
+	virtual void		OnVRSwingStart() OVERRIDE;
 	virtual void		OnVRPreMeleeHit( trace_t &trace ) OVERRIDE;
 	virtual void		OnVRPostMeleeHit( trace_t &trace ) OVERRIDE;
 	virtual bool		IsVRMeleeBlocked( void ) OVERRIDE { return IsInBackstabCooldown(); }

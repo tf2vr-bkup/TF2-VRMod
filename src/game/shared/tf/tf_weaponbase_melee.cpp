@@ -1422,6 +1422,7 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 
 			m_bVRSwingActive = true;
 			m_bVRSwingHit = false;
+			OnVRSwingStart();
 			WeaponSound( MELEE_MISS );
 		}
 	}

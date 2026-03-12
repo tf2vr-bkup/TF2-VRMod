@@ -109,6 +109,7 @@ public:
 
 	// Called in VRPhysicalMeleeUpdate before/after hit processing.
 	// Override in weapon subclasses (e.g. knife) for weapon-specific logic.
+	virtual void	OnVRSwingStart() {}
 	virtual void	OnVRPreMeleeHit( trace_t &trace ) {}
 	virtual void	OnVRPostMeleeHit( trace_t &trace ) {}
 	virtual bool	IsVRMeleeBlocked( void ) { return false; }
