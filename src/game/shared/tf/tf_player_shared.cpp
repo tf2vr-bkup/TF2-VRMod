@@ -106,6 +106,7 @@
 
 #include "tf_wearable_weapons.h"
 #include "tf_weapon_bonesaw.h"
+#include "collisionutils.h"
 
 static ConVar tf_demoman_charge_frametime_scaling( "tf_demoman_charge_frametime_scaling", "1", FCVAR_REPLICATED | FCVAR_CHEAT, "When enabled, scale yaw limiting based on client performance (frametime)." );
 static const float YAW_CAP_SCALE_MIN = 0.2f;
@@ -124,6 +125,8 @@ ConVar tfvr_tracer_offset_forward( "tfvr_tracer_offset_forward", "0", FCVAR_ARCH
 ConVar tfvr_tracer_offset_right( "tfvr_tracer_offset_right", "0", FCVAR_ARCHIVE, "VR tracer offset along right axis" );
 ConVar tfvr_tracer_offset_up( "tfvr_tracer_offset_up", "-4", FCVAR_ARCHIVE, "VR tracer offset along up axis" );
 ConVar tfvr_tracer_velocity_compensation( "tfvr_tracer_velocity_compensation", "0.001", FCVAR_ARCHIVE, "VR tracer velocity compensation factor (seconds)" );
+ConVar tfvr_self_headshot( "tfvr_self_headshot", "1", FCVAR_REPLICATED, "Allow VR players to damage themselves by shooting their own head" );
+ConVar tfvr_self_headshot_radius( "tfvr_self_headshot_radius", "10", FCVAR_REPLICATED, "Radius of the head sphere for VR self-headshot detection" );
 
 ConVar tf_spy_max_cloaked_speed( "tf_spy_max_cloaked_speed", "999", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );	// no cap
 ConVar tf_whip_speed_increase( "tf_whip_speed_increase", "105", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED );
@@ -10416,6 +10419,35 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 			}
 		}
 	}
+
+	// VR self-headshot: if the player is in VR, check if their bullet ray
+	// intersects their own head (approximated as a sphere at the tracked head position).
+	if ( tfvr_self_headshot.GetBool() && IsInVRMode() && m_clientEyePosition != vec3_origin )
+	{
+		float flHeadRadius = tfvr_self_headshot_radius.GetFloat();
+		Vector vecRayDelta = vecEnd - vecStart;
+
+		float t1, t2;
+		if ( IntersectRayWithSphere( vecStart, vecRayDelta, m_clientEyePosition, flHeadRadius, &t1, &t2 ) )
+		{
+			if ( t1 < trace.fraction )
+			{
+				CTakeDamageInfo selfDmg( this, this, 99999, nDamageType | DMG_CRITICAL );
+				selfDmg.SetWeapon( GetActiveWeapon() );
+				selfDmg.SetDamageCustom( TF_DMG_CUSTOM_SUICIDE );
+				selfDmg.SetDamagePosition( m_clientEyePosition );
+				CalculateBulletDamageForce( &selfDmg, info.m_iAmmoType, info.m_vecDirShooting, m_clientEyePosition, 1.0 );
+
+				if ( pWpn )
+				{
+					pWpn->WeaponSound( BURST );
+				}
+
+				TakeDamage( selfDmg );
+			}
+		}
+	}
+
 	if ( pWpn )
 	{
 		pWpn->OnBulletFire( iEnemyPlayersHit );
