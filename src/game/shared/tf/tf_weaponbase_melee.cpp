@@ -1590,7 +1590,10 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 
 		pPlayer->m_Shared.OnAttack();
 
-		OnSwingHit( trace, flDamageMod );
+		if ( !HandleVRBuildingHit( trace, flDamageMod ) )
+		{
+			OnSwingHit( trace, flDamageMod );
+		}
 
 		OnVRPostMeleeHit( trace );
 
