@@ -575,6 +575,10 @@ CVRWeaponSelectManager::CVRWeaponSelectManager()
 	m_vecMenuPlayspacePos = vec3_origin;
 	m_flMenuYaw = 0.0f;
 	
+	m_vecHandPlayspacePosAtOpen = vec3_origin;
+	m_vecMenuRightPlayspace = Vector(0, 1, 0);
+	m_vecMenuUpPlayspace = Vector(0, 0, 1);
+	
 	m_nLastSelectedSlot = -1;
 	m_bSelectionMade = false;
 	
@@ -730,6 +734,31 @@ void CVRWeaponSelectManager::OpenMenu()
 	VectorAngles(toHead, facingAngles);
 	m_flMenuYaw = facingAngles[YAW];
 	
+	// Store raw controller playspace position for head-independent cursor tracking.
+	// GetRightControllerPose applies a head-relative aim correction that shifts the
+	// controller's apparent position when the head rotates. By tracking deltas from
+	// the raw playspace position, cursor movement is purely physical hand movement.
+	VMatrix handRawPlayspace;
+	if (g_pOpenXRManager->GetRightControllerPoseRaw(handRawPlayspace))
+	{
+		m_vecHandPlayspacePosAtOpen = handRawPlayspace.GetTranslation();
+	}
+	else
+	{
+		m_vecHandPlayspacePosAtOpen = vec3_origin;
+	}
+	
+	// Compute menu orientation in playspace for cursor projection
+	VMatrix headPlayspace = g_pOpenXRManager->GetMideyePose();
+	Vector headPlayspacePos = headPlayspace.GetTranslation();
+	Vector toHeadPlayspace = headPlayspacePos - m_vecHandPlayspacePosAtOpen;
+	toHeadPlayspace.z = 0;
+	VectorNormalize(toHeadPlayspace);
+	
+	Vector menuForwardPlayspace = toHeadPlayspace;
+	VectorVectors(menuForwardPlayspace, m_vecMenuRightPlayspace, m_vecMenuUpPlayspace);
+	m_vecMenuRightPlayspace = -m_vecMenuRightPlayspace;
+	
 	// Update panel size from convars - use scale directly, not multiplied by distance
 	m_flMenuSize = tfvr_weapon_select_scale.GetFloat();
 	
@@ -834,44 +863,19 @@ void CVRWeaponSelectManager::UpdateHandPositionOnMenu()
 	if (!pPlayer)
 		return;
 	
-	// Calculate current playspace world matrix and menu world position
-	VMatrix headWorldMatrix = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
-	VMatrix headPlayspaceMatrix = g_pOpenXRManager->GetMideyePose();
-	VMatrix playspaceToHead = headPlayspaceMatrix.InverseTR();
-	VMatrix playspaceWorldMatrix = headWorldMatrix * playspaceToHead;
-	Vector menuCenter = playspaceWorldMatrix * m_vecMenuPlayspacePos;
+	// Use raw playspace positions for cursor tracking. This avoids drift caused
+	// by the head-relative aim pose correction in GetRightControllerPose, which
+	// shifts the controller's apparent world position when the head rotates.
+	VMatrix handRawPlayspace;
+	if (!g_pOpenXRManager->GetRightControllerPoseRaw(handRawPlayspace))
+		return;
 	
-	// Get current hand position (use same pose type as menu positioning)
-	Vector handPos = menuCenter; // Fallback to menu center
-	VMatrix handPose;
-	bool gotPose = false;
+	Vector currentHandPlayspace = handRawPlayspace.GetTranslation();
+	Vector deltaPlayspace = currentHandPlayspace - m_vecHandPlayspacePosAtOpen;
 	
-	if (tfvr_weapon_select_use_grip.GetBool())
-	{
-		gotPose = g_pOpenXRManager->GetRightControllerGripPose(handPose);
-	}
-	
-	if (!gotPose)
-	{
-		gotPose = g_pOpenXRManager->GetRightControllerPose(handPose);
-	}
-	
-	if (gotPose)
-	{
-		handPos = handPose.GetTranslation();
-	}
-	
-	// Calculate menu orientation using stored yaw
-	Vector menuForward;
-	AngleVectors(QAngle(0, m_flMenuYaw, 0), &menuForward, nullptr, nullptr);
-	Vector menuRight, menuUp;
-	VectorVectors(menuForward, menuRight, menuUp);
-	menuRight = -menuRight;
-	
-	// Project hand position onto menu plane
-	Vector toHand = handPos - menuCenter;
-	float u = DotProduct(toHand, menuRight) / m_flPanelWorldWidth + 0.5f;
-	float v = 0.5f - DotProduct(toHand, menuUp) / m_flPanelWorldHeight;
+	// Project the playspace delta onto the menu plane using stored playspace orientation
+	float u = DotProduct(deltaPlayspace, m_vecMenuRightPlayspace) / m_flPanelWorldWidth + 0.5f;
+	float v = 0.5f - DotProduct(deltaPlayspace, m_vecMenuUpPlayspace) / m_flPanelWorldHeight;
 	
 	// Clamp to valid range
 	u = clamp(u, 0.0f, 1.0f);
@@ -884,8 +888,8 @@ void CVRWeaponSelectManager::UpdateHandPositionOnMenu()
 		static float lastDebugTime = 0;
 		if (gpGlobals->curtime - lastDebugTime > 0.5f)
 		{
-			DevMsg("VR Weapon Select: Hand UV=(%.2f, %.2f), menuCenter=(%.1f,%.1f,%.1f), handPos=(%.1f,%.1f,%.1f)\n",
-				u, v, menuCenter.x, menuCenter.y, menuCenter.z, handPos.x, handPos.y, handPos.z);
+			DevMsg("VR Weapon Select: Hand UV=(%.2f, %.2f), delta=(%.1f,%.1f,%.1f)\n",
+				u, v, deltaPlayspace.x, deltaPlayspace.y, deltaPlayspace.z);
 			lastDebugTime = gpGlobals->curtime;
 		}
 	}
@@ -910,7 +914,7 @@ void CVRWeaponSelectManager::HandleWeaponSelection()
 			Q_snprintf(cmd, sizeof(cmd), "slot%d", selectedSlot + 1);
 			engine->ClientCmd(cmd);
 			
-			// Play weapon selection sound
+			// Play weapon selection sound only when hovering onto a slot
 			if (pPlayer)
 			{
 				pPlayer->EmitSound("Player.WeaponSelectionMoveSlot");
@@ -919,14 +923,6 @@ void CVRWeaponSelectManager::HandleWeaponSelection()
 			if (tfvr_weapon_select_debug.GetBool())
 			{
 				DevMsg("VR Weapon Select: Switching to slot %d\n", selectedSlot + 1);
-			}
-		}
-		else if (m_nLastSelectedSlot >= 0)
-		{
-			// Moved from a slot to center - play the move sound too
-			if (pPlayer)
-			{
-				pPlayer->EmitSound("Player.WeaponSelectionMoveSlot");
 			}
 		}
 	}

@@ -136,6 +136,11 @@ private:
 	Vector m_vecMenuPlayspacePos; // Position relative to playspace origin (stays fixed)
 	float m_flMenuYaw;            // Yaw to face toward head when opened (stays fixed)
 	
+	// Cursor tracking in playspace (immune to head-relative corrections)
+	Vector m_vecHandPlayspacePosAtOpen; // Raw controller playspace position when menu opened
+	Vector m_vecMenuRightPlayspace;     // Menu's "right" direction in playspace
+	Vector m_vecMenuUpPlayspace;        // Menu's "up" direction in playspace
+	
 	// Selection state
 	int m_nLastSelectedSlot;      // Last selected slot (for change detection)
 	bool m_bSelectionMade;        // Whether a selection was made this frame
