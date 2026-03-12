@@ -66,9 +66,9 @@ ConVar tfvr_melee_debug( "tfvr_melee_debug", "0", FCVAR_REPLICATED | FCVAR_CHEAT
 ConVar tfvr_melee_bone_axis( "tfvr_melee_bone_axis", "-1", FCVAR_ARCHIVE, "Weapon bone axis for melee direction. -1=auto, 0=X(red), 1=Y(green), 2=Z(blue) in HLMV" );
 
 // Hard minimum time between VR melee hits. Just under the fastest vanilla melee
-// fire rate (Eviction Notice @ 0.48s) to prevent double-hits from controller
+// fire rate (Eviction Notice w/ double fire rate power up @ 0.24s) to prevent double-hits from controller
 // jitter or rapid swing reversals. Per-weapon damage scaling still applies above this.
-#define VR_MELEE_MIN_COOLDOWN 0.4f
+#define VR_MELEE_MIN_COOLDOWN 0.24f
 
 //=============================================================================
 //

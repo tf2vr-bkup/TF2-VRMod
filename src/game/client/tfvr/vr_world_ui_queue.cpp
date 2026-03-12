@@ -14,6 +14,8 @@
 // Global instance
 CVRWorldUIQueue* g_pVRWorldUIQueue = nullptr;
 
+bool CVRWorldUIQueue::s_bInsideFlush = false;
+
 //=============================================================================
 // ConVars
 //=============================================================================
@@ -173,6 +175,8 @@ void CVRWorldUIQueue::FlushRenderQueue()
     // Render all queued panels
     g_pMatSystemSurface->DisableClipping(true);
     
+    s_bInsideFlush = true;
+    
     for (int i = 0; i < m_renderQueue.Count(); i++)
     {
         VRWorldUIRenderItem& item = m_renderQueue[i];
@@ -198,6 +202,8 @@ void CVRWorldUIQueue::FlushRenderQueue()
             item.pPanel->SetVisible(item.bWasVisible);
         }
     }
+    
+    s_bInsideFlush = false;
     
     g_pMatSystemSurface->DisableClipping(false);
     

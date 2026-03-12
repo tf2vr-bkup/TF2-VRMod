@@ -62,6 +62,10 @@ public:
     // Check if initialized
     bool IsInitialized() const { return m_bInitialized; }
     
+    // True while FlushRenderQueue is executing DrawPanelIn3DSpace calls.
+    // Used by paint-suppression functions to allow painting during 3D capture.
+    static bool s_bInsideFlush;
+    
 private:
     bool m_bInitialized;
     Vector m_headPos;

@@ -167,6 +167,12 @@ ConVar tfvr_weapon_hud_charge_offset_x("tfvr_weapon_hud_charge_offset_x", "0", F
 ConVar tfvr_weapon_hud_charge_offset_y("tfvr_weapon_hud_charge_offset_y", "40", FCVAR_ARCHIVE, 
     "Y offset for charge bars relative to ammo position (positive = below ammo)");
 
+// Metal/account panel layout
+ConVar tfvr_weapon_hud_account_offset_x("tfvr_weapon_hud_account_offset_x", "0", FCVAR_ARCHIVE, 
+    "X offset for metal count panel (added after meter layout, positive = right)");
+ConVar tfvr_weapon_hud_account_offset_y("tfvr_weapon_hud_account_offset_y", "0", FCVAR_ARCHIVE, 
+    "Y offset for metal count panel (added after meter layout, positive = down)");
+
 // Meter layout (sticky count, effect meters, etc.)
 ConVar tfvr_weapon_hud_meters_y("tfvr_weapon_hud_meters_y", "80", FCVAR_ARCHIVE, 
     "Y offset for meter panels (below ammo)");
@@ -981,6 +987,14 @@ void CVRWeaponHUDCompositor::UpdateMeterLayout()
         
         int effectiveWidth = (widthOverride > 0) ? widthOverride : info.width;
         currentX += effectiveWidth + spacing;
+    }
+    
+    // Apply per-element offsets (metal/account panel can be repositioned independently)
+    if (m_nAccountPanelSlotIndex >= 0)
+    {
+        VRHudElementSlot_t& accountSlot = m_HudSlots[m_nAccountPanelSlotIndex];
+        accountSlot.nOffsetX += tfvr_weapon_hud_account_offset_x.GetInt();
+        accountSlot.nOffsetY += tfvr_weapon_hud_account_offset_y.GetInt();
     }
 }
 

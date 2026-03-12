@@ -100,6 +100,12 @@ ConVar tfvr_popup_hud_healer_offset_x("tfvr_popup_hud_healer_offset_x", "0", FCV
 ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "0", FCVAR_ARCHIVE, 
     "Vertical offset for healer notification panel (positive = up)");
 
+// Building status specific offsets
+ConVar tfvr_popup_hud_building_offset_x("tfvr_popup_hud_building_offset_x", "0", FCVAR_ARCHIVE, 
+    "Horizontal offset for building status panel (positive = right)");
+ConVar tfvr_popup_hud_building_offset_y("tfvr_popup_hud_building_offset_y", "0", FCVAR_ARCHIVE, 
+    "Vertical offset for building status panel (positive = up)");
+
 // Voice status UI ConVars
 ConVar tfvr_popup_hud_voice_enabled("tfvr_popup_hud_voice_enabled", "1", FCVAR_ARCHIVE, 
     "Enable VR rendering of voice status panels (self-icon and other players speaking)");
@@ -1150,14 +1156,17 @@ void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
     }
     
     // Slot 2: Building status (engineer or spy)
-    float slot2Offset = baseOffset - (slotSpacing * 2.0f);
+    // Paint() suppression handles 2D, so don't toggle visibility (breaks stereo rendering)
+    float buildingOffsetX = tfvr_popup_hud_building_offset_x.GetFloat();
+    float buildingOffsetY = tfvr_popup_hud_building_offset_y.GetFloat();
+    float slot2Offset = baseOffset - (slotSpacing * 2.0f) + buildingOffsetY;
     if (m_pBuildingStatusEngineer && m_pBuildingStatusEngineer->IsVisible())
     {
-        RenderNotificationPanel(m_pBuildingStatusEngineer, baseTransform, slot2Offset);
+        RenderNotificationPanel(m_pBuildingStatusEngineer, baseTransform, slot2Offset, buildingOffsetX, false);
     }
     else if (m_pBuildingStatusSpy && m_pBuildingStatusSpy->IsVisible())
     {
-        RenderNotificationPanel(m_pBuildingStatusSpy, baseTransform, slot2Offset);
+        RenderNotificationPanel(m_pBuildingStatusSpy, baseTransform, slot2Offset, buildingOffsetX, false);
     }
 }
 
@@ -1573,6 +1582,12 @@ bool CVRPopupHUDManager::ShouldSuppressBuildingStatus()
     
     // Only suppress if VR is active
     if (!UseVR())
+        return false;
+    
+    // Don't suppress when the world UI queue is actively flushing (3D capture)
+    // or when a VR wrapper panel is painting — the panel must paint normally
+    // so DrawPanelIn3DSpace can capture its content.
+    if (CVRWorldUIQueue::s_bInsideFlush || CVRPanelWrapper::s_bInsideWrapperPaint)
         return false;
     
     return true;
