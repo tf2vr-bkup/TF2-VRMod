@@ -89,10 +89,20 @@ public:
 		BaseClass::FireEvent( origin, angles, event, options );
 	}
 
+	C_TFWeaponBase* GetSourceWeapon() const { return m_hSourceWeapon.Get(); }
+
 	// IHasOwner interface
 	virtual CBaseEntity *GetOwnerViaInterface(void) OVERRIDE
 	{
 		return m_hOwnerPlayer.Get();
+	}
+	
+	virtual IMaterial* GetEconWeaponMaterialOverride( int iTeam ) OVERRIDE
+	{
+		C_TFWeaponBase *pWeapon = m_hSourceWeapon.Get();
+		if ( pWeapon )
+			return pWeapon->GetEconWeaponMaterialOverride( pWeapon->GetTeamNumber() );
+		return NULL;
 	}
 	
 	// Fire animation support - set the fire sequence index directly from the hand
@@ -526,6 +536,33 @@ private:
 	int m_iFireLoopSequence;
 	MedigunFireState m_eMedigunFireState;
 };
+
+// Global helpers for war paint / weapon skin support.
+// These allow c_tf_player.cpp to resolve a VR render weapon back to its
+// source weapon's CEconItemView / owner without seeing the file-local class.
+CEconItemView *GetVRRenderWeaponEconItemView( CBaseEntity *pEntity )
+{
+	C_VRRenderWeapon *pRenderWeapon = dynamic_cast<C_VRRenderWeapon*>( pEntity );
+	if ( pRenderWeapon )
+	{
+		C_TFWeaponBase *pWeapon = pRenderWeapon->GetSourceWeapon();
+		if ( pWeapon )
+		{
+			IHasAttributes *pAttrib = GetAttribInterface( pWeapon );
+			if ( pAttrib )
+				return pAttrib->GetAttributeContainer()->GetItem();
+		}
+	}
+	return NULL;
+}
+
+C_TFPlayer *GetVRRenderWeaponOwner( CBaseEntity *pEntity )
+{
+	C_VRRenderWeapon *pRenderWeapon = dynamic_cast<C_VRRenderWeapon*>( pEntity );
+	if ( pRenderWeapon )
+		return dynamic_cast<C_TFPlayer*>( pRenderWeapon->GetOwnerViaInterface() );
+	return NULL;
+}
 
 // Forward declarations
 static const char* GetFistsIdleAnimName(C_TFWeaponBase *pWeapon);
@@ -1307,7 +1344,7 @@ C_TFVRHand* GetLocalPlayerRightHand()
 //-----------------------------------------------------------------------------
 C_TFVRHand::C_TFVRHand()
 {
-	m_handSide = VR_HAND_LEFT; // Will be set in Initialize
+	m_handSide = VR_HAND_LEFT;
 	m_hOwnerPlayer = NULL;
 	m_hHeldWeapon = NULL;
 	m_pHandTracker = NULL;
@@ -1788,7 +1825,7 @@ void C_TFVRHand::RemoveVRHands(C_TFPlayer *pPlayer)
 void C_TFVRHand::ClientThink()
 {
 	BaseClass::ClientThink();
-	
+
 	extern ConVar tfvr_weapon_fire_anim_debug;
 	static float s_flLastDebugTime = 0.0f;
 	
@@ -7016,6 +7053,10 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// Set source weapon so we can call its ViewModelAttachmentBlending
 	pRenderWeapon->SetSourceWeapon(pWeapon);
 	
+	// Match team for paint kit / war paint material overrides
+	if (pOwner)
+		pRenderWeapon->ChangeTeam(pOwner->GetTeamNumber());
+	
 	// Make weapon think every frame so animations can advance
 	pRenderWeapon->SetNextClientThink(CLIENT_THINK_ALWAYS);
 	
@@ -7767,6 +7808,10 @@ void C_TFVRHand::UpdateSkins()
 	
 	if (pRenderWeapon && pHeldWeapon)
 	{
+		// Sync team number for paint kit / war paint material overrides
+		if (pRenderWeapon->GetTeamNumber() != iTeamNumber)
+			pRenderWeapon->ChangeTeam(iTeamNumber);
+
 		// Get the weapon's proper skin (handles team colors, item skins, etc.)
 		int nWeaponSkin = pHeldWeapon->GetSkin();
 		
@@ -8226,7 +8271,9 @@ void C_TFVRHand::UpdateFlamethrowerFireAnimation()
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Trigger fire animation on the hand (animates fingers during firing)
+// Purpose: Track minimum clip across all prediction fires this render frame.
+//          If a fire's clip is HIGHER than the minimum, a reload must have
+//          Trigger fire animation on the hand (animates fingers during firing)
 //-----------------------------------------------------------------------------
 void C_TFVRHand::PlayWeaponFireAnimation()
 {
@@ -8235,7 +8282,7 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	
 	if (!tfvr_weapon_fire_anim.GetBool())
 		return;
-	
+
 	int sequenceToPlay = m_iFireSequence;
 	
 	// Check if this is a melee weapon with swing cycling

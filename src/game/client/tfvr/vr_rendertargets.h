@@ -8,6 +8,8 @@
 #include "tfvr/stCommon.h"
 #include "materialsystem/MaterialSystemUtil.h"
 
+#define ITEM_MODEL_IMAGE_CACHE_SIZE_VR 3
+
 // externs
 class IMaterialSystem;
 class IMaterialSystemHardwareConfig;
@@ -38,6 +40,8 @@ private:
 	CTextureReference		m_VRWaterReflectionTexture;
 	CTextureReference		m_VRScreenEffectTexture;
 	CTextureReference		m_VRHandsRenderTarget;
+	CTextureReference		m_ItemModelPanelRTs[ITEM_MODEL_IMAGE_CACHE_SIZE_VR];
+	CTextureReference		m_ModelImagePanelRT;
 	int						m_currentMsaa;
 
 	int						m_origThreadMode;

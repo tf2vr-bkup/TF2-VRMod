@@ -803,6 +803,11 @@ bool CTFWeaponBase::SendWeaponAnim( int iActivity )
 		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 		{
+			if ( iActivity == ACT_VM_PRIMARYATTACK )
+			{
+				pRightHand->PlayWeaponFireAnimation();
+			}
+
 			// Sticky launcher / loose cannon: charge on ACT_VM_PULLBACK
 			// Huntsman: initial draw on ACT_ITEM2_VM_CHARGE (remapped from ACT_VM_PULLBACK),
 			//   max-charge shake on ACT_ITEM2_VM_CHARGE_IDLE_3, looping via ACT_ITEM2_VM_IDLE_3
@@ -2240,21 +2245,46 @@ bool CTFWeaponBase::DefaultReload( int iClipSize1, int iClipSize2, int iActivity
 	pPlayer->DoAnimationEvent( PLAYERANIMEVENT_RELOAD );
 
 	float flReloadTime;
-	// First, see if we have a reload animation
-	if ( SendWeaponAnim( iActivity ) )
+	bool bSendAnimSuccess = SendWeaponAnim( iActivity );
+	if ( bSendAnimSuccess )
 	{
-		// We consider the reload finished 0.2 sec before the anim is, so that players don't keep accidentally aborting their reloads
 		flReloadTime = SequenceDuration() - 0.2;
 	}
 	else
 	{
-		// No reload animation. Use the script time.
 		flReloadTime = GetTFWpnData().m_WeaponData[TF_WEAPON_PRIMARY_MODE].m_flTimeReload;  
 		if ( bReloadSecondary )
 		{
 			flReloadTime = GetTFWpnData().m_WeaponData[TF_WEAPON_SECONDARY_MODE].m_flTimeReload;  
 		}
 	}
+
+#ifdef CLIENT_DLL
+	// VR: The client weapon entity uses the weapon mesh (c_model) which doesn't
+	// have reload animations -- those live on the arms model. The server uses
+	// the arms model so SequenceDuration() works there.
+	// Activity ID lookups fail on the client viewmodel (stale activity table),
+	// so scan the viewmodel's sequences by label instead.
+	if ( m_bHeldByVRHand && flReloadTime <= 0.0f )
+	{
+		CBaseViewModel *pVM = pPlayer->GetViewModel( 0 );
+		if ( pVM )
+		{
+			CStudioHdr *pStudioHdr = pVM->GetModelPtr();
+			if ( pStudioHdr )
+			{
+				for ( int i = 0; i < pStudioHdr->GetNumSeq(); i++ )
+				{
+					if ( Q_stristr( pStudioHdr->pSeqdesc( i ).pszLabel(), "reload" ) )
+					{
+						flReloadTime = pVM->SequenceDuration( i ) - 0.2f;
+						break;
+					}
+				}
+			}
+		}
+	}
+#endif
 
 	SetReloadTimer( flReloadTime );
 

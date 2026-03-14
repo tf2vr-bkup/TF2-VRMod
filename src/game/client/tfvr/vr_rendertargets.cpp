@@ -303,6 +303,29 @@ void CVrRenderTargets::InitClientRenderTargets( IMaterialSystem* pMaterialSystem
 	// VR hands render target (for sniper scope / isolated hand rendering)
 	m_VRHandsRenderTarget.Init( CreateVRHandsRenderTarget( pMaterialSystem ) );
 
+	// Item model panel render targets (war paints, festivized items, etc.)
+	{
+		extern const char *g_ItemModelPanelRenderTargetNames[];
+		extern const char *g_pszModelImagePanelRTName;
+		for ( int i = 0; i < ITEM_MODEL_IMAGE_CACHE_SIZE_VR; i++ )
+		{
+			m_ItemModelPanelRTs[i].Init( pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+				g_ItemModelPanelRenderTargetNames[i],
+				256, 256, RT_SIZE_DEFAULT,
+				pMaterialSystem->GetBackBufferFormat(),
+				MATERIAL_RT_DEPTH_SHARED,
+				TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+				0 ) );
+		}
+		m_ModelImagePanelRT.Init( pMaterialSystem->CreateNamedRenderTargetTextureEx2(
+			g_pszModelImagePanelRTName,
+			256, 256, RT_SIZE_DEFAULT,
+			pMaterialSystem->GetBackBufferFormat(),
+			MATERIAL_RT_DEPTH_SHARED,
+			TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,
+			0 ) );
+	}
+
 	// Water effects
 	m_WaterReflectionTexture.Init( CreateWaterReflectionTexture( pMaterialSystem ) );
 	m_VRWaterReflectionTexture.Init( CreateVRWaterReflectionTexture( pMaterialSystem ) );
@@ -331,6 +354,12 @@ void CVrRenderTargets::ShutdownClientRenderTargets()
 	}
 
     m_VROneEyeTextureQuarterSize.Shutdown();
+
+	for (int i = 0; i < ITEM_MODEL_IMAGE_CACHE_SIZE_VR; i++)
+	{
+		m_ItemModelPanelRTs[i].Shutdown();
+	}
+	m_ModelImagePanelRT.Shutdown();
 
     // Clean up standard HL2 RTs (camera and water) 
     BaseClass::ShutdownClientRenderTargets();

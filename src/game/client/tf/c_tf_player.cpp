@@ -2602,6 +2602,12 @@ CEconItemView *GetEconItemViewFromProxyEntity( void *pEntity )
 		{
 			return pDroppedWeapon->GetItem();
 		}
+
+		// VR render weapon - forwards to the source weapon's item
+		extern CEconItemView *GetVRRenderWeaponEconItemView( CBaseEntity *pEntity );
+		CEconItemView *pVRItem = GetVRRenderWeaponEconItemView( pBaseEntity );
+		if ( pVRItem )
+			return pVRItem;
 	}
 	// No direct entity, might be a EconItem (PlayerModelPanels)
 	else
@@ -2627,6 +2633,12 @@ C_TFPlayer *GetOwnerFromProxyEntity( void *pEntity )
 	// If an entity, find out what types it is and get the econ item view
 	if ( pBaseEntity )
 	{
+		// VR render weapon - return the owner player directly
+		extern C_TFPlayer *GetVRRenderWeaponOwner( CBaseEntity *pEntity );
+		C_TFPlayer *pVROwner = GetVRRenderWeaponOwner( pBaseEntity );
+		if ( pVROwner )
+			return pVROwner;
+
 		CBaseEntity* pOwner = pBaseEntity->GetOwnerEntity();
 		if ( pOwner )
 			return dynamic_cast<C_TFPlayer*>( pOwner->GetOwnerEntity() );
