@@ -1644,6 +1644,12 @@ public:
 
 	CNetworkVar(Vector, m_roomscaleOffset);
 
+	// VR IK: raw hand positions for third-person arm IK (player-relative offsets)
+	CNetworkVar(Vector, m_vecVRHandOffsetL);
+	CNetworkVar(QAngle, m_angVRHandAngL);
+	CNetworkVar(Vector, m_vecVRHandOffsetR);
+	CNetworkVar(QAngle, m_angVRHandAngR);
+
 private:
 	float					m_lastTimeHeadCleared;
 	float					m_flLastRecalibrateTime;

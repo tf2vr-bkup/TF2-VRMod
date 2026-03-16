@@ -755,6 +755,12 @@ BEGIN_SEND_TABLE_NOBASE( CTFPlayer, DT_TFNonLocalPlayerExclusive )
 	SendPropFloat( SENDINFO_VECTORELEM(m_angEyeAngles, 0), 8, SPROP_CHANGES_OFTEN, -90.0f, 90.0f ),
 	SendPropAngle( SENDINFO_VECTORELEM(m_angEyeAngles, 1), 10, SPROP_CHANGES_OFTEN ),
 
+	// VR IK hand data for third-person arm IK
+	SendPropVector( SENDINFO(m_vecVRHandOffsetL), -1, SPROP_NOSCALE ),
+	SendPropQAngles( SENDINFO(m_angVRHandAngL), 13 ),
+	SendPropVector( SENDINFO(m_vecVRHandOffsetR), -1, SPROP_NOSCALE ),
+	SendPropQAngles( SENDINFO(m_angVRHandAngR), 13 ),
+
 END_SEND_TABLE()
 
 //-----------------------------------------------------------------------------
@@ -1105,6 +1111,11 @@ CTFPlayer::CTFPlayer()
 	m_rightControllerOrigin.Init();
 	m_rightControllerAngles.Init();
 	m_flLastControllerUpdateTime = 0.0f;
+
+	m_vecVRHandOffsetL = vec3_origin;
+	m_angVRHandAngL = QAngle( 0, 0, 0 );
+	m_vecVRHandOffsetR = vec3_origin;
+	m_angVRHandAngR = QAngle( 0, 0, 0 );
 
 	m_bForcedSkin = false;
 	m_nForcedSkin = 0;
@@ -3264,6 +3275,12 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
         m_rightControllerAngles = ucmd->rightControllerAngles;
         // Store the command time for lag compensation
         m_flLastControllerUpdateTime = gpGlobals->curtime;
+
+        // Store raw grip positions as player-relative offsets for third-person arm IK
+        m_vecVRHandOffsetL = ucmd->vrIKHandPosL - GetAbsOrigin();
+        m_angVRHandAngL = ucmd->vrIKHandAngL;
+        m_vecVRHandOffsetR = ucmd->vrIKHandPosR - GetAbsOrigin();
+        m_angVRHandAngR = ucmd->vrIKHandAngR;
     }
     else
     {
@@ -3273,6 +3290,11 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
         m_rightControllerOrigin = vec3_origin;
         m_rightControllerAngles = QAngle(0, 0, 0);
         m_flLastControllerUpdateTime = 0.0f;
+
+        m_vecVRHandOffsetL = vec3_origin;
+        m_angVRHandAngL = QAngle( 0, 0, 0 );
+        m_vecVRHandOffsetR = vec3_origin;
+        m_angVRHandAngR = QAngle( 0, 0, 0 );
     }
 
 

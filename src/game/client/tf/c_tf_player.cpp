@@ -3780,6 +3780,12 @@ BEGIN_RECV_TABLE_NOBASE( C_TFPlayer, DT_TFNonLocalPlayerExclusive )
 	RecvPropFloat( RECVINFO( m_angEyeAngles[0] ) ),
 	RecvPropFloat( RECVINFO( m_angEyeAngles[1] ) ),
 
+	// VR IK hand data for third-person arm IK
+	RecvPropVector( RECVINFO(m_vecVRHandOffsetL) ),
+	RecvPropQAngles( RECVINFO(m_angVRHandAngL) ),
+	RecvPropVector( RECVINFO(m_vecVRHandOffsetR) ),
+	RecvPropQAngles( RECVINFO(m_angVRHandAngR) ),
+
 END_RECV_TABLE()
 
 //-----------------------------------------------------------------------------
@@ -3886,6 +3892,8 @@ END_PREDICTION_DATA()
 C_TFPlayer::C_TFPlayer() : 
 	m_iv_angEyeAngles( "C_TFPlayer::m_iv_angEyeAngles" ),
 	m_iv_roomscaleOffset( "C_TFPlayer::m_roomscaleOffset" ),
+	m_iv_vecVRHandOffsetL( "C_TFPlayer::m_iv_vecVRHandOffsetL" ),
+	m_iv_vecVRHandOffsetR( "C_TFPlayer::m_iv_vecVRHandOffsetR" ),
 	m_mapOverheadEffects( DefLessFunc( const char * ) )
 {
 	m_pAttributes = this;
@@ -4053,6 +4061,17 @@ C_TFPlayer::C_TFPlayer() :
 	m_localRoomscaleOffset = vec3_origin;
 
 	AddVar(&m_roomscaleOffset, &m_iv_roomscaleOffset, LATCH_SIMULATION_VAR);
+
+	m_vecVRHandOffsetL = vec3_origin;
+	m_angVRHandAngL.Init();
+	m_vecVRHandOffsetR = vec3_origin;
+	m_angVRHandAngR.Init();
+	m_bVRIKBonesResolved = false;
+	m_flUpperArmLen = 0.0f;
+	m_flForearmLen = 0.0f;
+
+	AddVar(&m_vecVRHandOffsetL, &m_iv_vecVRHandOffsetL, LATCH_SIMULATION_VAR);
+	AddVar(&m_vecVRHandOffsetR, &m_iv_vecVRHandOffsetR, LATCH_SIMULATION_VAR);
 
 	ListenForGameEvent( "player_hurt" );
 	ListenForGameEvent( "hltv_changed_mode" );
@@ -5490,6 +5509,8 @@ void C_TFPlayer::UpdateRuneIcon( bool bForceStop /*= false */ )
 //-----------------------------------------------------------------------------
 void C_TFPlayer::OnPlayerClassChange( void )
 {
+	m_bVRIKBonesResolved = false;
+
 	// Init the anim movement vars
 	m_PlayerAnimState->SetRunSpeed( GetPlayerClass()->GetMaxSpeed() );
 	m_PlayerAnimState->SetWalkSpeed( GetPlayerClass()->GetMaxSpeed() * 0.5 );
@@ -9256,6 +9277,463 @@ void BuildHandScaleTransformations( CBaseAnimating *pObject, CStudioHdr *hdr, Ve
 
 
 //-----------------------------------------------------------------------------
+// VR Arm IK ConVars
+//-----------------------------------------------------------------------------
+ConVar tfvr_ik_enabled("tfvr_ik_enabled", "1", FCVAR_NONE, "Enable third-person arm IK for VR players");
+ConVar tfvr_ik_local_body("tfvr_ik_local_body", "0", FCVAR_NONE, "Show IK'd body on local VR player (first-person full body)");
+ConVar tfvr_ik_pole_blend("tfvr_ik_pole_blend", "0.4", FCVAR_NONE, "How much hand orientation affects elbow direction (0-1)");
+ConVar tfvr_ik_debug("tfvr_ik_debug", "0", FCVAR_NONE, "Draw debug lines for VR arm IK");
+
+//-----------------------------------------------------------------------------
+// 2-bone IK solver: finds elbow position given shoulder, hand target, and arm lengths.
+// Returns false if inputs are degenerate.
+//-----------------------------------------------------------------------------
+static bool SolveTwoBoneIK(
+	const Vector &shoulderPos,
+	const Vector &targetPos,
+	float upperLen,
+	float foreLen,
+	const Vector &poleVector,
+	Vector &outElbowPos )
+{
+	Vector toTarget = targetPos - shoulderPos;
+	float dist = toTarget.Length();
+
+	if ( dist < 0.001f )
+		return false;
+
+	float minDist = fabsf( upperLen - foreLen ) + 0.1f;
+	float maxDist = upperLen + foreLen - 0.1f;
+	dist = clamp( dist, minDist, maxDist );
+
+	// Law of cosines: angle at shoulder
+	float cosA = ( upperLen * upperLen + dist * dist - foreLen * foreLen ) / ( 2.0f * upperLen * dist );
+	cosA = clamp( cosA, -1.0f, 1.0f );
+	float sinA = sqrtf( 1.0f - cosA * cosA );
+
+	Vector dir = toTarget;
+	dir.NormalizeInPlace();
+
+	float projLen = upperLen * cosA;
+	float elbowHeight = upperLen * sinA;
+
+	Vector elbowCenter = shoulderPos + dir * projLen;
+
+	// Project pole vector onto plane perpendicular to shoulder-to-target axis
+	Vector toPole = poleVector - shoulderPos;
+	Vector perpDir = toPole - dir * DotProduct( toPole, dir );
+	float perpLen = perpDir.Length();
+	if ( perpLen < 0.001f )
+	{
+		// Pole vector is collinear with arm axis; pick an arbitrary perpendicular
+		Vector arbitrary = ( fabsf( dir.z ) < 0.9f ) ? Vector( 0, 0, 1 ) : Vector( 1, 0, 0 );
+		perpDir = CrossProduct( dir, arbitrary );
+		perpLen = perpDir.Length();
+	}
+	perpDir /= perpLen;
+
+	outElbowPos = elbowCenter + perpDir * elbowHeight;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Rotate a bone matrix so its primary axis (X) points in a new direction,
+// preserving the original twist/roll as much as possible.
+//-----------------------------------------------------------------------------
+static void RotateBoneToDirection(
+	const matrix3x4_t &oldBoneMat,
+	const Vector &oldDir,
+	const Vector &newDir,
+	const Vector &newPos,
+	matrix3x4_t &outMat )
+{
+	// Build rotation quaternion from oldDir to newDir
+	Vector axis = CrossProduct( oldDir, newDir );
+	float axisLen = axis.Length();
+	float dot = DotProduct( oldDir, newDir );
+
+	Quaternion rotQ;
+	if ( axisLen < 0.0001f )
+	{
+		if ( dot > 0.0f )
+		{
+			// Directions are the same
+			MatrixCopy( oldBoneMat, outMat );
+			MatrixSetTranslation( newPos, outMat );
+			return;
+		}
+		// Directions are opposite; rotate 180 around any perpendicular axis
+		Vector perp = ( fabsf( oldDir.z ) < 0.9f ) ? Vector( 0, 0, 1 ) : Vector( 1, 0, 0 );
+		axis = CrossProduct( oldDir, perp );
+		axis.NormalizeInPlace();
+		AxisAngleQuaternion( axis, 180.0f, rotQ );
+	}
+	else
+	{
+		axis /= axisLen;
+		float angle = RAD2DEG( atan2f( axisLen, dot ) );
+		AxisAngleQuaternion( axis, angle, rotQ );
+	}
+
+	// Apply rotation to the old bone matrix
+	matrix3x4_t rotMat;
+	QuaternionMatrix( rotQ, rotMat );
+
+	// Strip translation from old matrix, rotate, then set new position
+	matrix3x4_t oldNoTranslate;
+	MatrixCopy( oldBoneMat, oldNoTranslate );
+	MatrixSetTranslation( vec3_origin, oldNoTranslate );
+
+	matrix3x4_t rotated;
+	ConcatTransforms( rotMat, oldNoTranslate, rotated );
+	MatrixSetTranslation( newPos, rotated );
+
+	MatrixCopy( rotated, outMat );
+}
+
+//-----------------------------------------------------------------------------
+// Apply a delta transform to all descendant bones of a given bone,
+// skipping bones in the skipSet (bones we're explicitly setting).
+//-----------------------------------------------------------------------------
+static void CascadeBoneDelta(
+	CBaseAnimating *pAnim,
+	const studiohdr_t *pHdr,
+	int parentBoneIdx,
+	const matrix3x4_t &delta,
+	const int *skipBones,
+	int numSkip )
+{
+	CUtlVector< const mstudiobone_t * > children;
+	AppendChildren_R( &children, pHdr, parentBoneIdx );
+
+	for ( int i = 0; i < children.Count(); i++ )
+	{
+		int childIdx = pAnim->LookupBone( children[i]->pszName() );
+		if ( childIdx == -1 )
+			continue;
+
+		bool bSkip = false;
+		for ( int s = 0; s < numSkip; s++ )
+		{
+			if ( childIdx == skipBones[s] )
+			{
+				bSkip = true;
+				break;
+			}
+		}
+		if ( bSkip )
+			continue;
+
+		matrix3x4_t &childMat = pAnim->GetBoneForWrite( childIdx );
+		matrix3x4_t newChild;
+		ConcatTransforms( delta, childMat, newChild );
+		MatrixCopy( newChild, childMat );
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Solve and apply arm IK for one arm.
+//-----------------------------------------------------------------------------
+static void ApplyArmIK(
+	CBaseAnimating *pAnim,
+	const studiohdr_t *pHdr,
+	int iUpperArm,
+	int iLowerArm,
+	int iHand,
+	float upperLen,
+	float foreLen,
+	const Vector &targetPos,
+	const QAngle &targetAng,
+	const Vector &poleVector,
+	bool bDebug )
+{
+	if ( iUpperArm == -1 || iLowerArm == -1 || iHand == -1 )
+		return;
+
+	// Read current animated bone positions
+	Vector animShoulderPos, animElbowPos, animHandPos;
+	MatrixPosition( pAnim->GetBone( iUpperArm ), animShoulderPos );
+	MatrixPosition( pAnim->GetBone( iLowerArm ), animElbowPos );
+	MatrixPosition( pAnim->GetBone( iHand ), animHandPos );
+
+	// Save old matrices for delta computation
+	matrix3x4_t oldUpperArm, oldLowerArm, oldHand;
+	MatrixCopy( pAnim->GetBone( iUpperArm ), oldUpperArm );
+	MatrixCopy( pAnim->GetBone( iLowerArm ), oldLowerArm );
+	MatrixCopy( pAnim->GetBone( iHand ), oldHand );
+
+	// Solve for elbow position
+	Vector elbowPos;
+	if ( !SolveTwoBoneIK( animShoulderPos, targetPos, upperLen, foreLen, poleVector, elbowPos ) )
+		return;
+
+	// Build new upper arm matrix: rotate from animated direction to IK direction
+	Vector animUpperDir = ( animElbowPos - animShoulderPos );
+	animUpperDir.NormalizeInPlace();
+	Vector ikUpperDir = ( elbowPos - animShoulderPos );
+	ikUpperDir.NormalizeInPlace();
+
+	matrix3x4_t &upperArmMat = pAnim->GetBoneForWrite( iUpperArm );
+	RotateBoneToDirection( oldUpperArm, animUpperDir, ikUpperDir, animShoulderPos, upperArmMat );
+
+	// Cascade upper arm delta to all descendants (including lowerArm, hand, fingers)
+	matrix3x4_t upperDelta, upperOldInv;
+	MatrixInvert( oldUpperArm, upperOldInv );
+	ConcatTransforms( upperArmMat, upperOldInv, upperDelta );
+
+	int skipUpper[] = { iUpperArm };
+	CascadeBoneDelta( pAnim, pHdr, iUpperArm, upperDelta, skipUpper, 1 );
+
+	// Now lowerArm and hand have been moved by the upper arm delta.
+	// Read their new positions for the forearm IK.
+	Vector newElbowAnimPos;
+	MatrixPosition( pAnim->GetBone( iLowerArm ), newElbowAnimPos );
+
+	// Build new lower arm matrix
+	matrix3x4_t currentLowerArm;
+	MatrixCopy( pAnim->GetBone( iLowerArm ), currentLowerArm );
+
+	Vector animForeDir = ( animHandPos - animElbowPos );
+	animForeDir.NormalizeInPlace();
+	// Transform the animated forearm direction by the upper arm rotation
+	Vector rotatedForeDir;
+	VectorRotate( animForeDir, upperDelta, rotatedForeDir );
+	rotatedForeDir.NormalizeInPlace();
+
+	Vector ikForeDir = ( targetPos - elbowPos );
+	ikForeDir.NormalizeInPlace();
+
+	matrix3x4_t &lowerArmMat = pAnim->GetBoneForWrite( iLowerArm );
+	RotateBoneToDirection( currentLowerArm, rotatedForeDir, ikForeDir, elbowPos, lowerArmMat );
+
+	// Cascade lower arm delta to descendants (hand, fingers, twist bones)
+	matrix3x4_t lowerDelta, lowerOldInv;
+	MatrixInvert( currentLowerArm, lowerOldInv );
+	ConcatTransforms( lowerArmMat, lowerOldInv, lowerDelta );
+
+	int skipLower[] = { iLowerArm };
+	CascadeBoneDelta( pAnim, pHdr, iLowerArm, lowerDelta, skipLower, 1 );
+
+	// Set hand rotation from controller angles, keep position from IK chain
+	Vector handWorldPos;
+	MatrixPosition( pAnim->GetBone( iHand ), handWorldPos );
+
+	matrix3x4_t &handMat = pAnim->GetBoneForWrite( iHand );
+	matrix3x4_t oldHandAfterCascade;
+	MatrixCopy( handMat, oldHandAfterCascade );
+
+	AngleMatrix( targetAng, handWorldPos, handMat );
+
+	// Cascade hand rotation delta to finger bones
+	matrix3x4_t handDelta, handOldInv;
+	MatrixInvert( oldHandAfterCascade, handOldInv );
+	ConcatTransforms( handMat, handOldInv, handDelta );
+
+	int skipHand[] = { iHand };
+	CascadeBoneDelta( pAnim, pHdr, iHand, handDelta, skipHand, 1 );
+
+	if ( bDebug )
+	{
+		debugoverlay->AddLineOverlay( animShoulderPos, elbowPos, 0, 255, 0, true, 0.0f );
+		debugoverlay->AddLineOverlay( elbowPos, targetPos, 0, 128, 255, true, 0.0f );
+		debugoverlay->AddBoxOverlay( animShoulderPos, Vector(-1,-1,-1), Vector(1,1,1), vec3_angle, 255, 0, 0, 128, 0.0f );
+		debugoverlay->AddBoxOverlay( elbowPos, Vector(-1,-1,-1), Vector(1,1,1), vec3_angle, 0, 255, 0, 128, 0.0f );
+		debugoverlay->AddBoxOverlay( targetPos, Vector(-1,-1,-1), Vector(1,1,1), vec3_angle, 0, 0, 255, 128, 0.0f );
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Resolve VR IK bone indices and arm lengths. Called once per model.
+//-----------------------------------------------------------------------------
+void C_TFPlayer::ResolveVRIKBones( CStudioHdr *hdr )
+{
+	m_iUpperArmBoneL = LookupBone( "bip_upperArm_L" );
+	m_iLowerArmBoneL = LookupBone( "bip_lowerArm_L" );
+	m_iHandBoneL = LookupBone( "bip_hand_L" );
+	m_iUpperArmBoneR = LookupBone( "bip_upperArm_R" );
+	m_iLowerArmBoneR = LookupBone( "bip_lowerArm_R" );
+	m_iHandBoneR = LookupBone( "bip_hand_R" );
+
+	m_flUpperArmLen = 0.0f;
+	m_flForearmLen = 0.0f;
+
+	if ( m_iUpperArmBoneR != -1 && m_iLowerArmBoneR != -1 && m_iHandBoneR != -1 )
+	{
+		Vector upperPos, elbowPos, handPos;
+		MatrixPosition( GetBone( m_iUpperArmBoneR ), upperPos );
+		MatrixPosition( GetBone( m_iLowerArmBoneR ), elbowPos );
+		MatrixPosition( GetBone( m_iHandBoneR ), handPos );
+		m_flUpperArmLen = ( elbowPos - upperPos ).Length();
+		m_flForearmLen = ( handPos - elbowPos ).Length();
+	}
+
+	m_bVRIKBonesResolved = true;
+}
+
+//-----------------------------------------------------------------------------
+// Main entry point for VR arm IK. Called from BuildTransformations.
+//-----------------------------------------------------------------------------
+void C_TFPlayer::BuildVRControllerIK( CStudioHdr *hdr, Vector *pos, Quaternion q[], const matrix3x4_t& cameraTransform, int boneMask, CBoneBitList &boneComputed )
+{
+	bool bDebugTrace = tfvr_ik_debug.GetBool();
+
+	if ( !tfvr_ik_enabled.GetBool() || !m_bInVRMode )
+	{
+		if ( bDebugTrace )
+			DevMsg( "VR IK: skipped (enabled=%d, inVR=%d)\n", tfvr_ik_enabled.GetBool(), (int)m_bInVRMode );
+		return;
+	}
+
+	if ( IsLocalPlayer() && !tfvr_ik_local_body.GetBool() )
+	{
+		if ( bDebugTrace )
+			DevMsg( "VR IK: skipped (local player, ik_local_body=0)\n" );
+		return;
+	}
+
+	if ( !IsAlive() || m_Shared.InCond( TF_COND_TAUNTING ) )
+		return;
+
+	// Resolve hand targets from the appropriate source
+	Vector targetPosL, targetPosR;
+	QAngle targetAngL, targetAngR;
+	bool bHaveL = false, bHaveR = false;
+
+	if ( IsLocalPlayer() )
+	{
+		// Local player: read bip_hand bone transform from the VR hand entities.
+		// We must call SetupBones with a real output buffer because
+		// C_TFVRHand::SetupBones skips the anchor delta when pBoneToWorldOut is NULL
+		// (which is what GetBonePosition does internally).
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+
+		matrix3x4_t handBones[MAXSTUDIOBONES];
+
+		if ( pLeftHand )
+		{
+			int iHandBone = pLeftHand->GetHandBoneIndex();
+			if ( iHandBone >= 0 && iHandBone < MAXSTUDIOBONES &&
+				 pLeftHand->SetupBones( handBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime ) )
+			{
+				MatrixAngles( handBones[iHandBone], targetAngL, targetPosL );
+				bHaveL = true;
+			}
+		}
+		if ( pRightHand )
+		{
+			int iHandBone = pRightHand->GetHandBoneIndex();
+			if ( iHandBone >= 0 && iHandBone < MAXSTUDIOBONES &&
+				 pRightHand->SetupBones( handBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime ) )
+			{
+				MatrixAngles( handBones[iHandBone], targetAngR, targetPosR );
+				bHaveR = true;
+			}
+		}
+		if ( bDebugTrace )
+			DevMsg( "VR IK: local player, haveL=%d haveR=%d\n", bHaveL, bHaveR );
+	}
+	else
+	{
+		// Remote player: read from interpolated network vars
+		if ( m_vecVRHandOffsetL != vec3_origin )
+		{
+			targetPosL = GetAbsOrigin() + m_vecVRHandOffsetL;
+			targetAngL = m_angVRHandAngL;
+			bHaveL = true;
+		}
+		if ( m_vecVRHandOffsetR != vec3_origin )
+		{
+			targetPosR = GetAbsOrigin() + m_vecVRHandOffsetR;
+			targetAngR = m_angVRHandAngR;
+			bHaveR = true;
+		}
+	}
+
+	if ( !bHaveL && !bHaveR )
+	{
+		if ( bDebugTrace )
+			DevMsg( "VR IK: skipped (no hand targets)\n" );
+		return;
+	}
+
+	// Resolve bone indices on first use or after model change
+	if ( !m_bVRIKBonesResolved )
+	{
+		ResolveVRIKBones( hdr );
+		if ( bDebugTrace )
+			DevMsg( "VR IK: resolved bones - upperR=%d lowerR=%d handR=%d upperL=%d lowerL=%d handL=%d, armLen=%.1f foreLen=%.1f\n",
+				m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR,
+				m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL,
+				m_flUpperArmLen, m_flForearmLen );
+	}
+
+	if ( m_flUpperArmLen < 1.0f || m_flForearmLen < 1.0f )
+	{
+		if ( bDebugTrace )
+			DevMsg( "VR IK: skipped (arm lengths too small: upper=%.2f fore=%.2f)\n", m_flUpperArmLen, m_flForearmLen );
+		return;
+	}
+
+	const studiohdr_t *pHdr = modelinfo->GetStudiomodel( GetModel() );
+	if ( !pHdr )
+		return;
+
+	bool bDebug = tfvr_ik_debug.GetBool();
+
+	// Compute pole vectors (elbow direction heuristic)
+	Vector vForward, vRight, vUp;
+	AngleVectors( GetRenderAngles(), &vForward, &vRight, &vUp );
+
+	float poleBlend = tfvr_ik_pole_blend.GetFloat();
+
+	// Right arm IK
+	if ( bHaveR && m_iUpperArmBoneR != -1 )
+	{
+		// Base pole: behind and outward (right)
+		Vector basePole = -vForward * 0.7f + vRight * 0.3f - vUp * 0.2f;
+		basePole.NormalizeInPlace();
+
+		// Blend with hand orientation
+		Vector handUp;
+		QAngle handAng = targetAngR;
+		Vector hFwd, hRight, hUp;
+		AngleVectors( handAng, &hFwd, &hRight, &hUp );
+
+		Vector poleDir = basePole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
+		poleDir.NormalizeInPlace();
+
+		// Convert pole direction to a world point behind the shoulder
+		Vector shoulderPos;
+		MatrixPosition( GetBone( m_iUpperArmBoneR ), shoulderPos );
+		Vector poleTarget = shoulderPos + poleDir * 50.0f;
+
+		ApplyArmIK( this, pHdr, m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR,
+			m_flUpperArmLen, m_flForearmLen, targetPosR, targetAngR, poleTarget, bDebug );
+	}
+
+	// Left arm IK
+	if ( bHaveL && m_iUpperArmBoneL != -1 )
+	{
+		Vector basePole = -vForward * 0.7f - vRight * 0.3f - vUp * 0.2f;
+		basePole.NormalizeInPlace();
+
+		Vector hFwd, hRight, hUp;
+		AngleVectors( targetAngL, &hFwd, &hRight, &hUp );
+
+		Vector poleDir = basePole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
+		poleDir.NormalizeInPlace();
+
+		Vector shoulderPos;
+		MatrixPosition( GetBone( m_iUpperArmBoneL ), shoulderPos );
+		Vector poleTarget = shoulderPos + poleDir * 50.0f;
+
+		ApplyArmIK( this, pHdr, m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL,
+			m_flUpperArmLen, m_flForearmLen, targetPosL, targetAngL, poleTarget, bDebug );
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
 void C_TFPlayer::BuildTransformations( CStudioHdr *hdr, Vector *pos, Quaternion q[], const matrix3x4_t& cameraTransform, int boneMask, CBoneBitList &boneComputed )
@@ -9317,6 +9795,8 @@ void C_TFPlayer::BuildTransformations( CStudioHdr *hdr, Vector *pos, Quaternion 
 	BuildBigHeadTransformations( this, hdr, pos, q, cameraTransform, boneMask, boneComputed, flHeadScale );
 	BuildTorsoScaleTransformations( this, hdr, pos, q, cameraTransform, boneMask, boneComputed, m_flTorsoScale, GetPlayerClass()->GetClassIndex() );
 	BuildHandScaleTransformations( this, hdr, pos, q, cameraTransform, boneMask, boneComputed, m_flHandScale );
+
+	BuildVRControllerIK( hdr, pos, q, cameraTransform, boneMask, boneComputed );
 
 	BuildFirstPersonMeathookTransformations( hdr, pos, q, cameraTransform, boneMask, boneComputed, "bip_head" );
 }
@@ -12329,6 +12809,11 @@ void C_TFPlayer::RecalibrateView()
 	m_isCalibrated = false;
 	m_roomscaleOffset = vec3_origin;
 	m_iv_roomscaleOffset.Reset();
+	m_vecVRHandOffsetL = vec3_origin;
+	m_vecVRHandOffsetR = vec3_origin;
+	m_iv_vecVRHandOffsetL.Reset();
+	m_iv_vecVRHandOffsetR.Reset();
+	m_bVRIKBonesResolved = false;
 }
 
 

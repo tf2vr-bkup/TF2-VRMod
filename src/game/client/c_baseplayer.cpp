@@ -2012,6 +2012,8 @@ void C_BasePlayer::ThirdPersonSwitch( bool bThirdperson )
 //-----------------------------------------------------------------------------
 // Purpose: single place to decide whether the local player should draw
 //-----------------------------------------------------------------------------
+extern ConVar tfvr_ik_local_body;
+
 /*static*/ bool C_BasePlayer::ShouldDrawLocalPlayer()
 {
 	if ( !UseVR() )
@@ -2020,7 +2022,7 @@ void C_BasePlayer::ThirdPersonSwitch( bool bThirdperson )
 	}
 
 	static ConVarRef vr_first_person_uses_world_model( "vr_first_person_uses_world_model" );
-	return !LocalPlayerInFirstPersonView() || vr_first_person_uses_world_model.GetBool();
+	return !LocalPlayerInFirstPersonView() || vr_first_person_uses_world_model.GetBool() || tfvr_ik_local_body.GetBool();
 }
 
 
@@ -2066,6 +2068,10 @@ bool C_BasePlayer::ShouldDrawThisPlayer()
 	{
 		static ConVarRef vr_first_person_uses_world_model( "vr_first_person_uses_world_model" );
 		if ( vr_first_person_uses_world_model.GetBool() )
+		{
+			return true;
+		}
+		if ( tfvr_ik_local_body.GetBool() )
 		{
 			return true;
 		}
@@ -3009,6 +3015,24 @@ void C_BasePlayer::BuildFirstPersonMeathookTransformations( CStudioHdr *hdr, Vec
 	}
 
 	m_BoneAccessor.SetWritableBones( BONE_USED_BY_ANYTHING );
+
+	// VR IK body mode: don't translate skeleton to HMD, just hide head and accessories
+	if ( UseVR() && tfvr_ik_local_body.GetBool() )
+	{
+		int iHead = LookupBone( pchHeadBoneName );
+		if ( iHead != -1 )
+			MatrixScaleByZero( GetBoneForWrite( iHead ) );
+
+		int iHelm = LookupBone( "prp_helmet" );
+		if ( iHelm != -1 )
+			MatrixScaleByZero( GetBoneForWrite( iHelm ) );
+
+		iHelm = LookupBone( "prp_hat" );
+		if ( iHelm != -1 )
+			MatrixScaleByZero( GetBoneForWrite( iHelm ) );
+
+		return;
+	}
 
 	int iHead = LookupBone( pchHeadBoneName );
 	if ( iHead == -1 )

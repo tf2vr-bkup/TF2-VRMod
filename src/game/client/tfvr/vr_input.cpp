@@ -908,9 +908,33 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         Vector leftPos = leftControllerPose.GetTranslation();
         QAngle leftAngles;
         MatrixAngles(leftControllerPose.As3x4(), leftAngles);
-        
-        // Check if left hand is holding a weapon (e.g., medigun) - if so, send muzzle position/angles
+
+        // Store hand bone position for third-person arm IK networking.
+        // Must call SetupBones with a real buffer because C_TFVRHand::SetupBones
+        // skips the anchor delta when pBoneToWorldOut is NULL (GetBonePosition path).
         C_TFVRHand* pLeftHand = GetLocalPlayerLeftHand();
+        if (pLeftHand)
+        {
+            int iHandBone = pLeftHand->GetHandBoneIndex();
+            matrix3x4_t handBones[MAXSTUDIOBONES];
+            if (iHandBone >= 0 && iHandBone < MAXSTUDIOBONES &&
+                pLeftHand->SetupBones(handBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+            {
+                MatrixAngles(handBones[iHandBone], cmd->vrIKHandAngL, cmd->vrIKHandPosL);
+            }
+            else
+            {
+                cmd->vrIKHandPosL = leftPos;
+                cmd->vrIKHandAngL = leftAngles;
+            }
+        }
+        else
+        {
+            cmd->vrIKHandPosL = leftPos;
+            cmd->vrIKHandAngL = leftAngles;
+        }
+
+        // Check if left hand is holding a weapon (e.g., medigun) - if so, send muzzle position/angles
         if (pLeftHand && pLeftHand->GetHeldWeapon())
         {
             Vector muzzlePos;
@@ -956,9 +980,32 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         Vector rightPos = rightControllerPose.GetTranslation();
         QAngle rightAngles;
         MatrixAngles(rightControllerPose.As3x4(), rightAngles);
-        
-        // Check if right hand is holding a weapon - if so, send muzzle position/angles
+
+        // Store hand bone position for third-person arm IK networking.
+        // Same SetupBones buffer approach as the left hand (see comment above).
         C_TFVRHand* pRightHand = GetLocalPlayerRightHand();
+        if (pRightHand)
+        {
+            int iHandBone = pRightHand->GetHandBoneIndex();
+            matrix3x4_t handBones[MAXSTUDIOBONES];
+            if (iHandBone >= 0 && iHandBone < MAXSTUDIOBONES &&
+                pRightHand->SetupBones(handBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+            {
+                MatrixAngles(handBones[iHandBone], cmd->vrIKHandAngR, cmd->vrIKHandPosR);
+            }
+            else
+            {
+                cmd->vrIKHandPosR = rightPos;
+                cmd->vrIKHandAngR = rightAngles;
+            }
+        }
+        else
+        {
+            cmd->vrIKHandPosR = rightPos;
+            cmd->vrIKHandAngR = rightAngles;
+        }
+
+        // Check if right hand is holding a weapon - if so, send muzzle position/angles
         if (pRightHand && pRightHand->GetHeldWeapon())
         {
             // Weapons that use raw controller pose instead of muzzle/weapon_bone aiming

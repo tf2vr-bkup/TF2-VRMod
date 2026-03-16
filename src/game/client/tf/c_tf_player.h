@@ -103,6 +103,8 @@ public:
 
 	virtual void ApplyBoneMatrixTransform( matrix3x4_t& transform );
 	virtual void BuildTransformations( CStudioHdr *hdr, Vector *pos, Quaternion q[], const matrix3x4_t& cameraTransform, int boneMask, CBoneBitList &boneComputed );
+	void BuildVRControllerIK( CStudioHdr *hdr, Vector *pos, Quaternion q[], const matrix3x4_t& cameraTransform, int boneMask, CBoneBitList &boneComputed );
+	void ResolveVRIKBones( CStudioHdr *hdr );
 
 	virtual bool CreateMove( float flInputSampleTime, CUserCmd *pCmd ) OVERRIDE;
 	void CreateVehicleMove( float flInputSampleTime, CUserCmd *pCmd );
@@ -614,6 +616,20 @@ public:
 	CInterpolatedVar<Vector> m_iv_roomscaleOffset;
 	Vector				m_headInPlayerO;
 	QAngle				m_headInPlayerA;
+
+	// VR IK: networked hand data for third-person arm IK (player-relative offsets)
+	Vector				m_vecVRHandOffsetL;
+	QAngle				m_angVRHandAngL;
+	Vector				m_vecVRHandOffsetR;
+	QAngle				m_angVRHandAngR;
+	CInterpolatedVar<Vector> m_iv_vecVRHandOffsetL;
+	CInterpolatedVar<Vector> m_iv_vecVRHandOffsetR;
+
+	// VR IK: cached bone indices (resolved on first use, invalidated on model change)
+	int					m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL;
+	int					m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR;
+	bool				m_bVRIKBonesResolved;
+	float				m_flUpperArmLen, m_flForearmLen;  // cached segment lengths
 	bool				m_bPhysicalCrouch;
 	bool				m_bDuckWasPhysical;
 

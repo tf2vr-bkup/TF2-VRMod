@@ -51,6 +51,10 @@ public:
 		leftControllerAngles.Init();
 		rightControllerOrigin.Init();
 		rightControllerAngles.Init();
+		vrIKHandPosL.Init();
+		vrIKHandAngL.Init();
+		vrIKHandPosR.Init();
+		vrIKHandAngR.Init();
 		vrThrowVelocity.Init();
 		vrThrowOrigin.Init();
 		vrThrowAngles.Init();
@@ -95,6 +99,10 @@ public:
 		leftControllerAngles = src.leftControllerAngles;
 		rightControllerOrigin = src.rightControllerOrigin;
 		rightControllerAngles = src.rightControllerAngles;
+		vrIKHandPosL		= src.vrIKHandPosL;
+		vrIKHandAngL		= src.vrIKHandAngL;
+		vrIKHandPosR		= src.vrIKHandPosR;
+		vrIKHandAngR		= src.vrIKHandAngR;
 		vrThrowVelocity		= src.vrThrowVelocity;
 		vrThrowOrigin		= src.vrThrowOrigin;
 		vrThrowAngles		= src.vrThrowAngles;
@@ -146,6 +154,10 @@ public:
 		CRC32_ProcessBuffer( &crc, &leftControllerAngles, sizeof( leftControllerAngles ) );
 		CRC32_ProcessBuffer( &crc, &rightControllerOrigin, sizeof( rightControllerOrigin ) );
 		CRC32_ProcessBuffer( &crc, &rightControllerAngles, sizeof( rightControllerAngles ) );
+		CRC32_ProcessBuffer( &crc, &vrIKHandPosL, sizeof( vrIKHandPosL ) );
+		CRC32_ProcessBuffer( &crc, &vrIKHandAngL, sizeof( vrIKHandAngL ) );
+		CRC32_ProcessBuffer( &crc, &vrIKHandPosR, sizeof( vrIKHandPosR ) );
+		CRC32_ProcessBuffer( &crc, &vrIKHandAngR, sizeof( vrIKHandAngR ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowVelocity, sizeof( vrThrowVelocity ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowOrigin, sizeof( vrThrowOrigin ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowAngles, sizeof( vrThrowAngles ) );
@@ -179,6 +191,10 @@ public:
 		leftControllerAngles.Init();
 		rightControllerOrigin.Init();
 		rightControllerAngles.Init();
+		vrIKHandPosL.Init();
+		vrIKHandAngL.Init();
+		vrIKHandPosR.Init();
+		vrIKHandAngR.Init();
 		vrThrowVelocity.Init();
 		vrThrowOrigin.Init();
 		vrThrowAngles.Init();
@@ -214,6 +230,12 @@ public:
 	QAngle	leftControllerAngles;
 	Vector	rightControllerOrigin;
 	QAngle	rightControllerAngles;
+
+	// VR IK: raw controller grip positions for third-person arm IK (always grip pose, never muzzle)
+	Vector	vrIKHandPosL;
+	QAngle	vrIKHandAngL;
+	Vector	vrIKHandPosR;
+	QAngle	vrIKHandAngR;
 
 	// VR physical throw (set on grip/trigger release for throwable weapons)
 	Vector	vrThrowVelocity;
