@@ -1650,6 +1650,16 @@ public:
 	CNetworkVar(Vector, m_vecVRHandOffsetR);
 	CNetworkVar(QAngle, m_angVRHandAngR);
 
+	// Server-side VR arm IK for hitboxes
+	virtual void SetupBones( matrix3x4_t *pBoneToWorld, int boneMask ) OVERRIDE;
+	void ResolveVRIKBones( void );
+	int		m_iHeadBone;
+	int		m_iCollarBoneL, m_iCollarBoneR;
+	int		m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL;
+	int		m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR;
+	bool	m_bVRIKBonesResolved;
+	float	m_flCollarLen, m_flUpperArmLen, m_flForearmLen;
+
 private:
 	float					m_lastTimeHeadCleared;
 	float					m_flLastRecalibrateTime;

@@ -77,6 +77,7 @@
 #include "econ_gcmessages.h"
 #include "tf_gcmessages.h"
 #include "tf_obj_sentrygun.h"
+#include "tf_vr_ik_shared.h"
 #include "tf_weapon_shovel.h"
 #include "bot/tf_bot.h"
 #include "bot/tf_bot_manager.h"
@@ -1116,6 +1117,13 @@ CTFPlayer::CTFPlayer()
 	m_angVRHandAngL = QAngle( 0, 0, 0 );
 	m_vecVRHandOffsetR = vec3_origin;
 	m_angVRHandAngR = QAngle( 0, 0, 0 );
+
+	m_bVRIKBonesResolved = false;
+	m_iHeadBone = -1;
+	m_iCollarBoneL = m_iCollarBoneR = -1;
+	m_iUpperArmBoneL = m_iLowerArmBoneL = m_iHandBoneL = -1;
+	m_iUpperArmBoneR = m_iLowerArmBoneR = m_iHandBoneR = -1;
+	m_flCollarLen = m_flUpperArmLen = m_flForearmLen = 0.0f;
 
 	m_bForcedSkin = false;
 	m_nForcedSkin = 0;
@@ -3276,10 +3284,15 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
         // Store the command time for lag compensation
         m_flLastControllerUpdateTime = gpGlobals->curtime;
 
-        // Store raw grip positions as player-relative offsets for third-person arm IK
-        m_vecVRHandOffsetL = ucmd->vrIKHandPosL - GetAbsOrigin();
+        // Store hand positions as offsets from the VR headset (clientEyePosition).
+        // On reconstruction, these offsets are applied relative to the model's head bone,
+        // so the arms always look correct relative to the body.
+        Vector headRef = ucmd->clientEyePosition;
+        if ( headRef == vec3_origin )
+            headRef = GetAbsOrigin();
+        m_vecVRHandOffsetL = ucmd->vrIKHandPosL - headRef;
         m_angVRHandAngL = ucmd->vrIKHandAngL;
-        m_vecVRHandOffsetR = ucmd->vrIKHandPosR - GetAbsOrigin();
+        m_vecVRHandOffsetR = ucmd->vrIKHandPosR - headRef;
         m_angVRHandAngR = ucmd->vrIKHandAngR;
     }
     else
@@ -23656,5 +23669,174 @@ void CTFPlayer::CheckForHeadCollisions()
 	{
 		m_lastTimeHeadCleared = gpGlobals->curtime;
 		m_bHeadCollisionWarning = false;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Server-side VR arm IK bone index resolution.
+//-----------------------------------------------------------------------------
+void CTFPlayer::ResolveVRIKBones( void )
+{
+	m_iHeadBone = LookupBone( "bip_head" );
+	m_iCollarBoneL = LookupBone( "bip_collar_L" );
+	m_iCollarBoneR = LookupBone( "bip_collar_R" );
+	m_iUpperArmBoneL = LookupBone( "bip_upperArm_L" );
+	m_iLowerArmBoneL = LookupBone( "bip_lowerArm_L" );
+	m_iHandBoneL = LookupBone( "bip_hand_L" );
+	m_iUpperArmBoneR = LookupBone( "bip_upperArm_R" );
+	m_iLowerArmBoneR = LookupBone( "bip_lowerArm_R" );
+	m_iHandBoneR = LookupBone( "bip_hand_R" );
+
+	m_flCollarLen = 0.0f;
+	m_flUpperArmLen = 0.0f;
+	m_flForearmLen = 0.0f;
+
+	m_bVRIKBonesResolved = true;
+}
+
+//-----------------------------------------------------------------------------
+// Server-side SetupBones override: applies VR arm IK to hitbox bones.
+//-----------------------------------------------------------------------------
+void CTFPlayer::SetupBones( matrix3x4_t *pBoneToWorld, int boneMask )
+{
+	BaseClass::SetupBones( pBoneToWorld, boneMask );
+
+	if ( !pBoneToWorld || !m_bInVRMode || !IsAlive() )
+		return;
+
+	if ( (Vector)m_vecVRHandOffsetL == vec3_origin && (Vector)m_vecVRHandOffsetR == vec3_origin )
+		return;
+
+	if ( !m_bVRIKBonesResolved )
+		ResolveVRIKBones();
+
+	if ( m_flUpperArmLen < 1.0f || m_flForearmLen < 1.0f )
+	{
+		// Arm lengths not measured yet -- measure from the bones we just set up
+		if ( m_iUpperArmBoneR != -1 && m_iLowerArmBoneR != -1 && m_iHandBoneR != -1 )
+		{
+			Vector upperPos, elbowPos, handPos;
+			MatrixPosition( pBoneToWorld[m_iUpperArmBoneR], upperPos );
+			MatrixPosition( pBoneToWorld[m_iLowerArmBoneR], elbowPos );
+			MatrixPosition( pBoneToWorld[m_iHandBoneR], handPos );
+			m_flUpperArmLen = ( elbowPos - upperPos ).Length();
+			m_flForearmLen = ( handPos - elbowPos ).Length();
+
+			if ( m_iCollarBoneR != -1 )
+			{
+				Vector collarPos;
+				MatrixPosition( pBoneToWorld[m_iCollarBoneR], collarPos );
+				m_flCollarLen = ( upperPos - collarPos ).Length();
+			}
+		}
+
+		if ( m_flUpperArmLen < 1.0f || m_flForearmLen < 1.0f )
+			return;
+	}
+
+	const studiohdr_t *pHdr = modelinfo->GetStudiomodel( GetModel() );
+	if ( !pHdr )
+		return;
+
+	// Reconstruct hand world positions from head bone (offsets are head-relative)
+	Vector headBonePos;
+	if ( m_iHeadBone >= 0 )
+		MatrixPosition( pBoneToWorld[m_iHeadBone], headBonePos );
+	else
+		headBonePos = GetAbsOrigin();
+
+	Vector vForward, vRight, vUp;
+	AngleVectors( GetAbsAngles(), &vForward, &vRight, &vUp );
+
+	float shoulderRange = 25.0f;
+	float wristTwistShare = 0.5f;
+	float poleBlend = 0.4f;
+	float poleDist = 50.0f;
+	float upBias = 0.8f;
+	float fwdBias = 0.5f;
+	float crossBias = 0.6f;
+
+	// Right arm
+	if ( (Vector)m_vecVRHandOffsetR != vec3_origin && m_iUpperArmBoneR != -1 )
+	{
+		Vector targetPosR = headBonePos + (Vector)m_vecVRHandOffsetR;
+		QAngle targetAngR = m_angVRHandAngR;
+
+		Vector shoulderPos;
+		MatrixPosition( pBoneToWorld[m_iUpperArmBoneR], shoulderPos );
+
+		Vector reachDir = ( targetPosR - shoulderPos );
+		reachDir.NormalizeInPlace();
+
+		float dotFwd = DotProduct( reachDir, vForward );
+		float dotRight = DotProduct( reachDir, vRight );
+		float dotUp = DotProduct( reachDir, vUp );
+
+		Vector pole = -vForward * 0.5f - vUp * 0.3f;
+
+		if ( dotUp > 0.0f )
+			pole += ( -vUp * upBias + vForward * 0.3f ) * dotUp;
+
+		if ( dotFwd > 0.0f )
+			pole += -vUp * fwdBias * dotFwd;
+
+		float crossAmount = -dotRight;
+		if ( crossAmount > 0.0f )
+			pole += vRight * crossBias * crossAmount;
+
+		pole.NormalizeInPlace();
+
+		Vector hFwd, hRight, hUp;
+		AngleVectors( targetAngR, &hFwd, &hRight, &hUp );
+		Vector poleDir = pole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
+		poleDir.NormalizeInPlace();
+
+		Vector poleTarget = shoulderPos + poleDir * poleDist;
+
+		VRIK_ApplyArmIK( this, pHdr, pBoneToWorld, m_iCollarBoneR, m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR,
+			m_flCollarLen, m_flUpperArmLen, m_flForearmLen, targetPosR, targetAngR, poleTarget,
+			shoulderRange, wristTwistShare, false );
+	}
+
+	// Left arm
+	if ( (Vector)m_vecVRHandOffsetL != vec3_origin && m_iUpperArmBoneL != -1 )
+	{
+		Vector targetPosL = headBonePos + (Vector)m_vecVRHandOffsetL;
+		QAngle targetAngL = m_angVRHandAngL;
+
+		Vector shoulderPos;
+		MatrixPosition( pBoneToWorld[m_iUpperArmBoneL], shoulderPos );
+
+		Vector reachDir = ( targetPosL - shoulderPos );
+		reachDir.NormalizeInPlace();
+
+		float dotFwd = DotProduct( reachDir, vForward );
+		float dotRight = DotProduct( reachDir, vRight );
+		float dotUp = DotProduct( reachDir, vUp );
+
+		Vector pole = -vForward * 0.5f - vUp * 0.3f;
+
+		if ( dotUp > 0.0f )
+			pole += ( -vUp * upBias + vForward * 0.3f ) * dotUp;
+
+		if ( dotFwd > 0.0f )
+			pole += -vUp * fwdBias * dotFwd;
+
+		float crossAmount = dotRight;
+		if ( crossAmount > 0.0f )
+			pole += -vRight * crossBias * crossAmount;
+
+		pole.NormalizeInPlace();
+
+		Vector hFwd, hRight, hUp;
+		AngleVectors( targetAngL, &hFwd, &hRight, &hUp );
+		Vector poleDir = pole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
+		poleDir.NormalizeInPlace();
+
+		Vector poleTarget = shoulderPos + poleDir * poleDist;
+
+		VRIK_ApplyArmIK( this, pHdr, pBoneToWorld, m_iCollarBoneL, m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL,
+			m_flCollarLen, m_flUpperArmLen, m_flForearmLen, targetPosL, targetAngL, poleTarget,
+			shoulderRange, wristTwistShare, false );
 	}
 }

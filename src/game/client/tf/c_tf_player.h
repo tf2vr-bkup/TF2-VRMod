@@ -214,7 +214,12 @@ public:
 	bool			IsRegenerating( void ) const { return m_bRegenerating; }
 
 	virtual void	InitPhonemeMappings();
+	virtual bool	SetupGlobalWeights( const matrix3x4_t *pBoneToWorld, int nFlexWeightCount, float *pFlexWeights, float *pFlexDelayedWeights );
 
+private:
+	void			ApplyOVRLipSync();
+
+public:
 	// Gibs.
 	void InitPlayerGibs( void );
 	void CheckAndUpdateGibType( void );
@@ -626,10 +631,13 @@ public:
 	CInterpolatedVar<Vector> m_iv_vecVRHandOffsetR;
 
 	// VR IK: cached bone indices (resolved on first use, invalidated on model change)
+	int					m_iHeadBone;
+	int					m_iCollarBoneL, m_iCollarBoneR;
 	int					m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL;
 	int					m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR;
 	bool				m_bVRIKBonesResolved;
-	float				m_flUpperArmLen, m_flForearmLen;  // cached segment lengths
+	float				m_flCollarLen;
+	float				m_flUpperArmLen, m_flForearmLen;
 	bool				m_bPhysicalCrouch;
 	bool				m_bDuckWasPhysical;
 

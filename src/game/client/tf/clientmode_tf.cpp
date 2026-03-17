@@ -28,6 +28,7 @@
 #include "view.h"
 #include "ivrenderview.h"
 #include "model_types.h"
+#include "tfvr/vr_lipsync.h"
 #include "iefx.h"
 #include "dlight.h"
 #include <imapoverview.h>
@@ -335,6 +336,8 @@ void CTFModeManager::Init()
 
 void CTFModeManager::LevelInit( const char *newmap )
 {
+	CVRLipSync::Instance().Init();
+
 	g_pClientMode->LevelInit( newmap );
 
 	ConVarRef voice_steal( "voice_steal" );
@@ -359,6 +362,7 @@ void CTFModeManager::LevelShutdown( void )
 	CL_Consumables_LevelShutdown();
 	CL_Halloween_LevelShutdown();
 	CleanupAllVRHands();
+	CVRLipSync::Instance().Shutdown();
 }
 
 //-----------------------------------------------------------------------------
@@ -1842,6 +1846,8 @@ void ClientModeTFNormal::RemoveFilesInPath( const char *pszPath ) const
 void ClientModeTFNormal::Update()
 {
 	BaseClass::Update();
+
+	CVRLipSync::Instance().Update();
 
 	if ( m_bPendingRichPresenceUpdate )
 	{

@@ -22,7 +22,7 @@ $Configuration
 {
 	$Compiler
 	{
-		$AdditionalIncludeDirectories	".\hl2;.\hl2\elements;.\tf;.\tf\vr\thirdparty\openxr\include;.\tf\vr;.\tf\vgui;..\statemachine;$SRCDIR\game\shared\multiplayer;$SRCDIR\game\shared\tf;$SRCDIR\gcsdk\steamextra;$BASE;.\econ;$(VULKAN_SDK)\Include"
+		$AdditionalIncludeDirectories	".\hl2;.\hl2\elements;.\tf;.\tf\vr\thirdparty\openxr\include;.\tf\vr;.\tf\vgui;..\statemachine;$SRCDIR\game\shared\multiplayer;$SRCDIR\game\shared\tf;$SRCDIR\gcsdk\steamextra;$BASE;.\econ;$(VULKAN_SDK)\Include;.\tfvr\thirdparty\ovrlipsync"
 		
 		$PreprocessorDefinitions		"$BASE;TF_CLIENT_DLL;USES_ECON_ITEMS;ENABLE_GC_MATCHMAKING;GLOWS_ENABLE;USE_DYNAMIC_ASSET_LOADING;VOTING_ENABLED;NEXT_BOT"
 		$PreprocessorDefinitions		"$BASE;SAXXYMAINMENU_ENABLED" [$SAXXYAWARDS_ENABLE]
@@ -519,6 +519,8 @@ $Project "Client (TFVR)"
 			$File	"$SRCDIR\game\shared\tf\tf_projectile_dragons_fury.cpp"
 			$File	"$SRCDIR\game\shared\tf\tf_shareddefs.cpp"
 			$File	"$SRCDIR\game\shared\tf\tf_shareddefs.h"
+			$File	"$SRCDIR\game\shared\tf\tf_vr_ik_shared.cpp"
+			$File	"$SRCDIR\game\shared\tf\tf_vr_ik_shared.h"
 			$File	"$SRCDIR\game\shared\tf\tf_duckleaderboard.cpp"
 			$File	"$SRCDIR\game\shared\tf\tf_duckleaderboard.h"
 			$File	"$SRCDIR\game\shared\tf\tf_usermessages.cpp"
@@ -1028,8 +1030,14 @@ $Project "Client (TFVR)"
 			$File   "tfvr\cgltf.h"
 			$File   "tfvr\stb_image.h"
 			
-			$Folder "VR Weapons"
-			{
+		$Folder "VR Lip Sync"
+		{
+			$File   "tfvr\vr_lipsync.h"
+			$File   "tfvr\vr_lipsync.cpp"
+		}
+
+		$Folder "VR Weapons"
+		{
 				$File	"tfvr\c_tfvr_weapon_magazine.h"
 				$File	"tfvr\c_tfvr_weapon_magazine.cpp"
 				
@@ -1081,6 +1089,11 @@ $Project "Client (TFVR)"
 		$File "$SRCDIR\..\game\tf\resource\tf_english.txt"
 		$File "$SRCDIR\..\game\tf\resource\ModEvents.res"
 		$File "$SRCDIR\..\game\tf\resource\ClientScheme.res"
+	}
+
+	$Folder "Link Libraries"
+	{
+		$Libexternal "$SRCDIR\game\client\tfvr\thirdparty\ovrlipsync\win64\OVRLipSyncShim" [$WIN64]
 	}
 }
 
