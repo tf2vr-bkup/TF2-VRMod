@@ -306,17 +306,10 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
         }
     }
     
-    // If menu is visible, block all gameplay actions except menu controls
-    if (bMenuVisible)
-    {
-        // Menu interaction (cursor control) is handled separately by the menu manager
-        bLastMenuButtonState = bMenu;
-        return;
-    }
-    
     // =========================================================================
     // Voice chat activation
-    // MUST be processed BEFORE attack inputs so we can suppress the offhand trigger
+    // MUST be processed BEFORE the menu-visible early return so voice works
+    // while dead, and BEFORE attack inputs so we can suppress the offhand trigger.
     // Uses the "voice" action which is bound to the left trigger by default.
     // 
     // When gesture mode is ENABLED (tfvr_voice_gesture_enabled 1):
@@ -479,6 +472,14 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
         
         // Update action state for next frame
         bLastVoiceActionPressed = bVoiceActionPressed;
+    }
+    
+    // If menu is visible, block all gameplay actions except menu controls
+    // (voice chat above is intentionally allowed through so it works while dead)
+    if (bMenuVisible)
+    {
+        bLastMenuButtonState = bMenu;
+        return;
     }
     
     // Normal gameplay input processing (only when menu is not visible)
