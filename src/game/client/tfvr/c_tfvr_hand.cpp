@@ -5624,22 +5624,18 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		}
 	}
 	
-	// Fallback: Force bone setup and query attachment directly
-	// This ensures bones are current before querying
+	// Fallback: Force bone setup and try multiple attachment names.
+	// Workshop models (e.g. Crusader's Crossbow) may use non-standard names.
 	InvalidateBoneCache();
 	matrix3x4_t boneArray[MAXSTUDIOBONES];
 	SetupBones(boneArray, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
 	
-	int iMuzzle = pRenderWeapon->LookupAttachment("muzzle");
-	if (iMuzzle > 0)
+	static const char *s_muzzleNames[] = { "muzzle", "muzzle_flash", "0", "1" };
+	for (int i = 0; i < ARRAYSIZE(s_muzzleNames); i++)
 	{
-		Vector muzzlePos;
-		QAngle muzzleAngles;
-		if (pRenderWeapon->GetAttachment(iMuzzle, muzzlePos, muzzleAngles))
+		int iAttach = pRenderWeapon->LookupAttachment(s_muzzleNames[i]);
+		if (iAttach > 0 && pRenderWeapon->GetAttachment(iAttach, outPos, outAngles))
 		{
-			outPos = muzzlePos;
-			outAngles = muzzleAngles;
-			
 			// Apply weapon-specific aim angle corrections as LOCAL rotations
 			if (pTFWeapon)
 			{
@@ -5676,7 +5672,27 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		}
 	}
 	
-	// Final fallback: use controller position with forward offset
+	// Controller aim fallback: use the physical controller's aim pose.
+	// This is the most natural fallback for ranged weapons without a
+	// muzzle attachment — it matches where the player is pointing.
+	if (g_pOpenXRManager)
+	{
+		VMatrix controllerPose;
+		bool bGotPose = IsLeftHand()
+			? g_pOpenXRManager->GetLeftControllerPose(controllerPose)
+			: g_pOpenXRManager->GetRightControllerPose(controllerPose);
+		if (bGotPose)
+		{
+			outPos = controllerPose.GetTranslation();
+			MatrixAngles(controllerPose.As3x4(), outAngles);
+			Vector forward;
+			AngleVectors(outAngles, &forward, NULL, NULL);
+			outPos += forward * 30.0f;
+			return true;
+		}
+	}
+	
+	// Final fallback: use hand position with forward offset
 	outPos = GetAbsOrigin();
 	outAngles = GetAbsAngles();
 	
