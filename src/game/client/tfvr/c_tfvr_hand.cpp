@@ -5770,6 +5770,25 @@ const char* GetSpyKnifeAnimPrefix(C_TFWeaponBase *pWeapon)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Check if a weapon uses the MELEE_ALLCLASS anim slot (frying pan,
+//          saxxy, conscientious objector, ham shank, etc.)
+//-----------------------------------------------------------------------------
+static bool IsAllClassMelee(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon)
+		return false;
+
+	CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+	if (pItem && pItem->IsValid())
+	{
+		CTFItemDefinition *pDef = pItem->GetStaticData();
+		if (pDef && pDef->GetAnimSlot() == TF_WPN_TYPE_MELEE_ALLCLASS)
+			return true;
+	}
+	return false;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Get the appropriate hand animation name for a weapon
 //-----------------------------------------------------------------------------
 const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
@@ -5777,34 +5796,8 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 	// Default fallback
 	const char *defaultAnim = "ref";
 	
-	// Check if this is an all-class melee weapon (frying pan, saxxy, etc.)
-	// These should use the class's default melee animation
-	// NOTE: melee_allclass_idle animation crashes in AccumulatePose, so we use class-specific melee anims
-	bool bIsAllClassMelee = false;
-	if (pWeapon)
-	{
-		const char *worldModel = pWeapon->GetWorldModel();
-		if (worldModel)
-		{
-			if (V_stristr(worldModel, "frying_pan") ||
-				V_stristr(worldModel, "saxxy") ||
-				V_stristr(worldModel, "golden_wrench") ||
-				V_stristr(worldModel, "necro_smasher") ||
-				V_stristr(worldModel, "crossing_guard") ||
-				V_stristr(worldModel, "freedom_staff") ||
-				V_stristr(worldModel, "ham_shank") ||
-				V_stristr(worldModel, "memory_maker") ||
-				V_stristr(worldModel, "prinny_machete") ||
-				V_stristr(worldModel, "conscientious"))
-			{
-				bIsAllClassMelee = true;
-			}
-		}
-	}
-	
-	// For all-class melee weapons, use melee_allclass_idle
-	// AccumulatePose will detect invalid animation data and skip it gracefully
-	if (bIsAllClassMelee)
+	// All-class melee weapons use melee_allclass_idle
+	if (IsAllClassMelee(pWeapon))
 	{
 		return "melee_allclass_idle";
 	}
@@ -5964,28 +5957,8 @@ const char* GetMeleeSwingBaseName(int playerClass, const char *weaponClass, C_TF
 {
 	outSwingCount = 0;
 	
-	// Check if this is an all-class melee weapon
-	if (pWeapon)
-	{
-		const char *worldModel = pWeapon->GetWorldModel();
-		if (worldModel)
-		{
-			if (V_stristr(worldModel, "frying_pan") ||
-				V_stristr(worldModel, "saxxy") ||
-				V_stristr(worldModel, "golden_wrench") ||
-				V_stristr(worldModel, "necro_smasher") ||
-				V_stristr(worldModel, "crossing_guard") ||
-				V_stristr(worldModel, "freedom_staff") ||
-				V_stristr(worldModel, "ham_shank") ||
-				V_stristr(worldModel, "memory_maker") ||
-				V_stristr(worldModel, "prinny_machete") ||
-				V_stristr(worldModel, "conscientious"))
-			{
-				// All-class melee uses a single animation, no cycling
-				return NULL;
-			}
-		}
-	}
+	if (IsAllClassMelee(pWeapon))
+		return NULL;
 	
 	// Per-class melee swing bases
 	switch (playerClass)
@@ -6102,31 +6075,8 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 	// Default fallback - no fire animation
 	const char *defaultAnim = NULL;
 	
-	// Check if this is an all-class melee weapon
-	bool bIsAllClassMelee = false;
-	if (pWeapon)
-	{
-		const char *worldModel = pWeapon->GetWorldModel();
-		if (worldModel)
-		{
-			if (V_stristr(worldModel, "frying_pan") ||
-				V_stristr(worldModel, "saxxy") ||
-				V_stristr(worldModel, "golden_wrench") ||
-				V_stristr(worldModel, "necro_smasher") ||
-				V_stristr(worldModel, "crossing_guard") ||
-				V_stristr(worldModel, "freedom_staff") ||
-				V_stristr(worldModel, "ham_shank") ||
-				V_stristr(worldModel, "memory_maker") ||
-				V_stristr(worldModel, "prinny_machete") ||
-				V_stristr(worldModel, "conscientious"))
-			{
-				bIsAllClassMelee = true;
-			}
-		}
-	}
-	
-	// For all-class melee weapons, use melee_allclass_swing
-	if (bIsAllClassMelee)
+	// All-class melee weapons use melee_allclass_swing
+	if (IsAllClassMelee(pWeapon))
 	{
 		return "melee_allclass_swing";
 	}
@@ -6309,29 +6259,7 @@ const char* GetWeaponChargeAnimation2(int playerClass, const char *weaponClass, 
 //-----------------------------------------------------------------------------
 const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_TFWeaponBase *pWeapon)
 {
-	bool bIsAllClassMelee = false;
-	if (pWeapon)
-	{
-		const char *worldModel = pWeapon->GetWorldModel();
-		if (worldModel)
-		{
-			if (V_stristr(worldModel, "frying_pan") ||
-				V_stristr(worldModel, "saxxy") ||
-				V_stristr(worldModel, "golden_wrench") ||
-				V_stristr(worldModel, "necro_smasher") ||
-				V_stristr(worldModel, "crossing_guard") ||
-				V_stristr(worldModel, "freedom_staff") ||
-				V_stristr(worldModel, "ham_shank") ||
-				V_stristr(worldModel, "memory_maker") ||
-				V_stristr(worldModel, "prinny_machete") ||
-				V_stristr(worldModel, "conscientious"))
-			{
-				bIsAllClassMelee = true;
-			}
-		}
-	}
-
-	if (bIsAllClassMelee)
+	if (IsAllClassMelee(pWeapon))
 		return "melee_allclass_draw";
 
 	switch (playerClass)
@@ -6449,29 +6377,7 @@ VRDrawAnimScope GetWeaponDrawAnimScope(int playerClass, const char *weaponClass,
 	// VR_DRAW_ANIM_WEAPON_BONE - only weapon_bone animates, hand stays at idle
 	// VR_DRAW_ANIM_NONE       - no draw animation at all
 
-	bool bIsAllClassMelee = false;
-	if (pWeapon)
-	{
-		const char *worldModel = pWeapon->GetWorldModel();
-		if (worldModel)
-		{
-			if (V_stristr(worldModel, "frying_pan") ||
-				V_stristr(worldModel, "saxxy") ||
-				V_stristr(worldModel, "golden_wrench") ||
-				V_stristr(worldModel, "necro_smasher") ||
-				V_stristr(worldModel, "crossing_guard") ||
-				V_stristr(worldModel, "freedom_staff") ||
-				V_stristr(worldModel, "ham_shank") ||
-				V_stristr(worldModel, "memory_maker") ||
-				V_stristr(worldModel, "prinny_machete") ||
-				V_stristr(worldModel, "conscientious"))
-			{
-				bIsAllClassMelee = true;
-			}
-		}
-	}
-
-	if (bIsAllClassMelee)
+	if (IsAllClassMelee(pWeapon))
 		return VR_DRAW_ANIM_NONE;
 
 	switch (playerClass)
