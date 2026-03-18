@@ -5704,27 +5704,34 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Check whether a tf_weapon_fists entity is actually a gloved
+//          variant (Apoco-Fists, KGB, GRU, Fists of Steel, Holiday Punch,
+//          Bread Bite, etc.) by inspecting the world model path.
+//-----------------------------------------------------------------------------
+static bool IsFistsGloveVariant(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon)
+		return false;
+
+	const char *worldModel = pWeapon->GetWorldModel();
+	if (!worldModel)
+		return false;
+
+	return V_stristr(worldModel, "boxing_gloves") ||
+		   V_stristr(worldModel, "gru") ||
+		   V_stristr(worldModel, "fists_of_steel") ||
+		   V_stristr(worldModel, "xms_gloves") ||
+		   V_stristr(worldModel, "breadmonster") ||
+		   V_stristr(worldModel, "sr3_punch");
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Determine the correct idle animation for Heavy fist weapons.
 //          Gloved variants use bg_idle, bare-fist variants use f_idle.
 //-----------------------------------------------------------------------------
 static const char* GetFistsIdleAnimName(C_TFWeaponBase *pWeapon)
 {
-	if (pWeapon)
-	{
-		const char *worldModel = pWeapon->GetWorldModel();
-		if (worldModel)
-		{
-			if (V_stristr(worldModel, "boxing_gloves") ||
-				V_stristr(worldModel, "gru") ||
-				V_stristr(worldModel, "fists_of_steel") ||
-				V_stristr(worldModel, "xms_gloves") ||
-				V_stristr(worldModel, "breadmonster"))
-			{
-				return "bg_idle";
-			}
-		}
-	}
-	return "f_idle";
+	return IsFistsGloveVariant(pWeapon) ? "bg_idle" : "f_idle";
 }
 
 //-----------------------------------------------------------------------------
@@ -6029,7 +6036,7 @@ const char* GetMeleeSwingBaseName(int playerClass, const char *weaponClass, C_TF
 			if (V_stristr(weaponClass, "fists"))
 			{
 				outSwingCount = 3;
-				return "f_swing_";
+				return IsFistsGloveVariant(pWeapon) ? "bg_swing_" : "f_swing_";
 			}
 			if (V_stristr(weaponClass, "gloves"))
 			{
@@ -6191,7 +6198,7 @@ const char* GetWeaponFireAnimation(int playerClass, const char *weaponClass, C_T
 			// Heavy: m_fire, fire (shotgun), f_swing_*, bg_swing_*, throw_fire
 			if (V_stristr(weaponClass, "minigun")) return "m_fire";
 			if (V_stristr(weaponClass, "shotgun")) return "fire";
-			if (V_stristr(weaponClass, "fists")) return "f_swing_a";
+			if (V_stristr(weaponClass, "fists")) return IsFistsGloveVariant(pWeapon) ? "bg_swing_a" : "f_swing_a";
 			if (V_stristr(weaponClass, "gloves")) return "bg_swing_a"; // KGB, GRU, etc.
 			if (V_stristr(weaponClass, "throwable")) return "throw_fire";
 			break;
@@ -6383,7 +6390,7 @@ const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_T
 		case TF_CLASS_HEAVYWEAPONS:
 			if (V_stristr(weaponClass, "minigun")) return "m_draw";
 			if (V_stristr(weaponClass, "shotgun")) return "draw";
-			if (V_stristr(weaponClass, "fists")) return "f_draw";
+			if (V_stristr(weaponClass, "fists")) return IsFistsGloveVariant(pWeapon) ? "bg_draw" : "f_draw";
 			break;
 
 		case TF_CLASS_ENGINEER:
