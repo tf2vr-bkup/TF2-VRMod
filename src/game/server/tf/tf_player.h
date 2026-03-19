@@ -1663,6 +1663,8 @@ public:
 private:
 	float					m_lastTimeHeadCleared;
 	float					m_flLastRecalibrateTime;
+	float					m_flSmoothedFadeIntensity;
+	float					m_flLastClientEyeUpdateTime;
 };
 
 //-----------------------------------------------------------------------------

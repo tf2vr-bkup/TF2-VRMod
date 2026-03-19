@@ -1103,6 +1103,8 @@ CTFPlayer::CTFPlayer()
 	
 	m_lastTimeHeadCleared = 0.0f;
 	m_flLastRecalibrateTime = 0.0f;
+	m_flSmoothedFadeIntensity = 0.0f;
+	m_flLastClientEyeUpdateTime = 0.0f;
 	m_bHeadCollisionWarning = false;
 	m_clientEyePosition.Init();
 
@@ -3274,6 +3276,7 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
 	else if ( ucmd->buttons & IN_DUCK )
 		m_bDuckWasPhysical = false;
 	m_clientEyePosition = ucmd->clientEyePosition;
+	m_flLastClientEyeUpdateTime = gpGlobals->curtime;
     // Store VR controller positions for weapon shooting (only when client is using VR)
     if (ucmd->playerToHmdOrigin != vec3_origin)
     {
@@ -12557,7 +12560,15 @@ void CTFPlayer::Event_Killed( const CTakeDamageInfo &info )
 	
 	ClearZoomOwner();
 
-	m_vecLastDeathPosition = GetAbsOrigin();
+	// For VR players, anchor the death position to the client's actual
+	// eye position.  On a remote server the client and server origins can
+	// diverge by 10-20+ units due to network latency, and the dead-state
+	// fade check compares against the client eye position, so using the
+	// server origin would cause an immediate false fade on death.
+	if (IsInVRMode() && m_clientEyePosition != vec3_origin)
+		m_vecLastDeathPosition = m_clientEyePosition;
+	else
+		m_vecLastDeathPosition = GetAbsOrigin();
 
 	CTakeDamageInfo info_modified = info;
 
@@ -23533,11 +23544,17 @@ void CTFPlayer::CheckForHeadCollisions()
 	if (!IsReadyToPlay())
 		return;
 
-	// Grace period after spawn or recalibration so transient eye positions
-	// don't trigger a false fade.
-	float graceCutoff = Max(m_flSpawnTime, m_flLastRecalibrateTime) + 0.5f;
+	// Grace period after spawn, death, or recalibration so transient
+	// eye positions don't trigger a false fade.
+	float graceCutoff = Max(m_flSpawnTime, m_flLastRecalibrateTime);
+	if (!bAlive)
+		graceCutoff = Max(graceCutoff, GetDeathTime());
+	graceCutoff += 0.5f;
 	if (gpGlobals->curtime < graceCutoff)
+	{
+		m_flSmoothedFadeIntensity = 0.f;
 		return;
+	}
 
 	// Use client's EyePosition for collision detection (we know this works correctly)
 	Vector clientHeadPosition = m_clientEyePosition;
@@ -23594,7 +23611,14 @@ void CTFPlayer::CheckForHeadCollisions()
 
 		// --- Distance-from-origin checks (alive only) ---
 		float speed = GetAbsVelocity().Length2D();
-		float velocityLeniency = Min(speed * 0.03f, 20.f);
+
+		// The client eye position lags behind by up to one client frame.
+		// During that interval the server keeps advancing the origin by
+		// velocity, creating a false distance delta.  Compensate using
+		// the measured staleness of the client position, capped at 100ms
+		// to prevent abuse via artificially withheld usercmds.
+		float staleness = Clamp(gpGlobals->curtime - m_flLastClientEyeUpdateTime, 0.f, 0.1f);
+		float velocityLeniency = speed * (staleness + 0.015f);
 
 		Vector delta = headPosition - GetAbsOrigin();
 		float horizontalDist = delta.Length2D();
@@ -23653,20 +23677,42 @@ void CTFPlayer::CheckForHeadCollisions()
 		fadeIntensity = deathFade;
 	}
 
-	// Apply fade effect
-	if (fadeIntensity > 0)
+	// Temporal smoothing: dampen single-tick spikes that occur when the
+	// client eye position is a few ticks stale relative to the server
+	// origin (common at lower client framerates or during knockback).
+	// A real collision persists across many ticks and ramps up quickly;
+	// a transient spike barely registers visually.
+	float targetFade = (float)fadeIntensity;
+	float dt = Max(gpGlobals->frametime, 0.001f);
+
+	const float kRampUpRate  = 800.f;   // ~0.32s from 0 to full opacity
+	const float kRampDownRate = 1200.f;  // ~0.21s from full to clear
+
+	if (targetFade > m_flSmoothedFadeIntensity)
+		m_flSmoothedFadeIntensity = Min(targetFade, m_flSmoothedFadeIntensity + kRampUpRate * dt);
+	else
+		m_flSmoothedFadeIntensity = Max(targetFade, m_flSmoothedFadeIntensity - kRampDownRate * dt);
+
+	byte smoothedFade = (byte)Clamp(m_flSmoothedFadeIntensity, 0.f, 255.f);
+
+	if (smoothedFade > 0)
 	{
-		color32 fadeColor{ 0, 0, 0, fadeIntensity };
-		UTIL_ScreenFade(this, fadeColor, 0.1f, 0.1f, FFADE_IN);
+		color32 fadeColor{ 0, 0, 0, smoothedFade };
+		UTIL_ScreenFade(this, fadeColor, 0.05f, 0.0f, FFADE_OUT | FFADE_STAYOUT);
 
 		float timeFaded = gpGlobals->curtime - m_lastTimeHeadCleared;
-		if (fadeIntensity >= 192 && timeFaded > 1.0f)
+		if (smoothedFade >= 192 && timeFaded > 1.0f)
 		{
 			m_bHeadCollisionWarning = true;
 		}
 	}
 	else
 	{
+		if (m_lastTimeHeadCleared < gpGlobals->curtime - gpGlobals->frametime)
+		{
+			color32 clearColor{ 0, 0, 0, 0 };
+			UTIL_ScreenFade(this, clearColor, 0.15f, 0.0f, FFADE_IN | FFADE_PURGE);
+		}
 		m_lastTimeHeadCleared = gpGlobals->curtime;
 		m_bHeadCollisionWarning = false;
 	}
