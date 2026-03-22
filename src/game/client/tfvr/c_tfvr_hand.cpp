@@ -5748,8 +5748,8 @@ const char* GetSpyKnifeAnimPrefix(C_TFWeaponBase *pWeapon)
 		const char *worldModel = pWeapon->GetWorldModel();
 		if (worldModel)
 		{
-			// Standard butterfly knife is the only one that uses knife_*
-			if (V_stristr(worldModel, "c_knife"))
+			// Standard butterfly knife and reskins that use knife_*
+			if (V_stristr(worldModel, "c_knife") || V_stristr(worldModel, "roseknife"))
 				return "knife";
 			if (V_stristr(worldModel, "sharp_dresser"))
 				return "acr";
@@ -5759,7 +5759,7 @@ const char* GetSpyKnifeAnimPrefix(C_TFWeaponBase *pWeapon)
 		if (pItem && pItem->IsValid())
 		{
 			int iDef = pItem->GetItemDefIndex();
-			if (iDef == 4 || iDef == 194)     // Knife, Golden Frying Pan uses knife too? Check stock
+			if (iDef == 4 || iDef == 194 || iDef == 727)  // Knife, Festive Knife, Black Rose
 				return "knife";
 			if (iDef == 638)                   // Sharp Dresser
 				return "acr";
