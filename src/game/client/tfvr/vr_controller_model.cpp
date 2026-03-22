@@ -1070,90 +1070,77 @@ void CVRControllerModelManager::RenderController(const GameControllerModel& mode
 		
 		pRenderContext->Bind(pMaterialToUse);
 		
-		int numTriangles = (int)mesh.indices.size() / 3;
+		int numVerts = (int)mesh.positions.size();
+		int numIndices = (int)mesh.indices.size();
 		IMesh* pMesh = pRenderContext->GetDynamicMesh(true, NULL, NULL, pMaterialToUse);
 		
 		CMeshBuilder meshBuilder;
-		meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, numTriangles);
+		meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, numVerts, numIndices);
 		
-		// Process triangles, reversing winding order to fix coordinate system flip
-		for (size_t tri = 0; tri < mesh.indices.size() / 3; tri++)
+		// Emit unique vertices with transforms applied
+		for (int vi = 0; vi < numVerts; vi++)
 		{
-			// Reverse winding: instead of 0,1,2 use 0,2,1
-			size_t triIndices[3] = { tri * 3 + 0, tri * 3 + 2, tri * 3 + 1 };
+			const Vector& localPosXR = mesh.positions[vi];
 			
-			for (int v = 0; v < 3; v++)
+			Vector modelPosXR;
+			VectorTransform(localPosXR, nodeMatrix3x4, modelPosXR);
+			
+			Vector worldPos;
+			
+			if (model.hasRawXRPose)
 			{
-				unsigned int idx = mesh.indices[triIndices[v]];
-				if (idx >= (unsigned int)mesh.positions.size())
-					continue;
+				Vector rotatedXR;
+				rotatedXR.x = r00 * modelPosXR.x + r01 * modelPosXR.y + r02 * modelPosXR.z;
+				rotatedXR.y = r10 * modelPosXR.x + r11 * modelPosXR.y + r12 * modelPosXR.z;
+				rotatedXR.z = r20 * modelPosXR.x + r21 * modelPosXR.y + r22 * modelPosXR.z;
 				
-				// Get vertex position in OpenXR coordinates (meters)
-				const Vector& localPosXR = mesh.positions[idx];
+				Vector playspacePosXR;
+				playspacePosXR.x = rotatedXR.x + xrPose.position.x;
+				playspacePosXR.y = rotatedXR.y + xrPose.position.y;
+				playspacePosXR.z = rotatedXR.z + xrPose.position.z;
 				
-				// Step 1: Apply node matrix in OpenXR space (mesh-local to model-local)
-				Vector modelPosXR;
-				VectorTransform(localPosXR, nodeMatrix3x4, modelPosXR);
+				Vector playspacePosSource;
+				playspacePosSource.x = -playspacePosXR.z;
+				playspacePosSource.y = -playspacePosXR.x;
+				playspacePosSource.z = playspacePosXR.y;
 				
-				Vector worldPos;
+				playspacePosSource *= worldScale;
 				
-				if (model.hasRawXRPose)
-				{
-					// NEW PATH: Apply OpenXR pose in OpenXR space, then convert to Source
-					
-					// Step 2: Apply OpenXR pose rotation (model-local to playspace)
-					Vector rotatedXR;
-					rotatedXR.x = r00 * modelPosXR.x + r01 * modelPosXR.y + r02 * modelPosXR.z;
-					rotatedXR.y = r10 * modelPosXR.x + r11 * modelPosXR.y + r12 * modelPosXR.z;
-					rotatedXR.z = r20 * modelPosXR.x + r21 * modelPosXR.y + r22 * modelPosXR.z;
-					
-					// Add pose translation (still in OpenXR playspace, meters)
-					Vector playspacePosXR;
-					playspacePosXR.x = rotatedXR.x + xrPose.position.x;
-					playspacePosXR.y = rotatedXR.y + xrPose.position.y;
-					playspacePosXR.z = rotatedXR.z + xrPose.position.z;
-					
-					// Step 3: Convert from OpenXR playspace to Source playspace
-					Vector playspacePosSource;
-					playspacePosSource.x = -playspacePosXR.z;  // Source X = -OpenXR Z
-					playspacePosSource.y = -playspacePosXR.x;  // Source Y = -OpenXR X
-					playspacePosSource.z = playspacePosXR.y;   // Source Z = OpenXR Y
-					
-					// Step 4: Scale from meters to game units
-					playspacePosSource *= worldScale;
-					
-					// Step 5: Transform to head-relative, then to world
-					Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
-					worldPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);
-				}
-				else
-				{
-					// FALLBACK PATH: Convert to Source first, then apply pre-converted pose
-					// This matches the old method that worked (but was offset)
-					
-					// Convert mesh vertex from OpenXR to Source coordinates
-					Vector modelPosSource;
-					modelPosSource.x = -modelPosXR.z;  // Source X = -OpenXR Z
-					modelPosSource.y = -modelPosXR.x;  // Source Y = -OpenXR X
-					modelPosSource.z = modelPosXR.y;   // Source Z = OpenXR Y
-					
-					// Scale from meters to game units
-					modelPosSource *= worldScale;
-					
-					// Apply the pre-computed Source world pose
-					worldPos = model.currentPose.VMul4x3(modelPosSource);
-				}
-				
-				meshBuilder.Position3fv(worldPos.Base());
-				meshBuilder.Color4f(r, g, b, a);
-				
-				if (idx < (unsigned int)mesh.texCoords.size())
-					meshBuilder.TexCoord2fv(0, &mesh.texCoords[idx].x);
-				else
-					meshBuilder.TexCoord2f(0, 0, 0);
-				
-				meshBuilder.AdvanceVertex();
+				Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
+				worldPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);
 			}
+			else
+			{
+				Vector modelPosSource;
+				modelPosSource.x = -modelPosXR.z;
+				modelPosSource.y = -modelPosXR.x;
+				modelPosSource.z = modelPosXR.y;
+				
+				modelPosSource *= worldScale;
+				
+				worldPos = model.currentPose.VMul4x3(modelPosSource);
+			}
+			
+			meshBuilder.Position3fv(worldPos.Base());
+			meshBuilder.Color4f(r, g, b, a);
+			
+			if (vi < (int)mesh.texCoords.size())
+				meshBuilder.TexCoord2fv(0, &mesh.texCoords[vi].x);
+			else
+				meshBuilder.TexCoord2f(0, 0, 0);
+			
+			meshBuilder.AdvanceVertex();
+		}
+		
+		// Emit indices with reversed winding order for coordinate system flip
+		for (int tri = 0; tri < numIndices / 3; tri++)
+		{
+			meshBuilder.Index(mesh.indices[tri * 3 + 0]);
+			meshBuilder.AdvanceIndex();
+			meshBuilder.Index(mesh.indices[tri * 3 + 2]);
+			meshBuilder.AdvanceIndex();
+			meshBuilder.Index(mesh.indices[tri * 3 + 1]);
+			meshBuilder.AdvanceIndex();
 		}
 		
 		meshBuilder.End();
