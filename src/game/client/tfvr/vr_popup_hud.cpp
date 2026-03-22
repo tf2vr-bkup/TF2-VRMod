@@ -289,7 +289,9 @@ bool CVRPopupHUDManager::Initialize()
         vgui::Panel* pViewport = g_pClientMode ? g_pClientMode->GetViewport() : nullptr;
         m_pMatchStatusWrapper = new CVRPanelWrapper(pViewport, "VRMatchStatusWrapper");
         m_pMatchStatusWrapper->SetVisible(false);
-        m_pMatchStatusWrapper->SetSize(1280, 720);  // Full screen size for capture
+        uint32_t specW, specH;
+        g_pOpenXRManager->GetSpectatorScreenDims(specW, specH);
+        m_pMatchStatusWrapper->SetSize(specW, specH);
     }
     
     // Create wrapper panel for healer notification (to center content properly)

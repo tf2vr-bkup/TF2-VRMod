@@ -249,8 +249,11 @@ void CVRDamageIndicatorManager::Update(float deltaTime)
     m_flMaxLagAngle = tfvr_damage_indicator_max_lag.GetFloat();
     m_flOffsetX = tfvr_damage_indicator_offset_x.GetFloat();
     m_flOffsetY = tfvr_damage_indicator_offset_y.GetFloat();
-    m_nPanelPixelWidth = tfvr_damage_indicator_width.GetInt();
-    m_nPanelPixelHeight = tfvr_damage_indicator_height.GetInt();
+    int sw, sh;
+    vgui::surface()->GetScreenSize(sw, sh);
+    float sf = (float)sw / 1280.0f;
+    m_nPanelPixelWidth = (int)(tfvr_damage_indicator_width.GetInt() * sf);
+    m_nPanelPixelHeight = (int)(tfvr_damage_indicator_height.GetInt() * sf);
     
     // Calculate world size from scale
     float scale = tfvr_damage_indicator_scale.GetFloat();

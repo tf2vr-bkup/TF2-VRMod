@@ -652,7 +652,7 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 
 	// Figure out the HUD vectors and frustum.
 	// The aspect ratio of the HMD may be something bizarre (e.g. Rift is 640x800), and the pixels may not be square, so don't use that!
-	// Use 16:9 aspect ratio to match the _rt_vgui texture dimensions (1280x720)
+	// Use 16:9 aspect ratio to match the _rt_vgui texture (all presets are 16:9)
 	static const float fAspectRatio = 16.f/9.f;
 	float fHFOV = m_fHudHorizontalFov;
 	float fVFOV = m_fHudHorizontalFov / fAspectRatio;

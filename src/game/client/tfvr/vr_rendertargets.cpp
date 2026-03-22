@@ -34,9 +34,12 @@ ITexture* CVrRenderTargets::CreateVGuiTexture(IMaterialSystem* pMaterialSystem)
 		// Otherwise stick with RGBA8888 - MSAA inheritance happens through MATERIAL_RT_DEPTH_SHARED
 	}
 	
+	uint32_t vguiW, vguiH;
+	g_pOpenXRManager->GetSpectatorScreenDims(vguiW, vguiH);
+
 	return pMaterialSystem->CreateNamedRenderTargetTextureEx2(
 		"_rt_vgui",
-		1280, 720,
+		vguiW, vguiH,
 		RT_SIZE_LITERAL,
 		targetFormat,								// Use appropriate format with MSAA consideration
 		MATERIAL_RT_DEPTH_SHARED,					// Use shared depth - this inherits MSAA from back buffer
@@ -165,16 +168,19 @@ void CVrRenderTargets::UpdateVRRenderTargets()
 	if (tex == nullptr)
 		return;
 
+	uint32_t vguiDesiredW, vguiDesiredH;
+	g_pOpenXRManager->GetSpectatorScreenDims(vguiDesiredW, vguiDesiredH);
+	ITexture *vguiTex = m_VGuiTexture;
+	bool vguiNeedsUpdate = vguiTex && ((uint32_t)vguiTex->GetActualWidth() != vguiDesiredW || (uint32_t)vguiTex->GetActualHeight() != vguiDesiredH);
+
 	ITexture *fullFrameTex0 = materials->FindTexture("_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET, false);
 	bool baseTexturesNeedUpdate = fullFrameTex0 && (fullFrameTex0->GetActualWidth() != fullFrameWidth || fullFrameTex0->GetActualHeight() != fullFrameHeight);
 
-	if (tex->GetActualWidth() != desiredWidth || tex->GetActualHeight() != desiredHeight || msaaChanged || baseTexturesNeedUpdate)
+	if (tex->GetActualWidth() != desiredWidth || tex->GetActualHeight() != desiredHeight || msaaChanged || baseTexturesNeedUpdate || vguiNeedsUpdate)
 	{
 		ConVarRef mat_queue_mode("mat_queue_mode");
 		if (mat_queue_mode.GetInt() != 0)
 		{
-			// if we try to recreate the render targets in threaded mode, we will crash
-			// so we have to switch to single-threaded mode, then wait until the next frame
 			m_origThreadMode = mat_queue_mode.GetInt();
 			m_changedThreadMode = true;
 			mat_queue_mode.SetValue(0);

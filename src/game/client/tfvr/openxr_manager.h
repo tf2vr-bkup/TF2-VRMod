@@ -60,6 +60,8 @@ public:
     XrSpaceLocation GetHeadLocation() const { return m_headLocation; }
 
     void GetSpectatorScreenDims(uint32_t& width, uint32_t& height);
+    void SetSpectatorScreenDims(uint32_t width, uint32_t height);
+    bool ConsumeSpectatorDimsChanged();
 
     void GetEyeProjectionMatrix(VMatrix& pResult, ISourceVirtualReality::VREye eye, float zNear, float zFar);
 
@@ -182,6 +184,7 @@ private:
 
     uint32_t m_spectatorScreenWidth = 1280;
 	uint32_t m_spectatorScreenHeight = 720;
+	bool m_bSpectatorDimsChanged = false;
 
     ITexture* m_pEyeRenderTargets[2] = { nullptr, nullptr };
     ITexture* m_pSharedRenderTarget = nullptr; // Shared render target for both eyes

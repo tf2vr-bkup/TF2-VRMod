@@ -200,8 +200,11 @@ void CVRSpringHUDManager::Update(float deltaTime)
     m_flMaxLagAngle = tfvr_killfeed_max_lag.GetFloat();
     m_flOffsetX = tfvr_killfeed_offset_x.GetFloat();
     m_flOffsetY = tfvr_killfeed_offset_y.GetFloat();
-    m_nPanelPixelWidth = tfvr_killfeed_width.GetInt();
-    m_nPanelPixelHeight = tfvr_killfeed_height.GetInt();
+    int w, h;
+    vgui::surface()->GetScreenSize(w, h);
+    float sf = (float)w / 1280.0f;
+    m_nPanelPixelWidth = (int)(tfvr_killfeed_width.GetInt() * sf);
+    m_nPanelPixelHeight = (int)(tfvr_killfeed_height.GetInt() * sf);
     
     // Calculate world size from scale
     float scale = tfvr_killfeed_scale.GetFloat();

@@ -26,6 +26,13 @@
 CVRStatusHUDManager* g_pVRStatusHUDManager = nullptr;
 CVRWeaponHUDManager* g_pVRWeaponHUDManager = nullptr;
 
+static float GetVRScreenScaleFactor()
+{
+	int w, h;
+	vgui::surface()->GetScreenSize(w, h);
+	return (float)w / 1280.0f;
+}
+
 //=============================================================================
 // ConVars - Status HUD (left hand: health/objective)
 //=============================================================================
@@ -593,7 +600,8 @@ void CVRStatusHUDCompositor::RefreshHUDReferences()
 //-----------------------------------------------------------------------------
 void CVRStatusHUDCompositor::UpdateLayout()
 {
-    SetCompositorSize(tfvr_status_hud_width.GetInt(), tfvr_status_hud_height.GetInt());
+    float sf = GetVRScreenScaleFactor();
+    SetCompositorSize((int)(tfvr_status_hud_width.GetInt() * sf), (int)(tfvr_status_hud_height.GetInt() * sf));
     m_bShowDebugBackground = tfvr_status_hud_debug_bg.GetBool();
     
     // Match status panel at top (team compositions + timer)
@@ -601,12 +609,12 @@ void CVRStatusHUDCompositor::UpdateLayout()
     {
         VRHudElementSlot_t& slot = m_HudSlots[m_nMatchStatusSlotIndex];
         slot.bEnabled = tfvr_status_hud_matchstatus_enabled.GetBool();
-        slot.nOffsetX = tfvr_status_hud_matchstatus_x.GetInt();
-        slot.nOffsetY = tfvr_status_hud_matchstatus_y.GetInt();
+        slot.nOffsetX = (int)(tfvr_status_hud_matchstatus_x.GetInt() * sf);
+        slot.nOffsetY = (int)(tfvr_status_hud_matchstatus_y.GetInt() * sf);
         slot.bCenterHorizontally = tfvr_status_hud_matchstatus_center.GetBool();
         slot.bCenterVertically = false;
-        slot.nContentOffsetX = tfvr_status_hud_matchstatus_content_offset_x.GetInt();
-        slot.nContentOffsetY = tfvr_status_hud_matchstatus_content_offset_y.GetInt();
+        slot.nContentOffsetX = (int)(tfvr_status_hud_matchstatus_content_offset_x.GetInt() * sf);
+        slot.nContentOffsetY = (int)(tfvr_status_hud_matchstatus_content_offset_y.GetInt() * sf);
         slot.flScale = tfvr_status_hud_matchstatus_scale.GetFloat();
     }
     
@@ -615,12 +623,12 @@ void CVRStatusHUDCompositor::UpdateLayout()
     {
         VRHudElementSlot_t& slot = m_HudSlots[m_nHealthSlotIndex];
         slot.bEnabled = tfvr_status_hud_health_enabled.GetBool();
-        slot.nOffsetX = tfvr_status_hud_health_x.GetInt();
-        slot.nOffsetY = tfvr_status_hud_health_y.GetInt();
+        slot.nOffsetX = (int)(tfvr_status_hud_health_x.GetInt() * sf);
+        slot.nOffsetY = (int)(tfvr_status_hud_health_y.GetInt() * sf);
         slot.bCenterHorizontally = tfvr_status_hud_health_center.GetBool();
         slot.bCenterVertically = tfvr_status_hud_health_center_v.GetBool();
-        slot.nContentOffsetX = tfvr_status_hud_health_content_offset_x.GetInt();
-        slot.nContentOffsetY = tfvr_status_hud_health_content_offset_y.GetInt();
+        slot.nContentOffsetX = (int)(tfvr_status_hud_health_content_offset_x.GetInt() * sf);
+        slot.nContentOffsetY = (int)(tfvr_status_hud_health_content_offset_y.GetInt() * sf);
         slot.flScale = tfvr_status_hud_health_scale.GetFloat();
     }
     
@@ -629,12 +637,12 @@ void CVRStatusHUDCompositor::UpdateLayout()
     {
         VRHudElementSlot_t& slot = m_HudSlots[m_nObjectiveSlotIndex];
         slot.bEnabled = tfvr_status_hud_objective_enabled.GetBool();
-        slot.nOffsetX = tfvr_status_hud_objective_x.GetInt();
-        slot.nOffsetY = tfvr_status_hud_objective_y.GetInt();
+        slot.nOffsetX = (int)(tfvr_status_hud_objective_x.GetInt() * sf);
+        slot.nOffsetY = (int)(tfvr_status_hud_objective_y.GetInt() * sf);
         slot.bCenterHorizontally = tfvr_status_hud_objective_center.GetBool();
         slot.bCenterVertically = tfvr_status_hud_objective_center_v.GetBool();
-        slot.nContentOffsetX = tfvr_status_hud_objective_content_offset_x.GetInt();
-        slot.nContentOffsetY = tfvr_status_hud_objective_content_offset_y.GetInt();
+        slot.nContentOffsetX = (int)(tfvr_status_hud_objective_content_offset_x.GetInt() * sf);
+        slot.nContentOffsetY = (int)(tfvr_status_hud_objective_content_offset_y.GetInt() * sf);
         slot.flScale = tfvr_status_hud_objective_scale.GetFloat();
     }
 }
@@ -855,7 +863,8 @@ void CVRWeaponHUDCompositor::RefreshDynamicElements()
 //-----------------------------------------------------------------------------
 void CVRWeaponHUDCompositor::UpdateLayout()
 {
-    SetCompositorSize(tfvr_weapon_hud_width.GetInt(), tfvr_weapon_hud_height.GetInt());
+    float sf = GetVRScreenScaleFactor();
+    SetCompositorSize((int)(tfvr_weapon_hud_width.GetInt() * sf), (int)(tfvr_weapon_hud_height.GetInt() * sf));
     m_bShowDebugBackground = tfvr_weapon_hud_debug_bg.GetBool();
     
     // Ammo panel layout
@@ -863,12 +872,12 @@ void CVRWeaponHUDCompositor::UpdateLayout()
     {
         VRHudElementSlot_t& slot = m_HudSlots[m_nAmmoSlotIndex];
         slot.bEnabled = tfvr_weapon_hud_ammo_enabled.GetBool();
-        slot.nOffsetX = tfvr_weapon_hud_ammo_x.GetInt();
-        slot.nOffsetY = tfvr_weapon_hud_ammo_y.GetInt();
+        slot.nOffsetX = (int)(tfvr_weapon_hud_ammo_x.GetInt() * sf);
+        slot.nOffsetY = (int)(tfvr_weapon_hud_ammo_y.GetInt() * sf);
         slot.bCenterHorizontally = tfvr_weapon_hud_ammo_center.GetBool();
         slot.bCenterVertically = false;
-        slot.nContentOffsetX = tfvr_weapon_hud_ammo_content_offset_x.GetInt();
-        slot.nContentOffsetY = tfvr_weapon_hud_ammo_content_offset_y.GetInt();
+        slot.nContentOffsetX = (int)(tfvr_weapon_hud_ammo_content_offset_x.GetInt() * sf);
+        slot.nContentOffsetY = (int)(tfvr_weapon_hud_ammo_content_offset_y.GetInt() * sf);
         slot.flScale = tfvr_weapon_hud_ammo_scale.GetFloat();
     }
     
@@ -879,10 +888,12 @@ void CVRWeaponHUDCompositor::UpdateLayout()
 //-----------------------------------------------------------------------------
 void CVRWeaponHUDCompositor::UpdateMeterLayout()
 {
-    int metersY = tfvr_weapon_hud_meters_y.GetInt();
-    int spacing = tfvr_weapon_hud_meters_spacing.GetInt();
-    int widthOverride = tfvr_weapon_hud_meters_width_override.GetInt();
-    int contentOffsetX = tfvr_weapon_hud_meters_content_offset_x.GetInt();
+    float sf = GetVRScreenScaleFactor();
+    int metersY = (int)(tfvr_weapon_hud_meters_y.GetInt() * sf);
+    int spacing = (int)(tfvr_weapon_hud_meters_spacing.GetInt() * sf);
+    int rawWidthOverride = tfvr_weapon_hud_meters_width_override.GetInt();
+    int widthOverride = rawWidthOverride > 0 ? (int)(rawWidthOverride * sf) : 0;
+    int contentOffsetX = (int)(tfvr_weapon_hud_meters_content_offset_x.GetInt() * sf);
     
     // Get ammo position for layered elements
     int ammoX = 0, ammoY = 0;
@@ -927,8 +938,8 @@ void CVRWeaponHUDCompositor::UpdateMeterLayout()
         {
             slot.bCenterHorizontally = false;
             slot.bCenterVertically = false;
-            slot.nOffsetX = ammoX + tfvr_weapon_hud_charge_offset_x.GetInt();
-            slot.nOffsetY = ammoY + tfvr_weapon_hud_charge_offset_y.GetInt();
+            slot.nOffsetX = ammoX + (int)(tfvr_weapon_hud_charge_offset_x.GetInt() * sf);
+            slot.nOffsetY = ammoY + (int)(tfvr_weapon_hud_charge_offset_y.GetInt() * sf);
             continue;
         }
         
@@ -993,8 +1004,8 @@ void CVRWeaponHUDCompositor::UpdateMeterLayout()
     if (m_nAccountPanelSlotIndex >= 0)
     {
         VRHudElementSlot_t& accountSlot = m_HudSlots[m_nAccountPanelSlotIndex];
-        accountSlot.nOffsetX += tfvr_weapon_hud_account_offset_x.GetInt();
-        accountSlot.nOffsetY += tfvr_weapon_hud_account_offset_y.GetInt();
+        accountSlot.nOffsetX += (int)(tfvr_weapon_hud_account_offset_x.GetInt() * sf);
+        accountSlot.nOffsetY += (int)(tfvr_weapon_hud_account_offset_y.GetInt() * sf);
     }
 }
 

@@ -17,6 +17,7 @@
 #include "const.h"
 #include "c_tf_playerclass.h"
 #include "client_virtualreality.h"
+#include "VGuiMatSurface/IMatSystemSurface.h"
 
 #include "mathlib/mathlib.h"
 
@@ -61,6 +62,27 @@ ConVar tfvr_calibration_debug("tfvr_calibration_debug", "0", FCVAR_ARCHIVE, "Sho
 
 
 ConVar tfvr_menu_scale("tfvr_menu_scale", "0.5", FCVAR_ARCHIVE);
+
+static void MirrorResolutionChanged(IConVar *var, const char *pOldValue, float flOldValue);
+ConVar tfvr_mirror_resolution("tfvr_mirror_resolution", "720", FCVAR_ARCHIVE,
+	"Desktop mirror resolution preset. Values: 720, 1080, 1440, 2160.",
+	MirrorResolutionChanged);
+
+static void MirrorResolutionChanged(IConVar *var, const char *pOldValue, float flOldValue)
+{
+	int height = ((ConVar*)var)->GetInt();
+	uint32_t w, h;
+	switch (height)
+	{
+	case 2160: w = 3840; h = 2160; break;
+	case 1440: w = 2560; h = 1440; break;
+	case 1080: w = 1920; h = 1080; break;
+	default:   w = 1280; h = 720;  break;
+	}
+
+	if (g_pOpenXRManager)
+		g_pOpenXRManager->SetSpectatorScreenDims(w, h);
+}
 
 ConVar tfvr_r_show_both_eyes("tfvr_r_show_both_eyes", "0", FCVAR_ARCHIVE, "Show both eyes on the game window.");
 
@@ -318,6 +340,10 @@ bool COpenXRManager::Initialize()
         vrParticleStabilize.SetValue( 1 );
     }
     
+    // Apply saved mirror resolution preset
+    extern ConVar tfvr_mirror_resolution;
+    MirrorResolutionChanged(&tfvr_mirror_resolution, "720", 720.0f);
+
     // OpenXR VR mode initialized successfully
     return true;
 }
@@ -843,6 +869,25 @@ void COpenXRManager::GetSpectatorScreenDims(uint32_t &width, uint32_t &height)
 {
 	width = m_spectatorScreenWidth;
 	height = m_spectatorScreenHeight;
+}
+
+void COpenXRManager::SetSpectatorScreenDims(uint32_t width, uint32_t height)
+{
+	if (m_spectatorScreenWidth == width && m_spectatorScreenHeight == height)
+		return;
+
+	m_spectatorScreenWidth = width;
+	m_spectatorScreenHeight = height;
+	m_bSpectatorDimsChanged = true;
+	Msg("VR: Mirror resolution set to %ux%u\n", width, height);
+}
+
+bool COpenXRManager::ConsumeSpectatorDimsChanged()
+{
+	if (!m_bSpectatorDimsChanged)
+		return false;
+	m_bSpectatorDimsChanged = false;
+	return true;
 }
 
 void COpenXRManager::UpdateOpenXRViewData()
@@ -2272,6 +2317,17 @@ void COpenXRManager::Update(float frametime)
 	UpdateOpenXRViewData();
 
 	vrRenderTargets->UpdateVRRenderTargets();
+
+	if (ConsumeSpectatorDimsChanged())
+	{
+		uint32_t w, h;
+		GetSpectatorScreenDims(w, h);
+		g_pMatSystemSurface->SetFullscreenViewportAndRenderTarget(0, 0, w, h, NULL);
+
+		char szCmd[256];
+		Q_snprintf(szCmd, sizeof(szCmd), "mat_setvideomode %u %u 1\n", w, h);
+		engine->ClientCmd_Unrestricted(szCmd);
+	}
 
 	// unfortunately, r_lod is not archived, so to make it an option, we have to map from our own convar here
 	static ConVarRef r_lod("r_lod");
