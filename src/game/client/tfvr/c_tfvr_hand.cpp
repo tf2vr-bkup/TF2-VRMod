@@ -2935,25 +2935,32 @@ bool C_TFVRHand::GetWristTransform(VMatrix& outTransform)
 
 //-----------------------------------------------------------------------------
 // Purpose: Get palm transform as a matrix - CANONICAL reference for offsets
-//          The OpenXR palm joint has standardized orientation:
-//          +X points along metacarpals (toward fingers)
-//          +Y points out of palm (palm normal)
-//          +Z points toward thumb side
-//          This is consistent across runtimes and input types.
+//          Fallback chain:
+//          1. grip_surface / palm_ext from action system (works across runtimes)
+//          2. XR_HAND_JOINT_PALM_EXT from hand tracking (SteamVR primarily)
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::GetPalmTransform(VMatrix& outTransform)
 {
+	// Prefer palm pose from action system (grip_surface or palm_ext)
+	if (g_pOpenXRManager && g_pOpenXRManager->IsPalmPoseSupported())
+	{
+		bool palmPoseValid = IsLeftHand() ?
+			g_pOpenXRManager->GetLeftPalmPose(outTransform) :
+			g_pOpenXRManager->GetRightPalmPose(outTransform);
+		if (palmPoseValid)
+			return true;
+	}
+	
+	// Fall back to hand tracking palm joint
 	if (!m_pHandTracker)
 		return false;
 	
-	// Get palm position and angles
 	Vector palmPos;
 	QAngle palmAngles;
 	
 	if (!m_pHandTracker->GetHandJoint(IsLeftHand(), XR_HAND_JOINT_PALM_EXT, palmPos, palmAngles))
 		return false;
 	
-	// Convert to matrix
 	matrix3x4_t temp;
 	AngleMatrix(palmAngles, palmPos, temp);
 	outTransform.CopyFrom3x4(temp);
@@ -2972,12 +2979,14 @@ void C_TFVRHand::UpdateHandTransform()
 	if (m_bShuttingDown)
 		return;
 		
-	if (!g_pOpenXRManager || !m_pHandTracker)
+	if (!g_pOpenXRManager)
+		return;
+	
+	// Need either hand tracking or palm pose from the action system
+	if (!m_pHandTracker && !g_pOpenXRManager->IsPalmPoseSupported())
 		return;
 
-	// Try to get PALM position using matrix (canonical reference)
-	// Palm joint has standardized orientation per OpenXR spec:
-	// +X toward fingers, +Y out of palm, +Z toward thumb
+	// GetPalmTransform tries: action system palm (grip_surface/palm_ext) → hand tracking palm
 	VMatrix palmMatrix;
 	
 	bool handValid = GetPalmTransform(palmMatrix);
@@ -3050,7 +3059,7 @@ void C_TFVRHand::UpdateHandTransform()
 		}
 	}
 	
-	// Normal path: use palm, fallback to wrist, then controller
+	// Normal path: palm → wrist (hand tracking) → grip pose (universal)
 	if (handValid)
 	{
 		m_vecLastValidPosition = palmMatrix.GetTranslation();
@@ -3059,9 +3068,9 @@ void C_TFVRHand::UpdateHandTransform()
 	}
 	else
 	{
-		// Try wrist as secondary fallback
+		// Try wrist from hand tracking as secondary fallback
 		VMatrix wristMatrix;
-		if (GetWristTransform(wristMatrix))
+		if (m_pHandTracker && GetWristTransform(wristMatrix))
 		{
 			m_vecLastValidPosition = wristMatrix.GetTranslation();
 			MatrixAngles(wristMatrix.As3x4(), m_angLastValidAngles);
@@ -3069,17 +3078,17 @@ void C_TFVRHand::UpdateHandTransform()
 		}
 		else
 		{
-			// Final fallback to controller pose
-			VMatrix controllerPose;
+			// Final fallback: grip pose (closer to hand position than aim pose)
+			VMatrix gripPose;
 			if (IsLeftHand())
-				m_bControllerTracked = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
+				m_bControllerTracked = g_pOpenXRManager->GetLeftControllerGripPose(gripPose);
 			else
-				m_bControllerTracked = g_pOpenXRManager->GetRightControllerPose(controllerPose);
+				m_bControllerTracked = g_pOpenXRManager->GetRightControllerGripPose(gripPose);
 			
 			if (m_bControllerTracked)
 			{
-				m_vecLastValidPosition = controllerPose.GetTranslation();
-				MatrixAngles(controllerPose.As3x4(), m_angLastValidAngles);
+				m_vecLastValidPosition = gripPose.GetTranslation();
+				MatrixAngles(gripPose.As3x4(), m_angLastValidAngles);
 			}
 		}
 	}

@@ -400,34 +400,46 @@ bool CVRObjectiveOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     {
         return false;
     }
-    
-    COpenXRHandTracker* handTracker = g_pOpenXRManager->GetHandTracker();
-    if (!handTracker)
-    {
-        return false;
-    }
-    
-    // Get hand joint data - use palm as the base position
-    Vector palmPosition, wristPosition;
-    QAngle palmAngles, wristAngles;
+
     bool leftHand = (m_nAttachedHand == 0);
-    
-    // Check if the hand is being tracked
-    bool handTracked = leftHand ? handTracker->IsLeftHandTracked() : handTracker->IsRightHandTracked();
-    if (!handTracked)
+    Vector palmPosition;
+    QAngle palmAngles;
+    bool palmValid = false;
+
+    // Try palm pose from action system (grip_surface or palm_ext)
+    if (g_pOpenXRManager->IsPalmPoseSupported())
     {
-        return false;
+        VMatrix palmMatrix;
+        bool gotPalm = leftHand ?
+            g_pOpenXRManager->GetLeftPalmPose(palmMatrix) :
+            g_pOpenXRManager->GetRightPalmPose(palmMatrix);
+        if (gotPalm)
+        {
+            palmPosition = palmMatrix.GetTranslation();
+            MatrixAngles(palmMatrix.As3x4(), palmAngles);
+            palmValid = true;
+        }
     }
-    
-    // Get palm joint (primary position reference)
-    bool palmValid = handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_PALM_EXT, palmPosition, palmAngles);
+
+    // Fall back to hand tracking palm joint
+    COpenXRHandTracker* handTracker = g_pOpenXRManager->GetHandTracker();
     if (!palmValid)
     {
-        return false;
+        if (!handTracker)
+            return false;
+        bool handTracked = leftHand ? handTracker->IsLeftHandTracked() : handTracker->IsRightHandTracked();
+        if (!handTracked)
+            return false;
+        palmValid = handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_PALM_EXT, palmPosition, palmAngles);
+        if (!palmValid)
+            return false;
     }
-    
-    // Get wrist joint for orientation reference
-    bool wristValid = handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPosition, wristAngles);
+
+    // Wrist from hand tracking (optional, for improved forward direction)
+    Vector wristPosition;
+    QAngle wristAngles;
+    bool wristValid = handTracker && 
+        handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPosition, wristAngles);
     
     // Calculate position below the health overlay
     Vector quadPosition = palmPosition;

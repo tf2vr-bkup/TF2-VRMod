@@ -1227,24 +1227,44 @@ bool CVRStatusHUDManager::CalculateHandTrackingTransform(VMatrix& transform)
     if (!g_pOpenXRManager)
         return false;
     
-    COpenXRHandTracker* handTracker = g_pOpenXRManager->GetHandTracker();
-    if (!handTracker)
-        return false;
-    
     bool leftHand = (m_nAttachedHand == 0);
-    
-    bool handTracked = leftHand ? handTracker->IsLeftHandTracked() : handTracker->IsRightHandTracked();
-    if (!handTracked)
-        return false;
-    
     Vector palmPosition;
     QAngle palmAngles;
-    if (!handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_PALM_EXT, palmPosition, palmAngles))
-        return false;
+    bool palmValid = false;
     
+    // Try palm pose from action system (grip_surface or palm_ext)
+    if (g_pOpenXRManager->IsPalmPoseSupported())
+    {
+        VMatrix palmMatrix;
+        bool gotPalm = leftHand ?
+            g_pOpenXRManager->GetLeftPalmPose(palmMatrix) :
+            g_pOpenXRManager->GetRightPalmPose(palmMatrix);
+        if (gotPalm)
+        {
+            palmPosition = palmMatrix.GetTranslation();
+            MatrixAngles(palmMatrix.As3x4(), palmAngles);
+            palmValid = true;
+        }
+    }
+    
+    // Fall back to hand tracking palm joint
+    COpenXRHandTracker* handTracker = g_pOpenXRManager->GetHandTracker();
+    if (!palmValid)
+    {
+        if (!handTracker)
+            return false;
+        bool handTracked = leftHand ? handTracker->IsLeftHandTracked() : handTracker->IsRightHandTracked();
+        if (!handTracked)
+            return false;
+        if (!handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_PALM_EXT, palmPosition, palmAngles))
+            return false;
+    }
+    
+    // Wrist from hand tracking (optional, for improved forward direction)
     Vector wristPosition;
     QAngle wristAngles;
-    bool wristValid = handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPosition, wristAngles);
+    bool wristValid = handTracker && 
+        handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPosition, wristAngles);
     
     Vector handForward, handRight, handUp;
     if (wristValid)

@@ -64,6 +64,7 @@ private:
     XrInputAction CreateBooleanAction(const char* name, const char* localizedName);
     XrInputAction CreateFloatAction(const char* name, const char* localizedName);
     XrInputAction CreatePoseAction(const char* name, const char* localizedName);
+    void AddPalmPoseBindings(std::vector<XrActionSuggestedBinding>& bindings);
 
     COpenXRManager* m_manager;
     XrInstance m_instance;

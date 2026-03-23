@@ -127,6 +127,12 @@ public:
     COpenXRHandTracker* GetHandTracker() const { return m_handTracker; }
     bool IsHandTrackingSupported() const { return m_handTrackingSupported; }
     
+    // Palm pose (grip_surface from OpenXR 1.1/maintenance1, or palm_ext fallback)
+    bool IsPalmPoseSupported() const { return m_palmPoseSupported; }
+    bool IsGripSurfaceAvailable() const { return m_gripSurfaceAvailable; }
+    bool GetLeftPalmPose(VMatrix& pose);
+    bool GetRightPalmPose(VMatrix& pose);
+    
     // Coordinate conversion functions
     VMatrix ToSourceCoordinateSystem(const XrPosef& pose) const;
     VMatrix ToSourceCoordinateSystemFloorAligned(const XrPosef& pose) const;
@@ -211,6 +217,9 @@ private:
     // Hand tracking system
     COpenXRHandTracker* m_handTracker;
     bool m_handTrackingSupported;
+    bool m_palmPoseSupported;
+    bool m_gripSurfaceAvailable;
+    bool m_maintenance1Enabled;
     
     // VR Menu Manager
     CVRMenuManager* m_menuManager;

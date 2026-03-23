@@ -118,6 +118,18 @@ bool COpenXRInputManager::CreateActions()
     if (rightHandGripPose.handle == XR_NULL_HANDLE) return false;
     m_actions["right_hand_grip_pose"] = rightHandGripPose;
 
+    // Create palm pose actions (XR_EXT_palm_pose - standardized hand placement)
+    if (m_manager->IsPalmPoseSupported())
+    {
+        XrInputAction leftPalmPose = CreatePoseAction("left_palm_pose", "Left Palm Pose");
+        if (leftPalmPose.handle == XR_NULL_HANDLE) return false;
+        m_actions["left_palm_pose"] = leftPalmPose;
+
+        XrInputAction rightPalmPose = CreatePoseAction("right_palm_pose", "Right Palm Pose");
+        if (rightPalmPose.handle == XR_NULL_HANDLE) return false;
+        m_actions["right_palm_pose"] = rightPalmPose;
+    }
+
     // Create button actions
     XrInputAction primaryAttack = CreateFloatAction("primary_attack", "Primary Attack");
     if (primaryAttack.handle == XR_NULL_HANDLE) return false;
@@ -597,6 +609,8 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         }
     }
 
+    AddPalmPoseBindings(suggestedBindings);
+
     // Suggest bindings for Index controller
     return SuggestBindings(indexProfilePath, suggestedBindings, "Valve Index");
 }
@@ -909,6 +923,8 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         }
     }
 
+    AddPalmPoseBindings(suggestedBindings);
+
     // Suggest bindings for Quest controller
     return SuggestBindings(questProfilePath, suggestedBindings, "Quest Touch");
 }
@@ -991,6 +1007,8 @@ bool COpenXRInputManager::CreateMinimalQuestControllerProfile()
 
         }
     }
+
+    AddPalmPoseBindings(suggestedBindings);
 
     // Suggest minimal bindings for Quest controller
     return SuggestBindings(questProfilePath, suggestedBindings, "Quest Touch (Minimal)");
@@ -1290,6 +1308,8 @@ bool COpenXRInputManager::CreateWMRControllerProfile()
         }
     }
 
+    AddPalmPoseBindings(suggestedBindings);
+
     return SuggestBindings(wmrProfilePath, suggestedBindings, "WMR Motion Controller");
 }
 
@@ -1588,6 +1608,8 @@ bool COpenXRInputManager::CreateViveControllerProfile()
         }
     }
 
+    AddPalmPoseBindings(suggestedBindings);
+
     return SuggestBindings(viveProfilePath, suggestedBindings, "HTC Vive Controller");
 }
 
@@ -1885,6 +1907,8 @@ bool COpenXRInputManager::CreateHPReverbControllerProfile()
         }
     }
 
+    AddPalmPoseBindings(suggestedBindings);
+
     return SuggestBindings(hpProfilePath, suggestedBindings, "HP Reverb G2");
 }
 
@@ -1964,6 +1988,8 @@ bool COpenXRInputManager::CreateGenericControllerProfile()
             suggestedBindings.push_back(binding);
         }
     }
+
+    AddPalmPoseBindings(suggestedBindings);
 
     // Suggest bindings for generic controller
     return SuggestBindings(genericProfilePath, suggestedBindings, "Generic");
@@ -2190,6 +2216,33 @@ XrInputAction COpenXRInputManager::CreatePoseAction(const char* name, const char
     m_actionSpaces[name] = actionSpace;
 
     return action;
+}
+
+void COpenXRInputManager::AddPalmPoseBindings(std::vector<XrActionSuggestedBinding>& bindings)
+{
+    if (m_actions.find("left_palm_pose") == m_actions.end())
+        return;
+    
+    const char* leftPath = m_manager->IsGripSurfaceAvailable() ?
+        "/user/hand/left/input/grip_surface/pose" : "/user/hand/left/input/palm_ext/pose";
+    const char* rightPath = m_manager->IsGripSurfaceAvailable() ?
+        "/user/hand/right/input/grip_surface/pose" : "/user/hand/right/input/palm_ext/pose";
+    
+    XrPath leftBindingPath, rightBindingPath;
+    if (XR_SUCCEEDED(xrStringToPath(m_instance, leftPath, &leftBindingPath)))
+    {
+        XrActionSuggestedBinding binding;
+        binding.action = m_actions["left_palm_pose"].handle;
+        binding.binding = leftBindingPath;
+        bindings.push_back(binding);
+    }
+    if (XR_SUCCEEDED(xrStringToPath(m_instance, rightPath, &rightBindingPath)))
+    {
+        XrActionSuggestedBinding binding;
+        binding.action = m_actions["right_palm_pose"].handle;
+        binding.binding = rightBindingPath;
+        bindings.push_back(binding);
+    }
 }
 
 void COpenXRInputManager::PollInput()

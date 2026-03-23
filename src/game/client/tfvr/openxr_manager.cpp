@@ -256,6 +256,9 @@ COpenXRManager::COpenXRManager()
     m_inputManager = nullptr;
     m_handTracker = nullptr;
     m_handTrackingSupported = false;
+    m_palmPoseSupported = false;
+    m_gripSurfaceAvailable = false;
+    m_maintenance1Enabled = false;
     m_menuManager = nullptr;
     m_laserPointer = nullptr;
 }
@@ -526,6 +529,30 @@ bool COpenXRManager::CreateOpenXRInstance()
         DevMsg("OpenXR: Hand tracking extension available and enabled\n");
     } else {
         DevMsg("OpenXR: Hand tracking extension not available\n");
+    }
+    
+    // Optional: KHR_maintenance1 (backports OpenXR 1.1 features like grip_surface to 1.0 apps)
+    m_maintenance1Enabled = isExtensionAvailable(XR_KHR_MAINTENANCE1_EXTENSION_NAME);
+    if (m_maintenance1Enabled) {
+        extensionsToEnable.push_back(XR_KHR_MAINTENANCE1_EXTENSION_NAME);
+        DevMsg("OpenXR: KHR_maintenance1 available - grip_surface pose enabled\n");
+    }
+    
+    // Optional: Palm pose (fallback for runtimes without maintenance1/1.1)
+    bool palmExtAvailable = isExtensionAvailable(XR_EXT_PALM_POSE_EXTENSION_NAME);
+    if (palmExtAvailable) {
+        extensionsToEnable.push_back(XR_EXT_PALM_POSE_EXTENSION_NAME);
+        DevMsg("OpenXR: Palm pose extension available and enabled\n");
+    }
+    
+    // Determine palm pose strategy: prefer grip_surface (1.1 core), fall back to palm_ext
+    m_gripSurfaceAvailable = m_maintenance1Enabled;
+    m_palmPoseSupported = m_gripSurfaceAvailable || palmExtAvailable;
+    if (m_palmPoseSupported) {
+        DevMsg("OpenXR: Palm pose will use %s path\n", 
+               m_gripSurfaceAvailable ? "grip_surface (via maintenance1)" : "palm_ext");
+    } else {
+        DevMsg("OpenXR: No palm pose support - will fall back to hand tracking or grip pose\n");
     }
     
     // Optional: XR_EXT_uuid (required by render model extension)
@@ -2820,6 +2847,77 @@ bool COpenXRManager::IsLeftControllerGripPoseValid()
 bool COpenXRManager::IsRightControllerGripPoseValid()
 {
     return m_inputManager ? m_inputManager->IsControllerPoseValid("right_hand_grip_pose") : false;
+}
+
+//-----------------------------------------------------------------------------
+// Palm pose from XR_EXT_palm_pose (standardized across runtimes, no hand
+// tracking extension required). Uses the same head-relative smoothing
+// pipeline as controller poses.
+//-----------------------------------------------------------------------------
+bool COpenXRManager::GetLeftPalmPose(VMatrix& pose)
+{
+    if (!m_inputManager || !m_palmPoseSupported) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("left_palm_pose", xrPose))
+    {
+        VMatrix palmInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
+        
+        C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+        if (pPlayer)
+        {
+            extern CClientVirtualReality g_ClientVirtualReality;
+            extern bool UseVR();
+            
+            if (UseVR())
+            {
+                VMatrix rawHeadPlayspace = GetMideyePose();
+                VMatrix palmRelativeToHead = rawHeadPlayspace.InverseTR() * palmInPlayspace;
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
+                pose = smoothedHeadWorld * palmRelativeToHead;
+            }
+            else
+            {
+                pose = palmInPlayspace;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool COpenXRManager::GetRightPalmPose(VMatrix& pose)
+{
+    if (!m_inputManager || !m_palmPoseSupported) return false;
+    
+    XrPosef xrPose;
+    if (m_inputManager->GetControllerPose("right_palm_pose", xrPose))
+    {
+        VMatrix palmInPlayspace = tfvr_use_floor_aligned_poses.GetBool() ? 
+            this->ToSourceCoordinateSystemFloorAligned(xrPose) : this->ToSourceCoordinateSystem(xrPose);
+        
+        C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+        if (pPlayer)
+        {
+            extern CClientVirtualReality g_ClientVirtualReality;
+            extern bool UseVR();
+            
+            if (UseVR())
+            {
+                VMatrix rawHeadPlayspace = GetMideyePose();
+                VMatrix palmRelativeToHead = rawHeadPlayspace.InverseTR() * palmInPlayspace;
+                VMatrix smoothedHeadWorld = g_ClientVirtualReality.GetWorldFromMidEyeRaw();
+                pose = smoothedHeadWorld * palmRelativeToHead;
+            }
+            else
+            {
+                pose = palmInPlayspace;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 VMatrix COpenXRManager::ToSourceCoordinateSystem(const XrPosef& pose) const
