@@ -599,6 +599,11 @@ void CInvisProxy::OnBind( C_BaseEntity *pC_BaseEntity )
 			{
 				pPlayer = ToTFPlayer( pOwnerInterface->GetOwnerViaInterface() );
 			}
+
+			if ( !pPlayer )
+			{
+				pPlayer = ToTFPlayer( pEnt->GetOwnerEntity() );
+			}
 		}
 	}
 	

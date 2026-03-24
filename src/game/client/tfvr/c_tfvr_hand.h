@@ -348,9 +348,12 @@ public:
 	// These are attached to the LEFT hand when the RIGHT hand equips certain weapons
 	// =========================================================================
 	
-	// Spy watch (ExtraWearableViewModel from cloak weapons)
-	// Attached when right hand has knife/revolver and spy has cloak equipped
+	// Spy watch (cloak weapon's wrist model)
+	// Shown on left hand whenever a Spy has a cloak weapon equipped
+	// Position is driven by weapon_bone_L in SetupBones
 	CHandle<C_BaseAnimating> m_hLeftHandWatch;
+	matrix3x4_t m_matWatchOffset;
+	bool m_bWatchOffsetValid;
 	
 	// Scout ball (Sandman baseball, Wrap Assassin ornament)
 	// Conditionally shown based on ammo availability
@@ -368,19 +371,16 @@ public:
 	// in a single model mesh, so they don't need special left-hand handling.
 	
 public:
-	// Left hand wearable management (called from right hand's EquipWeapon)
-	void AttachWatchToLeftHand(C_BaseAnimating *pWatch);  // Use existing networked wearable
-	void CreateWatchModel(const char *pszWatchModel);     // Create our own watch model
+	// Left hand wearable management
+	void CreateWatchModel(const char *pszWatchModel);
 	void RemoveLeftHandWatch();
+	void UpdateLeftHandWatch();   // Called each frame to check watch state
 	void AttachBallToLeftHand(const char *pszBallModel);
 	void RemoveLeftHandBall();
-	void UpdateLeftHandBall();  // Called each frame to check ammo
+	void UpdateLeftHandBall();    // Called each frame to check ammo
 	void AttachShieldToLeftHand(const char *pszShieldModel, int nSkin);
 	void RemoveLeftHandShield();
 	void UpdateLeftHandShield();  // Called each frame to check shield state
-	
-private:
-	bool m_bOwnWatchModel;  // True if we created the watch model ourselves (need to delete it)
 };
 
 // Global functions

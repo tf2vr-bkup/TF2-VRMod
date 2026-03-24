@@ -1533,7 +1533,8 @@ C_TFVRHand::C_TFVRHand()
 
 	// Left hand wearables
 	m_hLeftHandWatch = NULL;
-	m_bOwnWatchModel = false;
+	SetIdentityMatrix(m_matWatchOffset);
+	m_bWatchOffsetValid = false;
 	m_hLeftHandBall = NULL;
 	m_iLastBallAmmo = -1;
 	m_hLeftHandShield = NULL;
@@ -1648,7 +1649,8 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 
 	// Reset left hand wearables
 	m_hLeftHandWatch = NULL;
-	m_bOwnWatchModel = false;
+	SetIdentityMatrix(m_matWatchOffset);
+	m_bWatchOffsetValid = false;
 	m_hLeftHandBall = NULL;
 	m_iLastBallAmmo = -1;
 	m_hLeftHandShield = NULL;
@@ -3217,29 +3219,12 @@ void C_TFVRHand::Update()
 		}
 	}
 	
-	// Update left hand wearables (scout ball visibility based on ammo, watch position, shield)
+	// Update left hand wearables (lifecycle management for watch, ball, shield)
 	if (IsLeftHand())
 	{
+		UpdateLeftHandWatch();
 		UpdateLeftHandBall();
 		UpdateLeftHandShield();
-		
-		// Update watch position if we have one
-		C_BaseAnimating *pWatch = m_hLeftHandWatch.Get();
-		if (pWatch)
-		{
-			// Get the weapon_bone_L attachment position for watch
-			int iAttachment = LookupAttachment("weapon_bone_L");
-			if (iAttachment > 0)
-			{
-				Vector attachPos;
-				QAngle attachAng;
-				if (GetAttachment(iAttachment, attachPos, attachAng))
-				{
-					pWatch->SetAbsOrigin(attachPos);
-					pWatch->SetAbsAngles(attachAng);
-				}
-			}
-		}
 	}
 }
 
@@ -4494,6 +4479,18 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			MatrixAngles(shieldWorld, shieldAng, shieldPos);
 			m_hLeftHandShield->SetAbsOrigin(shieldPos);
 			m_hLeftHandShield->SetAbsAngles(shieldAng);
+		}
+
+		if (IsLeftHand() && m_hLeftHandWatch.Get() && m_bWatchOffsetValid
+			&& m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+		{
+			matrix3x4_t watchWorld;
+			ConcatTransforms(pBoneToWorldOut[m_iHandBone], m_matWatchOffset, watchWorld);
+			Vector watchPos;
+			QAngle watchAng;
+			MatrixAngles(watchWorld, watchAng, watchPos);
+			m_hLeftHandWatch->SetAbsOrigin(watchPos);
+			m_hLeftHandWatch->SetAbsAngles(watchAng);
 		}
 	}
 
@@ -7374,6 +7371,19 @@ int C_TFVRHand::DrawModel(int flags)
 			modelrender->ForcedMaterialOverride(NULL);
 	}
 
+	if (m_hLeftHandWatch.Get())
+	{
+		if (bInvuln && (flags & STUDIO_RENDER))
+			modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+
+		m_hLeftHandWatch->RemoveEffects(EF_NODRAW);
+		m_hLeftHandWatch->DrawModel(flags);
+		m_hLeftHandWatch->AddEffects(EF_NODRAW);
+
+		if (bInvuln && (flags & STUDIO_RENDER))
+			modelrender->ForcedMaterialOverride(NULL);
+	}
+
 	return ret;
 }
 
@@ -7900,53 +7910,6 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		DevMsg("VR: ExtraWearableViewModel found on weapon, attaching to render weapon\n");
 	}
 	
-	// Spy watch handling - the watch is on the INVIS weapon, not the knife/revolver
-	// We need to find the spy's invis watch weapon and get its wearable (or create one)
-	if (pOwner && pOwner->IsPlayerClass(TF_CLASS_SPY))
-	{
-		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
-		if (pLeftHand)
-		{
-			// Look for the invis watch weapon
-			C_BaseCombatWeapon *pInvisWeapon = pOwner->Weapon_OwnsThisID(TF_WEAPON_INVIS);
-			
-			if (pInvisWeapon)
-			{
-				C_TFWeaponBase *pTFInvisWeapon = dynamic_cast<C_TFWeaponBase*>(pInvisWeapon);
-				
-				if (pTFInvisWeapon)
-				{
-					// First try to use the networked wearable
-					C_TFWearable *pWatchWearable = pTFInvisWeapon->m_hExtraWearableViewModel.Get();
-					
-					if (pWatchWearable)
-					{
-						pLeftHand->AttachWatchToLeftHand(pWatchWearable);
-					}
-					else
-					{
-						// Networked wearable not available - try to get model from item schema
-						CEconItemView *pItem = pTFInvisWeapon->GetAttributeContainer()->GetItem();
-						const char *pszWatchModel = NULL;
-						
-						if (pItem && pItem->IsValid())
-						{
-							pszWatchModel = pItem->GetExtraWearableViewModel();
-						}
-						
-						// Use default spy watch model if item doesn't define one
-						if (!pszWatchModel || !pszWatchModel[0])
-						{
-							pszWatchModel = "models/weapons/c_models/c_spy_watch/c_spy_watch.mdl";
-						}
-						
-						// Create our own watch model on the left hand
-						pLeftHand->CreateWatchModel(pszWatchModel);
-					}
-				}
-			}
-		}
-	}
 	
 	// Handle Scout ball weapons (Sandman, Wrap Assassin)
 	// The ball model is shown on the LEFT hand when ammo is available
@@ -8156,13 +8119,12 @@ void C_TFVRHand::UnequipWeapon()
 	m_flGripRotationBlend = 0.0f;
 	
 	// Clean up weapon-dependent left hand wearables when right hand unequips.
-	// Shield is a persistent wearable managed by UpdateLeftHandShield, not weapon-dependent.
+	// Watch and shield are persistent wearables managed by their Update functions.
 	if (IsRightHand())
 	{
 		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
 		if (pLeftHand)
 		{
-			pLeftHand->RemoveLeftHandWatch();
 			pLeftHand->RemoveLeftHandBall();
 		}
 	}
@@ -9332,81 +9294,30 @@ CON_COMMAND(tfvr_weapon_info, "Display info about the currently held weapon")
 //=============================================================================
 
 //-----------------------------------------------------------------------------
-// Purpose: Attach a spy watch wearable to the left hand
-//          Called from right hand's EquipWeapon when spy has cloak weapon
-//-----------------------------------------------------------------------------
-void C_TFVRHand::AttachWatchToLeftHand(C_BaseAnimating *pWatch)
-{
-	if (!IsLeftHand() || !pWatch)
-		return;
-	
-	// Remove any existing watch
-	RemoveLeftHandWatch();
-	
-	// Check if watch has weapon_bone_L for bone merging
-	int iWatchBone = pWatch->LookupBone("weapon_bone_L");
-	int iHandBone = LookupBone("weapon_bone_L");
-	
-	if (iWatchBone >= 0 && iHandBone >= 0)
-	{
-		// Watch has matching bone - use bone merge
-		pWatch->FollowEntity(this, true);
-		pWatch->AddEffects(EF_BONEMERGE);
-	}
-	else
-	{
-		// No matching bone - try to parent to attachment or use fallback
-		int iAttach = LookupAttachment("weapon_bone_L");
-		if (iAttach > 0)
-		{
-			pWatch->SetParent(this, iAttach);
-		}
-		else
-		{
-			// Fall back to bone merge
-			pWatch->FollowEntity(this, true);
-			pWatch->AddEffects(EF_BONEMERGE);
-		}
-	}
-	
-	pWatch->RemoveEffects(EF_NODRAW);
-	pWatch->UpdateVisibility();
-	
-	m_hLeftHandWatch = pWatch;
-	m_bOwnWatchModel = false;  // We don't own this - the weapon system does
-}
-
-//-----------------------------------------------------------------------------
 // Purpose: Remove the spy watch from the left hand
 //-----------------------------------------------------------------------------
 void C_TFVRHand::RemoveLeftHandWatch()
 {
 	if (m_hLeftHandWatch.Get())
 	{
-		if (m_bOwnWatchModel)
-		{
-			// We created this model - delete it
-			m_hLeftHandWatch->Release();
-		}
-		// else: The weapon system owns this wearable, don't delete
-		
+		m_hLeftHandWatch->Release();
 		m_hLeftHandWatch = NULL;
-		m_bOwnWatchModel = false;
 	}
+	m_bWatchOffsetValid = false;
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Create our own watch model (when networked wearable isn't available)
+// Purpose: Create a watch model on the left hand
+//          Uses EF_NODRAW + explicit DrawModel pattern (same as ball/shield)
+//          Position is driven by weapon_bone_L in SetupBones
 //-----------------------------------------------------------------------------
 void C_TFVRHand::CreateWatchModel(const char *pszWatchModel)
 {
 	if (!IsLeftHand() || !pszWatchModel || !pszWatchModel[0])
 		return;
 	
-	// Remove any existing watch
 	RemoveLeftHandWatch();
 	
-	// Create new watch entity - use C_BaseAnimating (NOT CTFViewModel which is hidden in VR)
 	C_BaseAnimating *pWatch = new C_BaseAnimating();
 	if (!pWatch)
 		return;
@@ -9417,7 +9328,6 @@ void C_TFVRHand::CreateWatchModel(const char *pszWatchModel)
 		return;
 	}
 	
-	// Set owner for material proxies (cloak, etc.)
 	C_TFPlayer *pOwner = GetOwnerPlayer();
 	if (pOwner)
 	{
@@ -9425,14 +9335,183 @@ void C_TFVRHand::CreateWatchModel(const char *pszWatchModel)
 		pWatch->SetOwnerEntity(pOwner);
 	}
 	
-	// Use FollowEntity with bone merge
-	pWatch->FollowEntity(this, true);
-	pWatch->AddEffects(EF_BONEMERGE | EF_BONEMERGE_FASTCULL);
+	pWatch->AddEffects(EF_NODRAW);
 	pWatch->SetMoveType(MOVETYPE_NONE);
 	pWatch->AddSolidFlags(FSOLID_NOT_SOLID);
-	
+	pWatch->SetRenderMode(kRenderTransTexture);
+
+	// Step 1: Get the watch model's weapon_bone_L reference pose inverse.
+	// When we SetAbsOrigin(pos), the watch's weapon_bone_L bone renders at
+	// (entityTransform * refPose), so we need the inverse to correct the
+	// entity position so the bone ends up where we want it.
+	m_bWatchOffsetValid = false;
+	matrix3x4_t watchRefPoseInverse;
+	SetIdentityMatrix(watchRefPoseInverse);
+	{
+		pWatch->SetAbsOrigin(vec3_origin);
+		pWatch->SetAbsAngles(vec3_angle);
+		pWatch->InvalidateBoneCache();
+
+		matrix3x4_t watchBones[MAXSTUDIOBONES];
+		if (pWatch->SetupBones(watchBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+		{
+			int iWatchWeaponBone = pWatch->LookupBone("weapon_bone_L");
+			if (iWatchWeaponBone >= 0)
+			{
+				MatrixInvert(watchBones[iWatchWeaponBone], watchRefPoseInverse);
+			}
+		}
+	}
+
+	// Step 2: Sample offhand_idle on the hand to find weapon_bone_L
+	// relative to bip_hand_L (same pattern as shield uses c_demo_arms cm_idle).
+	CStudioHdr *pHandHdr = GetModelPtr();
+	if (pHandHdr)
+	{
+		int iOffhandIdle = LookupSequence("offhand_idle");
+		int iHandBone = LookupBone("bip_hand_L");
+		int iWeaponBoneL = LookupBone("weapon_bone_L");
+
+		if (iOffhandIdle >= 0 && iHandBone >= 0 && iWeaponBoneL >= 0)
+		{
+			float poseParams[MAXSTUDIOPOSEPARAM];
+			memset(poseParams, 0, sizeof(poseParams));
+
+			IBoneSetup boneSetup(pHandHdr, BONE_USED_BY_ANYTHING, poseParams);
+
+			Vector pos[MAXSTUDIOBONES];
+			Quaternion q[MAXSTUDIOBONES];
+			for (int i = 0; i < MAXSTUDIOBONES; i++)
+			{
+				pos[i].Init();
+				q[i].Init(0, 0, 0, 1);
+			}
+			boneSetup.InitPose(pos, q);
+			boneSetup.AccumulatePose(pos, q, iOffhandIdle, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+
+			int numBones = pHandHdr->numbones();
+			matrix3x4_t handBones[MAXSTUDIOBONES];
+			for (int i = 0; i < numBones; i++)
+			{
+				matrix3x4_t boneToParent;
+				QuaternionMatrix(q[i], pos[i], boneToParent);
+
+				const mstudiobone_t *pBone = pHandHdr->pBone(i);
+				if (!pBone)
+				{
+					SetIdentityMatrix(handBones[i]);
+					continue;
+				}
+
+				if (pBone->parent == -1)
+					MatrixCopy(boneToParent, handBones[i]);
+				else if (pBone->parent >= 0 && pBone->parent < numBones)
+					ConcatTransforms(handBones[pBone->parent], boneToParent, handBones[i]);
+				else
+					SetIdentityMatrix(handBones[i]);
+			}
+
+			// weapon_bone_L relative to bip_hand_L
+			matrix3x4_t invHandBone;
+			MatrixInvert(handBones[iHandBone], invHandBone);
+
+			matrix3x4_t weaponBoneToHand;
+			ConcatTransforms(invHandBone, handBones[iWeaponBoneL], weaponBoneToHand);
+
+			// Combine: weaponBoneToHand positions the bone relative to
+			// the hand, watchRefPoseInverse corrects the entity transform
+			// so the mesh lands where the bone should be.
+			ConcatTransforms(weaponBoneToHand, watchRefPoseInverse, m_matWatchOffset);
+			m_bWatchOffsetValid = true;
+		}
+	}
+
 	m_hLeftHandWatch = pWatch;
-	m_bOwnWatchModel = true;  // We own this, need to delete on cleanup
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update left hand watch visibility based on equipped state
+//          Called each frame for spy — scans for TF_WEAPON_INVIS directly
+//          so the watch persists across weapon switches
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateLeftHandWatch()
+{
+	if (!IsLeftHand())
+		return;
+	
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (!pOwner)
+	{
+		if (m_hLeftHandWatch.Get())
+			RemoveLeftHandWatch();
+		return;
+	}
+	
+	if (!pOwner->IsPlayerClass(TF_CLASS_SPY))
+	{
+		static bool bWarnedClass = false;
+		if (!bWarnedClass) { DevMsg("VR Watch: Not spy class (class=%d)\n", pOwner->GetPlayerClass()->GetClassIndex()); bWarnedClass = true; }
+		if (m_hLeftHandWatch.Get())
+			RemoveLeftHandWatch();
+		return;
+	}
+	
+	DevMsg("VR Watch: Spy detected, checking invis weapon...\n");
+	
+	// Find the invis watch weapon directly
+	C_BaseCombatWeapon *pInvisWeapon = pOwner->Weapon_OwnsThisID(TF_WEAPON_INVIS);
+	if (!pInvisWeapon)
+	{
+		static bool bWarnedNoInvis = false;
+		if (!bWarnedNoInvis) { DevMsg("VR Watch: No TF_WEAPON_INVIS found\n"); bWarnedNoInvis = true; }
+		if (m_hLeftHandWatch.Get())
+			RemoveLeftHandWatch();
+		return;
+	}
+	
+	C_TFWeaponBase *pTFInvisWeapon = dynamic_cast<C_TFWeaponBase*>(pInvisWeapon);
+	if (!pTFInvisWeapon)
+	{
+		if (m_hLeftHandWatch.Get())
+			RemoveLeftHandWatch();
+		return;
+	}
+	
+	// Determine the watch model path
+	const char *pszWatchModel = NULL;
+	
+	C_TFWearable *pWatchWearable = pTFInvisWeapon->m_hExtraWearableViewModel.Get();
+	if (pWatchWearable)
+	{
+		const model_t *pModel = pWatchWearable->GetModel();
+		if (pModel)
+			pszWatchModel = modelinfo->GetModelName(pModel);
+	}
+	
+	if (!pszWatchModel || !pszWatchModel[0])
+	{
+		CEconItemView *pItem = pTFInvisWeapon->GetAttributeContainer()->GetItem();
+		if (pItem && pItem->IsValid())
+			pszWatchModel = pItem->GetExtraWearableViewModel();
+	}
+	
+	if (!pszWatchModel || !pszWatchModel[0])
+		pszWatchModel = "models/weapons/c_models/c_spy_watch.mdl";
+	
+	// If watch already exists, check whether model changed (loadout update)
+	if (m_hLeftHandWatch.Get())
+	{
+		const model_t *pCurrentModel = m_hLeftHandWatch->GetModel();
+		const char *pszCurrentModel = pCurrentModel ? modelinfo->GetModelName(pCurrentModel) : "";
+		if (Q_stricmp(pszCurrentModel, pszWatchModel) == 0)
+			return;
+		
+		RemoveLeftHandWatch();
+	}
+	
+	DevMsg("VR Watch: Creating watch model '%s'\n", pszWatchModel);
+	CreateWatchModel(pszWatchModel);
+	DevMsg("VR Watch: Watch created = %s\n", m_hLeftHandWatch.Get() ? "YES" : "NO");
 }
 
 //-----------------------------------------------------------------------------
