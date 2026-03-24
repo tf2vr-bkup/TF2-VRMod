@@ -119,6 +119,11 @@ public:
 	// (e.g. wrench building repair). Return true to skip normal damage.
 	virtual bool	HandleVRBuildingHit( trace_t &trace, float flDamageMod ) { return false; }
 
+#ifdef GAME_DLL
+	virtual float	GetVRHitDamageMod() const OVERRIDE { return m_flVRHitDamageMod; }
+#endif
+	bool			CanVRAddHead();
+
 protected:
 	void			VRPhysicalMeleeUpdate();
 	bool			DoVRSwingTrace( trace_t &trace );
@@ -129,6 +134,8 @@ protected:
 
 	float	m_flVRGripSpeed;
 	float	m_flVRLastHitTime;		// shared between both hands for damage cooldown
+	float	m_flVRHitDamageMod;		// last VR cooldown damage multiplier (for on-hit effects)
+	float	m_flVRLastHeadAddTime;	// when a head/organ was last granted (for head-count gating)
 	bool	m_bVRSwingActive;		// right hand: above swing threshold
 	bool	m_bVRSwingHit;			// right hand: hit registered this swing arc
 	bool	m_bVRSwingActiveLeft;	// left hand (fists only)

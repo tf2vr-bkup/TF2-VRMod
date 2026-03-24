@@ -5577,7 +5577,7 @@ void CTFWeaponBase::ApplyOnHitAttributes( CBaseEntity *pVictimBaseEntity, CTFPla
 		}
 	}
 
-	// Add ubercharge on hit
+	// Add ubercharge on hit (VR: scale by cooldown like damage)
 	if ( pAttacker->IsPlayerClass( TF_CLASS_MEDIC ) )
 	{
 		float flUberChargeBonus = 0;
@@ -5587,6 +5587,8 @@ void CTFWeaponBase::ApplyOnHitAttributes( CBaseEntity *pVictimBaseEntity, CTFPla
 			CWeaponMedigun *pMedigun = (CWeaponMedigun *)pAttacker->Weapon_OwnsThisID( TF_WEAPON_MEDIGUN );
 			if ( pMedigun )
 			{
+				flUberChargeBonus *= GetVRHitDamageMod();
+
 				if ( TFGameRules() && TFGameRules()->IsPowerupMode() )
 				{
 					if ( pAttacker->m_Shared.GetCarryingRuneType() != RUNE_NONE )

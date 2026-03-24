@@ -97,6 +97,8 @@ void CTFWeaponBaseMelee::WeaponReset( void )
 
 	m_flVRGripSpeed = 0.0f;
 	m_flVRLastHitTime = 0.0f;
+	m_flVRHitDamageMod = 1.0f;
+	m_flVRLastHeadAddTime = 0.0f;
 	m_bVRSwingActive = false;
 	m_bVRSwingHit = false;
 	m_bVRSwingActiveLeft = false;
@@ -1317,6 +1319,25 @@ float CTFWeaponBaseMelee::CalcVRCooldownDamageMod()
 }
 
 //-----------------------------------------------------------------------------
+// Returns false if the weapon's attack interval hasn't elapsed since the
+// last head/organ was granted.  Non-VR players are never gated.
+//-----------------------------------------------------------------------------
+bool CTFWeaponBaseMelee::CanVRAddHead()
+{
+	if ( !IsOwnerInVR() )
+		return true;
+
+	if ( m_flVRLastHeadAddTime <= 0.0f )
+		return true;
+
+	float flElapsed = gpGlobals->curtime - m_flVRLastHeadAddTime;
+	float flAttackInterval = m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeFireDelay;
+	flAttackInterval = ApplyFireDelay( flAttackInterval );
+
+	return ( flAttackInterval <= 0.0f || flElapsed >= flAttackInterval );
+}
+
+//-----------------------------------------------------------------------------
 // Shared hull trace from an arbitrary grip position/orientation.
 //-----------------------------------------------------------------------------
 bool CTFWeaponBaseMelee::DoVRSwingTraceFromHand( trace_t &trace, const Vector &vecStart, const QAngle &angBone )
@@ -1572,6 +1593,7 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 
 		float flDamageMod = CalcVRCooldownDamageMod();
 		m_flVRLastHitTime = gpGlobals->curtime;
+		m_flVRHitDamageMod = flDamageMod;
 
 		m_iWeaponMode = TF_WEAPON_PRIMARY_MODE;
 		m_bConnected = true;
@@ -1605,6 +1627,7 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 		}
 
 		OnVRPostMeleeHit( trace );
+		m_flVRHitDamageMod = 1.0f;
 
 		if ( tfvr_melee_debug.GetInt() > 0 )
 		{

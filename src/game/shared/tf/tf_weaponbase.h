@@ -415,6 +415,7 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	virtual void	AddAssociatedObject( CBaseObject *pObject ) { }
 	virtual void	RemoveAssociatedObject( CBaseObject *pObject ) { }
 
+	virtual float	GetVRHitDamageMod() const { return 1.0f; }
 	virtual void	ApplyOnHitAttributes( CBaseEntity *pVictimBaseEntity, CTFPlayer *pAttacker, const CTakeDamageInfo &info );
 	virtual void	ApplyPostHitEffects( const CTakeDamageInfo &inputInfo, CTFPlayer *pPlayer );
 	virtual void	ApplyOnInjuredAttributes( CTFPlayer *pVictim, CTFPlayer *pAttacker, const CTakeDamageInfo &info );		// when owner of this weapon is hit
