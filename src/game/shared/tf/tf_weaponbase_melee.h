@@ -113,6 +113,7 @@ public:
 	virtual void	OnVRPreMeleeHit( trace_t &trace ) {}
 	virtual void	OnVRPostMeleeHit( trace_t &trace ) {}
 	virtual bool	IsVRMeleeBlocked( void ) { return false; }
+	bool			IsVRSwingActive( void ) const { return m_bVRSwingActive; }
 
 	// Override to intercept VR melee hits for non-damage interactions
 	// (e.g. wrench building repair). Return true to skip normal damage.

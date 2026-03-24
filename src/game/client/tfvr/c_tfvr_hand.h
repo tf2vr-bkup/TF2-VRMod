@@ -85,8 +85,18 @@ public:
 
 	// Suppress animation events - the hand model is only used for bone poses,
 	// sounds and effects should come from the render weapon instead.
-	virtual void FireEvent( const Vector& origin, const QAngle& angles, int event, const char *options ) override {}
-	virtual void DoAnimationEvents( CStudioHdr *pStudio ) override {}
+	// Exception: bread bite fire animations have their own attack sounds
+	// baked into the animation that we need to let through.
+	virtual void FireEvent( const Vector& origin, const QAngle& angles, int event, const char *options ) override
+	{
+		if (m_bIsBreadBite && m_bPlayingFireAnim)
+			BaseClass::FireEvent(origin, angles, event, options);
+	}
+	virtual void DoAnimationEvents( CStudioHdr *pStudio ) override
+	{
+		if (m_bIsBreadBite && m_bPlayingFireAnim)
+			BaseClass::DoAnimationEvents(pStudio);
+	}
 
 	// Rendering control
 	virtual bool ShouldDraw() override;
@@ -189,6 +199,7 @@ private:
 	// Held weapon
 	CHandle<C_TFWeaponBase> m_hHeldWeapon;  // The actual weapon (for mechanics/firing)
 	CHandle<C_BaseAnimating> m_hRenderWeapon;  // Separate render-only entity for visuals
+	int m_iLastEquippedWeaponID;  // Weapon ID at equip time (survives entity recreation)
 
 	// Hand tracking
 	COpenXRHandTracker *m_pHandTracker;
@@ -251,6 +262,23 @@ private:
 	int m_iMeleeSwingIndex;        // Current swing variant (0=a, 1=b, 2=c)
 	char m_szMeleeSwingBase[64];   // Base swing animation name (e.g., "b_swing_")
 	int m_iMeleeSwingCount;        // Number of swing variants available (usually 3)
+	
+	// VR physical swing edge detection (triggers hand fire animation)
+	bool m_bPrevVRSwingActive;     // Previous frame m_bVRSwingActive
+	
+	// Bread Bite: crit sequence + idle cycling on the hand model
+	int m_iBreadBiteCritSeq;       // breadglove_swing_crit on the hand
+	int m_iBreadBiteIdleSeqs[3];   // breadglove_idle_A/B/C on the hand
+	bool m_bIsBreadBite;           // current weapon is the Bread Bite
+	float m_flBreadBiteIdleStartTime; // when the current idle variant started playing
+
+	// Bread Bite animation crossfade
+	int m_iBBCrossfadeFromSeq;      // sequence we're blending away from (-1 = none)
+	float m_flBBCrossfadeFromCycle; // cycle of that sequence at transition time
+	float m_flBBCrossfadeStart;     // gpGlobals->curtime when crossfade began
+	int m_iBBLastSampledSeq;        // previous frame's sequence (for change detection)
+	float m_flBBLastSampledCycle;   // previous frame's cycle
+	float m_flBBLastCrossfadeCheck; // last curtime we ran crossfade detection
 	
 	// Backstab ready animation (spy knife only)
 	int m_iBackstabUpSequence;          // knife_backstab_up (raise transition)
@@ -330,6 +358,12 @@ public:
 	CHandle<C_BaseAnimating> m_hLeftHandBall;
 	int m_iLastBallAmmo;  // Track ammo changes to update ball visibility
 	
+	// Demoman shield (Chargin' Targe, Splendid Screen, Tide Turner, etc.)
+	// Shown on left hand whenever the Demoman has a shield equipped
+	CHandle<C_BaseAnimating> m_hLeftHandShield;
+	matrix3x4_t m_matShieldOffset;  // weapon_targe relative to bip_hand_L from c_demo_arms cm_idle
+	bool m_bShieldOffsetValid;
+	
 	// NOTE: attach_to_hands weapons (boxing gloves, etc.) contain BOTH hands
 	// in a single model mesh, so they don't need special left-hand handling.
 	
@@ -341,6 +375,9 @@ public:
 	void AttachBallToLeftHand(const char *pszBallModel);
 	void RemoveLeftHandBall();
 	void UpdateLeftHandBall();  // Called each frame to check ammo
+	void AttachShieldToLeftHand(const char *pszShieldModel, int nSkin);
+	void RemoveLeftHandShield();
+	void UpdateLeftHandShield();  // Called each frame to check shield state
 	
 private:
 	bool m_bOwnWatchModel;  // True if we created the watch model ourselves (need to delete it)

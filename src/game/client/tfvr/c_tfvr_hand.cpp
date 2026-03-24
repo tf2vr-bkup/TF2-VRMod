@@ -12,7 +12,10 @@
 #include "tf/tf_weapon_flamethrower.h"
 #include "tf/tf_weapon_bat.h"
 #include "tf/tf_weapon_knife.h"
+#include "tf/tf_weaponbase_melee.h"
+#include "c_baseviewmodel.h"
 #include "tf/tf_item_wearable.h"
+#include "tf/tf_wearable_weapons.h"
 #include "econ/econ_entity.h"
 #include "econ/econ_item_schema.h"
 #include "model_types.h"
@@ -31,6 +34,10 @@
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
+// Forward declarations for Bread Bite variant selection (defined with fists helpers below)
+static int GetBreadBiteIdleVariant();
+static int GetBreadBiteDrawVariant();
+
 //-----------------------------------------------------------------------------
 // Purpose: Custom render weapon class that implements IHasOwner for material proxies
 //          This allows crit glow and other effects to work properly
@@ -40,7 +47,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false) {}
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
@@ -111,6 +118,11 @@ public:
 		m_iFireSequence = iSequence;
 	}
 	
+	void SetIdleSequence(int iSequence)
+	{
+		m_iIdleSequence = iSequence;
+	}
+	
 	void SetupAnimations()
 	{
 		extern ConVar tfvr_weapon_fire_anim_debug;
@@ -143,6 +155,30 @@ public:
 		
 		if (!tfvr_weapon_fire_anim.GetBool())
 			return;
+		
+		// Bread Bite: play the bread creature's own swing/crit animation
+		if (m_bBreadBiteAnims)
+		{
+			bool bIsCrit = false;
+			C_TFWeaponBase *pWeapon = m_hSourceWeapon.Get();
+			if (pWeapon)
+				bIsCrit = pWeapon->IsCurrentAttackACrit();
+			
+			int seq = (bIsCrit && m_iBreadBiteCritSeq >= 0) ? m_iBreadBiteCritSeq : m_iBreadBiteSwingSeq;
+			if (seq >= 0)
+			{
+				SetSequence(seq);
+				SetCycle(0.0f);
+				SetPlaybackRate(1.0f);
+				m_bPlayingFireAnim = true;
+				
+				if (tfvr_weapon_fire_anim_debug.GetBool())
+				{
+					DevMsg("VR: Playing bread bite weapon swing (seq %d, crit=%d)\n", seq, bIsCrit);
+				}
+				return;
+			}
+		}
 		
 		// Try to find a fire animation on the weapon model itself
 		// Common names: "fire", "shoot", "ref"
@@ -194,6 +230,34 @@ public:
 		}
 	}
 	
+	void SetupBreadBiteAnimations()
+	{
+		m_bBreadBiteAnims = true;
+		m_iBreadBiteSwingSeq = LookupSequence("breadglove_swing_right");
+		m_iBreadBiteCritSeq = LookupSequence("breadglove_swing_crit");
+		
+		m_iBreadBiteIdleSeqs[0] = LookupSequence("breadglove_idle_A");
+		m_iBreadBiteIdleSeqs[1] = LookupSequence("breadglove_idle_B");
+		m_iBreadBiteIdleSeqs[2] = LookupSequence("breadglove_idle_C");
+		
+		extern ConVar tfvr_weapon_fire_anim_debug;
+		if (tfvr_weapon_fire_anim_debug.GetBool())
+		{
+			DevMsg("VR: Bread Bite weapon model sequences - swing: %d, crit: %d, idles: %d/%d/%d\n",
+				m_iBreadBiteSwingSeq, m_iBreadBiteCritSeq,
+				m_iBreadBiteIdleSeqs[0], m_iBreadBiteIdleSeqs[1], m_iBreadBiteIdleSeqs[2]);
+		}
+	}
+	
+	void RandomizeBreadBiteIdle()
+	{
+		if (!m_bBreadBiteAnims)
+			return;
+		int idx = RandomInt(0, 2);
+		if (m_iBreadBiteIdleSeqs[idx] >= 0)
+			m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
+	}
+	
 	void PlayMedigunSequence(MedigunFireState state)
 	{
 		int seq = -1;
@@ -235,6 +299,9 @@ public:
 		// Check if fire animation has completed (skip for medigun - driven by hand)
 		if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE && GetCycle() >= 1.0f)
 		{
+			// Bread Bite: pick a new random idle variant each time
+			RandomizeBreadBiteIdle();
+			
 			// Return to idle
 			if (m_iIdleSequence >= 0)
 			{
@@ -256,6 +323,8 @@ public:
 		// Check if fire animation has completed (skip for medigun - driven by hand)
 		if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE && GetCycle() >= 1.0f)
 		{
+			RandomizeBreadBiteIdle();
+			
 			// Return to idle
 			if (m_iIdleSequence >= 0)
 			{
@@ -278,7 +347,17 @@ public:
 		if (!tfvr_weapon_draw_anim.GetBool())
 			return;
 		
-		int drawSeq = LookupSequence("draw");
+		int drawSeq = -1;
+		
+		// Bread Bite: use the bread creature's deploy animation
+		if (m_bBreadBiteAnims)
+		{
+			int variant = GetBreadBiteDrawVariant();
+			drawSeq = LookupSequence(variant ? "breadglove_draw_B" : "breadglove_draw_A");
+		}
+		
+		if (drawSeq < 0)
+			drawSeq = LookupSequence("draw");
 		if (drawSeq < 0)
 			drawSeq = LookupSequence("deploy");
 		
@@ -535,6 +614,12 @@ private:
 	int m_iFireOffSequence;
 	int m_iFireLoopSequence;
 	MedigunFireState m_eMedigunFireState;
+	
+	// Bread Bite weapon model animation state
+	bool m_bBreadBiteAnims;
+	int m_iBreadBiteSwingSeq;
+	int m_iBreadBiteCritSeq;
+	int m_iBreadBiteIdleSeqs[3];
 };
 
 // Global helpers for war paint / weapon skin support.
@@ -1347,6 +1432,7 @@ C_TFVRHand::C_TFVRHand()
 	m_handSide = VR_HAND_LEFT;
 	m_hOwnerPlayer = NULL;
 	m_hHeldWeapon = NULL;
+	m_iLastEquippedWeaponID = -1;
 	m_pHandTracker = NULL;
 	m_bHandTrackingValid = false;
 	m_bBoneMappingSetup = false;
@@ -1418,7 +1504,18 @@ C_TFVRHand::C_TFVRHand()
 	m_iMeleeSwingIndex = 0;
 	m_szMeleeSwingBase[0] = '\0';
 	m_iMeleeSwingCount = 0;
-	
+	m_bPrevVRSwingActive = false;
+	m_iBreadBiteCritSeq = -1;
+	m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1;
+	m_bIsBreadBite = false;
+	m_flBreadBiteIdleStartTime = 0.0f;
+	m_iBBCrossfadeFromSeq = -1;
+	m_flBBCrossfadeFromCycle = 0.0f;
+	m_flBBCrossfadeStart = 0.0f;
+	m_iBBLastSampledSeq = -1;
+	m_flBBLastSampledCycle = 0.0f;
+	m_flBBLastCrossfadeCheck = 0.0f;
+
 	// Backstab ready animation
 	m_iBackstabUpSequence = -1;
 	m_iBackstabDownSequence = -1;
@@ -1439,6 +1536,9 @@ C_TFVRHand::C_TFVRHand()
 	m_bOwnWatchModel = false;
 	m_hLeftHandBall = NULL;
 	m_iLastBallAmmo = -1;
+	m_hLeftHandShield = NULL;
+	m_bShieldOffsetValid = false;
+	SetIdentityMatrix(m_matShieldOffset);
 
 	// Initialize bone mapping to invalid
 	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
@@ -1482,6 +1582,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	
 	// Reset ALL state for clean reinitialize (match constructor)
 	m_hHeldWeapon = NULL;
+	m_iLastEquippedWeaponID = -1;
 	m_hRenderWeapon = NULL;
 	m_bHandTrackingValid = false;
 	m_bControllerTracked = false;
@@ -1533,12 +1634,26 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_iMeleeSwingIndex = 0;
 	m_szMeleeSwingBase[0] = '\0';
 	m_iMeleeSwingCount = 0;
-	
+	m_bPrevVRSwingActive = false;
+	m_iBreadBiteCritSeq = -1;
+	m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1;
+	m_bIsBreadBite = false;
+	m_flBreadBiteIdleStartTime = 0.0f;
+	m_iBBCrossfadeFromSeq = -1;
+	m_flBBCrossfadeFromCycle = 0.0f;
+	m_flBBCrossfadeStart = 0.0f;
+	m_iBBLastSampledSeq = -1;
+	m_flBBLastSampledCycle = 0.0f;
+	m_flBBLastCrossfadeCheck = 0.0f;
+
 	// Reset left hand wearables
 	m_hLeftHandWatch = NULL;
 	m_bOwnWatchModel = false;
 	m_hLeftHandBall = NULL;
 	m_iLastBallAmmo = -1;
+	m_hLeftHandShield = NULL;
+	m_bShieldOffsetValid = false;
+	SetIdentityMatrix(m_matShieldOffset);
 	
 	m_hOwnerPlayer = pOwner;
 	m_handSide = handSide;
@@ -1697,6 +1812,7 @@ void C_TFVRHand::Shutdown()
 	{
 		RemoveLeftHandWatch();
 		RemoveLeftHandBall();
+		RemoveLeftHandShield();
 	}
 	
 	// Reset bone mapping so it gets recalculated on reinit
@@ -1839,6 +1955,7 @@ void C_TFVRHand::ClientThink()
 	
 	// Advance animation frame
 	StudioFrameAdvance();
+	DoAnimationEvents(GetModelPtr());
 	
 	// Check if fire animation has completed and return to idle
 	// Skip for medigun (handled by UpdateMedigunFireAnimation) and
@@ -1857,12 +1974,21 @@ void C_TFVRHand::ClientThink()
 		// Check if animation cycle has completed (or timed out after 1 second)
 		if (GetCycle() >= 1.0f || (gpGlobals->curtime - m_flFireAnimStartTime) > 1.0f)
 		{
+			// Bread Bite: pick a new random idle variant and reset timer
+			if (m_bIsBreadBite)
+			{
+				int idx = RandomInt(0, 2);
+				if (m_iBreadBiteIdleSeqs[idx] >= 0)
+					m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
+				m_flBreadBiteIdleStartTime = gpGlobals->curtime;
+			}
+			
 			// Return to idle animation
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(0.0f);
+				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
 			}
 			m_bPlayingFireAnim = false;
 			
@@ -1894,11 +2020,20 @@ void C_TFVRHand::ClientThink()
 
 		if (bDrawComplete)
 		{
+			if (m_bIsBreadBite)
+			{
+				int idx = RandomInt(0, 2);
+				if (m_iBreadBiteIdleSeqs[idx] >= 0)
+					m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
+				m_flBreadBiteIdleStartTime = gpGlobals->curtime;
+				Warning("VR BB DRAW DONE: returning to idle seq %d, rate=1.0\n", m_iIdleSequence);
+			}
+			
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(0.0f);
+				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
 			}
 			m_bPlayingDrawAnim = false;
 			InvalidateBoneCache();
@@ -1911,6 +2046,108 @@ void C_TFVRHand::ClientThink()
 		}
 	}
 	
+	// Unconditional state diagnostic for right hand with a render weapon
+	if (!IsLeftHand() && m_hRenderWeapon.Get())
+	{
+		static float s_flBBStateDiag = 0.0f;
+		if (gpGlobals->curtime - s_flBBStateDiag > 3.0f)
+		{
+			Warning("VR BB STATE: isBB=%d fire=%d draw=%d charge=%d wpnID=%d seq=%d idle=%d rate=%.1f\n",
+				m_bIsBreadBite, m_bPlayingFireAnim, m_bPlayingDrawAnim, m_bPlayingChargeAnim,
+				m_iLastEquippedWeaponID, GetSequence(), m_iIdleSequence, GetPlaybackRate());
+			s_flBBStateDiag = gpGlobals->curtime;
+		}
+	}
+
+	// Bread Bite: cycle through idle animations (A/B/C) while weapon is held.
+	// The entity's live sequence/cycle drives the pose (bUseCurrentAnim),
+	// so we keep playback rate at 1.0 and switch sequences when one expires.
+	if (m_bIsBreadBite && !m_bPlayingFireAnim && !m_bPlayingDrawAnim && !m_bPlayingChargeAnim)
+	{
+		if (GetPlaybackRate() < 0.01f)
+			SetPlaybackRate(1.0f);
+		
+		CStudioHdr *pHdr = GetModelPtr();
+		float duration = (pHdr && m_iIdleSequence >= 0) ? SequenceDuration(pHdr, m_iIdleSequence) : 1.0f;
+		float elapsed = gpGlobals->curtime - m_flBreadBiteIdleStartTime;
+
+		static float s_flBBLastDiag = 0.0f;
+		if (gpGlobals->curtime - s_flBBLastDiag > 2.0f)
+		{
+			Warning("VR BB IDLE: seq=%d cycle=%.2f rate=%.1f elapsed=%.1f/%.1f idles=%d/%d/%d entSeq=%d\n",
+				m_iIdleSequence, GetCycle(), GetPlaybackRate(),
+				elapsed, duration,
+				m_iBreadBiteIdleSeqs[0], m_iBreadBiteIdleSeqs[1], m_iBreadBiteIdleSeqs[2],
+				GetSequence());
+			s_flBBLastDiag = gpGlobals->curtime;
+		}
+
+		if (elapsed >= duration && duration > 0.0f)
+		{
+			int idx = RandomInt(0, 2);
+			if (m_iBreadBiteIdleSeqs[idx] >= 0)
+				m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
+			SetSequence(m_iIdleSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+			m_flBreadBiteIdleStartTime = gpGlobals->curtime;
+			InvalidateBoneCache();
+			Warning("VR BB CYCLE: switched to idle seq %d (variant %d)\n", m_iIdleSequence, idx);
+		}
+	}
+	else if (m_bIsBreadBite)
+	{
+		static float s_flBBBlockedDiag = 0.0f;
+		if (gpGlobals->curtime - s_flBBBlockedDiag > 2.0f)
+		{
+			Warning("VR BB BLOCKED: fire=%d draw=%d charge=%d\n",
+				m_bPlayingFireAnim, m_bPlayingDrawAnim, m_bPlayingChargeAnim);
+			s_flBBBlockedDiag = gpGlobals->curtime;
+		}
+	}
+	
+	// VR physical melee swing: detect rising edge on m_bVRSwingActive
+	// to trigger the hand's fire animation (drives weapon via bone merge)
+	if (!IsLeftHand() && m_bIsBreadBite)
+	{
+		C_TFWeaponBase *pWeapon = GetHeldWeapon();
+		if (pWeapon)
+		{
+			int wtype = pWeapon->GetTFWpnData().m_iWeaponType;
+			if (wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS)
+			{
+				CTFWeaponBaseMelee *pMelee = static_cast<CTFWeaponBaseMelee *>(pWeapon);
+				bool bSwingNow = pMelee->IsVRSwingActive();
+				if (bSwingNow && !m_bPrevVRSwingActive)
+				{
+					Warning("VR BB SWING: detected! fireSeq=%d critSeq=%d\n",
+						m_iFireSequence, m_iBreadBiteCritSeq);
+					PlayWeaponFireAnimation();
+				}
+				m_bPrevVRSwingActive = bSwingNow;
+			}
+			else
+			{
+				static float s_flSwingTypeDiag = 0.0f;
+				if (gpGlobals->curtime - s_flSwingTypeDiag > 5.0f)
+				{
+					Warning("VR BB SWING SKIP: wtype=%d (need %d or %d)\n",
+						wtype, TF_WPN_TYPE_MELEE, TF_WPN_TYPE_MELEE_ALLCLASS);
+					s_flSwingTypeDiag = gpGlobals->curtime;
+				}
+			}
+		}
+		else
+		{
+			static float s_flSwingWpnDiag = 0.0f;
+			if (gpGlobals->curtime - s_flSwingWpnDiag > 5.0f)
+			{
+				Warning("VR BB SWING SKIP: no weapon held\n");
+				s_flSwingWpnDiag = gpGlobals->curtime;
+			}
+		}
+	}
+
 	// VR: Update weapon position every frame with fresh tracking
 	if (m_hRenderWeapon.Get())
 	{
@@ -1956,6 +2193,7 @@ void C_TFVRHand::Update()
 	
 	// Advance animation frame
 	StudioFrameAdvance();
+	DoAnimationEvents(GetModelPtr());
 	
 	// Check if fire animation has completed and return to idle
 	// Skip for medigun (handled by UpdateMedigunFireAnimation) and
@@ -1976,12 +2214,21 @@ void C_TFVRHand::Update()
 		// Check if animation cycle has completed (or timed out after 1 second)
 		if (GetCycle() >= 1.0f || (gpGlobals->curtime - m_flFireAnimStartTime) > 1.0f)
 		{
+			// Bread Bite: pick a new random idle variant and reset timer
+			if (m_bIsBreadBite)
+			{
+				int idx = RandomInt(0, 2);
+				if (m_iBreadBiteIdleSeqs[idx] >= 0)
+					m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
+				m_flBreadBiteIdleStartTime = gpGlobals->curtime;
+			}
+			
 			// Return to idle animation
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(0.0f);
+				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
 			}
 			m_bPlayingFireAnim = false;
 			
@@ -2011,11 +2258,19 @@ void C_TFVRHand::Update()
 
 		if (bDrawComplete)
 		{
+			if (m_bIsBreadBite)
+			{
+				int idx = RandomInt(0, 2);
+				if (m_iBreadBiteIdleSeqs[idx] >= 0)
+					m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
+				m_flBreadBiteIdleStartTime = gpGlobals->curtime;
+			}
+			
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(0.0f);
+				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
 			}
 			m_bPlayingDrawAnim = false;
 			InvalidateBoneCache();
@@ -2028,6 +2283,67 @@ void C_TFVRHand::Update()
 		}
 	}
 	
+	// Bread Bite: keep idle animations cycling smoothly.
+	// Sync the idle VARIANT to the viewmodel (for audio alignment) but
+	// let StudioFrameAdvance drive the cycle to avoid per-frame jitter.
+	if (m_bIsBreadBite && !m_bPlayingFireAnim && !m_bPlayingDrawAnim && !m_bPlayingChargeAnim)
+	{
+		if (GetPlaybackRate() < 0.01f)
+			SetPlaybackRate(1.0f);
+
+		// Check if viewmodel changed to a different bread bite idle
+		C_TFPlayer *pSyncOwner = m_hOwnerPlayer.Get();
+		C_BaseViewModel *pVM = pSyncOwner ? pSyncOwner->GetViewModel(0) : NULL;
+		if (pVM)
+		{
+			int vmSeq = pVM->GetSequence();
+			for (int i = 0; i < 3; i++)
+			{
+				if (vmSeq == m_iBreadBiteIdleSeqs[i] && vmSeq != GetSequence())
+				{
+					m_iIdleSequence = vmSeq;
+					SetSequence(vmSeq);
+					SetCycle(pVM->GetCycle());
+					SetPlaybackRate(1.0f);
+					break;
+				}
+			}
+		}
+
+		// When the current idle finishes (cycle hit 1.0), immediately
+		// start the next variant so there is no visible pause.
+		if (GetCycle() >= 0.999f)
+		{
+			int idx = RandomInt(0, 2);
+			if (m_iBreadBiteIdleSeqs[idx] >= 0)
+				m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
+			SetSequence(m_iIdleSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+			InvalidateBoneCache();
+		}
+	}
+
+	// VR physical melee swing: detect rising edge on m_bVRSwingActive
+	if (!IsLeftHand() && m_bIsBreadBite)
+	{
+		C_TFWeaponBase *pWeapon = GetHeldWeapon();
+		if (pWeapon)
+		{
+			int wtype = pWeapon->GetTFWpnData().m_iWeaponType;
+			if (wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS)
+			{
+				CTFWeaponBaseMelee *pMelee = static_cast<CTFWeaponBaseMelee *>(pWeapon);
+				bool bSwingNow = pMelee->IsVRSwingActive();
+				if (bSwingNow && !m_bPrevVRSwingActive)
+				{
+					PlayWeaponFireAnimation();
+				}
+				m_bPrevVRSwingActive = bSwingNow;
+			}
+		}
+	}
+
 	// Update medigun fire animation state machine
 	UpdateMedigunFireAnimation();
 	
@@ -2713,7 +3029,23 @@ void C_TFVRHand::Update()
 
 				if (pActiveWeapon != pCurrentHeld)
 				{
-					bNeedsWeaponUpdate = true;
+					// TF2 recreates weapon entities during prediction/networking,
+					// which changes the pointer even though it's the same weapon.
+					// The old EHANDLE may be stale (entity destroyed), so compare
+					// against the stored weapon ID from the last equip.
+					if (pActiveWeapon && m_iLastEquippedWeaponID >= 0 &&
+						pActiveWeapon->GetWeaponID() == m_iLastEquippedWeaponID &&
+						m_hRenderWeapon.Get())
+					{
+						m_hHeldWeapon = pActiveWeapon;
+						C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+						if (pRenderWeapon)
+							pRenderWeapon->SetSourceWeapon(pActiveWeapon);
+					}
+					else
+					{
+						bNeedsWeaponUpdate = true;
+					}
 				}
 				else if (pCurrentHeld && !pCurrentHeld->GetOwner())
 				{
@@ -2885,10 +3217,11 @@ void C_TFVRHand::Update()
 		}
 	}
 	
-	// Update left hand wearables (scout ball visibility based on ammo, watch position)
+	// Update left hand wearables (scout ball visibility based on ammo, watch position, shield)
 	if (IsLeftHand())
 	{
 		UpdateLeftHandBall();
+		UpdateLeftHandShield();
 		
 		// Update watch position if we have one
 		C_BaseAnimating *pWatch = m_hLeftHandWatch.Get();
@@ -3258,8 +3591,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// Draw animations with WRIST or FULL_ARM scope also drive the skeleton.
 		// WEAPON_BONE scope draw anims leave the skeleton at idle (weapon_bone
 		// is handled separately in ApplyWeaponPose).
+		// Bread Bite: always use entity's live sequence/cycle so
+		// StudioFrameAdvance drives the animation and the engine can interpolate.
 		bool bUseCurrentAnim = m_bPlayingFireAnim || m_bPlayingChargeAnim
-			|| (m_bPlayingDrawAnim && m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST);
+			|| (m_bPlayingDrawAnim && m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST)
+			|| m_bIsBreadBite;
 		int seqToSample;
 		float cycleToSample;
 		if (bUseCurrentAnim)
@@ -3441,6 +3777,56 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		}
 		boneSetup.InitPose(posAnim, qAnim);
 		boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
+
+		// Bread Bite crossfade: detect sequence changes once per game frame
+		// and smoothly blend from the old animation to the new one.
+		if (m_bIsBreadBite && gpGlobals->curtime != m_flBBLastCrossfadeCheck)
+		{
+			m_flBBLastCrossfadeCheck = gpGlobals->curtime;
+
+			if (seqToSample != m_iBBLastSampledSeq && m_iBBLastSampledSeq >= 0)
+			{
+				m_iBBCrossfadeFromSeq = m_iBBLastSampledSeq;
+				m_flBBCrossfadeFromCycle = m_flBBLastSampledCycle;
+				m_flBBCrossfadeStart = gpGlobals->curtime;
+			}
+			m_iBBLastSampledSeq = seqToSample;
+			m_flBBLastSampledCycle = cycleToSample;
+		}
+
+		if (m_bIsBreadBite && m_iBBCrossfadeFromSeq >= 0)
+		{
+			const float BB_BLEND_TIME = 0.2f;
+			float elapsed = gpGlobals->curtime - m_flBBCrossfadeStart;
+			if (elapsed >= BB_BLEND_TIME)
+			{
+				m_iBBCrossfadeFromSeq = -1;
+			}
+			else
+			{
+				float oldCycle = m_flBBCrossfadeFromCycle;
+				float oldDur = SequenceDuration(pStudioHdr, m_iBBCrossfadeFromSeq);
+				if (oldDur > 0.0f)
+					oldCycle = MIN(m_flBBCrossfadeFromCycle + elapsed / oldDur, 1.0f);
+
+				Vector posOld[MAXSTUDIOBONES];
+				Quaternion qOld[MAXSTUDIOBONES];
+				for (int i = 0; i < MAXSTUDIOBONES; i++)
+				{
+					posOld[i].Init();
+					qOld[i].Init(0, 0, 0, 1);
+				}
+				boneSetup.InitPose(posOld, qOld);
+				boneSetup.AccumulatePose(posOld, qOld, m_iBBCrossfadeFromSeq, oldCycle, 1.0f, gpGlobals->curtime, NULL);
+
+				float blend = SimpleSpline(elapsed / BB_BLEND_TIME);
+				for (int i = 0; i < numBones; i++)
+				{
+					VectorLerp(posOld[i], posAnim[i], blend, posAnim[i]);
+					QuaternionSlerp(qOld[i], qAnim[i], blend, qAnim[i]);
+				}
+			}
+		}
 
 		// Flamethrower blend: smoothly lerp between idle and fire poses using
 		// m_flFlamethrowerFireBlend (ramped in UpdateFlamethrowerFireAnimation).
@@ -3644,12 +4030,13 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		
 		// Calculate anchor delta from hand bone to controller
 		// anchorDelta = controller * inverse(handBone)
-		// When backstab is active the sampled animation differs from idle,
-		// so use the current frame's sampled hand bone to keep the hand
-		// pinned to the controller regardless of which animation is playing.
+		// When backstab or bread bite animation is active, the sampled
+		// animation differs from idle, so use the current frame's sampled
+		// hand bone to keep the hand pinned to the controller.  Child bones
+		// (fingers, vm_weapon chain) still show animation-relative motion.
 		matrix3x4_t anchorDelta;
 		
-		if (bBackstabPose)
+		if (bBackstabPose || m_bIsBreadBite)
 		{
 			matrix3x4_t invSampledHand;
 			MatrixInvert(sampledBones[m_iHandBone], invSampledHand);
@@ -4093,6 +4480,21 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		
 		// Position offset was already applied to controllerTransform at the beginning,
 		// so all bones and weapon are naturally at the offset position.
+		
+		// Position shield from the precomputed c_demo_arms offset, applied to
+		// bip_hand_L which is already at the controller transform after anchoring.
+		// Done here in SetupBones (like the ball) for direct bone access.
+		if (IsLeftHand() && m_hLeftHandShield.Get() && m_bShieldOffsetValid
+			&& m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+		{
+			matrix3x4_t shieldWorld;
+			ConcatTransforms(pBoneToWorldOut[m_iHandBone], m_matShieldOffset, shieldWorld);
+			Vector shieldPos;
+			QAngle shieldAng;
+			MatrixAngles(shieldWorld, shieldAng, shieldPos);
+			m_hLeftHandShield->SetAbsOrigin(shieldPos);
+			m_hLeftHandShield->SetAbsAngles(shieldAng);
+		}
 	}
 
 	return true;
@@ -4944,16 +5346,24 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		handWeaponBone = LookupBone("weapon_bone");
 	}
 
-	if (handWeaponBone >= 0 && handWeaponBone < nMaxBones)
+	// Bread Bite: the weapon_bone in the bread glove model is misplaced,
+	// so anchor the render weapon to the hand bone instead.
+	int handAlignBone = handWeaponBone;
+	if (m_bIsBreadBite && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
 	{
-		if (m_bHasIdleWeaponBone)
+		handAlignBone = m_iHandBone;
+	}
+
+	if (handAlignBone >= 0 && handAlignBone < nMaxBones)
+	{
+		if (m_bHasIdleWeaponBone && !m_bIsBreadBite)
 			MatrixCopy(m_matIdleWeaponBoneWorld, m_matWeaponBoneWorld);
 		else
-			MatrixCopy(pBoneToWorldOut[handWeaponBone], m_matWeaponBoneWorld);
+			MatrixCopy(pBoneToWorldOut[handAlignBone], m_matWeaponBoneWorld);
 		m_bWeaponBoneWorldValid = true;
 	}
 
-	// Position the RENDER weapon based on hand's weapon_bone
+	// Position the RENDER weapon based on hand's alignment bone
 	C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
 	if (!pRenderWeapon)
 		return;
@@ -4965,10 +5375,10 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	bool bIsFistWeapon = pAlignWeapon && pAlignWeapon->GetWeaponID() == TF_WEAPON_FISTS;
 	int weaponWeaponBone = -1;
 
-	if (handWeaponBone >= 0 && handWeaponBone < nMaxBones)
+	if (handAlignBone >= 0 && handAlignBone < nMaxBones)
 	{
 		matrix3x4_t handWeaponBoneMatrix;
-		MatrixCopy(pBoneToWorldOut[handWeaponBone], handWeaponBoneMatrix);
+		MatrixCopy(pBoneToWorldOut[handAlignBone], handWeaponBoneMatrix);
 		
 		// Extract position and angles
 		Vector bonePos;
@@ -4976,7 +5386,11 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		MatrixAngles(handWeaponBoneMatrix, boneAng, bonePos);
 		
 		// Determine which bone on the weapon model to align to the hand's weapon_bone.
-		if (IsLeftHand() && IsWeaponMedigun(pAlignWeapon))
+		if (m_bIsBreadBite)
+		{
+			weaponWeaponBone = pRenderWeapon->LookupBone("bip_hand_R");
+		}
+		else if (IsLeftHand() && IsWeaponMedigun(pAlignWeapon))
 		{
 			weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone_L");
 		}
@@ -5735,11 +6149,60 @@ static bool IsFistsGloveVariant(C_TFWeaponBase *pWeapon)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Check if a fist weapon is specifically the Bread Bite (c_breadmonster_gloves).
+//-----------------------------------------------------------------------------
+static bool IsBreadBite(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_FISTS)
+		return false;
+	const char *worldModel = pWeapon->GetWorldModel();
+	return worldModel && V_stristr(worldModel, "breadmonster");
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Returns 0, 1, or 2 for Bread Bite idle variant (A/B/C).
+//          Randomly selected each deploy, consistent within the same frame.
+//-----------------------------------------------------------------------------
+static int GetBreadBiteIdleVariant()
+{
+	static int s_nVariant = 0;
+	static int s_nLastFrame = -1;
+	if (gpGlobals->framecount != s_nLastFrame)
+	{
+		s_nVariant = RandomInt(0, 2);
+		s_nLastFrame = gpGlobals->framecount;
+	}
+	return s_nVariant;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Returns 0 or 1 for Bread Bite draw variant (A/B).
+//          Randomly selected each deploy, consistent within the same frame.
+//-----------------------------------------------------------------------------
+static int GetBreadBiteDrawVariant()
+{
+	static int s_nVariant = 0;
+	static int s_nLastFrame = -1;
+	if (gpGlobals->framecount != s_nLastFrame)
+	{
+		s_nVariant = RandomInt(0, 1);
+		s_nLastFrame = gpGlobals->framecount;
+	}
+	return s_nVariant;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Determine the correct idle animation for Heavy fist weapons.
-//          Gloved variants use bg_idle, bare-fist variants use f_idle.
+//          Bread Bite randomly picks breadglove_idle_A / _B / _C per deploy.
+//          Other gloved variants use bg_idle, bare-fist variants use f_idle.
 //-----------------------------------------------------------------------------
 static const char* GetFistsIdleAnimName(C_TFWeaponBase *pWeapon)
 {
+	if (IsBreadBite(pWeapon))
+	{
+		static const char *s_szBreadBiteIdles[] = { "breadglove_idle_A", "breadglove_idle_B", "breadglove_idle_C" };
+		return s_szBreadBiteIdles[GetBreadBiteIdleVariant()];
+	}
 	return IsFistsGloveVariant(pWeapon) ? "bg_idle" : "f_idle";
 }
 
@@ -6014,9 +6477,11 @@ const char* GetMeleeSwingBaseName(int playerClass, const char *weaponClass, C_TF
 			}
 			break;
 			
-		case TF_CLASS_HEAVYWEAPONS:
+	case TF_CLASS_HEAVYWEAPONS:
 			if (V_stristr(weaponClass, "fists"))
 			{
+				if (IsBreadBite(pWeapon))
+					return NULL;
 				outSwingCount = 3;
 				return IsFistsGloveVariant(pWeapon) ? "bg_swing_" : "f_swing_";
 			}
@@ -6026,7 +6491,7 @@ const char* GetMeleeSwingBaseName(int playerClass, const char *weaponClass, C_TF
 				return "bg_swing_";
 			}
 			break;
-			
+		
 		case TF_CLASS_ENGINEER:
 			if (V_stristr(weaponClass, "wrench"))
 			{
@@ -6327,7 +6792,12 @@ const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_T
 		case TF_CLASS_HEAVYWEAPONS:
 			if (V_stristr(weaponClass, "minigun")) return "m_draw";
 			if (V_stristr(weaponClass, "shotgun")) return "draw";
-			if (V_stristr(weaponClass, "fists")) return IsFistsGloveVariant(pWeapon) ? "bg_draw" : "f_draw";
+			if (V_stristr(weaponClass, "fists"))
+			{
+				if (IsBreadBite(pWeapon))
+					return GetBreadBiteDrawVariant() ? "breadglove_draw_B" : "breadglove_draw_A";
+				return IsFistsGloveVariant(pWeapon) ? "bg_draw" : "f_draw";
+			}
 			break;
 
 		case TF_CLASS_ENGINEER:
@@ -6439,7 +6909,8 @@ VRDrawAnimScope GetWeaponDrawAnimScope(int playerClass, const char *weaponClass,
 		case TF_CLASS_HEAVYWEAPONS:
 			if (V_stristr(weaponClass, "minigun")) return VR_DRAW_ANIM_NONE;
 			if (V_stristr(weaponClass, "shotgun")) return VR_DRAW_ANIM_NONE;
-			if (V_stristr(weaponClass, "fists")) return VR_DRAW_ANIM_NONE;
+			if (V_stristr(weaponClass, "fists"))
+				return IsBreadBite(pWeapon) ? VR_DRAW_ANIM_WRIST : VR_DRAW_ANIM_NONE;
 			break;
 
 		case TF_CLASS_ENGINEER:
@@ -6774,6 +7245,18 @@ bool C_TFVRHand::ShouldDraw()
 	if (pOwner->IsPlayerDead())
 		return false;
 	
+	// Bread Bite: hide both VR hand meshes so only the weapon model shows.
+	// SetupBones still runs (triggered by the render weapon) so weapon
+	// positioning is unaffected.
+	if (m_bIsBreadBite)
+		return false;
+	if (IsLeftHand())
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if (pRightHand && pRightHand->m_bIsBreadBite)
+			return false;
+	}
+
 	// Always draw hands in VR (bypass frustum culling)
 	// The hands are almost always in view, and we want smooth rendering
 	return true;
@@ -6828,6 +7311,10 @@ int C_TFVRHand::DrawModel(int flags)
 		{
 			VRHandLayer_AddParticleOwner(m_hLeftHandBall.Get());
 		}
+		if (m_hLeftHandShield.Get())
+		{
+			VRHandLayer_AddRenderable(m_hLeftHandShield.Get());
+		}
 
 		return 0;
 	}
@@ -6872,6 +7359,19 @@ int C_TFVRHand::DrawModel(int flags)
 		m_hLeftHandBall->RemoveEffects(EF_NODRAW);
 		m_hLeftHandBall->DrawModel(flags);
 		m_hLeftHandBall->AddEffects(EF_NODRAW);
+	}
+
+	if (m_hLeftHandShield.Get())
+	{
+		if (bInvuln && (flags & STUDIO_RENDER))
+			modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+
+		m_hLeftHandShield->RemoveEffects(EF_NODRAW);
+		m_hLeftHandShield->DrawModel(flags);
+		m_hLeftHandShield->AddEffects(EF_NODRAW);
+
+		if (bInvuln && (flags & STUDIO_RENDER))
+			modelrender->ForcedMaterialOverride(NULL);
 	}
 
 	return ret;
@@ -6954,6 +7454,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Store reference to the actual weapon (for getting properties, firing, etc.)
 	m_hHeldWeapon = pWeapon;
+	m_iLastEquippedWeaponID = pWeapon->GetWeaponID();
 	
 	// Reset aim stabilization so it recaptures reference with this weapon's grip
 	m_bAimRefValid = false;
@@ -7137,15 +7638,22 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			}
 		}
 
-		// Mutated Milk (item def 1121) has an animated bread creature driven by
-		// the weapon model's own idle. Skip vm_weapon bone merge so it can play.
+		// Weapons with animated creatures driven by the weapon model's own idle.
+		// Skip vm_weapon bone merge so the creature visually animates.
 		m_bAnimateIdle = false;
 		m_bLoopIdleOnHand = false;
+		m_bIsBreadBite = false;
 		if (pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
 		{
 			CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
 			if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
 				m_bAnimateIdle = true;
+		}
+		// Bread Bite: animation lives on the arm model. Idle cycling and fire
+		// animations are driven by the hand with our own timer-based system.
+		if (IsBreadBite(pWeapon))
+		{
+			m_bIsBreadBite = true;
 		}
 
 		// Sapper: the animation lives on the hand model, not the weapon model.
@@ -7309,7 +7817,8 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// Animated idle weapons (sapper, Mutated Milk): play idle on the weapon model
 	if (m_bAnimateIdle)
 	{
-		int weaponIdleSeq = pRenderWeapon->LookupSequence("c_sapper_idle");
+		int weaponIdleSeq = -1;
+		weaponIdleSeq = pRenderWeapon->LookupSequence("c_sapper_idle");
 		if (weaponIdleSeq < 0)
 			weaponIdleSeq = pRenderWeapon->LookupSequence("idle");
 		if (weaponIdleSeq >= 0)
@@ -7317,7 +7826,38 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			pRenderWeapon->SetSequence(weaponIdleSeq);
 			pRenderWeapon->SetCycle(0.0f);
 			pRenderWeapon->SetPlaybackRate(1.0f);
+			pRenderWeapon->SetIdleSequence(weaponIdleSeq);
 		}
+	}
+	
+	// Bread Bite: set up hand-side sequences for swing, crit, and idle cycling
+	if (m_bIsBreadBite)
+	{
+		m_iFireSequence = LookupSequence("breadglove_swing_right");
+		m_iBreadBiteCritSeq = LookupSequence("breadglove_swing_crit");
+		m_iBreadBiteIdleSeqs[0] = LookupSequence("breadglove_idle_A");
+		m_iBreadBiteIdleSeqs[1] = LookupSequence("breadglove_idle_B");
+		m_iBreadBiteIdleSeqs[2] = LookupSequence("breadglove_idle_C");
+		m_bPrevVRSwingActive = false;
+		m_flBreadBiteIdleStartTime = gpGlobals->curtime;
+		
+		// Start the first idle playing on the entity with rate 1.0
+		// so StudioFrameAdvance advances it and SetupBones uses the live pose
+		if (m_iIdleSequence >= 0)
+		{
+			SetSequence(m_iIdleSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+		}
+		
+		CStudioHdr *pHdr = GetModelPtr();
+		float dur0 = (pHdr && m_iBreadBiteIdleSeqs[0] >= 0) ? SequenceDuration(pHdr, m_iBreadBiteIdleSeqs[0]) : -1.0f;
+		float dur1 = (pHdr && m_iBreadBiteIdleSeqs[1] >= 0) ? SequenceDuration(pHdr, m_iBreadBiteIdleSeqs[1]) : -1.0f;
+		float dur2 = (pHdr && m_iBreadBiteIdleSeqs[2] >= 0) ? SequenceDuration(pHdr, m_iBreadBiteIdleSeqs[2]) : -1.0f;
+		Warning("VR BB EQUIP: model='%s' swing=%d crit=%d idle=%d/%d/%d dur=%.2f/%.2f/%.2f idleSeq=%d rate=%.1f\n",
+			GetModelName(), m_iFireSequence, m_iBreadBiteCritSeq,
+			m_iBreadBiteIdleSeqs[0], m_iBreadBiteIdleSeqs[1], m_iBreadBiteIdleSeqs[2],
+			dur0, dur1, dur2, m_iIdleSequence, GetPlaybackRate());
 	}
 
 	// Sync broken bodygroup for breakable melee weapons (bottle, sign, etc.)
@@ -7420,6 +7960,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			pLeftHand->m_iLastBallAmmo = -1;  // Force update on next frame
 		}
 	}
+	
 	
 	// NOTE: attach_to_hands weapons (Heavy boxing gloves, etc.) contain BOTH hands
 	// in a single model mesh. They bone-merge with the hand model, so we don't
@@ -7579,6 +8120,16 @@ void C_TFVRHand::UnequipWeapon()
 	m_iIdleSequence = -1;
 	m_bAnimateIdle = false;
 	m_bLoopIdleOnHand = false;
+	m_bIsBreadBite = false;
+	m_iBreadBiteCritSeq = -1;
+	m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1;
+	m_flBreadBiteIdleStartTime = 0.0f;
+	m_iBBCrossfadeFromSeq = -1;
+	m_flBBCrossfadeFromCycle = 0.0f;
+	m_flBBCrossfadeStart = 0.0f;
+	m_iBBLastSampledSeq = -1;
+	m_flBBLastSampledCycle = 0.0f;
+	m_flBBLastCrossfadeCheck = 0.0f;
 	m_iFireSequence = -1;
 	m_iAltFireSequence = -1;
 	m_iChargeSequence = -1;
@@ -7604,7 +8155,8 @@ void C_TFVRHand::UnequipWeapon()
 	m_bWasOffhandGripActive = false;
 	m_flGripRotationBlend = 0.0f;
 	
-	// Clean up left hand wearables when right hand unequips weapon
+	// Clean up weapon-dependent left hand wearables when right hand unequips.
+	// Shield is a persistent wearable managed by UpdateLeftHandShield, not weapon-dependent.
 	if (IsRightHand())
 	{
 		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
@@ -7676,6 +8228,7 @@ void C_TFVRHand::UnequipWeapon()
 	}
 	
 	m_hHeldWeapon = NULL;
+	m_iLastEquippedWeaponID = -1;
 }
 
 //-----------------------------------------------------------------------------
@@ -8223,6 +8776,15 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 
 	int sequenceToPlay = m_iFireSequence;
 	
+	// Bread Bite: use crit-specific swing when applicable
+	if (m_bIsBreadBite)
+	{
+		C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+		bool bIsCrit = pWeapon && pWeapon->IsCurrentAttackACrit();
+		if (bIsCrit && m_iBreadBiteCritSeq >= 0)
+			sequenceToPlay = m_iBreadBiteCritSeq;
+	}
+	
 	// Check if this is a melee weapon with swing cycling
 	if (m_iMeleeSwingCount > 0 && m_szMeleeSwingBase[0] != '\0')
 	{
@@ -8298,6 +8860,12 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	SetPlaybackRate(1.0f);
 	m_bPlayingFireAnim = true;
 	m_flFireAnimStartTime = gpGlobals->curtime;
+	
+	// Reset sequence info so DoAnimationEvents dispatches from cycle 0.
+	// Also sets up the event index for the new sequence. Normally suppressed
+	// on this entity, so the internal event tracking is stale.
+	ResetSequenceInfo();
+	SetPlaybackRate(1.0f);
 	
 	// Force animation frame advance to start immediately
 	InvalidateBoneCache();
@@ -8979,3 +9547,200 @@ void C_TFVRHand::UpdateLeftHandBall()
 	}
 }
 
+//-----------------------------------------------------------------------------
+// Purpose: Create and attach a shield model to the left hand
+//-----------------------------------------------------------------------------
+void C_TFVRHand::AttachShieldToLeftHand(const char *pszShieldModel, int nSkin)
+{
+	if (!IsLeftHand() || !pszShieldModel || !pszShieldModel[0])
+		return;
+	
+	RemoveLeftHandShield();
+	
+	C_BaseAnimating *pShield = new C_BaseAnimating();
+	if (!pShield)
+		return;
+	
+	if (!pShield->InitializeAsClientEntity(pszShieldModel, RENDER_GROUP_OPAQUE_ENTITY))
+	{
+		pShield->Release();
+		return;
+	}
+	
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (pOwner)
+	{
+		pShield->m_nSkin = nSkin;
+		pShield->SetOwnerEntity(pOwner);
+	}
+	
+	pShield->AddEffects(EF_NODRAW);
+	pShield->SetMoveType(MOVETYPE_NONE);
+	pShield->AddSolidFlags(FSOLID_NOT_SOLID);
+
+	m_hLeftHandShield = pShield;
+
+	// Step 1: Get the shield model's weapon_targe reference pose.
+	// When we SetAbsOrigin(pos), the shield's weapon_targe bone actually
+	// renders at (entityTransform * refPose), so we need the inverse to
+	// correct the entity position so the bone ends up where we want it.
+	matrix3x4_t shieldRefPoseInverse;
+	SetIdentityMatrix(shieldRefPoseInverse);
+	{
+		pShield->SetAbsOrigin(vec3_origin);
+		pShield->SetAbsAngles(vec3_angle);
+		matrix3x4_t shieldBones[MAXSTUDIOBONES];
+		if (pShield->SetupBones(shieldBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+		{
+			int iShieldTarge = pShield->LookupBone("weapon_targe");
+			if (iShieldTarge >= 0)
+			{
+				MatrixInvert(shieldBones[iShieldTarge], shieldRefPoseInverse);
+
+				Vector refPos;
+				QAngle refAng;
+				MatrixAngles(shieldBones[iShieldTarge], refAng, refPos);
+				DevMsg("VR Shield: shieldRefPose pos=(%.1f,%.1f,%.1f) ang=(%.1f,%.1f,%.1f)\n",
+					refPos.x, refPos.y, refPos.z, refAng.x, refAng.y, refAng.z);
+			}
+		}
+	}
+
+	// Step 2: Create a temporary c_demo_arms entity to read
+	// weapon_targe relative to bip_hand_L from its own SetupBones pipeline.
+	const char *pszArmsModel = GetFallbackModelForClass(TF_CLASS_DEMOMAN);
+	C_BaseAnimating *pArms = new C_BaseAnimating();
+	if (pArms && pArms->InitializeAsClientEntity(pszArmsModel, RENDER_GROUP_OPAQUE_ENTITY))
+	{
+		int iCmIdle = pArms->LookupSequence("cm_idle");
+		if (iCmIdle >= 0)
+			pArms->ResetSequence(iCmIdle);
+
+		if (pOwner)
+			pArms->SetOwnerEntity(pOwner);
+
+		pArms->AddEffects(EF_NODRAW);
+		pArms->SetMoveType(MOVETYPE_NONE);
+		pArms->AddSolidFlags(FSOLID_NOT_SOLID);
+		pArms->SetAbsOrigin(vec3_origin);
+		pArms->SetAbsAngles(vec3_angle);
+
+		matrix3x4_t armsBones[MAXSTUDIOBONES];
+		if (pArms->SetupBones(armsBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+		{
+			int iArmsHand = pArms->LookupBone("bip_hand_L");
+			int iArmsTarge = pArms->LookupBone("weapon_targe");
+			if (iArmsHand >= 0 && iArmsTarge >= 0)
+			{
+				matrix3x4_t invArmsHand;
+				MatrixInvert(armsBones[iArmsHand], invArmsHand);
+
+				matrix3x4_t targeToHand;
+				ConcatTransforms(invArmsHand, armsBones[iArmsTarge], targeToHand);
+
+				// Combine: targeToHand gives us where weapon_targe bone should be
+				// relative to bip_hand_L, then shieldRefPoseInverse corrects so the
+				// shield ENTITY position makes the bone land in the right spot.
+				// Since ref pose rotation is ~identity, this fixes position only.
+				ConcatTransforms(targeToHand, shieldRefPoseInverse, m_matShieldOffset);
+				m_bShieldOffsetValid = true;
+
+				Vector targeToHandPos, combinedPos;
+				MatrixGetColumn(targeToHand, 3, targeToHandPos);
+				MatrixGetColumn(m_matShieldOffset, 3, combinedPos);
+				DevMsg("VR Shield: targeToHand=(%.1f,%.1f,%.1f) combined=(%.1f,%.1f,%.1f) handIdx=%d targeIdx=%d\n",
+					targeToHandPos.x, targeToHandPos.y, targeToHandPos.z,
+					combinedPos.x, combinedPos.y, combinedPos.z,
+					iArmsHand, iArmsTarge);
+			}
+		}
+
+		pArms->Release();
+	}
+	else if (pArms)
+	{
+		pArms->Release();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Remove the shield model from the left hand
+//-----------------------------------------------------------------------------
+void C_TFVRHand::RemoveLeftHandShield()
+{
+	if (m_hLeftHandShield.Get())
+	{
+		m_hLeftHandShield->Release();
+		m_hLeftHandShield = NULL;
+	}
+	m_bShieldOffsetValid = false;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Update left hand shield visibility based on equipped state
+//          Called each frame for demoman
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateLeftHandShield()
+{
+	if (!IsLeftHand())
+		return;
+	
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (!pOwner || !pOwner->IsPlayerClass(TF_CLASS_DEMOMAN))
+	{
+		if (m_hLeftHandShield.Get())
+			RemoveLeftHandShield();
+		return;
+	}
+	
+	// Scan the wearable list directly for a shield entity instead of
+	// relying on IsShieldEquipped(), which is a networked bool that can
+	// briefly toggle false during weapon switches and cause flicker.
+	C_TFWearableDemoShield *pEquippedShield = NULL;
+	for (int i = 0; i < pOwner->GetNumWearables(); ++i)
+	{
+		C_TFWearableDemoShield *pShield = dynamic_cast<C_TFWearableDemoShield*>(pOwner->GetWearable(i));
+		if (pShield)
+		{
+			pEquippedShield = pShield;
+			break;
+		}
+	}
+	
+	if (!pEquippedShield)
+	{
+		if (m_hLeftHandShield.Get())
+			RemoveLeftHandShield();
+		return;
+	}
+	
+	const model_t *pModel = pEquippedShield->GetModel();
+	if (!pModel)
+	{
+		if (m_hLeftHandShield.Get())
+			RemoveLeftHandShield();
+		return;
+	}
+	
+	const char *pszModel = modelinfo->GetModelName(pModel);
+	if (!pszModel || !pszModel[0])
+	{
+		if (m_hLeftHandShield.Get())
+			RemoveLeftHandShield();
+		return;
+	}
+	
+	int nSkin = pEquippedShield->m_nSkin;
+	
+	// If shield already exists, check whether model or skin changed (loadout update)
+	if (m_hLeftHandShield.Get())
+	{
+		const model_t *pCurrentModel = m_hLeftHandShield->GetModel();
+		if (pCurrentModel == pModel && m_hLeftHandShield->m_nSkin == nSkin)
+			return;
+		
+		RemoveLeftHandShield();
+	}
+	
+	AttachShieldToLeftHand(pszModel, nSkin);
+}
