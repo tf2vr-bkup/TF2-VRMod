@@ -1012,7 +1012,8 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             // Weapons that use raw controller pose instead of muzzle/weapon_bone aiming
             C_TFWeaponBase *pHeldWeapon = pRightHand->GetHeldWeapon();
             bool bIsFists = (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_FISTS);
-            bool bUseRawController = bIsFists;
+            bool bIsGunslinger = (pHeldWeapon && V_stristr(pHeldWeapon->GetClassname(), "robot_arm"));
+            bool bUseRawController = bIsFists || bIsGunslinger;
             if (pHeldWeapon)
             {
                 const char *cls = pHeldWeapon->GetClassname();
@@ -1057,7 +1058,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             // ExtraMouseSample clobbering the statics.
             int wtype = pHeldWeapon->GetTFWpnData().m_iWeaponType;
             if ( cmd->command_number != 0 &&
-                 ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS ) )
+                 ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS || bIsGunslinger ) )
             {
                 float flRightSpeed = 0.0f;
                 float flLeftSpeed  = 0.0f;

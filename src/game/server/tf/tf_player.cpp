@@ -2996,6 +2996,7 @@ void CTFPlayer::PrecacheTFPlayer()
 	PrecacheModel("models/weapons/vr_models/vr_heavy_hand_r.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_engineer_hand_l.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_engineer_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_engineer_gunslinger.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_medic_hand_l.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_medic_hand_r.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_sniper_hand_l.mdl");

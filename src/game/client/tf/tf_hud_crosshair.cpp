@@ -107,7 +107,8 @@ bool CHudTFCrosshair::ShouldDraw( void )
 			if ( pWeapon )
 			{
 				int wtype = pWeapon->GetTFWpnData().m_iWeaponType;
-				if ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS )
+				bool bIsRobotArm = V_stristr( pWeapon->GetClassname(), "robot_arm" ) != NULL;
+				if ( wtype == TF_WPN_TYPE_MELEE || wtype == TF_WPN_TYPE_MELEE_ALLCLASS || bIsRobotArm )
 				{
 					int wid = pWeapon->GetWeaponID();
 

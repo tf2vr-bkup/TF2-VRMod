@@ -14,6 +14,7 @@
 class C_TFPlayer;
 class COpenXRHandTracker;
 class C_TFWeaponBase;
+class CVRWatchPanel;
 
 // Hand side enum
 enum VRHandSide
@@ -227,6 +228,7 @@ private:
 
 	// Model info
 	char m_szModelName[MAX_PATH];
+	bool m_bHasGunslinger;         // Engineer has Gunslinger equipped (robot right hand)
 	
 	// Fire animation
 	int m_iFireSequence;           // Fire animation sequence index (fire_loop for medigun)
@@ -354,6 +356,7 @@ public:
 	CHandle<C_BaseAnimating> m_hLeftHandWatch;
 	matrix3x4_t m_matWatchOffset;
 	bool m_bWatchOffsetValid;
+	CVRWatchPanel *m_pWatchPanel;
 	
 	// Scout ball (Sandman baseball, Wrap Assassin ornament)
 	// Conditionally shown based on ammo availability
