@@ -84,18 +84,17 @@ public:
 	// Bone setup override to position hand bones
 	virtual bool SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int boneMask, float currentTime) override;
 
-	// Suppress animation events - the hand model is only used for bone poses,
-	// sounds and effects should come from the render weapon instead.
-	// Exception: bread bite fire animations have their own attack sounds
-	// baked into the animation that we need to let through.
+	// Suppress animation events on the hand — only allow through:
+	//   - Bread Bite fire animations (attack sounds baked into animation)
+	//   - Bread creature weapons (draw + idle sounds driven by the hand)
 	virtual void FireEvent( const Vector& origin, const QAngle& angles, int event, const char *options ) override
 	{
-		if (m_bIsBreadBite && m_bPlayingFireAnim)
+		if ((m_bIsBreadBite && m_bPlayingFireAnim) || m_bAnimateIdle)
 			BaseClass::FireEvent(origin, angles, event, options);
 	}
 	virtual void DoAnimationEvents( CStudioHdr *pStudio ) override
 	{
-		if (m_bIsBreadBite && m_bPlayingFireAnim)
+		if ((m_bIsBreadBite && m_bPlayingFireAnim) || m_bAnimateIdle)
 			BaseClass::DoAnimationEvents(pStudio);
 	}
 
@@ -272,6 +271,7 @@ private:
 	int m_iBreadBiteCritSeq;       // breadglove_swing_crit on the hand
 	int m_iBreadBiteIdleSeqs[3];   // breadglove_idle_A/B/C on the hand
 	bool m_bIsBreadBite;           // current weapon is the Bread Bite
+	bool m_bBreadCreaturePin;      // pin hand to controller during creature idle (jars)
 	float m_flBreadBiteIdleStartTime; // when the current idle variant started playing
 
 	// Bread Bite animation crossfade

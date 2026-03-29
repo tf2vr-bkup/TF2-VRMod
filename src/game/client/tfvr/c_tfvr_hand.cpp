@@ -30,6 +30,12 @@
 #include "tfvr/vr_hand_render.h"
 #include "cl_animevent.h"
 #include "eventlist.h"
+#include <vgui/IVGui.h>
+#include <vgui_controls/EditablePanel.h>
+#include <vgui_controls/ProgressBar.h>
+#include "ienginevgui.h"
+#include "VGuiMatSurface/IMatSystemSurface.h"
+#include "iclientmode.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -47,7 +53,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
@@ -86,15 +92,20 @@ public:
 		return BaseClass::SetupBones(pBoneToWorldOut, nMaxBones, boneMask, currentTime);
 	}
 	
-	// Suppress sound events on the render weapon -- the viewmodel's FireEvent
-	// redirects all weapon sounds (draw, reload, idle, etc.) to this entity's
-	// position already, so letting them through here would cause duplication.
+	// Always suppress sound events on the render weapon — the viewmodel
+	// is the sole source of weapon sounds (draw, reload, idle growls, etc.)
+	// via C_BaseViewModel::FireEvent → EmitSound.  Letting them through
+	// here would cause duplicate/desynced audio.
 	virtual void FireEvent( const Vector& origin, const QAngle& angles, int event, const char *options ) OVERRIDE
 	{
 		if ( event == AE_CL_PLAYSOUND || event == CL_EVENT_SOUND )
 			return;
 		BaseClass::FireEvent( origin, angles, event, options );
 	}
+
+	void SetAnimateIdle(bool bAnimate) { m_bAnimateIdle = bAnimate; }
+	bool IsPlayingDrawOrFire() const { return m_bPlayingFireAnim; }
+	int GetIdleSequence() const { return m_iIdleSequence; }
 
 	C_TFWeaponBase* GetSourceWeapon() const { return m_hSourceWeapon.Get(); }
 
@@ -292,48 +303,47 @@ public:
 	virtual void ClientThink() OVERRIDE
 	{
 		BaseClass::ClientThink();
-		
-		// Advance animations
+
+		// Bread creature weapons: render weapon is a passive mesh (rate 0).
+		// All bones are driven by the hand via bone merge — no self-animation.
+		// Only non-bread animated weapons self-advance here.
+
 		StudioFrameAdvance();
-		
-		// Check if fire animation has completed (skip for medigun - driven by hand)
+
+		// Check if fire/draw animation has completed (skip for medigun - driven by hand)
 		if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE && GetCycle() >= 1.0f)
 		{
-			// Bread Bite: pick a new random idle variant each time
 			RandomizeBreadBiteIdle();
-			
-			// Return to idle
+
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
 			}
+			SetPlaybackRate(0.0f);
 			m_bPlayingFireAnim = false;
 		}
-		
-		// Update crit boost effect each frame
+
+		// Loop idle animations for non-bread animated weapons
+		if (!m_bAnimateIdle && !m_bPlayingFireAnim && GetPlaybackRate() > 0.0f && GetCycle() >= 1.0f)
+		{
+			SetCycle(0.0f);
+		}
+
 		UpdateCritBoostEffect();
 	}
 	
-	// Override to return to idle after fire animation completes (backup for when FrameAdvance is called directly)
 	virtual float FrameAdvance(float flInterval = 0.0f) OVERRIDE
 	{
 		float flReturn = BaseClass::FrameAdvance(flInterval);
-		
-		// Check if fire animation has completed (skip for medigun - driven by hand)
-		if (m_bPlayingFireAnim && m_eMedigunFireState == MEDIGUN_FIRE_IDLE && GetCycle() >= 1.0f)
+
+		// Draw/fire completion and idle looping are handled in ClientThink
+		// so that rate-setting and state cleanup happen in one place.
+		if (!m_bPlayingFireAnim && GetPlaybackRate() > 0.0f && GetCycle() >= 1.0f)
 		{
-			RandomizeBreadBiteIdle();
-			
-			// Return to idle
-			if (m_iIdleSequence >= 0)
-			{
-				SetSequence(m_iIdleSequence);
-				SetCycle(0.0f);
-			}
-			m_bPlayingFireAnim = false;
+			SetCycle(0.0f);
 		}
-		
+
 		return flReturn;
 	}
 	
@@ -357,6 +367,12 @@ public:
 		}
 		
 		if (drawSeq < 0)
+			drawSeq = LookupSequence("bm_draw");
+		if (drawSeq < 0)
+			drawSeq = LookupSequence("c_breadmonster_sapper_draw");
+		if (drawSeq < 0)
+			drawSeq = LookupSequence("c_breadmonster_draw");
+		if (drawSeq < 0)
 			drawSeq = LookupSequence("draw");
 		if (drawSeq < 0)
 			drawSeq = LookupSequence("deploy");
@@ -367,15 +383,6 @@ public:
 			SetCycle(0.0f);
 			SetPlaybackRate(1.0f);
 			m_bPlayingFireAnim = true;
-			
-			if (tfvr_weapon_draw_anim_debug.GetBool())
-			{
-				DevMsg("VR: Playing weapon model draw animation (sequence %d)\n", drawSeq);
-			}
-		}
-		else if (tfvr_weapon_draw_anim_debug.GetBool())
-		{
-			DevMsg("VR: No draw animation found on weapon model\n");
 		}
 	}
 	
@@ -605,6 +612,7 @@ private:
 	int m_iIdleSequence;
 	int m_iFireSequence;
 	bool m_bPlayingFireAnim;
+	bool m_bAnimateIdle;
 	CSmartPtr<CNewParticleEffect> m_pCritBoostEffect;
 	bool m_bCritBoostActive;
 	bool m_bInSetupBones;
@@ -649,8 +657,52 @@ C_TFPlayer *GetVRRenderWeaponOwner( CBaseEntity *pEntity )
 	return NULL;
 }
 
+//-----------------------------------------------------------------------------
+// Purpose: Standalone VGUI panel for the VR spy watch cloak meter.
+//          Matches vanilla TF2 appearance by using the same scheme and layout.
+//          Kept visible but off-screen so VGUI processes scheme/layout;
+//          rendered in 3D via DrawPanelIn3DSpace in C_TFVRHand::DrawModel.
+//-----------------------------------------------------------------------------
+class CVRWatchPanel : public vgui::EditablePanel
+{
+	DECLARE_CLASS_SIMPLE(CVRWatchPanel, vgui::EditablePanel);
+public:
+	CVRWatchPanel(vgui::Panel *parent)
+		: BaseClass(parent, "CVRWatchPanel",
+			vgui::scheme()->LoadSchemeFromFileEx(
+				enginevgui->GetPanel(PANEL_CLIENTDLL),
+				"resource/PDAControlPanelScheme.res", "TFBase"))
+	{
+		m_pInvisProgress = new vgui::ProgressBar(this, "InvisProgress");
+		SetBounds(0, 0, 280, 100);
+		SetPos(-10000, -10000);
+		vgui::ivgui()->AddTickSignal(GetVPanel());
+	}
+
+	virtual void ApplySchemeSettings(vgui::IScheme *pScheme)
+	{
+		BaseClass::ApplySchemeSettings(pScheme);
+		LoadControlSettings("scripts/screens/pda_spy_invis.res");
+	}
+
+	virtual void OnTick()
+	{
+		C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+		if (pPlayer && m_pInvisProgress)
+		{
+			float flMeter = pPlayer->m_Shared.GetSpyCloakMeter();
+			m_pInvisProgress->SetProgress(flMeter / 100.0f);
+		}
+	}
+
+private:
+	vgui::ProgressBar *m_pInvisProgress;
+};
+
 // Forward declarations
 static const char* GetFistsIdleAnimName(C_TFWeaponBase *pWeapon);
+static bool IsFistsGloveVariant(C_TFWeaponBase *pWeapon);
+static bool IsBareFists(C_TFWeaponBase *pWeapon);
 
 // ConVars for debugging and control
 ConVar tfvr_hands_enabled("tfvr_hands_enabled", "1", FCVAR_ARCHIVE, "Enable VR hand rendering");
@@ -1297,6 +1349,24 @@ static void ApplyTwoHandGripRotation(matrix3x4_t &transform, const Vector &desir
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Check if an engineer player has the Gunslinger (robot arm) equipped
+//-----------------------------------------------------------------------------
+static bool IsPlayerUsingGunslinger(C_TFPlayer *pPlayer)
+{
+	if (!pPlayer)
+		return false;
+
+	if (pPlayer->GetPlayerClass()->GetClassIndex() != TF_CLASS_ENGINEER)
+		return false;
+
+	CBaseEntity *pMelee = pPlayer->GetEntityForLoadoutSlot(LOADOUT_POSITION_MELEE);
+	if (!pMelee)
+		return false;
+
+	return V_stristr(pMelee->GetClassname(), "robot_arm") != NULL;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Get the hand model path for a specific class
 //-----------------------------------------------------------------------------
 const char* GetHandModelForClass(int playerClass, bool bLeftHand)
@@ -1462,6 +1532,7 @@ C_TFVRHand::C_TFVRHand()
 	m_vecLastValidPosition = vec3_origin;
 	m_angLastValidAngles = vec3_angle;
 	m_szModelName[0] = '\0';
+	m_bHasGunslinger = false;
 	SetIdentityMatrix(m_matIdleHandBoneTransform);
 	m_vecIdleHandBoneLocalPos.Init();
 	m_bHandBoneOffsetValid = false;
@@ -1535,6 +1606,7 @@ C_TFVRHand::C_TFVRHand()
 	m_hLeftHandWatch = NULL;
 	SetIdentityMatrix(m_matWatchOffset);
 	m_bWatchOffsetValid = false;
+	m_pWatchPanel = NULL;
 	m_hLeftHandBall = NULL;
 	m_iLastBallAmmo = -1;
 	m_hLeftHandShield = NULL;
@@ -1651,6 +1723,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_hLeftHandWatch = NULL;
 	SetIdentityMatrix(m_matWatchOffset);
 	m_bWatchOffsetValid = false;
+	m_pWatchPanel = NULL;
 	m_hLeftHandBall = NULL;
 	m_iLastBallAmmo = -1;
 	m_hLeftHandShield = NULL;
@@ -1678,8 +1751,19 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 		return false;
 	}
 
+	// Check for Gunslinger (engineer robot arm)
+	m_bHasGunslinger = IsPlayerUsingGunslinger(pOwner);
+
 	// Get class-specific hand model path (may return NULL to force fallback)
 	const char *handModelPath = GetHandModelForClass(m_iLastPlayerClass, IsLeftHand());
+
+	// Engineer with Gunslinger: use recompiled gunslinger model with blank body
+	// bodygroup so only the robot arm renders. Same skeleton so finger tracking works.
+	if (m_bHasGunslinger && IsRightHand())
+	{
+		handModelPath = "models/weapons/vr_models/vr_engineer_gunslinger.mdl";
+		Msg("VR Hand (RIGHT): Engineer has Gunslinger - using VR gunslinger model\n");
+	}
 	
 	// Set a valid origin first (entities need to be in the world)
 	SetAbsOrigin(pOwner->EyePosition());
@@ -1745,6 +1829,21 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	{
 		Warning("C_TFVRHand::Initialize - GetModelPtr() returned NULL after SetModel!\n");
 		// Don't fail here - the studio hdr might not be loaded yet
+	}
+
+	// Gunslinger bodygroup setup: enable "rightarm" (robot arm mesh).
+	// Gunslinger bodygroup setup: hide "body" (blank submodel), show "rightarm" (robot arm)
+	if (m_bHasGunslinger && IsRightHand() && pStudioHdr)
+	{
+		int iBody = FindBodygroupByName("body");
+		int iRightArm = FindBodygroupByName("rightarm");
+
+		if (iBody >= 0)
+			SetBodygroup(iBody, 1);     // blank submodel hides normal arms
+		if (iRightArm >= 0)
+			SetBodygroup(iRightArm, 0); // robot arm mesh
+
+		Msg("VR Hand (RIGHT): Gunslinger bodygroups - body=%d->1(hidden), rightarm=%d->0(visible)\n", iBody, iRightArm);
 	}
 	
 	// Skip partition updates - this is a client-only entity that we update manually
@@ -1986,11 +2085,12 @@ void C_TFVRHand::ClientThink()
 			}
 			
 			// Return to idle animation
+			bool bLiveIdleFire = m_bIsBreadBite || (m_bAnimateIdle && m_bLoopIdleOnHand);
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
+				SetPlaybackRate(bLiveIdleFire ? 1.0f : 0.0f);
 			}
 			m_bPlayingFireAnim = false;
 			
@@ -2007,8 +2107,9 @@ void C_TFVRHand::ClientThink()
 		bool bDrawComplete = false;
 		if (m_eDrawAnimScope == VR_DRAW_ANIM_WEAPON_BONE)
 		{
-			// WEAPON_BONE scope: the entity sequence stays at idle, so check
-			// elapsed time against the draw sequence duration.
+			// WEAPON_BONE scope: check elapsed time against draw sequence duration.
+			// Bread creatures also use this path — they play the draw sequence on
+			// the entity (for vm_weapon bones) but completion uses elapsed time.
 			CStudioHdr *pHdr = GetModelPtr();
 			float flDuration = pHdr ? SequenceDuration(pHdr, m_iDrawSequence) : 0.0f;
 			bDrawComplete = (gpGlobals->curtime - m_flDrawAnimStartTime) >= flDuration
@@ -2028,14 +2129,14 @@ void C_TFVRHand::ClientThink()
 				if (m_iBreadBiteIdleSeqs[idx] >= 0)
 					m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
 				m_flBreadBiteIdleStartTime = gpGlobals->curtime;
-				Warning("VR BB DRAW DONE: returning to idle seq %d, rate=1.0\n", m_iIdleSequence);
 			}
-			
+
+			bool bLiveIdle = m_bIsBreadBite || (m_bAnimateIdle && m_bLoopIdleOnHand);
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
+				SetPlaybackRate(bLiveIdle ? 1.0f : 0.0f);
 			}
 			m_bPlayingDrawAnim = false;
 			InvalidateBoneCache();
@@ -2048,19 +2149,6 @@ void C_TFVRHand::ClientThink()
 		}
 	}
 	
-	// Unconditional state diagnostic for right hand with a render weapon
-	if (!IsLeftHand() && m_hRenderWeapon.Get())
-	{
-		static float s_flBBStateDiag = 0.0f;
-		if (gpGlobals->curtime - s_flBBStateDiag > 3.0f)
-		{
-			Warning("VR BB STATE: isBB=%d fire=%d draw=%d charge=%d wpnID=%d seq=%d idle=%d rate=%.1f\n",
-				m_bIsBreadBite, m_bPlayingFireAnim, m_bPlayingDrawAnim, m_bPlayingChargeAnim,
-				m_iLastEquippedWeaponID, GetSequence(), m_iIdleSequence, GetPlaybackRate());
-			s_flBBStateDiag = gpGlobals->curtime;
-		}
-	}
-
 	// Bread Bite: cycle through idle animations (A/B/C) while weapon is held.
 	// The entity's live sequence/cycle drives the pose (bUseCurrentAnim),
 	// so we keep playback rate at 1.0 and switch sequences when one expires.
@@ -2073,17 +2161,6 @@ void C_TFVRHand::ClientThink()
 		float duration = (pHdr && m_iIdleSequence >= 0) ? SequenceDuration(pHdr, m_iIdleSequence) : 1.0f;
 		float elapsed = gpGlobals->curtime - m_flBreadBiteIdleStartTime;
 
-		static float s_flBBLastDiag = 0.0f;
-		if (gpGlobals->curtime - s_flBBLastDiag > 2.0f)
-		{
-			Warning("VR BB IDLE: seq=%d cycle=%.2f rate=%.1f elapsed=%.1f/%.1f idles=%d/%d/%d entSeq=%d\n",
-				m_iIdleSequence, GetCycle(), GetPlaybackRate(),
-				elapsed, duration,
-				m_iBreadBiteIdleSeqs[0], m_iBreadBiteIdleSeqs[1], m_iBreadBiteIdleSeqs[2],
-				GetSequence());
-			s_flBBLastDiag = gpGlobals->curtime;
-		}
-
 		if (elapsed >= duration && duration > 0.0f)
 		{
 			int idx = RandomInt(0, 2);
@@ -2094,17 +2171,29 @@ void C_TFVRHand::ClientThink()
 			SetPlaybackRate(1.0f);
 			m_flBreadBiteIdleStartTime = gpGlobals->curtime;
 			InvalidateBoneCache();
-			Warning("VR BB CYCLE: switched to idle seq %d (variant %d)\n", m_iIdleSequence, idx);
 		}
 	}
-	else if (m_bIsBreadBite)
+	// Bread creatures (not Bread Bite): keep idle looping at rate 1.0.
+	// Sync the render weapon's cycle to the hand every frame so weapon-only
+	// bones (sapper mechanism etc.) stay in lockstep. The render weapon is
+	// at rate 0 — it never self-advances.
+	if (m_bAnimateIdle && !m_bIsBreadBite
+		&& !m_bPlayingFireAnim && !m_bPlayingDrawAnim && !m_bPlayingChargeAnim)
 	{
-		static float s_flBBBlockedDiag = 0.0f;
-		if (gpGlobals->curtime - s_flBBBlockedDiag > 2.0f)
+		if (GetPlaybackRate() < 0.01f)
+			SetPlaybackRate(1.0f);
+
+		if (m_iIdleSequence >= 0 && GetCycle() >= 0.999f)
 		{
-			Warning("VR BB BLOCKED: fire=%d draw=%d charge=%d\n",
-				m_bPlayingFireAnim, m_bPlayingDrawAnim, m_bPlayingChargeAnim);
-			s_flBBBlockedDiag = gpGlobals->curtime;
+			SetSequence(m_iIdleSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+		}
+
+		C_VRRenderWeapon *pRW = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+		if (pRW)
+		{
+			pRW->SetCycle(GetCycle());
 		}
 	}
 	
@@ -2122,30 +2211,9 @@ void C_TFVRHand::ClientThink()
 				bool bSwingNow = pMelee->IsVRSwingActive();
 				if (bSwingNow && !m_bPrevVRSwingActive)
 				{
-					Warning("VR BB SWING: detected! fireSeq=%d critSeq=%d\n",
-						m_iFireSequence, m_iBreadBiteCritSeq);
 					PlayWeaponFireAnimation();
 				}
 				m_bPrevVRSwingActive = bSwingNow;
-			}
-			else
-			{
-				static float s_flSwingTypeDiag = 0.0f;
-				if (gpGlobals->curtime - s_flSwingTypeDiag > 5.0f)
-				{
-					Warning("VR BB SWING SKIP: wtype=%d (need %d or %d)\n",
-						wtype, TF_WPN_TYPE_MELEE, TF_WPN_TYPE_MELEE_ALLCLASS);
-					s_flSwingTypeDiag = gpGlobals->curtime;
-				}
-			}
-		}
-		else
-		{
-			static float s_flSwingWpnDiag = 0.0f;
-			if (gpGlobals->curtime - s_flSwingWpnDiag > 5.0f)
-			{
-				Warning("VR BB SWING SKIP: no weapon held\n");
-				s_flSwingWpnDiag = gpGlobals->curtime;
 			}
 		}
 	}
@@ -2226,11 +2294,12 @@ void C_TFVRHand::Update()
 			}
 			
 			// Return to idle animation
+			bool bLiveIdleFire2 = m_bIsBreadBite || (m_bAnimateIdle && m_bLoopIdleOnHand);
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
+				SetPlaybackRate(bLiveIdleFire2 ? 1.0f : 0.0f);
 			}
 			m_bPlayingFireAnim = false;
 			
@@ -2267,12 +2336,13 @@ void C_TFVRHand::Update()
 					m_iIdleSequence = m_iBreadBiteIdleSeqs[idx];
 				m_flBreadBiteIdleStartTime = gpGlobals->curtime;
 			}
-			
+
+			bool bLiveIdle2 = m_bIsBreadBite || (m_bAnimateIdle && m_bLoopIdleOnHand);
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
 				SetCycle(0.0f);
-				SetPlaybackRate(m_bIsBreadBite ? 1.0f : 0.0f);
+				SetPlaybackRate(bLiveIdle2 ? 1.0f : 0.0f);
 			}
 			m_bPlayingDrawAnim = false;
 			InvalidateBoneCache();
@@ -2285,6 +2355,28 @@ void C_TFVRHand::Update()
 		}
 	}
 	
+	// Bread creatures (not Bread Bite): keep idle looping at rate 1.0.
+	// Sync render weapon cycle to hand each frame.
+	if (m_bAnimateIdle && !m_bIsBreadBite
+		&& !m_bPlayingFireAnim && !m_bPlayingDrawAnim && !m_bPlayingChargeAnim)
+	{
+		if (GetPlaybackRate() < 0.01f)
+			SetPlaybackRate(1.0f);
+
+		if (m_iIdleSequence >= 0 && GetCycle() >= 0.999f)
+		{
+			SetSequence(m_iIdleSequence);
+			SetCycle(0.0f);
+			SetPlaybackRate(1.0f);
+		}
+
+		C_VRRenderWeapon *pRW = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+		if (pRW)
+		{
+			pRW->SetCycle(GetCycle());
+		}
+	}
+
 	// Bread Bite: keep idle animations cycling smoothly.
 	// Sync the idle VARIANT to the viewmodel (for audio alignment) but
 	// let StudioFrameAdvance drive the cycle to avoid per-frame jitter.
@@ -2392,6 +2484,23 @@ void C_TFVRHand::Update()
 	}
 	m_iLastPlayerClass = currentClass;
 
+	// Check if gunslinger state changed (e.g. resupply locker loadout swap)
+	if (currentClass == TF_CLASS_ENGINEER)
+	{
+		bool bNowGunslinger = IsPlayerUsingGunslinger(pOwner);
+		if (bNowGunslinger != m_bHasGunslinger)
+		{
+			Msg("VR Update: %s hand detected gunslinger change (%d -> %d), reinitializing\n",
+				IsLeftHand() ? "LEFT" : "RIGHT", m_bHasGunslinger, bNowGunslinger);
+			Shutdown();
+			if (Initialize(pOwner, m_handSide))
+			{
+				Spawn();
+			}
+			return;
+		}
+	}
+
 	// Check if VR is still active
 	if (!g_pOpenXRManager || !g_pOpenXRManager->IsActive())
 	{
@@ -2430,6 +2539,11 @@ void C_TFVRHand::Update()
 				int iWeaponID = pWeapon->GetWeaponID();
 				// Heavy fists/gloves - left hand does its own melee
 				if (iWeaponID == TF_WEAPON_FISTS)
+				{
+					bSkipTwoHand = true;
+				}
+				// Gunslinger - robot arm IS the hand, no two-handing
+				else if (V_stristr(pWeapon->GetClassname(), "robot_arm"))
 				{
 					bSkipTwoHand = true;
 				}
@@ -3037,7 +3151,7 @@ void C_TFVRHand::Update()
 					// against the stored weapon ID from the last equip.
 					if (pActiveWeapon && m_iLastEquippedWeaponID >= 0 &&
 						pActiveWeapon->GetWeaponID() == m_iLastEquippedWeaponID &&
-						m_hRenderWeapon.Get())
+						(m_hRenderWeapon.Get() || (m_bHasGunslinger && V_stristr(pActiveWeapon->GetClassname(), "robot_arm"))))
 					{
 						m_hHeldWeapon = pActiveWeapon;
 						C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
@@ -3580,7 +3694,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// StudioFrameAdvance drives the animation and the engine can interpolate.
 		bool bUseCurrentAnim = m_bPlayingFireAnim || m_bPlayingChargeAnim
 			|| (m_bPlayingDrawAnim && m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST)
-			|| m_bIsBreadBite;
+			|| m_bIsBreadBite
+			|| (m_bAnimateIdle && m_bLoopIdleOnHand);
 		int seqToSample;
 		float cycleToSample;
 		if (bUseCurrentAnim)
@@ -3873,6 +3988,13 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				SetIdentityMatrix(sampledBones[i]);
 		}
 		
+		// Pin hand bone to controller when the sampled animation may move the
+		// hand bone away from idle (backstab, Bread Bite, bread creature jars).
+		// During draw: also pin bread creature hands so the deploy animation
+		// drives vm_weapon bones (creature visuals) without wrist displacement.
+		bool bPinToSampled = bBackstabPose || m_bIsBreadBite || m_bBreadCreaturePin
+			|| (m_bAnimateIdle && m_bPlayingDrawAnim);
+
 		// Cache the hand bone transform from the sampled animation.
 		// Used by the normal anchor path for stable weapon positioning.
 		// For hands WITH a weapon: cache once (stable idle offset).
@@ -3880,7 +4002,48 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// because the sampled animation changes as m_flTwoHandBlend transitions.
 		if (!m_bHandBoneOffsetValid || !m_hHeldWeapon.Get())
 		{
-			MatrixCopy(sampledBones[m_iHandBone], m_matIdleHandBoneTransform);
+			// For bread creatures with wrist motion (Bread Sapper), sampledBones
+			// comes from the creature idle which moves per frame.  Build the
+			// weapon POSE skeleton once so the anchor stays fixed relative to
+			// the static grip — both hand and weapon then move together.
+			if (bUseCurrentAnim && m_bAnimateIdle && m_bLoopIdleOnHand
+				&& !bPinToSampled && m_iIdleSequence >= 0)
+			{
+				Vector posWpn[MAXSTUDIOBONES];
+				Quaternion qWpn[MAXSTUDIOBONES];
+				for (int i = 0; i < numBones; i++)
+				{
+					posWpn[i].Init();
+					qWpn[i].Init(0, 0, 0, 1);
+				}
+				boneSetup.InitPose(posWpn, qWpn);
+				boneSetup.AccumulatePose(posWpn, qWpn, m_iIdleSequence, 0.0f,
+					1.0f, gpGlobals->curtime, NULL);
+
+				matrix3x4_t wpnPoseBones[MAXSTUDIOBONES];
+				for (int i = 0; i < numBones; i++)
+				{
+					matrix3x4_t boneToParent;
+					QuaternionMatrix(qWpn[i], posWpn[i], boneToParent);
+					const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+					if (!pBone)
+					{
+						SetIdentityMatrix(wpnPoseBones[i]);
+						continue;
+					}
+					if (pBone->parent == -1)
+						MatrixCopy(boneToParent, wpnPoseBones[i]);
+					else if (pBone->parent >= 0 && pBone->parent < numBones)
+						ConcatTransforms(wpnPoseBones[pBone->parent], boneToParent, wpnPoseBones[i]);
+					else
+						SetIdentityMatrix(wpnPoseBones[i]);
+				}
+				MatrixCopy(wpnPoseBones[m_iHandBone], m_matIdleHandBoneTransform);
+			}
+			else
+			{
+				MatrixCopy(sampledBones[m_iHandBone], m_matIdleHandBoneTransform);
+			}
 			m_bHandBoneOffsetValid = true;
 		}
 		
@@ -4021,7 +4184,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		// (fingers, vm_weapon chain) still show animation-relative motion.
 		matrix3x4_t anchorDelta;
 		
-		if (bBackstabPose || m_bIsBreadBite)
+		if (bPinToSampled)
 		{
 			matrix3x4_t invSampledHand;
 			MatrixInvert(sampledBones[m_iHandBone], invSampledHand);
@@ -4098,8 +4261,18 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		{
 			if (!bBackstabPose)
 			{
-				// Normal idle: overlay the weapon grip pose onto fingers + weapon_bone
-				ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
+				if (IsBareFists(m_hHeldWeapon.Get()) ||
+					(m_bHasGunslinger && V_stristr(m_hHeldWeapon->GetClassname(), "robot_arm")))
+				{
+					// Bare fists / Gunslinger: use finger tracking so the hand
+					// follows the player's real fingers.
+					ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+				}
+				else
+				{
+					// Normal idle: overlay the weapon grip pose onto fingers + weapon_bone
+					ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
+				}
 			}
 			// When bBackstabPose is true, the main AccumulatePose already
 			// sampled the backstab animation, so the full skeleton
@@ -4449,12 +4622,15 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		{
 			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 			C_TFWeaponBase *pRightWeapon = pRightHand ? pRightHand->GetHeldWeapon() : NULL;
-			if (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_FISTS)
+			if (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_FISTS
+				&& !IsBareFists(pRightWeapon))
 			{
+				// Gloved fists: use the weapon pose so fingers match the glove model
 				ApplyWeaponPose(pBoneToWorldOut, nMaxBones, pRightWeapon);
 			}
 			else
 			{
+				// Bare fists or no fists: use finger tracking
 				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 			}
 		}
@@ -4491,6 +4667,13 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			MatrixAngles(watchWorld, watchAng, watchPos);
 			m_hLeftHandWatch->SetAbsOrigin(watchPos);
 			m_hLeftHandWatch->SetAbsAngles(watchAng);
+		}
+
+		// Gunslinger uses the combined c_engineer_gunslinger model:
+		// hide left-side bones so only the robot right arm renders
+		if (m_bHasGunslinger && IsRightHand())
+		{
+			HideOppositeHand(pBoneToWorldOut, nMaxBones, pStudioHdr);
 		}
 	}
 
@@ -5668,6 +5851,23 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	C_TFWeaponBase *pMergeWeapon = m_hHeldWeapon.Get();
 	bool bSkipBoneMerge = pMergeWeapon && pMergeWeapon->GetWeaponID() == TF_WEAPON_FISTS;
 
+	// For pistol/shotgun-type weapons, keep vm_weapon bones in the weapon
+	// model's own idle pose so ammo/shells don't float visibly without a
+	// covering hand mesh (placeholder until manual reloading is added).
+	bool bKeepAmmoRefPose = false;
+	if (pMergeWeapon)
+	{
+		const char *weaponClass = pMergeWeapon->GetClassname();
+		if (V_stristr(weaponClass, "pistol") ||
+			V_stristr(weaponClass, "shotgun") ||
+			V_stristr(weaponClass, "scattergun") ||
+			V_stristr(weaponClass, "sentry_revenge") ||
+			V_stristr(weaponClass, "handgun_scout"))
+		{
+			bKeepAmmoRefPose = true;
+		}
+	}
+
 	CStudioHdr *pWeaponHdr = pRenderWeapon->GetModelPtr();
 	if (pWeaponHdr && pBoneToWorldOut && !bSkipBoneMerge)
 	{
@@ -5693,17 +5893,35 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			
 			const char *szBoneName = pWpnBone->pszName();
 			
-			// Skip weapon_bone and weapon_bone_L/R - used for weapon positioning
-			if (Q_strcmp(szBoneName, "weapon_bone") == 0 ||
-				Q_strcmp(szBoneName, "weapon_bone_L") == 0 ||
-				Q_strcmp(szBoneName, "weapon_bone_R") == 0)
+			// Skip weapon_bone and weapon_bone_L/R for non-bread weapons.
+			// For bread creature weapons (m_bAnimateIdle) we INCLUDE weapon_bone
+			// so that vertices weighted to it stay in sync with the hand.
+			// Without this, the render weapon's own animation drives weapon_bone
+			// independently, causing the sapper frame to desync from the creature.
+			if (!m_bAnimateIdle &&
+				(Q_strcmp(szBoneName, "weapon_bone") == 0 ||
+				 Q_strcmp(szBoneName, "weapon_bone_L") == 0 ||
+				 Q_strcmp(szBoneName, "weapon_bone_R") == 0))
 				continue;
 
-			// For weapons with animated idles (e.g. Mutated Milk bread creature),
-			// don't overwrite vm_weapon bones - let the weapon model's own
-			// animation drive them so the creature visually animates.
-			if (m_bAnimateIdle && Q_strncmp(szBoneName, "vm_weapon", 9) == 0)
-				continue;
+			// Skip vm_weapon bones when the weapon model's own animation should
+			// drive them: ammo ref pose, or render weapon playing its draw/fire
+			// while the hand is NOT also playing the draw (hand paused at idle).
+			// When the hand IS playing the draw animation, merge from the hand
+			// so the hand drives both visual and audio for the deploy.
+			if (Q_strncmp(szBoneName, "vm_weapon", 9) == 0)
+			{
+				if ((m_bAnimateIdle && !m_bLoopIdleOnHand) || bKeepAmmoRefPose)
+					continue;
+				if (m_bLoopIdleOnHand)
+				{
+				C_VRRenderWeapon *pRW = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+				bool bHandDrivingDraw = m_bPlayingDrawAnim
+					&& (m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST || m_bAnimateIdle);
+				if (pRW && pRW->IsPlayingDrawOrFire() && !bHandDrivingDraw)
+						continue;
+				}
+			}
 			
 			// Skip hand/arm bones - these exist in c_models but should NOT be
 			// merged from the hand model. The weapon model's own hand bones
@@ -5745,9 +5963,11 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			copiedCount++;
 		}
 		
-		// Second pass: rebuild children of copied bones that weren't themselves copied.
-		// Extract the child's local transform from the ORIGINAL weapon animation, then
-		// recompute it relative to the new (hand-driven) parent transform.
+		// Second pass: rebuild children of copied/adjusted bones that weren't
+		// themselves directly copied. Cascades down the hierarchy so
+		// grandchildren of merged bones also get repositioned correctly.
+		// Source guarantees bones are ordered parent-first, so iterating
+		// in index order handles the cascade naturally.
 		for (int i = 0; i < weaponBoneCount && i < MAXSTUDIOBONES; i++)
 		{
 			if (bCopiedBone[i])
@@ -5760,6 +5980,9 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			if (!bCopiedBone[pWpnBone->parent])
 				continue;
 			
+			// Save original before overwriting so deeper descendants can use it
+			MatrixCopy(pRenderWeapon->GetBoneForWrite(i), originalWeaponBones[i]);
+			
 			// local = inv(original_parent) * original_child
 			matrix3x4_t invOriginalParent;
 			MatrixInvert(originalWeaponBones[pWpnBone->parent], invOriginalParent);
@@ -5771,6 +5994,8 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			// new_child = new_parent * local
 			matrix3x4_t &newParentBone = pRenderWeapon->GetBoneForWrite(pWpnBone->parent);
 			ConcatTransforms(newParentBone, localTransform, childBone);
+			
+			bCopiedBone[i] = true;
 		}
 		
 		if (tfvr_weapon_fire_anim_debug.GetBool() && copiedCount != lastCopiedCount)
@@ -6146,6 +6371,29 @@ static bool IsFistsGloveVariant(C_TFWeaponBase *pWeapon)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Returns true for bare-handed fist variants (default fists and
+//          reskins that use f_ animations rather than bg_ glove animations).
+//          These show the Heavy's bare hands, making them candidates for
+//          finger tracking instead of canned weapon-pose animations.
+//          The Eviction Notice uses f_ animations but has visible wrapping
+//          geometry that clashes with tracked fingers, so it is excluded.
+//-----------------------------------------------------------------------------
+static bool IsBareFists(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_FISTS)
+		return false;
+
+	if (IsFistsGloveVariant(pWeapon))
+		return false;
+
+	const char *worldModel = pWeapon->GetWorldModel();
+	if (worldModel && V_stristr(worldModel, "eviction"))
+		return false;
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Check if a fist weapon is specifically the Bread Bite (c_breadmonster_gloves).
 //-----------------------------------------------------------------------------
 static bool IsBreadBite(C_TFWeaponBase *pWeapon)
@@ -6245,6 +6493,12 @@ const char* GetSpyKnifeAnimPrefix(C_TFWeaponBase *pWeapon)
 static bool IsAllClassMelee(C_TFWeaponBase *pWeapon)
 {
 	if (!pWeapon)
+		return false;
+
+	// Breadmonster items (bread box reskins) have allclass melee anim slot
+	// in the schema but are NOT melee weapons — they need class-specific handling.
+	const char *worldModel = pWeapon->GetWorldModel();
+	if (worldModel && V_stristr(worldModel, "breadmonster"))
 		return false;
 
 	CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
@@ -6388,7 +6642,14 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 			if (V_stristr(weaponClass, "smg")) return "smg_idle";
 			if (V_stristr(weaponClass, "club")) return "m_idle"; // Kukri, Bushwacka, Shahanshah, etc.
 			if (V_stristr(weaponClass, "sword")) return "m_idle";
-			if (V_stristr(weaponClass, "jar")) return "pj_idle"; // Jarate
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1105)
+					return "bm_idle"; // Self-Aware Beauty Mark (bread monster)
+				return "pj_idle"; // Jarate
+			}
+			if (V_stristr(weaponClass, "jar")) return "pj_idle"; // Jarate (fallback)
 			if (V_stristr(weaponClass, "cleaver")) return "throw_idle"; // Throwing weapons
 			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
 			if (V_stristr(weaponClass, "charged_smg")) return "idle"; // Cleaner's Carbine (uses generic idle)
@@ -6403,7 +6664,13 @@ const char* GetWeaponPoseAnimation(int playerClass, const char *weaponClass, C_T
 				V_snprintf(s_szSpyKnifeIdle, sizeof(s_szSpyKnifeIdle), "%s_idle", GetSpyKnifeAnimPrefix(pWeapon));
 				return s_szSpyKnifeIdle;
 			}
-			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")) return "c_sapper_idle";
+			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder"))
+			{
+				const char *worldModel = pWeapon ? pWeapon->GetWorldModel() : NULL;
+				if (worldModel && V_stristr(worldModel, "breadmonster"))
+					return "c_breadmonster_sapper_drawDeployed";
+				return "c_sapper_idle";
+			}
 			if (V_stristr(weaponClass, "pda_spy")) return "offhand_idle"; // Disguise kit
 			if (V_stristr(weaponClass, "invis")) return "offhand_idle"; // Invis watch
 			if (V_stristr(weaponClass, "throwable")) return "throw_idle";
@@ -6820,6 +7087,12 @@ const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_T
 			if (V_stristr(weaponClass, "smg")) return "smg_draw";
 			if (V_stristr(weaponClass, "club")) return "m_draw";
 			if (V_stristr(weaponClass, "sword")) return "m_draw";
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1105)
+					return "bm_draw"; // Self-Aware Beauty Mark (bread monster)
+			}
 			break;
 
 		case TF_CLASS_SPY:
@@ -6830,7 +7103,13 @@ const char* GetWeaponDrawAnimation(int playerClass, const char *weaponClass, C_T
 				V_snprintf(s_szSpyKnifeDraw, sizeof(s_szSpyKnifeDraw), "%s_draw", GetSpyKnifeAnimPrefix(pWeapon));
 				return s_szSpyKnifeDraw;
 			}
-			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")) return "c_sapper_draw";
+			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder"))
+			{
+				const char *worldModel = pWeapon ? pWeapon->GetWorldModel() : NULL;
+				if (worldModel && V_stristr(worldModel, "breadmonster"))
+					return "c_breadmonster_sapper_draw";
+				return "c_sapper_draw";
+			}
 			break;
 	}
 
@@ -6869,8 +7148,8 @@ VRDrawAnimScope GetWeaponDrawAnimScope(int playerClass, const char *weaponClass,
 			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
 			{
 				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
-				if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
-					return VR_DRAW_ANIM_NONE; // Mutated Milk
+			if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
+				return VR_DRAW_ANIM_WEAPON_BONE; // Mutated Milk: hand drives creature, no wrist motion
 				return VR_DRAW_ANIM_WRIST; // Mad Milk
 			}
 			break;
@@ -6933,12 +7212,19 @@ VRDrawAnimScope GetWeaponDrawAnimScope(int playerClass, const char *weaponClass,
 			if (V_stristr(weaponClass, "smg")) return VR_DRAW_ANIM_NONE;
 			if (V_stristr(weaponClass, "club")) return VR_DRAW_ANIM_NONE;
 			if (V_stristr(weaponClass, "sword")) return VR_DRAW_ANIM_NONE;
+			if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_JAR)
+			{
+				CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+			if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1105)
+				return VR_DRAW_ANIM_WEAPON_BONE; // Self-Aware Beauty Mark: hand drives creature, no wrist motion
+			}
 			break;
 
 		case TF_CLASS_SPY:
 			if (V_stristr(weaponClass, "revolver")) return VR_DRAW_ANIM_NONE;
 			if (V_stristr(weaponClass, "knife")) return VR_DRAW_ANIM_WRIST;
-			if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")) return VR_DRAW_ANIM_NONE;
+		if (V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder"))
+			return VR_DRAW_ANIM_WEAPON_BONE;
 			break;
 	}
 
@@ -6972,8 +7258,10 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 	const char *usedName = NULL;
 	float cycle = 0.0f;
 
-	// Track whether draw animation drives only weapon_bone (not fingers)
-	bool bDrawWeaponBoneOnly = m_bPlayingDrawAnim && m_eDrawAnimScope == VR_DRAW_ANIM_WEAPON_BONE;
+	// Track whether draw animation drives only weapon_bone (not fingers).
+	// Bread creatures excluded: their entity plays the draw sequence directly.
+	bool bDrawWeaponBoneOnly = m_bPlayingDrawAnim && m_eDrawAnimScope == VR_DRAW_ANIM_WEAPON_BONE
+		&& !m_bAnimateIdle;
 
 	if (seqOverride >= 0)
 	{
@@ -7384,6 +7672,49 @@ int C_TFVRHand::DrawModel(int flags)
 			modelrender->ForcedMaterialOverride(NULL);
 	}
 
+	if (m_hLeftHandWatch.Get() && m_pWatchPanel && (flags & STUDIO_RENDER)
+		&& pOwner->GetPercentInvisible() < 1.0f)
+	{
+		C_BaseAnimating *pWatch = m_hLeftHandWatch.Get();
+		int iLL = pWatch->LookupAttachment("controlpanel0_ll");
+		int iUR = pWatch->LookupAttachment("controlpanel0_ur");
+		if (iLL > 0 && iUR > 0)
+		{
+			matrix3x4_t matLL;
+			Vector urPos;
+			pWatch->GetAttachment(iLL, matLL);
+			pWatch->GetAttachment(iUR, urPos);
+
+			Vector llPos, right, up, forward;
+			MatrixGetColumn(matLL, 3, llPos);
+			MatrixGetColumn(matLL, 0, right);
+			MatrixGetColumn(matLL, 1, up);
+			MatrixGetColumn(matLL, 2, forward);
+
+			matrix3x4_t invLL;
+			MatrixInvert(matLL, invLL);
+			Vector lrlocal;
+			VectorTransform(urPos, invLL, lrlocal);
+
+			VMatrix panelToWorld;
+			panelToWorld.Identity();
+			panelToWorld[0][0] = right.x;  panelToWorld[0][1] = up.x;  panelToWorld[0][2] = forward.x;
+			panelToWorld[1][0] = right.y;  panelToWorld[1][1] = up.y;  panelToWorld[1][2] = forward.y;
+			panelToWorld[2][0] = right.z;  panelToWorld[2][1] = up.z;  panelToWorld[2][2] = forward.z;
+			panelToWorld.SetTranslation(llPos);
+
+			int pixelW, pixelH;
+			m_pWatchPanel->GetSize(pixelW, pixelH);
+
+			g_pMatSystemSurface->DisableClipping(true);
+			g_pMatSystemSurface->DrawPanelIn3DSpace(
+				m_pWatchPanel->GetVPanel(), panelToWorld,
+				pixelW, pixelH,
+				lrlocal.x, lrlocal.y);
+			g_pMatSystemSurface->DisableClipping(false);
+		}
+	}
+
 	return ret;
 }
 
@@ -7468,6 +7799,15 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Reset aim stabilization so it recaptures reference with this weapon's grip
 	m_bAimRefValid = false;
+
+	// Gunslinger (robot_arm): the hand model IS the weapon, no render weapon needed.
+	// Melee hit detection is handled by VRPhysicalMeleeUpdate in the shared weapon code.
+	// Finger tracking drives the hand pose, no fire animation needed.
+	if (m_bHasGunslinger && V_stristr(pWeapon->GetClassname(), "robot_arm"))
+	{
+		Msg("VR Hand (RIGHT): Gunslinger equipped - no render weapon, hand IS the weapon\n");
+		return;
+	}
 	
 	// VR NEW APPROACH: Create a separate render-only entity for the weapon visual
 	// This way the player's actual weapon can remain in the viewmodel system
@@ -7475,7 +7815,6 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Use world model for VR (c_models in TF2 are the world models)
 	const char *worldModel = pWeapon->GetWorldModel();
-	
 	if (!worldModel || !worldModel[0])
 		return;
 	
@@ -7648,31 +7987,49 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			}
 		}
 
-		// Weapons with animated creatures driven by the weapon model's own idle.
-		// Skip vm_weapon bone merge so the creature visually animates.
 		m_bAnimateIdle = false;
 		m_bLoopIdleOnHand = false;
 		m_bIsBreadBite = false;
+		m_bBreadCreaturePin = false;
+
+		// Bread creature weapons: hand plays the animation at rate 1.0,
+		// bone merge copies vm_weapon bones to the render weapon each frame.
+		// One entity drives both visual and audio — no desync.
+		// Jar weapons (Mutated Milk, Beauty Mark) pin the hand to the controller.
+		// Bread Sapper lets the hand follow the animation's weapon_bone.
 		if (pWeapon->GetWeaponID() == TF_WEAPON_JAR_MILK)
 		{
 			CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
 			if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1121)
+			{
 				m_bAnimateIdle = true;
+				m_bLoopIdleOnHand = true;
+				m_bBreadCreaturePin = true;
+			}
 		}
-		// Bread Bite: animation lives on the arm model. Idle cycling and fire
-		// animations are driven by the hand with our own timer-based system.
+		if (pWeapon->GetWeaponID() == TF_WEAPON_JAR)
+		{
+			CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+			if (pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 1105)
+			{
+				m_bAnimateIdle = true;
+				m_bLoopIdleOnHand = true;
+				m_bBreadCreaturePin = true;
+			}
+		}
 		if (IsBreadBite(pWeapon))
 		{
 			m_bIsBreadBite = true;
 		}
 
-		// Sapper: the animation lives on the hand model, not the weapon model.
-		// Advance the hand's idle cycle so bone merge copies the animated
-		// vm_weapon transforms to the weapon each frame.
+		// Sapper/builder: the idle animation lives on the hand model.
 		if (playerClass == TF_CLASS_SPY &&
 			(V_stristr(weaponClass, "sapper") || V_stristr(weaponClass, "builder")))
 		{
 			m_bLoopIdleOnHand = true;
+			const char *worldModel = pWeapon->GetWorldModel();
+			if (worldModel && V_stristr(worldModel, "breadmonster"))
+				m_bAnimateIdle = true;
 		}
 
 		
@@ -7824,20 +8181,50 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		}
 	}
 
-	// Animated idle weapons (sapper, Mutated Milk): play idle on the weapon model
+	// Bread creature weapons: set the render weapon to the same idle animation
+	// as the hand but at rate 0 (frozen). The hand drives the cycle per-frame
+	// via SetCycle in ClientThink. Bone merge copies vm_weapon bones from the
+	// hand; weapon-only bones (e.g. sapper mechanism) use the render weapon's
+	// own animation at the synced cycle.
 	if (m_bAnimateIdle)
 	{
+		C_TFPlayer *pIdleOwner = GetOwnerPlayer();
 		int weaponIdleSeq = -1;
-		weaponIdleSeq = pRenderWeapon->LookupSequence("c_sapper_idle");
+		if (pIdleOwner)
+		{
+			int pc = pIdleOwner->GetPlayerClass()->GetClassIndex();
+			const char *wc = pWeapon->GetClassname();
+			const char *idleName = GetWeaponPoseAnimation(pc, wc, pWeapon);
+			if (idleName && idleName[0])
+			{
+				weaponIdleSeq = pRenderWeapon->LookupSequence(idleName);
+			}
+		}
+		if (weaponIdleSeq < 0)
+			weaponIdleSeq = pRenderWeapon->LookupSequence("c_sapper_idle");
 		if (weaponIdleSeq < 0)
 			weaponIdleSeq = pRenderWeapon->LookupSequence("idle");
 		if (weaponIdleSeq >= 0)
 		{
 			pRenderWeapon->SetSequence(weaponIdleSeq);
 			pRenderWeapon->SetCycle(0.0f);
-			pRenderWeapon->SetPlaybackRate(1.0f);
+			pRenderWeapon->SetPlaybackRate(0.0f);
 			pRenderWeapon->SetIdleSequence(weaponIdleSeq);
 		}
+		else
+		{
+			pRenderWeapon->SetPlaybackRate(0.0f);
+		}
+	}
+
+	// Bread creatures (not Bread Bite): start idle on the hand at rate 1.0.
+	// Bone merge copies vm_weapon bones to the render weapon, so the hand
+	// drives both the creature visual and sound events — keeping them in sync.
+	if (m_bAnimateIdle && !m_bIsBreadBite && m_iIdleSequence >= 0)
+	{
+		SetSequence(m_iIdleSequence);
+		SetCycle(0.0f);
+		SetPlaybackRate(1.0f);
 	}
 	
 	// Bread Bite: set up hand-side sequences for swing, crit, and idle cycling
@@ -7860,14 +8247,6 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			SetPlaybackRate(1.0f);
 		}
 		
-		CStudioHdr *pHdr = GetModelPtr();
-		float dur0 = (pHdr && m_iBreadBiteIdleSeqs[0] >= 0) ? SequenceDuration(pHdr, m_iBreadBiteIdleSeqs[0]) : -1.0f;
-		float dur1 = (pHdr && m_iBreadBiteIdleSeqs[1] >= 0) ? SequenceDuration(pHdr, m_iBreadBiteIdleSeqs[1]) : -1.0f;
-		float dur2 = (pHdr && m_iBreadBiteIdleSeqs[2] >= 0) ? SequenceDuration(pHdr, m_iBreadBiteIdleSeqs[2]) : -1.0f;
-		Warning("VR BB EQUIP: model='%s' swing=%d crit=%d idle=%d/%d/%d dur=%.2f/%.2f/%.2f idleSeq=%d rate=%.1f\n",
-			GetModelName(), m_iFireSequence, m_iBreadBiteCritSeq,
-			m_iBreadBiteIdleSeqs[0], m_iBreadBiteIdleSeqs[1], m_iBreadBiteIdleSeqs[2],
-			dur0, dur1, dur2, m_iIdleSequence, GetPlaybackRate());
 	}
 
 	// Sync broken bodygroup for breakable melee weapons (bottle, sign, etc.)
@@ -8061,10 +8440,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// Trigger draw animation after all weapon setup is complete.
 	// This must come AFTER the idle hand bone offset is cached so that
 	// FULL_ARM scope has a valid anchor to compute displacement from.
-	if (m_iDrawSequence >= 0 && m_eDrawAnimScope != VR_DRAW_ANIM_NONE)
-	{
-		PlayWeaponDrawAnimation();
-	}
+	// Always call this — even with NONE scope the render weapon may
+	// have its own draw animation (bread creatures).
+	PlayWeaponDrawAnimation();
 }
 
 //-----------------------------------------------------------------------------
@@ -8204,8 +8582,47 @@ void C_TFVRHand::UpdateWeaponTransform()
 	if (!pWeapon)
 		return;
 	
-	// Ensure weapon stays visible and uses world model
-	pWeapon->RemoveEffects(EF_NODRAW);
+	// The render weapon handles all visual rendering in VR.
+	// Hide the source weapon entity so it doesn't draw on top with
+	// its own (server-driven) animation — that causes desync artifacts
+	// on bread creatures and doubled geometry on everything else.
+	// Also freeze its animation so its StudioFrameAdvance doesn't
+	// fire duplicate sound events.
+	if (m_hRenderWeapon.Get())
+	{
+		pWeapon->AddEffects(EF_NODRAW);
+		pWeapon->SetPlaybackRate(0.0f);
+
+		// Bread creature weapons: sync the viewmodel's animation to the
+		// hand so both fire sound events at the same instant.  The
+		// doubled audio reinforces the quiet spatialized sounds rather
+		// than creating an echo.  The hand drives both draw and idle.
+		if (m_bAnimateIdle)
+		{
+			C_TFPlayer *pOwner = GetOwnerPlayer();
+			C_BaseViewModel *pVM = pOwner ? pOwner->GetViewModel(0) : NULL;
+			if (pVM)
+			{
+				CStudioHdr *pHandHdr = GetModelPtr();
+				int handSeq = GetSequence();
+				if (pHandHdr && handSeq >= 0 && handSeq < pHandHdr->GetNumSeq())
+				{
+					mstudioseqdesc_t &seqDesc = pHandHdr->pSeqdesc(handSeq);
+					int vmSeq = pVM->LookupSequence(seqDesc.pszLabel());
+					if (vmSeq >= 0)
+					{
+						if (pVM->GetSequence() != vmSeq)
+							pVM->SetSequence(vmSeq);
+						pVM->SetCycle(GetCycle());
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		pWeapon->RemoveEffects(EF_NODRAW);
+	}
 	pWeapon->RemoveEffects(EF_BONEMERGE);
 	pWeapon->RemoveEffects(EF_BONEMERGE_FASTCULL);
 	
@@ -8996,11 +9413,19 @@ void C_TFVRHand::PlayWeaponDrawAnimation()
 	if (!tfvr_weapon_draw_anim.GetBool())
 		return;
 
+	// Always trigger draw animation on the render weapon, even if the hand
+	// doesn't play one (scope NONE). The weapon model still needs its deploy.
+	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+	if (pRenderWeapon)
+	{
+		pRenderWeapon->PlayDrawAnimation();
+	}
+
 	if (m_iDrawSequence < 0 || m_eDrawAnimScope == VR_DRAW_ANIM_NONE)
 	{
 		if (tfvr_weapon_draw_anim_debug.GetBool())
 		{
-			DevMsg("VR: No draw animation for this weapon (seq %d, scope %d)\n",
+			DevMsg("VR: No hand draw animation for this weapon (seq %d, scope %d)\n",
 				m_iDrawSequence, (int)m_eDrawAnimScope);
 		}
 		return;
@@ -9009,7 +9434,11 @@ void C_TFVRHand::PlayWeaponDrawAnimation()
 	// For WEAPON_BONE scope, the main skeleton stays at idle and we only
 	// sample the draw animation for weapon_bone in ApplyWeaponPose.
 	// For WRIST and FULL_ARM, the draw animation drives the entity sequence.
-	if (m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST)
+	// Bread creatures with WEAPON_BONE scope: also play the draw sequence
+	// on the entity so vm_weapon bones animate the creature deploy, but
+	// bPinToSampled keeps the hand/wrist fixed at the controller.
+	if (m_eDrawAnimScope >= VR_DRAW_ANIM_WRIST
+		|| (m_bAnimateIdle && m_eDrawAnimScope == VR_DRAW_ANIM_WEAPON_BONE))
 	{
 		SetSequence(m_iDrawSequence);
 		SetCycle(0.0f);
@@ -9028,13 +9457,6 @@ void C_TFVRHand::PlayWeaponDrawAnimation()
 		const char *scopeNames[] = { "NONE", "WEAPON_BONE", "WRIST", "FULL_ARM" };
 		DevMsg("VR: Playing draw animation on hand (sequence %d, scope %s) at time %.2f\n",
 			m_iDrawSequence, scopeNames[m_eDrawAnimScope], gpGlobals->curtime);
-	}
-
-	// Also trigger draw animation on the render weapon model
-	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
-	if (pRenderWeapon)
-	{
-		pRenderWeapon->PlayDrawAnimation();
 	}
 }
 
@@ -9304,6 +9726,11 @@ void C_TFVRHand::RemoveLeftHandWatch()
 		m_hLeftHandWatch = NULL;
 	}
 	m_bWatchOffsetValid = false;
+	if (m_pWatchPanel)
+	{
+		m_pWatchPanel->MarkForDeletion();
+		m_pWatchPanel = NULL;
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -9427,6 +9854,11 @@ void C_TFVRHand::CreateWatchModel(const char *pszWatchModel)
 	}
 
 	m_hLeftHandWatch = pWatch;
+
+	if (!m_pWatchPanel)
+	{
+		m_pWatchPanel = new CVRWatchPanel(g_pClientMode->GetViewport());
+	}
 }
 
 //-----------------------------------------------------------------------------
