@@ -6032,6 +6032,8 @@ bool C_TFVRHand::GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const
 	return true;
 }
 
+static bool IsAllClassMelee(C_TFWeaponBase *pWeapon);
+
 //-----------------------------------------------------------------------------
 // Purpose: Get the weapon's muzzle position and angles in world space
 //          Returns false if no weapon is held or muzzle can't be determined
@@ -6112,14 +6114,20 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 			{
 				iAxis = clamp( s_meleeAxis.GetInt(), 0, 2 );
 			}
-			else if ( weaponType == TF_WPN_TYPE_MELEE )
+			else if ( weaponType == TF_WPN_TYPE_MELEE && !IsAllClassMelee(pTFWeapon) )
 			{
 				C_TFPlayer *pOwnerPlayer = m_hOwnerPlayer.Get();
 				if ( pOwnerPlayer )
 				{
 					int iClass = pOwnerPlayer->GetPlayerClass()->GetClassIndex();
 					if ( iClass == TF_CLASS_MEDIC || iClass == TF_CLASS_SNIPER )
-						iAxis = 2;
+					{
+						// Solemn Vow (bust statue) aligns along Y like all-class melees
+						CEconItemView *pItem = pTFWeapon->GetAttributeContainer()->GetItem();
+						bool bSolemnVow = pItem && pItem->IsValid() && pItem->GetItemDefIndex() == 413;
+						if ( !bSolemnVow )
+							iAxis = 2;
+					}
 				}
 			}
 
