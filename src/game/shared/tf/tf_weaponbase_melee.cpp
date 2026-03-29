@@ -1338,6 +1338,31 @@ bool CTFWeaponBaseMelee::CanVRAddHead()
 }
 
 //-----------------------------------------------------------------------------
+// Called when a VR swing ends without registering a hit.
+// Applies self-damage for weapons with the hit_self_on_miss attribute
+// (e.g. Boston Basher), matching vanilla Smack() miss behavior.
+//-----------------------------------------------------------------------------
+void CTFWeaponBaseMelee::OnVRSwingMiss()
+{
+#if !defined( CLIENT_DLL )
+	int iHitSelf = 0;
+	CALL_ATTRIB_HOOK_INT( iHitSelf, hit_self_on_miss );
+	if ( iHitSelf != 1 )
+		return;
+
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return;
+
+	trace_t trace;
+	memset( &trace, 0, sizeof( trace ) );
+	trace.endpos = pPlayer->WorldSpaceCenter();
+
+	DoMeleeDamage( pPlayer, trace, 0.5f );
+#endif
+}
+
+//-----------------------------------------------------------------------------
 // Shared hull trace from an arbitrary grip position/orientation.
 //-----------------------------------------------------------------------------
 bool CTFWeaponBaseMelee::DoVRSwingTraceFromHand( trace_t &trace, const Vector &vecStart, const QAngle &angBone )
@@ -1420,6 +1445,8 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 	{
 		if ( flRightGripSpeed < flResetThreshold )
 		{
+			if ( !m_bVRSwingHit )
+				OnVRSwingMiss();
 			m_bVRSwingActive = false;
 			m_bVRSwingHit = false;
 		}
@@ -1460,6 +1487,8 @@ void CTFWeaponBaseMelee::VRPhysicalMeleeUpdate()
 		{
 			if ( flLeftGripSpeed < flResetThreshold )
 			{
+				if ( !m_bVRSwingHitLeft )
+					OnVRSwingMiss();
 				m_bVRSwingActiveLeft = false;
 				m_bVRSwingHitLeft = false;
 			}

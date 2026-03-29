@@ -126,6 +126,7 @@ public:
 
 protected:
 	void			VRPhysicalMeleeUpdate();
+	void			OnVRSwingMiss();
 	bool			DoVRSwingTrace( trace_t &trace );
 	bool			DoVRSwingTraceFromHand( trace_t &trace, const Vector &vecStart, const QAngle &angBone );
 	float			CalcVRCooldownDamageMod();
