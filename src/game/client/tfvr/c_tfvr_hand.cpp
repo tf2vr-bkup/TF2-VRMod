@@ -1203,6 +1203,14 @@ ConVar tfvr_aim_stickybomb_pitch("tfvr_aim_stickybomb_pitch", "0", FCVAR_ARCHIVE
 ConVar tfvr_aim_stickybomb_yaw("tfvr_aim_stickybomb_yaw", "90", FCVAR_ARCHIVE, "Yaw correction for sticky launcher aim (degrees, local space)");
 ConVar tfvr_aim_stickybomb_roll("tfvr_aim_stickybomb_roll", "0", FCVAR_ARCHIVE, "Roll correction for sticky launcher aim (degrees, local space)");
 
+// Crusader's Crossbow muzzle offset from weapon_bone (model has no muzzle attachment)
+ConVar tfvr_crossbow_muzzle_fwd("tfvr_crossbow_muzzle_fwd", "22", FCVAR_ARCHIVE, "Crossbow muzzle forward offset from weapon_bone (units)");
+ConVar tfvr_crossbow_muzzle_right("tfvr_crossbow_muzzle_right", "0", FCVAR_ARCHIVE, "Crossbow muzzle right offset from weapon_bone (units)");
+ConVar tfvr_crossbow_muzzle_up("tfvr_crossbow_muzzle_up", "0", FCVAR_ARCHIVE, "Crossbow muzzle up offset from weapon_bone (units)");
+ConVar tfvr_crossbow_muzzle_pitch("tfvr_crossbow_muzzle_pitch", "0", FCVAR_ARCHIVE, "Crossbow muzzle pitch rotation relative to weapon_bone (degrees)");
+ConVar tfvr_crossbow_muzzle_yaw("tfvr_crossbow_muzzle_yaw", "0", FCVAR_ARCHIVE, "Crossbow muzzle yaw rotation relative to weapon_bone (degrees)");
+ConVar tfvr_crossbow_muzzle_roll("tfvr_crossbow_muzzle_roll", "0", FCVAR_ARCHIVE, "Crossbow muzzle roll rotation relative to weapon_bone (degrees)");
+
 // Aim stabilization - counteracts grip/trigger-induced palm wobble on weapon aim
 ConVar tfvr_aim_stabilize("tfvr_aim_stabilize", "1", FCVAR_ARCHIVE, "Stabilize weapon aim against grip-induced palm movement (0=off, 1=on)");
 ConVar tfvr_aim_stabilize_adapt("tfvr_aim_stabilize_adapt", "0.1", FCVAR_ARCHIVE, "Rate at which aim reference adapts to current grip (per second, 0=never)");
@@ -6231,6 +6239,40 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		}
 	}
 	
+	// CRUSADER'S CROSSBOW: The workshop model has no muzzle attachment, so we
+	// synthesize one from the weapon_bone with a configurable offset and rotation.
+	if (pTFWeapon && pTFWeapon->GetWeaponID() == TF_WEAPON_CROSSBOW)
+	{
+		matrix3x4_t matBone;
+		if (GetCachedWeaponBoneTransform(matBone))
+		{
+			Vector bonePos;
+			QAngle boneAngles;
+			MatrixAngles(matBone, boneAngles, bonePos);
+
+			Vector forward, right, up;
+			AngleVectors(boneAngles, &forward, &right, &up);
+
+			outPos = bonePos
+				+ forward * tfvr_crossbow_muzzle_fwd.GetFloat()
+				+ right   * tfvr_crossbow_muzzle_right.GetFloat()
+				+ up      * tfvr_crossbow_muzzle_up.GetFloat();
+
+			QAngle rotationOffset(
+				tfvr_crossbow_muzzle_pitch.GetFloat(),
+				tfvr_crossbow_muzzle_yaw.GetFloat(),
+				tfvr_crossbow_muzzle_roll.GetFloat());
+
+			matrix3x4_t boneMat, rotMat, resultMat;
+			AngleMatrix(boneAngles, vec3_origin, boneMat);
+			AngleMatrix(rotationOffset, vec3_origin, rotMat);
+			ConcatTransforms(boneMat, rotMat, resultMat);
+			MatrixAngles(resultMat, outAngles);
+
+			return true;
+		}
+	}
+
 	// STANDARD WEAPONS: Query the render weapon's muzzle attachment directly.
 	// The render weapon's SetupBones override forces the hand to position it
 	// with fresh tracking data before computing bone/attachment transforms,
