@@ -23699,7 +23699,7 @@ void CTFPlayer::CheckForHeadCollisions()
 	if (smoothedFade > 0)
 	{
 		color32 fadeColor{ 0, 0, 0, smoothedFade };
-		UTIL_ScreenFade(this, fadeColor, 0.05f, 0.0f, FFADE_OUT | FFADE_STAYOUT);
+		UTIL_ScreenFade(this, fadeColor, 0.0f, 0.0f, FFADE_STAYOUT | FFADE_PURGE);
 
 		float timeFaded = gpGlobals->curtime - m_lastTimeHeadCleared;
 		if (smoothedFade >= 192 && timeFaded > 1.0f)
