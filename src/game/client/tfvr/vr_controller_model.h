@@ -145,6 +145,13 @@ private:
 	void UpdateAnimationState();
 	void UpdateControllerPoses();
 	void RenderController(const GameControllerModel& model, bool isLeft);
+	void TransformControllerVertex(
+		const Vector& localPosXR, const matrix3x4_t& nodeMatrix3x4, const GameControllerModel& model,
+		float r00, float r01, float r02, float r10, float r11, float r12,
+		float r20, float r21, float r22,
+		const XrPosef& xrPose, float worldScale,
+		const VMatrix& headInverse, const VMatrix& smoothedHeadWorld,
+		Vector& worldPos);
 	void CleanupModel(GameControllerModel& model);
 	
 	COpenXRManager* m_pOpenXRManager;

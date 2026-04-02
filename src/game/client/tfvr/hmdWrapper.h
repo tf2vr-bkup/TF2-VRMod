@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vulkan/vulkan.h>
 #include "openxr/openxr.h"
 
 // Source Engine State for VR Compositor
@@ -51,3 +52,12 @@ extern "C" void __declspec(dllexport) TF2VR_UpdateHUDPosition(
     int frame_number,                                      // Current frame number
     float world_scale                                      // VR world scale factor
 );
+
+// DXVK Vulkan device info - allows the game DLL to bind the OpenXR session to
+// DXVK's VkDevice instead of creating a separate one (fixes SteamVR on Linux/Proton)
+extern "C" bool __declspec(dllexport) dxvkGetVulkanDeviceInfo(
+    VkInstance* outInstance,
+    VkPhysicalDevice* outPhysicalDevice,
+    VkDevice* outDevice,
+    VkQueue* outQueue,
+    uint32_t* outQueueFamilyIndex);

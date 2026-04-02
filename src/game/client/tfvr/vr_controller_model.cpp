@@ -994,6 +994,52 @@ void CVRControllerModelManager::Render()
 		RenderController(m_rightController, false);
 }
 
+void CVRControllerModelManager::TransformControllerVertex(
+	const Vector& localPosXR, const matrix3x4_t& nodeMatrix3x4, const GameControllerModel& model,
+	float r00, float r01, float r02, float r10, float r11, float r12,
+	float r20, float r21, float r22,
+	const XrPosef& xrPose, float worldScale,
+	const VMatrix& headInverse, const VMatrix& smoothedHeadWorld,
+	Vector& worldPos)
+{
+	Vector modelPosXR;
+	VectorTransform(localPosXR, nodeMatrix3x4, modelPosXR);
+	
+	if (model.hasRawXRPose)
+	{
+		Vector rotatedXR;
+		rotatedXR.x = r00 * modelPosXR.x + r01 * modelPosXR.y + r02 * modelPosXR.z;
+		rotatedXR.y = r10 * modelPosXR.x + r11 * modelPosXR.y + r12 * modelPosXR.z;
+		rotatedXR.z = r20 * modelPosXR.x + r21 * modelPosXR.y + r22 * modelPosXR.z;
+		
+		Vector playspacePosXR;
+		playspacePosXR.x = rotatedXR.x + xrPose.position.x;
+		playspacePosXR.y = rotatedXR.y + xrPose.position.y;
+		playspacePosXR.z = rotatedXR.z + xrPose.position.z;
+		
+		Vector playspacePosSource;
+		playspacePosSource.x = -playspacePosXR.z;
+		playspacePosSource.y = -playspacePosXR.x;
+		playspacePosSource.z = playspacePosXR.y;
+		
+		playspacePosSource *= worldScale;
+		
+		Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
+		worldPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);
+	}
+	else
+	{
+		Vector modelPosSource;
+		modelPosSource.x = -modelPosXR.z;
+		modelPosSource.y = -modelPosXR.x;
+		modelPosSource.z = modelPosXR.y;
+		
+		modelPosSource *= worldScale;
+		
+		worldPos = model.currentPose.VMul4x3(modelPosSource);
+	}
+}
+
 void CVRControllerModelManager::RenderController(const GameControllerModel& model, bool isLeft)
 {
 	CMatRenderContextPtr pRenderContext(materials);
@@ -1032,6 +1078,10 @@ void CVRControllerModelManager::RenderController(const GameControllerModel& mode
 	float r20 = 2.0f * (xz - wy);
 	float r21 = 2.0f * (yz + wx);
 	float r22 = 1.0f - 2.0f * (xx + yy);
+	
+	// Dynamic vertex buffer limit is 32768; use non-indexed batches for large meshes
+	static const int MAX_VERTS_PER_BATCH = 30000;
+	static const int MAX_TRIS_PER_BATCH = MAX_VERTS_PER_BATCH / 3;
 	
 	for (int nodeIdx = 0; nodeIdx < model.nodes.Count(); nodeIdx++)
 	{
@@ -1072,79 +1122,99 @@ void CVRControllerModelManager::RenderController(const GameControllerModel& mode
 		
 		int numVerts = (int)mesh.positions.size();
 		int numIndices = (int)mesh.indices.size();
-		IMesh* pMesh = pRenderContext->GetDynamicMesh(true, NULL, NULL, pMaterialToUse);
+		int totalTris = numIndices / 3;
 		
-		CMeshBuilder meshBuilder;
-		meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, numVerts, numIndices);
-		
-		// Emit unique vertices with transforms applied
-		for (int vi = 0; vi < numVerts; vi++)
+		if (numVerts <= MAX_VERTS_PER_BATCH && numIndices <= INDEX_BUFFER_SIZE)
 		{
-			const Vector& localPosXR = mesh.positions[vi];
+			// Fast path: mesh fits in a single indexed batch
+			IMesh* pMesh = pRenderContext->GetDynamicMesh(true, NULL, NULL, pMaterialToUse);
 			
-			Vector modelPosXR;
-			VectorTransform(localPosXR, nodeMatrix3x4, modelPosXR);
+			CMeshBuilder meshBuilder;
+			meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, numVerts, numIndices);
 			
-			Vector worldPos;
-			
-			if (model.hasRawXRPose)
+			for (int vi = 0; vi < numVerts; vi++)
 			{
-				Vector rotatedXR;
-				rotatedXR.x = r00 * modelPosXR.x + r01 * modelPosXR.y + r02 * modelPosXR.z;
-				rotatedXR.y = r10 * modelPosXR.x + r11 * modelPosXR.y + r12 * modelPosXR.z;
-				rotatedXR.z = r20 * modelPosXR.x + r21 * modelPosXR.y + r22 * modelPosXR.z;
+				Vector worldPos;
+				TransformControllerVertex(mesh.positions[vi], nodeMatrix3x4, model,
+					r00, r01, r02, r10, r11, r12, r20, r21, r22,
+					xrPose, worldScale, headInverse, smoothedHeadWorld, worldPos);
 				
-				Vector playspacePosXR;
-				playspacePosXR.x = rotatedXR.x + xrPose.position.x;
-				playspacePosXR.y = rotatedXR.y + xrPose.position.y;
-				playspacePosXR.z = rotatedXR.z + xrPose.position.z;
+				meshBuilder.Position3fv(worldPos.Base());
+				meshBuilder.Color4f(r, g, b, a);
 				
-				Vector playspacePosSource;
-				playspacePosSource.x = -playspacePosXR.z;
-				playspacePosSource.y = -playspacePosXR.x;
-				playspacePosSource.z = playspacePosXR.y;
+				if (vi < (int)mesh.texCoords.size())
+					meshBuilder.TexCoord2fv(0, &mesh.texCoords[vi].x);
+				else
+					meshBuilder.TexCoord2f(0, 0, 0);
 				
-				playspacePosSource *= worldScale;
-				
-				Vector posRelativeToHead = headInverse.VMul4x3(playspacePosSource);
-				worldPos = smoothedHeadWorld.VMul4x3(posRelativeToHead);
-			}
-			else
-			{
-				Vector modelPosSource;
-				modelPosSource.x = -modelPosXR.z;
-				modelPosSource.y = -modelPosXR.x;
-				modelPosSource.z = modelPosXR.y;
-				
-				modelPosSource *= worldScale;
-				
-				worldPos = model.currentPose.VMul4x3(modelPosSource);
+				meshBuilder.AdvanceVertex();
 			}
 			
-			meshBuilder.Position3fv(worldPos.Base());
-			meshBuilder.Color4f(r, g, b, a);
+			for (int tri = 0; tri < totalTris; tri++)
+			{
+				meshBuilder.Index(mesh.indices[tri * 3 + 0]);
+				meshBuilder.AdvanceIndex();
+				meshBuilder.Index(mesh.indices[tri * 3 + 2]);
+				meshBuilder.AdvanceIndex();
+				meshBuilder.Index(mesh.indices[tri * 3 + 1]);
+				meshBuilder.AdvanceIndex();
+			}
 			
-			if (vi < (int)mesh.texCoords.size())
-				meshBuilder.TexCoord2fv(0, &mesh.texCoords[vi].x);
-			else
-				meshBuilder.TexCoord2f(0, 0, 0);
-			
-			meshBuilder.AdvanceVertex();
+			meshBuilder.End();
+			pMesh->Draw();
 		}
-		
-		// Emit indices with reversed winding order for coordinate system flip
-		for (int tri = 0; tri < numIndices / 3; tri++)
+		else
 		{
-			meshBuilder.Index(mesh.indices[tri * 3 + 0]);
-			meshBuilder.AdvanceIndex();
-			meshBuilder.Index(mesh.indices[tri * 3 + 2]);
-			meshBuilder.AdvanceIndex();
-			meshBuilder.Index(mesh.indices[tri * 3 + 1]);
-			meshBuilder.AdvanceIndex();
+			// Batched path: mesh exceeds vertex buffer limit, render as
+			// non-indexed triangles in batches that fit within the limit.
+			int triOffset = 0;
+			while (triOffset < totalTris)
+			{
+				int trisThisBatch = MIN(totalTris - triOffset, MAX_TRIS_PER_BATCH);
+				int vertsThisBatch = trisThisBatch * 3;
+				
+				IMesh* pMesh = pRenderContext->GetDynamicMesh(true, NULL, NULL, pMaterialToUse);
+				
+				CMeshBuilder meshBuilder;
+				meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, vertsThisBatch);
+				
+				for (int tri = 0; tri < trisThisBatch; tri++)
+				{
+					int globalTri = triOffset + tri;
+					// Reversed winding order for coordinate system flip
+					int indices[3] = {
+						(int)mesh.indices[globalTri * 3 + 0],
+						(int)mesh.indices[globalTri * 3 + 2],
+						(int)mesh.indices[globalTri * 3 + 1]
+					};
+					
+					for (int v = 0; v < 3; v++)
+					{
+						int vi = indices[v];
+						
+						Vector worldPos;
+						TransformControllerVertex(mesh.positions[vi], nodeMatrix3x4, model,
+							r00, r01, r02, r10, r11, r12, r20, r21, r22,
+							xrPose, worldScale, headInverse, smoothedHeadWorld, worldPos);
+						
+						meshBuilder.Position3fv(worldPos.Base());
+						meshBuilder.Color4f(r, g, b, a);
+						
+						if (vi < (int)mesh.texCoords.size())
+							meshBuilder.TexCoord2fv(0, &mesh.texCoords[vi].x);
+						else
+							meshBuilder.TexCoord2f(0, 0, 0);
+						
+						meshBuilder.AdvanceVertex();
+					}
+				}
+				
+				meshBuilder.End();
+				pMesh->Draw();
+				
+				triOffset += trisThisBatch;
+			}
 		}
-		
-		meshBuilder.End();
-		pMesh->Draw();
 	}
 	
 	// Restore default depth test behavior

@@ -23,7 +23,6 @@
 
 #include <vector>
 #include <cstring>
-
 // Forward declaration for global menu manager pointer
 extern class CVRMenuManager* g_pVRMenuManager;
 
@@ -80,8 +79,19 @@ static void MirrorResolutionChanged(IConVar *var, const char *pOldValue, float f
 	default:   w = 1280; h = 720;  break;
 	}
 
-	if (g_pOpenXRManager)
-		g_pOpenXRManager->SetSpectatorScreenDims(w, h);
+	if (!g_pOpenXRManager)
+		return;
+
+	g_pOpenXRManager->SetSpectatorScreenDims(w, h);
+
+	if (g_pOpenXRManager->IsActive() && g_pMatSystemSurface)
+	{
+		g_pMatSystemSurface->SetFullscreenViewportAndRenderTarget(0, 0, w, h, NULL);
+
+		char szCmd[256];
+		Q_snprintf(szCmd, sizeof(szCmd), "mat_setvideomode %u %u 1\n", w, h);
+		engine->ClientCmd_Unrestricted(szCmd);
+	}
 }
 
 ConVar tfvr_r_show_both_eyes("tfvr_r_show_both_eyes", "0", FCVAR_ARCHIVE, "Show both eyes on the game window.");
@@ -343,7 +353,9 @@ bool COpenXRManager::Initialize()
         vrParticleStabilize.SetValue( 1 );
     }
     
-    // Apply saved mirror resolution preset
+    // Apply the mirror resolution from whatever config.cfg restored (or the
+    // default).  When exec tfvr runs later and changes the value, the ConVar
+    // callback will re-apply with the correct resolution.
     extern ConVar tfvr_mirror_resolution;
     MirrorResolutionChanged(&tfvr_mirror_resolution, "720", 720.0f);
 
@@ -475,6 +487,9 @@ void COpenXRManager::Reactivate()
         vrParticleStabilize.SetValue( 1 );
     }
     
+    extern ConVar tfvr_mirror_resolution;
+    MirrorResolutionChanged(&tfvr_mirror_resolution, "720", 720.0f);
+
     DevMsg("VR session reactivated instantly (all components preserved)\n");
 }
 
@@ -686,11 +701,21 @@ bool COpenXRManager::CreateSession()
         return false;
     }
     
-    // Now that we have the requirements, create the Vulkan context using OpenXR helper functions
-    if (!CreateVulkanContext(&graphicsRequirements)) 
+    // Try to use DXVK's existing VkDevice for the OpenXR session binding.
+    bool usedDxvkDevice = false;
+    if (dxvkGetVulkanDeviceInfo(&m_vkInstance, &m_vkPhysicalDevice, &m_vkDevice, &m_vkQueue, &m_vkQueueFamilyIndex))
     {
-        DevMsg("Vulkan context creation failed!\n");
-        return false;
+        DevMsg("VR: Using DXVK's Vulkan device for OpenXR session (shared device mode)\n");
+        usedDxvkDevice = true;
+    }
+    else
+    {
+        DevMsg("VR: DXVK Vulkan device not available, creating dedicated Vulkan context\n");
+        if (!CreateVulkanContext(&graphicsRequirements)) 
+        {
+            DevMsg("Vulkan context creation failed!\n");
+            return false;
+        }
     }
    
     // Set up Vulkan graphics binding - use the Vulkan2KHR version 
@@ -710,10 +735,70 @@ bool COpenXRManager::CreateSession()
     result = xrCreateSession(m_instance, &sessionInfo, &m_session);
     if (!XR_SUCCEEDED(result)) 
     {
-        DevMsg("Failed to create OpenXR session: %d\n", result);
-        return false;
+        if (usedDxvkDevice)
+        {
+            DevMsg("VR: Session creation failed with DXVK device (error %d), falling back to dedicated Vulkan context\n", result);
+            if (!CreateVulkanContext(&graphicsRequirements))
+            {
+                DevMsg("Vulkan context creation failed!\n");
+                return false;
+            }
+            graphicsBinding.instance = m_vkInstance;
+            graphicsBinding.physicalDevice = m_vkPhysicalDevice;
+            graphicsBinding.device = m_vkDevice;
+            graphicsBinding.queueFamilyIndex = m_vkQueueFamilyIndex;
+            
+            result = xrCreateSession(m_instance, &sessionInfo, &m_session);
+            if (!XR_SUCCEEDED(result))
+            {
+                DevMsg("Failed to create OpenXR session (fallback): %d\n", result);
+                return false;
+            }
+            DevMsg("VR: OpenXR session created with dedicated Vulkan context (fallback)\n");
+        }
+        else
+        {
+            DevMsg("Failed to create OpenXR session: %d\n", result);
+            return false;
+        }
+    }
+    else if (usedDxvkDevice)
+    {
+        DevMsg("VR: OpenXR session created successfully with DXVK's shared Vulkan device\n");
     }
     DevMsg("OpenXR session created!\n");
+
+    // Per OpenXR spec, we must wait for XR_SESSION_STATE_READY before calling
+    // xrBeginSession. Poll events until we see the READY state or time out.
+    bool sessionReady = false;
+    const int maxPollAttempts = 200;  // ~2 seconds at 10ms intervals
+    for (int attempt = 0; attempt < maxPollAttempts && !sessionReady; attempt++)
+    {
+        XrEventDataBuffer eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};
+        while (xrPollEvent(m_instance, &eventBuffer) == XR_SUCCESS)
+        {
+            if (eventBuffer.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
+            {
+                auto* stateEvent = reinterpret_cast<XrEventDataSessionStateChanged*>(&eventBuffer);
+                DevMsg("VR: Session state changed to %d during init\n", stateEvent->state);
+                if (stateEvent->state == XR_SESSION_STATE_READY)
+                {
+                    sessionReady = true;
+                    break;
+                }
+            }
+            eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};
+        }
+        if (!sessionReady)
+        {
+            ThreadSleep(10);
+        }
+    }
+    
+    if (!sessionReady)
+    {
+        DevMsg("VR: WARNING - Did not receive XR_SESSION_STATE_READY after polling, attempting xrBeginSession anyway\n");
+    }
 
     XrSessionBeginInfo beginInfo{ XR_TYPE_SESSION_BEGIN_INFO };
     beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -2268,9 +2353,9 @@ void COpenXRManager::Update(float frametime)
 	// NOTE: VR Laser Pointer update moved to after CalcView for better timing
 	// (see view.cpp after CalcView)
 
-	// Poll OpenXR events
+	// Poll OpenXR events (poll even when not running to receive READY state)
 	XrEventDataBuffer eventBuffer = {XR_TYPE_EVENT_DATA_BUFFER};
-	while (m_sessionRunning && xrPollEvent(m_instance, &eventBuffer) == XR_SUCCESS)
+	while (m_instance != XR_NULL_HANDLE && xrPollEvent(m_instance, &eventBuffer) == XR_SUCCESS)
 	{
 		switch (eventBuffer.type)
 		{
@@ -2279,39 +2364,62 @@ void COpenXRManager::Update(float frametime)
 		{
 			XrEventDataSessionStateChanged *sessionStateEvent = reinterpret_cast<XrEventDataSessionStateChanged *>(&eventBuffer);
 
+			DevMsg("VR: Session state changed to %d\n", sessionStateEvent->state);
 			switch (sessionStateEvent->state)
 			{
-			// Session has input focus (overlay closed)
+			case XR_SESSION_STATE_IDLE:
+				break;
+
+			case XR_SESSION_STATE_READY:
+			{
+				if (!m_sessionRunning)
+				{
+					XrSessionBeginInfo beginInfo{ XR_TYPE_SESSION_BEGIN_INFO };
+					beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+					XrResult beginResult = xrBeginSession(m_session, &beginInfo);
+					if (XR_SUCCEEDED(beginResult))
+					{
+						DevMsg("VR: Session (re)started from READY state\n");
+						m_sessionRunning = true;
+					}
+					else
+					{
+						DevMsg("VR: Failed to begin session from READY state: %d\n", beginResult);
+					}
+				}
+				break;
+			}
+
+			case XR_SESSION_STATE_SYNCHRONIZED:
+				break;
+
 			case XR_SESSION_STATE_FOCUSED:
 				m_sessionFocused = true;
 				break;
 				
-			// Session visible but no input focus (overlay open)
 			case XR_SESSION_STATE_VISIBLE:
 				m_sessionFocused = false;
 				break;
 			
-			// Session is stopping (e.g., user quit via XR runtime)
 			case XR_SESSION_STATE_STOPPING:
 				Log("Shutdown requested by OpenXR runtime\n");
-				xrEndSession(m_session); // Gracefully end the session
+				xrEndSession(m_session);
 				m_sessionRunning = false;
 				m_sessionFocused = false;
-				if (engine)
-				{
-					// Assuming engine has a similar quit command
-					engine->ClientCmd_Unrestricted("quit");
-				}
 				break;
 
-			// Session is losing focus (e.g., dashboard activated)
 			case XR_SESSION_STATE_LOSS_PENDING:
 				Log("OpenXR dashboard likely activated\n");
 				m_sessionFocused = false;
-				if (engine && !enginevgui->IsGameUIVisible()) // Assume IsGameUIVisible exists
+				if (engine && !enginevgui->IsGameUIVisible())
 				{
 					engine->ClientCmd_Unrestricted("gameui_toggle\n");
 				}
+				break;
+
+			case XR_SESSION_STATE_EXITING:
+				m_sessionRunning = false;
+				m_sessionFocused = false;
 				break;
 
 			default:
@@ -2324,12 +2432,8 @@ void COpenXRManager::Update(float frametime)
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
 		{
 			XrEventDataInstanceLossPending *lossEvent = reinterpret_cast<XrEventDataInstanceLossPending *>(&eventBuffer);
-			Log("OpenXR instance loss pending, shutting down\n");
+			Log("OpenXR instance loss pending\n");
 			m_sessionRunning = false;
-			if (engine)
-			{
-				engine->ClientCmd_Unrestricted("quit");
-			}
 			break;
 		}
 
