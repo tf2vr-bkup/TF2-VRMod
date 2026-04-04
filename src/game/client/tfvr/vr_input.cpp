@@ -12,6 +12,7 @@
 #include "tf/c_tf_player.h"
 #include "tf/tf_weaponbase.h"
 #include "tf/tf_shareddefs.h"
+#include "tf/tf_weapon_shotgun.h"
 #include "c_tfvr_hand.h"
 #include <game/client/iviewport.h>
 #include "viewport_panel_names.h"
@@ -29,6 +30,12 @@ ConVar tfvr_use_hmd_angles("tfvr_use_hmd_angles", "0", FCVAR_ARCHIVE, "Use HMD a
 // Controller tracking ConVars
 ConVar tfvr_enable_controller_tracking("tfvr_enable_controller_tracking", "1", FCVAR_ARCHIVE, "Enable VR controller position and orientation tracking");
 ConVar tfvr_controller_tracking_debug("tfvr_controller_tracking_debug", "0", FCVAR_ARCHIVE, "Show debug output for controller tracking");
+
+extern ConVar tfvr_scattergun_lever_reload;
+extern ConVar tfvr_twohand_enabled;
+
+ConVar tfvr_scattergun_lever_weapon_grip_threshold( "tfvr_scattergun_lever_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: weapon-hand grip analog (right_grip when gun is in right hand, else left_grip) must reach this (0-1) while two-handing" );
+ConVar tfvr_scattergun_lever_twohand_min_blend( "tfvr_scattergun_lever_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: minimum two-hand blend on the weapon hand before lever motion counts (0-1)" );
 
 // VR Turning ConVars
 ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap" );
@@ -881,8 +888,64 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
     //       oldForward, cmd->forwardmove, oldSide, cmd->sidemove);
 }
 
+static void TFVR_UpdateScattergunLeverArmedInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_scattergun_lever_reload.GetBool() || !tfvr_twohand_enabled.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || !IsScattergunWeaponID( pWpn->GetWeaponID() ) || !pWpn->IsHeldByVRHand() )
+		return;
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+
+	if ( !pWeaponHand || !pOffHand )
+		return;
+
+	// Off-hand blend tracks whether the off-hand is gripping the weapon's foregrip
+	if ( pOffHand->GetTwoHandBlendAmount() < tfvr_scattergun_lever_twohand_min_blend.GetFloat() )
+		return;
+
+	// Weapon-hand grip squeeze (the hand holding the gun)
+	const float flGrip = ( pWeaponHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "right_grip" )
+		: g_pOpenXRManager->GetAnalogValue( "left_grip" );
+
+	if ( flGrip >= tfvr_scattergun_lever_weapon_grip_threshold.GetFloat() )
+	{
+		cmd->vrScattergunLeverArmed = true;
+		cmd->vrWeaponHandIsRight = ( pWeaponHand == pRight );
+	}
+}
+
 void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 {
+	if ( cmd )
+	{
+		cmd->vrScattergunLeverArmed = false;
+		cmd->vrWeaponHandIsRight = true;
+	}
+
     // Check if controller tracking is enabled
     if (!tfvr_enable_controller_tracking.GetBool())
         return;
@@ -894,6 +957,8 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         // Don't process controller tracking when menu is open
         return;
     }
+
+	TFVR_UpdateScattergunLeverArmedInCmd( cmd );
     
     // Get controller poses
     VMatrix leftControllerPose, rightControllerPose;
@@ -909,6 +974,19 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         Vector leftPos = leftControllerPose.GetTranslation();
         QAngle leftAngles;
         MatrixAngles(leftControllerPose.As3x4(), leftAngles);
+
+        // Playspace-relative pose (immune to locomotion/smoothing)
+        VMatrix leftRawPose;
+        if (g_pOpenXRManager->GetLeftControllerPoseRaw(leftRawPose))
+        {
+            cmd->vrRawControllerPosL = leftRawPose.GetTranslation();
+            MatrixAngles(leftRawPose.As3x4(), cmd->vrRawControllerAngL);
+        }
+        else
+        {
+            cmd->vrRawControllerPosL = leftPos;
+            cmd->vrRawControllerAngL = leftAngles;
+        }
 
         // Store hand bone position for third-person arm IK networking.
         // Must call SetupBones with a real buffer because C_TFVRHand::SetupBones
@@ -981,6 +1059,19 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         Vector rightPos = rightControllerPose.GetTranslation();
         QAngle rightAngles;
         MatrixAngles(rightControllerPose.As3x4(), rightAngles);
+
+        // Playspace-relative pose (immune to locomotion/smoothing)
+        VMatrix rightRawPose;
+        if (g_pOpenXRManager->GetRightControllerPoseRaw(rightRawPose))
+        {
+            cmd->vrRawControllerPosR = rightRawPose.GetTranslation();
+            MatrixAngles(rightRawPose.As3x4(), cmd->vrRawControllerAngR);
+        }
+        else
+        {
+            cmd->vrRawControllerPosR = rightPos;
+            cmd->vrRawControllerAngR = rightAngles;
+        }
 
         // Store hand bone position for third-person arm IK networking.
         // Same SetupBones buffer approach as the left hand (see comment above).

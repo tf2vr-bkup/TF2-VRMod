@@ -14,6 +14,10 @@
 // Client specific.
 #if defined( CLIENT_DLL )
 #include "c_tf_player.h"
+#include "prediction.h"
+#include "effect_dispatch_data.h"
+#include "c_te_effect_dispatch.h"
+#include "tfvr/c_tfvr_hand.h"
 // Server specific.
 #else
 #include "tf_player.h"
@@ -21,6 +25,10 @@
 #include "collisionutils.h"
 #include "in_buttons.h"
 #endif
+
+#include "usercmd.h"
+
+extern ConVar tfvr_reload_throttle_scale;
 
 //=============================================================================
 //
@@ -31,7 +39,41 @@ CREATE_SIMPLE_WEAPON_TABLE( TFShotgun, tf_weapon_shotgun_primary )
 CREATE_SIMPLE_WEAPON_TABLE( TFShotgun_Soldier, tf_weapon_shotgun_soldier )
 CREATE_SIMPLE_WEAPON_TABLE( TFShotgun_HWG, tf_weapon_shotgun_hwg )
 CREATE_SIMPLE_WEAPON_TABLE( TFShotgun_Pyro, tf_weapon_shotgun_pyro )
-CREATE_SIMPLE_WEAPON_TABLE( TFScatterGun, tf_weapon_scattergun )
+
+IMPLEMENT_NETWORKCLASS_ALIASED( TFScatterGun, DT_TFScatterGun )
+
+BEGIN_NETWORK_TABLE( CTFScatterGun, DT_TFScatterGun )
+#if defined( CLIENT_DLL )
+	RecvPropBool( RECVINFO( m_bVRLeverIsArmed ) ),
+	RecvPropVector( RECVINFO( m_vecVRLeverLastHandPos ) ),
+	RecvPropBool( RECVINFO( m_bVRLeverStrokeOut ) ),
+	RecvPropBool( RECVINFO( m_bVRLeverStrokeIn ) ),
+	RecvPropFloat( RECVINFO( m_flVRLeverStrokeDist ) ),
+	RecvPropFloat( RECVINFO( m_flNextVRLeverShellReadyTime ) ),
+#else
+	SendPropBool( SENDINFO( m_bVRLeverIsArmed ) ),
+	SendPropVector( SENDINFO( m_vecVRLeverLastHandPos ), -1, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bVRLeverStrokeOut ) ),
+	SendPropBool( SENDINFO( m_bVRLeverStrokeIn ) ),
+	SendPropFloat( SENDINFO( m_flVRLeverStrokeDist ), 0, SPROP_NOSCALE ),
+	SendPropFloat( SENDINFO( m_flNextVRLeverShellReadyTime ) ),
+#endif
+END_NETWORK_TABLE()
+
+BEGIN_PREDICTION_DATA( CTFScatterGun )
+#ifdef CLIENT_DLL
+	DEFINE_PRED_FIELD( m_bVRLeverIsArmed, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_vecVRLeverLastHandPos, FIELD_VECTOR, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRLeverStrokeOut, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRLeverStrokeIn, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRLeverStrokeDist, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flNextVRLeverShellReadyTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+#endif
+END_PREDICTION_DATA()
+
+LINK_ENTITY_TO_CLASS( tf_weapon_scattergun, CTFScatterGun );
+PRECACHE_WEAPON_REGISTER( tf_weapon_scattergun );
+
 CREATE_SIMPLE_WEAPON_TABLE( TFShotgun_Revenge, tf_weapon_sentry_revenge )
 CREATE_SIMPLE_WEAPON_TABLE( TFSodaPopper, tf_weapon_soda_popper )
 CREATE_SIMPLE_WEAPON_TABLE( TFPEPBrawlerBlaster, tf_weapon_pep_brawler_blaster )
@@ -39,6 +81,19 @@ CREATE_SIMPLE_WEAPON_TABLE( TFShotgunBuildingRescue, tf_weapon_shotgun_building_
 
 #define SCATTERGUN_KNOCKBACK_MIN_DMG		30.0f
 #define SCATTERGUN_KNOCKBACK_MIN_RANGE_SQ	160000.0f //400x400
+
+static inline float TFVR_ReloadThrottleScale()
+{
+	return MAX( 1.0f, tfvr_reload_throttle_scale.GetFloat() );
+}
+
+// 0 = vanilla TF2 behavior in VR too (auto-reload when idle + normal singly reload / reload key). 1 = manual lever only.
+ConVar tfvr_scattergun_lever_reload( "tfvr_scattergun_lever_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Scout scattergun: 1 = load shells with weapon-hand pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
+ConVar tfvr_scattergun_lever_distance( "tfvr_scattergun_lever_distance", "4.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along lever axis per pump stroke" );
+ConVar tfvr_scattergun_lever_sign( "tfvr_scattergun_lever_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply lever-axis motion (+1 or -1) if pump direction feels inverted" );
+ConVar tfvr_scattergun_lever_axis( "tfvr_scattergun_lever_axis", "2", FCVAR_REPLICATED, "VR: controller matrix column for pump axis (0=fwd, 1=right, 2=up)" );
+ConVar tfvr_scattergun_lever_debug( "tfvr_scattergun_lever_debug", "0", FCVAR_REPLICATED, "VR: 1 = print scattergun lever reload state to console" );
+
 //=============================================================================
 //
 // Weapon Shotgun functions.
@@ -296,8 +351,439 @@ void CTFShotgun_Revenge::Detach( void )
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
+CTFScatterGun::CTFScatterGun()
+{
+	m_bVRLeverIsArmed = false;
+	m_vecVRLeverLastHandPos = vec3_origin;
+	m_bVRLeverStrokeOut = false;
+	m_bVRLeverStrokeIn = false;
+	m_flVRLeverStrokeDist = 0.0f;
+
+	PrecacheScriptSound( "VR.ScattergunPumpDown" );
+	PrecacheScriptSound( "VR.ScattergunPumpUp" );
+	m_flNextVRLeverShellReadyTime = 0.0f;
+	m_iVRLeverLastClipForThrottle = -1;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+bool CTFScatterGun::ShouldSuppressAutoAndSinglyReloadForVR() const
+{
+	if ( !IsScattergunWeaponID( GetWeaponID() ) )
+		return false;
+	if ( !tfvr_scattergun_lever_reload.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	return IsHeldByVRHand();
+#else
+	return true;
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+bool CTFScatterGun::Deploy( void )
+{
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+	{
+		AbortReload();
+		CTFPlayer *pOwner = GetTFPlayerOwner();
+		if ( pOwner && Clip1() == 0 && pOwner->GetAmmoCount( m_iPrimaryAmmoType ) > 0 )
+		{
+			const float flDelay = ( GetVRSinglyReloadStartThrottleInterval() + GetVRSinglyReloadShellThrottleInterval() ) * TFVR_ReloadThrottleScale();
+			m_flNextVRLeverShellReadyTime = gpGlobals->curtime + flDelay;
+		}
+		else
+		{
+			m_flNextVRLeverShellReadyTime = 0.0f;
+		}
+		m_iVRLeverLastClipForThrottle = Clip1();
+	}
+	return BaseClass::Deploy();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+bool CTFScatterGun::Holster( CBaseCombatWeapon *pSwitchingTo )
+{
+	ResetVRLeverGestureState();
+	m_flNextVRLeverShellReadyTime = 0.0f;
+	m_iVRLeverLastClipForThrottle = -1;
+	return BaseClass::Holster( pSwitchingTo );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+void CTFScatterGun::ItemPostFrame( void )
+{
+	BaseClass::ItemPostFrame();
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+	{
+		CTFPlayer *pOwner = GetTFPlayerOwner();
+#if defined( CLIENT_DLL )
+		if ( pOwner && pOwner->IsLocalPlayer() )
+#endif
+		{
+			if ( pOwner && pOwner->GetAmmoCount( m_iPrimaryAmmoType ) > 0 )
+			{
+				const int iClip = Clip1();
+
+				if ( m_iVRLeverLastClipForThrottle >= 0 )
+				{
+					const int nMaxClip = GetMaxClip1();
+					// Match ReloadSingly: first shell in a sequence costs reload_start + per-shell time (tube went empty,
+					// or first shot from a full clip begins a new reload session).
+					if ( ( iClip == 0 && m_iVRLeverLastClipForThrottle > 0 ) ||
+						( nMaxClip > 1 && m_iVRLeverLastClipForThrottle == nMaxClip && iClip == nMaxClip - 1 ) )
+					{
+						const float flDelay = ( GetVRSinglyReloadStartThrottleInterval() + GetVRSinglyReloadShellThrottleInterval() ) * TFVR_ReloadThrottleScale();
+						m_flNextVRLeverShellReadyTime = MAX( m_flNextVRLeverShellReadyTime, gpGlobals->curtime + flDelay );
+					}
+					else if ( iClip == nMaxClip )
+					{
+						m_flNextVRLeverShellReadyTime = 0.0f;
+					}
+				}
+				m_iVRLeverLastClipForThrottle = iClip;
+			}
+		}
+
+		VRLeverReloadPostFrame();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Off-hand lever motion uses left controller world position from usercmd
+//          (same data the server stores from VR input).
+//-----------------------------------------------------------------------------
+void CTFScatterGun::ResetVRLeverGestureState( void )
+{
+	m_bVRLeverIsArmed = false;
+	m_vecVRLeverLastHandPos = vec3_origin;
+	m_bVRLeverStrokeOut = false;
+	m_bVRLeverStrokeIn = false;
+	m_flVRLeverStrokeDist = 0.0f;
+}
+
+float CTFScatterGun::GetVRLeverStrokeProgress() const
+{
+	float dist = tfvr_scattergun_lever_distance.GetFloat();
+	return ( dist > 0.0f ) ? clamp( (float)m_flVRLeverStrokeDist / dist, 0.0f, 1.0f ) : 0.0f;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+void CTFScatterGun::VRCommitLeverShell( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+	const CUserCmd *pCmdCommit = pOwner->GetCurrentUserCommand();
+	if ( !pCmdCommit || !pCmdCommit->vrScattergunLeverArmed )
+		return;
+
+	if ( gpGlobals->curtime < m_flNextVRLeverShellReadyTime )
+		return;
+
+	if ( Clip1() >= GetMaxClip1() )
+		return;
+	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+		return;
+	if ( CheckReloadMisfire() )
+		return;
+
+	m_iClip1++;
+	pOwner->RemoveAmmo( 1, m_iPrimaryAmmoType );
+	m_flNextVRLeverShellReadyTime = gpGlobals->curtime + GetVRSinglyReloadShellThrottleInterval() * TFVR_ReloadThrottleScale();
+
+#ifdef CLIENT_DLL
+	if ( ShouldPlayClientReloadSound() )
+		WeaponSound( RELOAD );
+#else
+	WeaponSound( RELOAD );
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Two-stroke gesture along weapon "up" (open, then close) loads one shell.
+//-----------------------------------------------------------------------------
+void CTFScatterGun::VRLeverReloadPostFrame( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+#if defined( CLIENT_DLL )
+	if ( !pOwner->IsLocalPlayer() )
+		return;
+#endif
+
+	const bool bDebug = tfvr_scattergun_lever_debug.GetBool();
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+	{
+		ResetVRLeverGestureState();
+		return;
+	}
+
+	// Use the weapon-hand position RELATIVE to the off-hand.  Both controllers
+	// share the same global scaling / reference-space offset, so the difference
+	// is purely physical hand motion — completely immune to locomotion, world-
+	// scale changes, and reference-space shifts.
+	Vector vecWeaponHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosR
+		: pCmd->vrRawControllerPosL;
+	Vector vecOffHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosL
+		: pCmd->vrRawControllerPosR;
+
+	if ( vecWeaponHandRaw == vec3_origin || vecOffHandRaw == vec3_origin )
+		return;
+
+	Vector vecHandRelative = vecWeaponHandRaw - vecOffHandRaw;
+
+	if ( Clip1() >= GetMaxClip1() || pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+	{
+		if ( bDebug && ( m_bVRLeverStrokeOut || m_bVRLeverStrokeIn ) )
+			DevMsg( "[VR Lever] Reset: clip full or no reserve ammo\n" );
+		ResetVRLeverGestureState();
+		return;
+	}
+
+	if ( !pCmd->vrScattergunLeverArmed )
+	{
+		const bool bMidStroke = m_bVRLeverStrokeOut || m_bVRLeverStrokeIn;
+		if ( !bMidStroke )
+		{
+			if ( bDebug && m_vecVRLeverLastHandPos != vec3_origin )
+				DevMsg( "[VR Lever] Reset: lever not armed\n" );
+			ResetVRLeverGestureState();
+		}
+		else
+		{
+			// Mid-stroke: keep stroke state but slide the reference so
+			// there's no displacement jump when grip returns.
+			m_vecVRLeverLastHandPos = vecHandRelative;
+			m_flVRLeverStrokeDist = 0.0f;
+			if ( bDebug )
+				DevMsg( "[VR Lever] Grip lost mid-stroke, holding state\n" );
+		}
+		return;
+	}
+
+	m_bVRLeverIsArmed = true;
+
+	// Block pumping while the weapon's fire cycle is still active.
+	// Keep the reference position current so there's no displacement
+	// jump when the cooldown ends.
+	if ( gpGlobals->curtime < m_flNextPrimaryAttack )
+	{
+		if ( m_vecVRLeverLastHandPos != vec3_origin )
+		{
+			m_vecVRLeverLastHandPos = vecHandRelative;
+			m_flVRLeverStrokeDist = 0.0f;
+		}
+		if ( bDebug )
+			DevMsg( "[VR Lever] Paused: fire cooldown\n" );
+		return;
+	}
+
+	const float flLeverDist    = tfvr_scattergun_lever_distance.GetFloat();
+	const float flSign         = tfvr_scattergun_lever_sign.GetFloat();
+
+	// Pump axis from the weapon-hand controller's raw orientation.
+	// Column 2 = controller "up" in Source coords — use tfvr_scattergun_lever_axis
+	// to try other columns if the mapping feels wrong.
+	QAngle angWeaponHand = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerAngR
+		: pCmd->vrRawControllerAngL;
+
+	matrix3x4_t controllerMatrix;
+	AngleMatrix( angWeaponHand, controllerMatrix );
+
+	int iAxisCol = clamp( tfvr_scattergun_lever_axis.GetInt(), 0, 2 );
+	Vector vecPumpAxis;
+	MatrixGetColumn( controllerMatrix, iAxisCol, vecPumpAxis );
+	VectorNormalize( vecPumpAxis );
+
+	// First frame: seed the reference position.
+	if ( m_vecVRLeverLastHandPos == vec3_origin )
+	{
+		m_vecVRLeverLastHandPos = vecHandRelative;
+		m_flVRLeverStrokeDist   = 0.0f;
+		if ( bDebug )
+			DevMsg( "[VR Lever] Tracking started\n" );
+		return;
+	}
+
+	// State machine: Neutral -> PumpDown -> PumpReturn -> commit -> Neutral
+	if ( !m_bVRLeverStrokeOut && !m_bVRLeverStrokeIn )
+	{
+		// In neutral, measure per-tick displacement and accumulate downward
+		// motion.  The reference is always updated to current so the pump
+		// starts from wherever the hand IS, not where it WAS.
+		if ( m_vecVRLeverLastHandPos != vec3_origin )
+		{
+			Vector vecFrameDelta = vecHandRelative - m_vecVRLeverLastHandPos;
+			float  flFrameDisp   = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+			if ( flFrameDisp < 0.0f )
+			{
+				// Downward motion: accumulate
+				m_flVRLeverStrokeDist += -flFrameDisp;
+			}
+			else
+			{
+				// Upward or no motion: decay the accumulator so tremor
+				// doesn't build up, but don't slam to zero (allows brief
+				// hesitation mid-start).
+				m_flVRLeverStrokeDist = MAX( m_flVRLeverStrokeDist - flFrameDisp * 2.0f, 0.0f );
+			}
+
+			if ( m_flVRLeverStrokeDist >= 0.5f )
+			{
+				m_bVRLeverStrokeOut = true;
+				m_vecVRLeverLastHandPos = vecHandRelative;
+				m_flVRLeverStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR Lever] Pump down started\n" );
+			}
+			else
+			{
+				// Stay in neutral — keep reference current
+				m_vecVRLeverLastHandPos = vecHandRelative;
+			}
+		}
+		else
+		{
+			// First-frame seed
+			m_vecVRLeverLastHandPos = vecHandRelative;
+			m_flVRLeverStrokeDist = 0.0f;
+		}
+	}
+	else
+	{
+		// Per-frame accumulation for both strokes, matching the neutral
+		// state pattern.  Reference is always updated so overshooting
+		// the end of a stroke never penalises the return.
+		Vector vecFrameDelta = vecHandRelative - m_vecVRLeverLastHandPos;
+		float  flFrameDisp   = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+		if ( m_bVRLeverStrokeOut )
+		{
+			if ( flFrameDisp < 0.0f )
+			{
+				m_flVRLeverStrokeDist += -flFrameDisp;
+			}
+			else
+			{
+				m_flVRLeverStrokeDist = MAX( m_flVRLeverStrokeDist - flFrameDisp * 2.0f, 0.0f );
+			}
+			m_vecVRLeverLastHandPos = vecHandRelative;
+
+			if ( bDebug )
+				DevMsg( "[VR Lever] Down: %.2f / %.2f\n", (float)m_flVRLeverStrokeDist, flLeverDist );
+
+			if ( m_flVRLeverStrokeDist >= flLeverDist )
+			{
+				m_bVRLeverStrokeOut   = false;
+				m_bVRLeverStrokeIn    = true;
+				m_flVRLeverStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR Lever] Bottom reached, pump back up to load\n" );
+
+#ifdef CLIENT_DLL
+				if ( prediction->IsFirstTimePredicted() )
+				{
+					EmitSound( "VR.ScattergunPumpDown" );
+
+					if ( ShouldEjectBrass() )
+					{
+						CEffectData data;
+						bool bGotAttachment = false;
+
+						C_TFVRHand *pHand = pCmd->vrWeaponHandIsRight
+							? GetLocalPlayerRightHand()
+							: GetLocalPlayerLeftHand();
+						if ( pHand )
+						{
+							C_BaseAnimating *pRenderWeapon = pHand->GetRenderWeapon();
+							if ( pRenderWeapon )
+							{
+								int iEjectAttach = pRenderWeapon->LookupAttachment( "eject_brass" );
+								if ( iEjectAttach > 0 )
+								{
+									pRenderWeapon->GetAttachment( iEjectAttach, data.m_vOrigin, data.m_vAngles );
+									bGotAttachment = true;
+								}
+							}
+						}
+
+						if ( bGotAttachment )
+						{
+							data.m_nDamageType = GetAttributeContainer()->GetItem()
+								? GetAttributeContainer()->GetItem()->GetItemDefIndex() : 0;
+							data.m_nHitBox = GetWeaponID();
+							DispatchEffect( "TF_EjectBrass", data );
+						}
+					}
+				}
+#endif
+			}
+		}
+		else if ( m_bVRLeverStrokeIn )
+		{
+			if ( flFrameDisp > 0.0f )
+			{
+				m_flVRLeverStrokeDist += flFrameDisp;
+			}
+			else
+			{
+				m_flVRLeverStrokeDist = MAX( m_flVRLeverStrokeDist + flFrameDisp * 2.0f, 0.0f );
+			}
+			m_vecVRLeverLastHandPos = vecHandRelative;
+
+			if ( bDebug )
+				DevMsg( "[VR Lever] Up: %.2f / %.2f\n", (float)m_flVRLeverStrokeDist, flLeverDist );
+
+			if ( m_flVRLeverStrokeDist >= flLeverDist )
+			{
+				VRCommitLeverShell();
+				m_bVRLeverStrokeIn    = false;
+				m_flVRLeverStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR Lever] Shell loaded! Ready for next pump.\n" );
+#ifdef CLIENT_DLL
+				if ( prediction->IsFirstTimePredicted() )
+				{
+					EmitSound( "VR.ScattergunPumpUp" );
+				}
+#endif
+			}
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
 bool CTFScatterGun::Reload( void )
 {
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+		return false;
+
 	int iWeaponMod = 0;
 	CALL_ATTRIB_HOOK_INT( iWeaponMod, set_scattergun_no_reload_single );
 	if ( iWeaponMod == 1 )

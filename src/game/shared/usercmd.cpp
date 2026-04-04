@@ -215,6 +215,10 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	WriteVec3Diff(buf, to->vrIKHandAngL, from->vrIKHandAngL);
 	WriteVec3Diff(buf, to->vrIKHandPosR, from->vrIKHandPosR);
 	WriteVec3Diff(buf, to->vrIKHandAngR, from->vrIKHandAngR);
+	WriteVec3Diff(buf, to->vrRawControllerPosL, from->vrRawControllerPosL);
+	WriteVec3Diff(buf, to->vrRawControllerPosR, from->vrRawControllerPosR);
+	WriteVec3Diff(buf, to->vrRawControllerAngL, from->vrRawControllerAngL);
+	WriteVec3Diff(buf, to->vrRawControllerAngR, from->vrRawControllerAngR);
 	WriteVec3Diff(buf, to->vrThrowVelocity, from->vrThrowVelocity);
 	WriteVec3Diff(buf, to->vrThrowOrigin, from->vrThrowOrigin);
 	WriteVec3Diff(buf, to->vrThrowAngles, from->vrThrowAngles);
@@ -242,6 +246,8 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 
 	buf->WriteOneBit( to->vrBallAimActive ? 1 : 0 );
 	buf->WriteOneBit( to->vrPhysicalCrouch ? 1 : 0 );
+	buf->WriteOneBit( to->vrScattergunLeverArmed ? 1 : 0 );
+	buf->WriteOneBit( to->vrWeaponHandIsRight ? 1 : 0 );
 
 #if defined( HL2_CLIENT_DLL )
 	if ( to->entitygroundcontact.Count() != 0 )
@@ -391,6 +397,10 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	ReadVec3Diff(buf, move->vrIKHandAngL);
 	ReadVec3Diff(buf, move->vrIKHandPosR);
 	ReadVec3Diff(buf, move->vrIKHandAngR);
+	ReadVec3Diff(buf, move->vrRawControllerPosL);
+	ReadVec3Diff(buf, move->vrRawControllerPosR);
+	ReadVec3Diff(buf, move->vrRawControllerAngL);
+	ReadVec3Diff(buf, move->vrRawControllerAngR);
 	ReadVec3Diff(buf, move->vrThrowVelocity);
 	ReadVec3Diff(buf, move->vrThrowOrigin);
 	ReadVec3Diff(buf, move->vrThrowAngles);
@@ -408,6 +418,8 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 
 	move->vrBallAimActive = buf->ReadOneBit() ? true : false;
 	move->vrPhysicalCrouch = buf->ReadOneBit() ? true : false;
+	move->vrScattergunLeverArmed = buf->ReadOneBit() ? true : false;
+	move->vrWeaponHandIsRight = buf->ReadOneBit() ? true : false;
 
 #if defined( HL2_DLL )
 	if ( buf->ReadOneBit() )

@@ -42,6 +42,16 @@ enum VRDrawAnimScope
 	VR_DRAW_ANIM_FULL_ARM,        // Full arm chain follows the animation (hand can displace from controller)
 };
 
+// VR reload animation state (scattergun lever pump)
+enum VRReloadAnimState
+{
+	VR_RELOAD_ANIM_NONE = 0,
+	VR_RELOAD_ANIM_ENTER,     // Playing sg_reload_start (auto-advance)
+	VR_RELOAD_ANIM_HOLD,      // Holding last frame of sg_reload_start
+	VR_RELOAD_ANIM_PUMPING,   // Sampling sg_reload_loop by pump progress
+	VR_RELOAD_ANIM_EXIT,      // Playing sg_reload_end (auto-advance)
+};
+
 //-----------------------------------------------------------------------------
 // Purpose: Client-side VR hand entity that renders a single animated hand
 //          driven by OpenXR hand tracking data
@@ -296,6 +306,19 @@ private:
 	matrix3x4_t m_matIdleWeaponBoneLocal;
 	matrix3x4_t m_matIdleWeaponBoneWorld;
 	bool m_bHasIdleWeaponBone;
+
+	// Scattergun VR lever reload animation
+	int m_iReloadStartSequence;
+	int m_iReloadLoopSequence;
+	int m_iReloadEndSequence;
+	VRReloadAnimState m_eReloadAnimState;
+	float m_flReloadAnimStartTime;
+	float m_flReloadLoopBottomCycle;   // cycle value at frame 5 of sg_reload_loop
+	bool m_bPlayingReloadAnim;
+	int m_iLeverReloadSequence;        // reload sequence sampled for lever bone only
+	float m_flLeverReloadCycle;        // cycle within that lever sequence
+	void UpdateScattergunReloadAnimation();
+
 public:
 	bool IsBackstabReady() const { return m_bBackstabReady; }
 	bool GetIdleWeaponBoneTransform( Vector &outPos, QAngle &outAng ) const;

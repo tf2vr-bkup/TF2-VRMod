@@ -100,6 +100,12 @@ public:
 #endif
 };
 
+inline bool IsScattergunWeaponID( int id )
+{
+	return id == TF_WEAPON_SCATTERGUN
+		|| id == TF_WEAPON_PEP_BRAWLER_BLASTER;
+}
+
 // Scout version. Different models, possibly different behaviour later on
 class CTFScatterGun : public CTFShotgun
 {
@@ -108,16 +114,45 @@ public:
 	DECLARE_NETWORKCLASS(); 
 	DECLARE_PREDICTABLE();
 
+	CTFScatterGun();
+
 	virtual int		GetWeaponID( void ) const			{ return TF_WEAPON_SCATTERGUN; }
 	virtual bool	Reload( void );
 	virtual void	FireBullet( CTFPlayer *pPlayer );
 	virtual void	ApplyPostHitEffects( const CTakeDamageInfo &inputInfo, CTFPlayer *pPlayer );
 	virtual void	FinishReload( void );
 	virtual bool	HasKnockback( void );
+	virtual bool	ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
+	virtual void	ItemPostFrame( void ) OVERRIDE;
+	virtual bool	Deploy( void ) OVERRIDE;
+	virtual bool	Holster( CBaseCombatWeapon *pSwitchingTo ) OVERRIDE;
 
 #ifdef GAME_DLL
 	virtual void	Equip( CBaseCombatCharacter *pOwner );
 #endif // GAME_DLL
+
+	// VR lever reload state accessors (client hand animation reads these)
+	bool  IsVRLeverArmed() const       { return m_bVRLeverIsArmed; }
+	bool  IsVRLeverPumpingDown() const { return m_bVRLeverStrokeOut; }
+	bool  IsVRLeverReturning() const   { return m_bVRLeverStrokeIn; }
+	float GetVRLeverStrokeProgress() const;
+
+private:
+	void	VRLeverReloadPostFrame( void );
+	void	VRCommitLeverShell( void );
+	void	ResetVRLeverGestureState( void );
+
+	// Lever gesture state — all networked with prediction for authoritative shell
+	// commits.  m_vecVRLeverLastHandPos is sent with SPROP_NOSCALE to avoid
+	// coordinate-precision quantization that corrupts prediction on stairs/slopes.
+	CNetworkVar( bool, m_bVRLeverIsArmed );
+	CNetworkVector( m_vecVRLeverLastHandPos );
+	CNetworkVar( bool, m_bVRLeverStrokeOut );
+	CNetworkVar( bool, m_bVRLeverStrokeIn );
+	CNetworkVar( float, m_flVRLeverStrokeDist );
+	CNetworkVar( float, m_flNextVRLeverShellReadyTime );
+
+	int		m_iVRLeverLastClipForThrottle;
 };
 
 class CTFShotgun_Soldier : public CTFShotgun

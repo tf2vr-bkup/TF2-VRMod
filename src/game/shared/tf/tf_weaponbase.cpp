@@ -89,6 +89,7 @@ ConVar tf_scout_hype_pep_min_damage( "tf_scout_hype_pep_min_damage", "5.0", FCVA
 
 ConVar tfvr_weapon_wall_clip_check( "tfvr_weapon_wall_clip_check", "1", FCVAR_REPLICATED | FCVAR_NOT_CONNECTED, "Prevent VR weapons from firing when the muzzle is clipped through a wall" );
 ConVar tfvr_weapon_wall_clip_fan_offset( "tfvr_weapon_wall_clip_fan_offset", "12", FCVAR_REPLICATED | FCVAR_NOT_CONNECTED, "Lateral offset (units) for fan traces that distinguish gates/walls from corner peeks" );
+ConVar tfvr_reload_throttle_scale( "tfvr_reload_throttle_scale", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR manual reload: scales minimum shell intervals derived from TF2 reload timing; values below 1 are clamped to 1 so reload is never faster than stock TF2" );
 
 ConVar tf_weapon_criticals_nopred( "tf_weapon_criticals_nopred", "1.0", FCVAR_REPLICATED | FCVAR_CHEAT );
 
@@ -2313,36 +2314,22 @@ void CTFWeaponBase::UpdateReloadTimers( bool bStart )
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose: Same reload-time multipliers as SetReloadTimer (no viewmodel or attack scheduling).
+//          Used to throttle VR manual singly reloads so they cannot outpace vanilla TF2.
 //-----------------------------------------------------------------------------
-void CTFWeaponBase::SetReloadTimer( float flReloadTime )
+float CTFWeaponBase::ModifyReloadTimeForVRThrottle( float flBaseTime ) const
 {
 	CTFPlayer *pPlayer = GetTFPlayerOwner();
 	if ( !pPlayer )
-		return;
+		return MAX( flBaseTime, 0.00001f );
 
-	float flBaseReloadTime = flReloadTime;
+	float flReloadTime = flBaseTime;
 
 	CALL_ATTRIB_HOOK_FLOAT( flReloadTime, mult_reload_time );
 	CALL_ATTRIB_HOOK_FLOAT( flReloadTime, mult_reload_time_hidden );
 	CALL_ATTRIB_HOOK_FLOAT( flReloadTime, fast_reload );
 	CALL_ATTRIB_HOOK_FLOAT_ON_OTHER( pPlayer, flReloadTime, hwn_mult_reload_time );
 
-	//int iPanicAttack = 0;
-	//CALL_ATTRIB_HOOK_INT( iPanicAttack, panic_attack );
-	//if ( iPanicAttack ) 
-	//{
-	//	if ( pPlayer->GetHealth() < pPlayer->GetMaxHealth() * 0.33f )
-	//	{
-	//		flReloadTime *= 0.3f;
-	//	}
-	//	else if ( pPlayer->GetHealth() < pPlayer->GetMaxHealth() * 0.66f )
-	//	{
-	//		flReloadTime *= 0.6f;
-	//	}
-	//}
-
-	// Haste Powerup Rune adds multiplier to reload time.
 	if ( pPlayer->m_Shared.GetCarryingRuneType() == RUNE_HASTE )
 	{
 		if ( pPlayer->m_Shared.InCond( TF_COND_POWERUPMODE_DOMINANT ) )
@@ -2361,12 +2348,77 @@ void CTFWeaponBase::SetReloadTimer( float flReloadTime )
 
 	flReloadTime *= GetReloadSpeedScale();
 
-
 	int numHealers = pPlayer->m_Shared.GetNumHealers();
 	if ( numHealers == 1 )
 	{
 		CALL_ATTRIB_HOOK_FLOAT_ON_OTHER( pPlayer, flReloadTime, mult_reload_time_while_healed );
 	}
+
+	return MAX( flReloadTime, 0.00001f );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Matches ReloadSingly TF_RELOADING reload delay (per shell) for throttle purposes.
+//-----------------------------------------------------------------------------
+float CTFWeaponBase::GetVRSinglyReloadShellThrottleInterval()
+{
+	if ( !m_pWeaponInfo )
+		return ModifyReloadTimeForVRThrottle( 0.5f );
+
+	float flBase = m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeReload;
+	if ( flBase < 0.001f )
+		flBase = 0.5f;
+
+	int iSeq = SelectWeightedSequence( ACT_VM_RELOAD );
+	if ( iSeq != ACTIVITY_NOT_AVAILABLE )
+	{
+		if ( GetWeaponID() == TF_WEAPON_GRENADELAUNCHER )
+		{
+			flBase = GetTFWpnData().m_WeaponData[TF_WEAPON_PRIMARY_MODE].m_flTimeReload;
+		}
+		else
+		{
+			float flSeq = SequenceDuration( iSeq );
+			if ( flSeq > 0.001f )
+				flBase = flSeq;
+		}
+	}
+
+	return ModifyReloadTimeForVRThrottle( flBase );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Matches ReloadSingly TF_RELOAD_START delay for throttle purposes.
+//-----------------------------------------------------------------------------
+float CTFWeaponBase::GetVRSinglyReloadStartThrottleInterval()
+{
+	if ( !m_pWeaponInfo )
+		return ModifyReloadTimeForVRThrottle( 0.5f );
+
+	float flBase = m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeReloadStart;
+	if ( flBase < 0.001f )
+		flBase = 0.5f;
+
+	int iSeq = SelectWeightedSequence( ACT_RELOAD_START );
+	if ( iSeq != ACTIVITY_NOT_AVAILABLE )
+	{
+		float flSeq = SequenceDuration( iSeq );
+		if ( flSeq > 0.001f )
+			flBase = flSeq;
+	}
+
+	return ModifyReloadTimeForVRThrottle( flBase );
+}
+
+void CTFWeaponBase::SetReloadTimer( float flReloadTime )
+{
+	CTFPlayer *pPlayer = GetTFPlayerOwner();
+	if ( !pPlayer )
+		return;
+
+	float flBaseReloadTime = flReloadTime;
+
+	flReloadTime = ModifyReloadTimeForVRThrottle( flReloadTime );
 
 	flReloadTime = MAX( flReloadTime, 0.00001f );
 	if ( pPlayer->GetViewModel(0) )
@@ -2513,7 +2565,7 @@ void CTFWeaponBase::ItemPostFrame( void )
 	bool bNeedsReload = NeedsReloadForAmmo1( GetMaxClip1() ) || ( IsEnergyWeapon() && !Energy_FullyCharged() );
 
 	// If we're not shooting, and we want to autoreload, press our reload key
-	if ( !AutoFiresFullClip() && pOwner->ShouldAutoReload() && UsesClipsForAmmo1() && !(pOwner->m_nButtons & (IN_ATTACK|IN_ATTACK2)) && bNeedsReload )
+	if ( !ShouldSuppressAutoAndSinglyReloadForVR() && !AutoFiresFullClip() && pOwner->ShouldAutoReload() && UsesClipsForAmmo1() && !(pOwner->m_nButtons & (IN_ATTACK|IN_ATTACK2)) && bNeedsReload )
 	{
 		pOwner->m_nButtons |= IN_RELOAD;
 	}
@@ -2718,6 +2770,9 @@ void CTFWeaponBase::ItemHolsterFrame( void )
 //-----------------------------------------------------------------------------
 void CTFWeaponBase::ReloadSinglyPostFrame( void )
 {
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+		return;
+
 	if ( m_flTimeWeaponIdle > gpGlobals->curtime )
 		return;
 

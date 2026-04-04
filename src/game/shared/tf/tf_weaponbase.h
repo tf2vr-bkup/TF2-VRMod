@@ -381,6 +381,16 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	virtual bool DefaultReload( int iClipSize1, int iClipSize2, int iActivity );
 	void SendReloadEvents();
 	virtual bool IsReloading() const;			// is the weapon reloading right now?
+
+	// VR: When true, ItemPostFrame will not fake IN_RELOAD for autoreload, and ReloadSinglyPostFrame
+	// will not advance the singly-reload state machine (weapon-specific manual reload instead).
+	// Weapons that override this should expose a cvar (e.g. scattergun) so players can keep auto reload.
+	virtual bool ShouldSuppressAutoAndSinglyReloadForVR() const { return false; }
+
+	// VR: Minimum intervals between singly-style reload shells (after attrib/rune/healer scaling), matching ReloadSingly / SetReloadTimer.
+	float		ModifyReloadTimeForVRThrottle( float flBaseTime ) const;
+	float		GetVRSinglyReloadShellThrottleInterval();
+	float		GetVRSinglyReloadStartThrottleInterval();
 	virtual float GetReloadSpeedScale() const { return 1.f; }
 
 	virtual bool AutoFiresFullClip( void ) const OVERRIDE;

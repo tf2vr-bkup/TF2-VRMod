@@ -55,6 +55,10 @@ public:
 		vrIKHandAngL.Init();
 		vrIKHandPosR.Init();
 		vrIKHandAngR.Init();
+		vrRawControllerPosL.Init();
+		vrRawControllerPosR.Init();
+		vrRawControllerAngL.Init();
+		vrRawControllerAngR.Init();
 		vrThrowVelocity.Init();
 		vrThrowOrigin.Init();
 		vrThrowAngles.Init();
@@ -63,6 +67,8 @@ public:
 		vrMeleeGripSpeedLeft = 0.0f;
 		vrBallAimActive = false;
 		vrPhysicalCrouch = false;
+		vrScattergunLeverArmed = false;
+		vrWeaponHandIsRight = true;
 		forwardmove = 0.0f;
 		sidemove = 0.0f;
 		upmove = 0.0f;
@@ -103,6 +109,10 @@ public:
 		vrIKHandAngL		= src.vrIKHandAngL;
 		vrIKHandPosR		= src.vrIKHandPosR;
 		vrIKHandAngR		= src.vrIKHandAngR;
+		vrRawControllerPosL	= src.vrRawControllerPosL;
+		vrRawControllerPosR	= src.vrRawControllerPosR;
+		vrRawControllerAngL	= src.vrRawControllerAngL;
+		vrRawControllerAngR	= src.vrRawControllerAngR;
 		vrThrowVelocity		= src.vrThrowVelocity;
 		vrThrowOrigin		= src.vrThrowOrigin;
 		vrThrowAngles		= src.vrThrowAngles;
@@ -111,6 +121,8 @@ public:
 		vrMeleeGripSpeedLeft = src.vrMeleeGripSpeedLeft;
 		vrBallAimActive		= src.vrBallAimActive;
 		vrPhysicalCrouch	= src.vrPhysicalCrouch;
+		vrScattergunLeverArmed = src.vrScattergunLeverArmed;
+		vrWeaponHandIsRight = src.vrWeaponHandIsRight;
 		forwardmove			= src.forwardmove;
 		sidemove			= src.sidemove;
 		upmove				= src.upmove;
@@ -158,6 +170,10 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrIKHandAngL, sizeof( vrIKHandAngL ) );
 		CRC32_ProcessBuffer( &crc, &vrIKHandPosR, sizeof( vrIKHandPosR ) );
 		CRC32_ProcessBuffer( &crc, &vrIKHandAngR, sizeof( vrIKHandAngR ) );
+		CRC32_ProcessBuffer( &crc, &vrRawControllerPosL, sizeof( vrRawControllerPosL ) );
+		CRC32_ProcessBuffer( &crc, &vrRawControllerPosR, sizeof( vrRawControllerPosR ) );
+		CRC32_ProcessBuffer( &crc, &vrRawControllerAngL, sizeof( vrRawControllerAngL ) );
+		CRC32_ProcessBuffer( &crc, &vrRawControllerAngR, sizeof( vrRawControllerAngR ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowVelocity, sizeof( vrThrowVelocity ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowOrigin, sizeof( vrThrowOrigin ) );
 		CRC32_ProcessBuffer( &crc, &vrThrowAngles, sizeof( vrThrowAngles ) );
@@ -166,6 +182,8 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrMeleeGripSpeedLeft, sizeof( vrMeleeGripSpeedLeft ) );
 		CRC32_ProcessBuffer( &crc, &vrBallAimActive, sizeof( vrBallAimActive ) );
 		CRC32_ProcessBuffer( &crc, &vrPhysicalCrouch, sizeof( vrPhysicalCrouch ) );
+		CRC32_ProcessBuffer( &crc, &vrScattergunLeverArmed, sizeof( vrScattergunLeverArmed ) );
+		CRC32_ProcessBuffer( &crc, &vrWeaponHandIsRight, sizeof( vrWeaponHandIsRight ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
 		CRC32_ProcessBuffer( &crc, &sidemove, sizeof( sidemove ) );      
 		CRC32_ProcessBuffer( &crc, &upmove, sizeof( upmove ) );         
@@ -195,6 +213,10 @@ public:
 		vrIKHandAngL.Init();
 		vrIKHandPosR.Init();
 		vrIKHandAngR.Init();
+		vrRawControllerPosL.Init();
+		vrRawControllerPosR.Init();
+		vrRawControllerAngL.Init();
+		vrRawControllerAngR.Init();
 		vrThrowVelocity.Init();
 		vrThrowOrigin.Init();
 		vrThrowAngles.Init();
@@ -203,6 +225,8 @@ public:
 		vrMeleeGripSpeedLeft = 0.0f;
 		vrBallAimActive = false;
 		vrPhysicalCrouch = false;
+		vrScattergunLeverArmed = false;
+		vrWeaponHandIsRight = true;
 		forwardmove = 0.f;
 		sidemove = 0.f;
 		upmove = 0.f;
@@ -237,6 +261,12 @@ public:
 	Vector	vrIKHandPosR;
 	QAngle	vrIKHandAngR;
 
+	// VR: raw OpenXR controller poses in playspace (no bone setup / IK processing)
+	Vector	vrRawControllerPosL;
+	Vector	vrRawControllerPosR;
+	QAngle	vrRawControllerAngL;
+	QAngle	vrRawControllerAngR;
+
 	// VR physical throw (set on grip/trigger release for throwable weapons)
 	Vector	vrThrowVelocity;
 	Vector	vrThrowOrigin;		// player-relative offset (reconstructed on server)
@@ -252,6 +282,11 @@ public:
 
 	// VR physical crouch: true when player is physically crouching (HMD below threshold)
 	bool	vrPhysicalCrouch;
+
+	// VR scattergun: two-handing + weapon-hand grip held (lever motion only counts when true)
+	bool	vrScattergunLeverArmed;
+	// VR: true when the weapon is held in the right hand (so shared code picks the correct controller origin)
+	bool	vrWeaponHandIsRight;
 
 	// Intended velocities
 	//	forward velocity.

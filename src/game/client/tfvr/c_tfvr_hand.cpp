@@ -12,6 +12,7 @@
 #include "tf/tf_weapon_flamethrower.h"
 #include "tf/tf_weapon_bat.h"
 #include "tf/tf_weapon_knife.h"
+#include "tf/tf_weapon_shotgun.h"
 #include "tf/tf_weaponbase_melee.h"
 #include "c_baseviewmodel.h"
 #include "tf/tf_item_wearable.h"
@@ -53,7 +54,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1), m_iReloadStartSequence(-1), m_iReloadLoopSequence(-1), m_iReloadEndSequence(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
@@ -628,6 +629,35 @@ private:
 	int m_iBreadBiteSwingSeq;
 	int m_iBreadBiteCritSeq;
 	int m_iBreadBiteIdleSeqs[3];
+
+	// Scattergun reload animation sequences (cached on weapon model)
+	int m_iReloadStartSequence;
+	int m_iReloadLoopSequence;
+	int m_iReloadEndSequence;
+
+public:
+	void SetupReloadAnimations()
+	{
+		m_iReloadStartSequence = LookupSequence("sg_reload_start");
+		m_iReloadLoopSequence  = LookupSequence("sg_reload_loop");
+		m_iReloadEndSequence   = LookupSequence("sg_reload_end");
+	}
+
+	int GetReloadSequence(VRReloadAnimState state) const
+	{
+		switch (state)
+		{
+		case VR_RELOAD_ANIM_ENTER:
+		case VR_RELOAD_ANIM_HOLD:
+			return m_iReloadStartSequence;
+		case VR_RELOAD_ANIM_PUMPING:
+			return m_iReloadLoopSequence;
+		case VR_RELOAD_ANIM_EXIT:
+			return m_iReloadEndSequence;
+		default:
+			return -1;
+		}
+	}
 };
 
 // Global helpers for war paint / weapon skin support.
@@ -1610,6 +1640,17 @@ C_TFVRHand::C_TFVRHand()
 	SetIdentityMatrix( m_matIdleWeaponBoneLocal );
 	SetIdentityMatrix( m_matIdleWeaponBoneWorld );
 
+	// Scattergun reload animation
+	m_iReloadStartSequence = -1;
+	m_iReloadLoopSequence = -1;
+	m_iReloadEndSequence = -1;
+	m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+	m_flReloadAnimStartTime = 0.0f;
+	m_flReloadLoopBottomCycle = 0.0f;
+	m_bPlayingReloadAnim = false;
+	m_iLeverReloadSequence = -1;
+	m_flLeverReloadCycle = 0.0f;
+
 	// Left hand wearables
 	m_hLeftHandWatch = NULL;
 	SetIdentityMatrix(m_matWatchOffset);
@@ -2451,6 +2492,9 @@ void C_TFVRHand::Update()
 	
 	// Update flamethrower fire animation (driven by weapon fire state)
 	UpdateFlamethrowerFireAnimation();
+
+	// Update scattergun lever reload animation (pump-driven cycle)
+	UpdateScattergunReloadAnimation();
 	
 	// Update backstab ready state (spy knife only).
 	// SetupBones uses this to drive the up/down/idle transition animations.
@@ -4308,7 +4352,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			// Reconstruct the idle weapon_bone world transform every frame
 			// from the cached local offset so HUD elements and hitboxes
 			// remain stable while animations play.
-			if (m_bHasIdleWeaponBone && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+			// Skip during reload — ApplyWeaponPose already set
+			// m_matIdleWeaponBoneWorld from the idle weapon_bone before the
+			// reload override moved bip_hand.
+			if (m_bHasIdleWeaponBone && !m_bPlayingReloadAnim
+				&& m_iHandBone >= 0 && m_iHandBone < nMaxBones)
 			{
 				ConcatTransforms(pBoneToWorldOut[m_iHandBone], m_matIdleWeaponBoneLocal, m_matIdleWeaponBoneWorld);
 			}
@@ -7420,17 +7468,22 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 	// Now apply the sampled finger bone rotations to the output bones
 	// We also need to apply it to weapon_bone so weapons attach correctly
 	
-	// List of finger bone prefixes (without L/R suffix) + weapon_bone
+	// List of finger bone prefixes (without L/R suffix) + weapon bones.
+	// weapon_bone_1 (scattergun lever) is before weapon_bone so the
+	// reload exclusion (decrement count) only removes weapon_bone.
 	const char *fingerBones[] = {
 		"bip_thumb_0", "bip_thumb_1", "bip_thumb_2",
 		"bip_index_0", "bip_index_1", "bip_index_2",
 		"bip_middle_0", "bip_middle_1", "bip_middle_2",
 		"bip_ring_0", "bip_ring_1", "bip_ring_2",
 		"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
+		"weapon_bone_1",
 		"weapon_bone",
 	};
-	
-	for (int i = 0; i < ARRAYSIZE(fingerBones); i++)
+
+	int nFingerBoneCount = ARRAYSIZE(fingerBones);
+
+	for (int i = 0; i < nFingerBoneCount; i++)
 	{
 		// Try both left and right hand suffixes
 		char boneName[64];
@@ -7464,6 +7517,13 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		if (parentIndex < 0 || parentIndex >= nMaxBones)
 			continue;
 		
+		// During reload, weapon_bone_1 (lever) is a child of bip_hand_R
+		// in the skeleton, but should be positioned relative to weapon_bone
+		// so it follows the weapon (held by two-hand grip) rather than
+		// the hand (which moves with the controller pump gesture).
+		// Both weapon_bone and weapon_bone_1 have local transforms relative
+		// to bip_hand_R, so compute lever's offset relative to weapon_bone
+		// from the animation, then apply to weapon_bone's actual world pos.
 		// Convert the sampled quaternion to a matrix
 		matrix3x4_t localBoneMatrix;
 		QuaternionMatrix(q[boneIndex], pos[boneIndex], localBoneMatrix);
@@ -7476,15 +7536,108 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 	// PositionWeaponFromBones reads it by that exact name.  The loop
 	// above may have found "weapon_bone_R" first and written to a
 	// different bone index, leaving the unsuffixed one at its idle pose.
-	int wpnUnsuffixed = LookupBone("weapon_bone");
-	if (wpnUnsuffixed >= 0 && wpnUnsuffixed < nMaxBones)
 	{
-		const mstudiobone_t *pBone = pStudioHdr->pBone(wpnUnsuffixed);
-		if (pBone && pBone->parent >= 0 && pBone->parent < nMaxBones)
+		int wpnUnsuffixed = LookupBone("weapon_bone");
+		if (wpnUnsuffixed >= 0 && wpnUnsuffixed < nMaxBones)
 		{
-			matrix3x4_t localBoneMatrix;
-			QuaternionMatrix(q[wpnUnsuffixed], pos[wpnUnsuffixed], localBoneMatrix);
-			ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[wpnUnsuffixed]);
+			const mstudiobone_t *pBone = pStudioHdr->pBone(wpnUnsuffixed);
+			if (pBone && pBone->parent >= 0 && pBone->parent < nMaxBones)
+			{
+				matrix3x4_t localBoneMatrix;
+				QuaternionMatrix(q[wpnUnsuffixed], pos[wpnUnsuffixed], localBoneMatrix);
+				ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[wpnUnsuffixed]);
+			}
+			MatrixCopy(pBoneToWorldOut[wpnUnsuffixed], m_matIdleWeaponBoneWorld);
+		}
+	}
+
+	// Reload override: sample the reload animation and apply finger bones
+	// (hand animates with the lever) plus weapon_bone_1 (lever) relative
+	// to weapon_bone.  weapon_bone itself stays at the idle pose set above
+	// so the weapon body doesn't move.
+	if (m_bPlayingReloadAnim && !m_bPlayingFireAnim && m_iLeverReloadSequence >= 0)
+	{
+		int leverBoneIdx = LookupBone("weapon_bone_1");
+		int weaponBoneIdx = LookupBone("weapon_bone");
+		if (leverBoneIdx >= 0 && leverBoneIdx < nMaxBones &&
+			weaponBoneIdx >= 0 && weaponBoneIdx < nMaxBones)
+		{
+			Vector reloadPos[MAXSTUDIOBONES];
+			Quaternion reloadQ[MAXSTUDIOBONES];
+			float reloadPoseParams[MAXSTUDIOPOSEPARAM];
+			for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+				reloadPoseParams[i] = 0.0f;
+
+			IBoneSetup reloadBoneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, reloadPoseParams);
+			reloadBoneSetup.InitPose(reloadPos, reloadQ);
+			reloadBoneSetup.AccumulatePose(reloadPos, reloadQ, m_iLeverReloadSequence,
+				m_flLeverReloadCycle, 1.0f, gpGlobals->curtime, NULL);
+
+			// Position bip_hand so the reload animation's hand pose is
+			// applied relative to weapon_bone (which stays at idle).
+			// weapon_bone is a child of bip_hand, so:
+			//   bip_hand = weapon_bone_world * inverse(weapon_bone_local_in_reload)
+			if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+			{
+				matrix3x4_t reloadWeaponBoneLocal;
+				QuaternionMatrix(reloadQ[weaponBoneIdx], reloadPos[weaponBoneIdx], reloadWeaponBoneLocal);
+
+				matrix3x4_t reloadWeaponBoneLocalInv;
+				MatrixInvert(reloadWeaponBoneLocal, reloadWeaponBoneLocalInv);
+
+				ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], reloadWeaponBoneLocalInv, pBoneToWorldOut[m_iHandBone]);
+			}
+
+			// Override finger bones with reload animation so the hand
+			// grips and moves with the lever.  Processed parent-first
+			// so child bones use updated parent transforms.
+			const char *reloadFingerPrefixes[] = {
+				"bip_thumb_0", "bip_thumb_1", "bip_thumb_2",
+				"bip_index_0", "bip_index_1", "bip_index_2",
+				"bip_middle_0", "bip_middle_1", "bip_middle_2",
+				"bip_ring_0", "bip_ring_1", "bip_ring_2",
+				"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
+			};
+			for (int i = 0; i < ARRAYSIZE(reloadFingerPrefixes); i++)
+			{
+				char boneName[64];
+				const char *sfx = IsLeftHand() ? "_L" : "_R";
+				V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
+				int boneIndex = LookupBone(boneName);
+				if (boneIndex < 0 || boneIndex >= nMaxBones)
+				{
+					sfx = IsLeftHand() ? "_l" : "_r";
+					V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
+					boneIndex = LookupBone(boneName);
+				}
+				if (boneIndex < 0 || boneIndex >= nMaxBones)
+					boneIndex = LookupBone(reloadFingerPrefixes[i]);
+				if (boneIndex < 0 || boneIndex >= nMaxBones)
+					continue;
+
+				const mstudiobone_t *pBone = pStudioHdr->pBone(boneIndex);
+				if (!pBone || pBone->parent < 0 || pBone->parent >= nMaxBones)
+					continue;
+
+				matrix3x4_t localBoneMatrix;
+				QuaternionMatrix(reloadQ[boneIndex], reloadPos[boneIndex], localBoneMatrix);
+				ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[boneIndex]);
+			}
+
+			// weapon_bone_1 (lever): position relative to weapon_bone so
+			// the lever stays attached to the weapon body rather than
+			// following the pumping hand.
+			matrix3x4_t reloadWeaponLocal, reloadLeverLocal;
+			QuaternionMatrix(reloadQ[weaponBoneIdx], reloadPos[weaponBoneIdx], reloadWeaponLocal);
+			QuaternionMatrix(reloadQ[leverBoneIdx], reloadPos[leverBoneIdx], reloadLeverLocal);
+
+			matrix3x4_t weaponLocalInverse;
+			MatrixInvert(reloadWeaponLocal, weaponLocalInverse);
+
+			matrix3x4_t leverRelativeToWeapon;
+			ConcatTransforms(weaponLocalInverse, reloadLeverLocal, leverRelativeToWeapon);
+
+			ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], leverRelativeToWeapon, pBoneToWorldOut[leverBoneIdx]);
 		}
 	}
 
@@ -8037,6 +8190,39 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			}
 		}
 
+		// Scattergun reload animation sequences
+		m_iReloadStartSequence = -1;
+		m_iReloadLoopSequence = -1;
+		m_iReloadEndSequence = -1;
+		m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+		m_flReloadAnimStartTime = 0.0f;
+		m_flReloadLoopBottomCycle = 0.0f;
+		m_bPlayingReloadAnim = false;
+		m_iLeverReloadSequence = -1;
+		m_flLeverReloadCycle = 0.0f;
+		if (IsScattergunWeaponID(pWeapon->GetWeaponID()))
+		{
+			m_iReloadStartSequence = LookupSequence("sg_reload_start");
+			m_iReloadLoopSequence  = LookupSequence("sg_reload_loop");
+			m_iReloadEndSequence   = LookupSequence("sg_reload_end");
+
+			if (m_iReloadLoopSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iReloadLoopSequence, poseParams);
+					if (maxFrame > 0)
+						m_flReloadLoopBottomCycle = 5.0f / (float)maxFrame;
+				}
+			}
+
+			DevMsg("VR: Scattergun reload sequences: start=%d loop=%d end=%d bottomCycle=%.3f on '%s'\n",
+				m_iReloadStartSequence, m_iReloadLoopSequence, m_iReloadEndSequence,
+				m_flReloadLoopBottomCycle, GetModelName());
+		}
+
 		m_bAnimateIdle = false;
 		m_bLoopIdleOnHand = false;
 		m_bIsBreadBite = false;
@@ -8215,6 +8401,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	
 	// Set up idle animations for the weapon model
 	pRenderWeapon->SetupAnimations();
+
+	if (IsScattergunWeaponID(pWeapon->GetWeaponID()))
+		pRenderWeapon->SetupReloadAnimations();
 
 	// For fist/glove weapons, override with the correct idle pose so the
 	// vm_weapon_bone chain positions the mesh correctly.
@@ -8539,6 +8728,17 @@ void C_TFVRHand::UnequipWeapon()
 	m_bMedigunWasHealing = false;
 	m_bFlamethrowerWasFiring = false;
 	m_flFlamethrowerFireBlend = 0.0f;
+
+	// Reset reload animation state
+	m_iReloadStartSequence = -1;
+	m_iReloadLoopSequence = -1;
+	m_iReloadEndSequence = -1;
+	m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+	m_flReloadAnimStartTime = 0.0f;
+	m_flReloadLoopBottomCycle = 0.0f;
+	m_bPlayingReloadAnim = false;
+	m_iLeverReloadSequence = -1;
+	m_flLeverReloadCycle = 0.0f;
 
 	// Reset two-hand grip state
 	m_flTwoHandBlend = 0.0f;
@@ -9188,6 +9388,172 @@ void C_TFVRHand::UpdateFlamethrowerFireAnimation()
 	}
 
 	m_bFlamethrowerWasFiring = bIsFiring;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Drive the scattergun lever reload state machine.
+//          Stores the lever sequence/cycle for ApplyWeaponPose to sample
+//          on weapon_bone_1 only — the entity stays at idle so the rest
+//          of the weapon is not affected by the reload animation.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateScattergunReloadAnimation()
+{
+	if (m_iReloadStartSequence < 0)
+		return;
+
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon || !IsScattergunWeaponID(pWeapon->GetWeaponID()))
+	{
+		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+		}
+		return;
+	}
+
+	CTFScatterGun *pSG = static_cast<CTFScatterGun *>(pWeapon);
+	bool bArmed = pSG->IsVRLeverArmed();
+
+	extern ConVar tfvr_scattergun_lever_debug;
+	bool bDebug = tfvr_scattergun_lever_debug.GetBool();
+
+	if (m_bPlayingFireAnim)
+		return;
+
+	// --- Edge detection: arm / disarm ---
+	if (bArmed && m_eReloadAnimState == VR_RELOAD_ANIM_NONE)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_ENTER;
+		m_flReloadAnimStartTime = gpGlobals->curtime;
+		m_bPlayingReloadAnim = true;
+		m_bPlayingDrawAnim = false;
+		m_bPlayingChargeAnim = false;
+		m_iLeverReloadSequence = m_iReloadStartSequence;
+		m_flLeverReloadCycle = 0.0f;
+		if (bDebug)
+			DevMsg("[VR Lever Anim] Enter reload mode\n");
+	}
+	else if (!bArmed && m_eReloadAnimState != VR_RELOAD_ANIM_NONE
+			&& m_eReloadAnimState != VR_RELOAD_ANIM_EXIT)
+	{
+		if (m_iReloadEndSequence >= 0)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_EXIT;
+			m_flReloadAnimStartTime = gpGlobals->curtime;
+			m_iLeverReloadSequence = m_iReloadEndSequence;
+			m_flLeverReloadCycle = 0.0f;
+			if (bDebug)
+				DevMsg("[VR Lever Anim] Exit reload mode\n");
+		}
+		else
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+		}
+	}
+
+	// --- State machine: compute lever sequence and cycle ---
+	switch (m_eReloadAnimState)
+	{
+	case VR_RELOAD_ANIM_ENTER:
+	{
+		CStudioHdr *pHdr = GetModelPtr();
+		float duration = pHdr ? SequenceDuration(pHdr, m_iReloadStartSequence) : 0.0f;
+		float elapsed = gpGlobals->curtime - m_flReloadAnimStartTime;
+		if (elapsed >= duration)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+			m_iLeverReloadSequence = m_iReloadStartSequence;
+			m_flLeverReloadCycle = 1.0f;
+			if (bDebug)
+				DevMsg("[VR Lever Anim] Holding reload pose\n");
+		}
+		else
+		{
+			m_iLeverReloadSequence = m_iReloadStartSequence;
+			m_flLeverReloadCycle = (duration > 0.0f) ? (elapsed / duration) : 0.0f;
+		}
+		break;
+	}
+
+	case VR_RELOAD_ANIM_HOLD:
+	{
+		if (pSG->IsVRLeverPumpingDown() || pSG->IsVRLeverReturning())
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_PUMPING;
+			if (bDebug)
+				DevMsg("[VR Lever Anim] Pumping started\n");
+		}
+		m_iLeverReloadSequence = m_iReloadStartSequence;
+		m_flLeverReloadCycle = 1.0f;
+		break;
+	}
+
+	case VR_RELOAD_ANIM_PUMPING:
+	{
+		if (m_iReloadLoopSequence < 0)
+			break;
+
+		float progress = pSG->GetVRLeverStrokeProgress();
+		float cycle = 0.0f;
+
+		if (pSG->IsVRLeverPumpingDown())
+		{
+			cycle = progress * m_flReloadLoopBottomCycle;
+		}
+		else if (pSG->IsVRLeverReturning())
+		{
+			cycle = m_flReloadLoopBottomCycle + progress * (1.0f - m_flReloadLoopBottomCycle);
+		}
+		else
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+			m_iLeverReloadSequence = m_iReloadStartSequence;
+			m_flLeverReloadCycle = 1.0f;
+			if (bDebug)
+				DevMsg("[VR Lever Anim] Pump complete, back to hold\n");
+			break;
+		}
+
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = clamp(cycle, 0.0f, 1.0f);
+
+		if (bDebug)
+			DevMsg("[VR Lever Anim] Pump cycle: %.3f (progress %.2f, down=%d)\n",
+				m_flLeverReloadCycle, progress, pSG->IsVRLeverPumpingDown() ? 1 : 0);
+		break;
+	}
+
+	case VR_RELOAD_ANIM_EXIT:
+	{
+		CStudioHdr *pHdr = GetModelPtr();
+		float duration = pHdr ? SequenceDuration(pHdr, m_iReloadEndSequence) : 0.0f;
+		float elapsed = gpGlobals->curtime - m_flReloadAnimStartTime;
+		if (elapsed >= duration)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+			if (bDebug)
+				DevMsg("[VR Lever Anim] Reload exit complete, back to idle\n");
+		}
+		else
+		{
+			m_iLeverReloadSequence = m_iReloadEndSequence;
+			m_flLeverReloadCycle = (duration > 0.0f) ? (elapsed / duration) : 0.0f;
+		}
+		break;
+	}
+
+	default:
+		break;
+	}
 }
 
 //-----------------------------------------------------------------------------
