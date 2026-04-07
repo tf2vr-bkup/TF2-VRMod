@@ -9439,7 +9439,8 @@ void C_TFVRHand::UpdateScattergunReloadAnimation()
 	else if (!bArmed && m_eReloadAnimState != VR_RELOAD_ANIM_NONE
 			&& m_eReloadAnimState != VR_RELOAD_ANIM_EXIT)
 	{
-		if (m_iReloadEndSequence >= 0)
+		bool bFireCooldown = ( gpGlobals->curtime < pSG->m_flNextPrimaryAttack );
+		if (m_iReloadEndSequence >= 0 && !bFireCooldown)
 		{
 			m_eReloadAnimState = VR_RELOAD_ANIM_EXIT;
 			m_flReloadAnimStartTime = gpGlobals->curtime;

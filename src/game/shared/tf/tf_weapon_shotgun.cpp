@@ -562,6 +562,21 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 		return;
 	}
 
+	// Block pumping while the weapon's fire cycle is still active.
+	// Reset all reload state so the lever visually returns to idle.
+	if ( gpGlobals->curtime < m_flNextPrimaryAttack )
+	{
+		m_bVRLeverIsArmed = false;
+		m_bVRLeverStrokeOut = false;
+		m_bVRLeverStrokeIn = false;
+		m_flVRLeverStrokeDist = 0.0f;
+		if ( m_vecVRLeverLastHandPos != vec3_origin )
+			m_vecVRLeverLastHandPos = vecHandRelative;
+		if ( bDebug )
+			DevMsg( "[VR Lever] Paused: fire cooldown\n" );
+		return;
+	}
+
 	if ( !pCmd->vrScattergunLeverArmed )
 	{
 		const bool bMidStroke = m_bVRLeverStrokeOut || m_bVRLeverStrokeIn;
@@ -585,23 +600,9 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 
 	m_bVRLeverIsArmed = true;
 
-	// Block pumping while the weapon's fire cycle is still active.
-	// Keep the reference position current so there's no displacement
-	// jump when the cooldown ends.
-	if ( gpGlobals->curtime < m_flNextPrimaryAttack )
-	{
-		if ( m_vecVRLeverLastHandPos != vec3_origin )
-		{
-			m_vecVRLeverLastHandPos = vecHandRelative;
-			m_flVRLeverStrokeDist = 0.0f;
-		}
-		if ( bDebug )
-			DevMsg( "[VR Lever] Paused: fire cooldown\n" );
-		return;
-	}
-
 	const float flLeverDist    = tfvr_scattergun_lever_distance.GetFloat();
 	const float flSign         = tfvr_scattergun_lever_sign.GetFloat();
+	const float flReloadInterval = GetVRSinglyReloadShellThrottleInterval() * TFVR_ReloadThrottleScale();
 
 	// Pump axis from the weapon-hand controller's raw orientation.
 	// Column 2 = controller "up" in Source coords — use tfvr_scattergun_lever_axis
@@ -641,14 +642,10 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 
 			if ( flFrameDisp < 0.0f )
 			{
-				// Downward motion: accumulate
 				m_flVRLeverStrokeDist += -flFrameDisp;
 			}
 			else
 			{
-				// Upward or no motion: decay the accumulator so tremor
-				// doesn't build up, but don't slam to zero (allows brief
-				// hesitation mid-start).
 				m_flVRLeverStrokeDist = MAX( m_flVRLeverStrokeDist - flFrameDisp * 2.0f, 0.0f );
 			}
 
@@ -686,10 +683,6 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 			if ( flFrameDisp < 0.0f )
 			{
 				m_flVRLeverStrokeDist += -flFrameDisp;
-			}
-			else
-			{
-				m_flVRLeverStrokeDist = MAX( m_flVRLeverStrokeDist - flFrameDisp * 2.0f, 0.0f );
 			}
 			m_vecVRLeverLastHandPos = vecHandRelative;
 
@@ -745,32 +738,42 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 		}
 		else if ( m_bVRLeverStrokeIn )
 		{
+			float flCompletionDist = flLeverDist * 0.9f;
+			float flMinUpPumpTime = MAX( flReloadInterval * 0.5f, 0.05f );
+			float flMaxDistPerFrame = ( flCompletionDist / flMinUpPumpTime ) * gpGlobals->frametime;
+
+			float flPrevDist = m_flVRLeverStrokeDist;
 			if ( flFrameDisp > 0.0f )
 			{
-				m_flVRLeverStrokeDist += flFrameDisp;
+				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flCompletionDist );
 			}
-			else
+			if ( m_flVRLeverStrokeDist >= flLeverDist * 0.75f )
 			{
-				m_flVRLeverStrokeDist = MAX( m_flVRLeverStrokeDist + flFrameDisp * 2.0f, 0.0f );
+				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + flMaxDistPerFrame, flCompletionDist );
 			}
 			m_vecVRLeverLastHandPos = vecHandRelative;
 
-			if ( bDebug )
-				DevMsg( "[VR Lever] Up: %.2f / %.2f\n", (float)m_flVRLeverStrokeDist, flLeverDist );
+#ifdef CLIENT_DLL
+			float flSoundThreshold = flCompletionDist * 0.15f;
+			if ( prediction->IsFirstTimePredicted()
+				&& flPrevDist < flSoundThreshold
+				&& m_flVRLeverStrokeDist >= flSoundThreshold )
+			{
+				EmitSound( "VR.ScattergunPumpUp" );
+			}
+#endif
 
-			if ( m_flVRLeverStrokeDist >= flLeverDist )
+			if ( bDebug )
+				DevMsg( "[VR Lever] Up: %.2f / %.2f\n", (float)m_flVRLeverStrokeDist, flCompletionDist );
+
+			if ( m_flVRLeverStrokeDist >= flCompletionDist
+				&& gpGlobals->curtime >= m_flNextVRLeverShellReadyTime )
 			{
 				VRCommitLeverShell();
 				m_bVRLeverStrokeIn    = false;
 				m_flVRLeverStrokeDist = 0.0f;
 				if ( bDebug )
 					DevMsg( "[VR Lever] Shell loaded! Ready for next pump.\n" );
-#ifdef CLIENT_DLL
-				if ( prediction->IsFirstTimePredicted() )
-				{
-					EmitSound( "VR.ScattergunPumpUp" );
-				}
-#endif
 			}
 		}
 	}
