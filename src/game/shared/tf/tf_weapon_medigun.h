@@ -80,6 +80,13 @@ public:
 	void			DrainCharge( void );
 	virtual void	WeaponReset( void );
 
+	// VR lever mechanic — physical forward push on right hand engages healing
+	bool			ShouldUseVRLever() const;
+	void			VRLeverPostFrame( void );
+	void			ResetVRLeverState( void );
+	float			GetVRLeverProgress() const;
+	bool			IsVRLeverEngaged() const { return m_bVRLeverEngaged; }
+
 	virtual float	GetTargetRange( void );
 	virtual float	GetStickRange( void );
 	virtual float	GetHealRate( void );
@@ -187,6 +194,11 @@ protected:
 	CNetworkVar( bool,		m_bChargeRelease );
 	CNetworkVar( float,		m_flChargeLevel );
 	CNetworkVar( int,		m_nChargeResistType );
+
+	// VR lever state — networked with prediction
+	CNetworkVar( bool, m_bVRLeverEngaged );
+	CNetworkVar( float, m_flVRLeverProgress );
+	CNetworkVector( m_vecVRLeverLastHandPos );
 
 	float					m_flNextTargetCheckTime;
 	bool					m_bCanChangeTarget; // used to track the PrimaryAttack key being released for AutoHeal mode

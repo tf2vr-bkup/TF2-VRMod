@@ -246,7 +246,7 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 
 	buf->WriteOneBit( to->vrBallAimActive ? 1 : 0 );
 	buf->WriteOneBit( to->vrPhysicalCrouch ? 1 : 0 );
-	buf->WriteOneBit( to->vrScattergunLeverArmed ? 1 : 0 );
+	buf->WriteOneBit( to->vrWeaponArmed ? 1 : 0 );
 	buf->WriteOneBit( to->vrWeaponHandIsRight ? 1 : 0 );
 
 #if defined( HL2_CLIENT_DLL )
@@ -418,7 +418,7 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 
 	move->vrBallAimActive = buf->ReadOneBit() ? true : false;
 	move->vrPhysicalCrouch = buf->ReadOneBit() ? true : false;
-	move->vrScattergunLeverArmed = buf->ReadOneBit() ? true : false;
+	move->vrWeaponArmed = buf->ReadOneBit() ? true : false;
 	move->vrWeaponHandIsRight = buf->ReadOneBit() ? true : false;
 
 #if defined( HL2_DLL )

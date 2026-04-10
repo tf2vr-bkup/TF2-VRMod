@@ -490,7 +490,7 @@ void CTFScatterGun::VRCommitLeverShell( void )
 		return;
 
 	const CUserCmd *pCmdCommit = pOwner->GetCurrentUserCommand();
-	if ( !pCmdCommit || !pCmdCommit->vrScattergunLeverArmed )
+	if ( !pCmdCommit || !pCmdCommit->vrWeaponArmed )
 		return;
 
 	if ( gpGlobals->curtime < m_flNextVRLeverShellReadyTime )
@@ -577,7 +577,7 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 		return;
 	}
 
-	if ( !pCmd->vrScattergunLeverArmed )
+	if ( !pCmd->vrWeaponArmed )
 	{
 		const bool bMidStroke = m_bVRLeverStrokeOut || m_bVRLeverStrokeIn;
 		if ( !bMidStroke )

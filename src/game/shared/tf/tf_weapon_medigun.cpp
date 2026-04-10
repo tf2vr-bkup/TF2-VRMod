@@ -41,9 +41,16 @@
 #include "tf_revive.h"
 #include "tf_weapon_medigun.h"
 #include "tf_weapon_shovel.h"
+#include "usercmd.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+ConVar tfvr_medigun_lever( "tfvr_medigun_lever", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR medigun: 1 = engage healing beam with physical lever push; 0 = standard trigger" );
+ConVar tfvr_medigun_lever_distance( "tfvr_medigun_lever_distance", "4.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of hand motion along lever axis to fully engage/disengage" );
+ConVar tfvr_medigun_lever_sign( "tfvr_medigun_lever_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply lever-axis motion (+1 or -1) if push direction feels inverted" );
+ConVar tfvr_medigun_lever_axis( "tfvr_medigun_lever_axis", "0", FCVAR_REPLICATED, "VR: controller matrix column for lever axis (0=fwd, 1=right, 2=up)" );
+ConVar tfvr_medigun_lever_debug( "tfvr_medigun_lever_debug", "0", FCVAR_REPLICATED, "VR: 1 = print medigun lever state to console" );
 
 
 MedigunEffects_t g_MedigunEffects[MEDIGUN_NUM_CHARGE_TYPES] =
@@ -153,6 +160,9 @@ BEGIN_NETWORK_TABLE( CWeaponMedigun, DT_WeaponMedigun )
 	SendPropBool( SENDINFO( m_bHolstered ) ),
 	SendPropInt( SENDINFO( m_nChargeResistType ) ),
 	SendPropEHandle( SENDINFO( m_hLastHealingTarget ) ),
+	SendPropBool( SENDINFO( m_bVRLeverEngaged ) ),
+	SendPropFloat( SENDINFO( m_flVRLeverProgress ), 0, SPROP_NOSCALE ),
+	SendPropVector( SENDINFO( m_vecVRLeverLastHandPos ), -1, SPROP_NOSCALE ),
 	SendPropDataTable("LocalTFWeaponMedigunData", 0, &REFERENCE_SEND_TABLE(DT_LocalTFWeaponMedigunData), SendProxy_SendLocalWeaponDataTable ),
 	SendPropDataTable("NonLocalTFWeaponMedigunData", 0, &REFERENCE_SEND_TABLE(DT_TFWeaponMedigunDataNonLocal), SendProxy_SendNonLocalWeaponDataTable ),
 #else
@@ -164,6 +174,9 @@ BEGIN_NETWORK_TABLE( CWeaponMedigun, DT_WeaponMedigun )
 	RecvPropBool( RECVINFO( m_bHolstered ) ),
 	RecvPropInt( RECVINFO( m_nChargeResistType ) ),
 	RecvPropEHandle( RECVINFO( m_hLastHealingTarget ) ),
+	RecvPropBool( RECVINFO( m_bVRLeverEngaged ) ),
+	RecvPropFloat( RECVINFO( m_flVRLeverProgress ) ),
+	RecvPropVector( RECVINFO( m_vecVRLeverLastHandPos ) ),
 	RecvPropDataTable("LocalTFWeaponMedigunData", 0, 0, &REFERENCE_RECV_TABLE(DT_LocalTFWeaponMedigunData)),
 	RecvPropDataTable("NonLocalTFWeaponMedigunData", 0, 0, &REFERENCE_RECV_TABLE(DT_TFWeaponMedigunDataNonLocal)),
 #endif
@@ -182,6 +195,10 @@ BEGIN_PREDICTION_DATA( CWeaponMedigun  )
 
 	DEFINE_PRED_FIELD( m_flChargeLevel, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_bChargeRelease, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+
+	DEFINE_PRED_FIELD( m_bVRLeverEngaged, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRLeverProgress, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_vecVRLeverLastHandPos, FIELD_VECTOR, FTYPEDESC_INSENDTABLE ),
 
 //	DEFINE_PRED_FIELD( m_bPlayingSound, FIELD_BOOLEAN ),
 //	DEFINE_PRED_FIELD( m_bUpdateHealingTargets, FIELD_BOOLEAN ),
@@ -284,6 +301,8 @@ void CWeaponMedigun::WeaponReset( void )
 	m_flEndResistCharge = 0.f;
 
 	m_bCanChangeTarget = true;
+
+	ResetVRLeverState();
 
 	m_flNextBuzzTime = 0;
 	m_flReleaseStartedAt = 0;
@@ -434,6 +453,7 @@ bool CWeaponMedigun::Deploy( void )
 //-----------------------------------------------------------------------------
 bool CWeaponMedigun::Holster( CBaseCombatWeapon *pSwitchingTo )
 {
+	ResetVRLeverState();
 	RemoveHealingTarget( true );
 	m_bAttacking = false;
 	m_bHolstered = true;
@@ -458,6 +478,7 @@ bool CWeaponMedigun::Holster( CBaseCombatWeapon *pSwitchingTo )
 //-----------------------------------------------------------------------------
 void CWeaponMedigun::UpdateOnRemove( void )
 {
+	ResetVRLeverState();
 	m_bHealing = false;
 	RemoveHealingTarget( true );
 	m_bAttacking = false;
@@ -1554,7 +1575,21 @@ void CWeaponMedigun::ItemPostFrame( void )
 
 	// Try to start healing
 	m_bAttacking = false;
-	if ( pOwner->GetMedigunAutoHeal() )
+	if ( ShouldUseVRLever() )
+	{
+		VRLeverPostFrame();
+
+		if ( m_bVRLeverEngaged )
+		{
+			PrimaryAttack();
+			m_bAttacking = true;
+		}
+		else if ( m_bHealing )
+		{
+			RemoveHealingTarget();
+		}
+	}
+	else if ( pOwner->GetMedigunAutoHeal() )
 	{
 		if ( pOwner->m_nButtons & IN_ATTACK )
 		{
@@ -1567,7 +1602,6 @@ void CWeaponMedigun::ItemPostFrame( void )
 					StopHealSound( true, true, false );
 				}
 #endif
-				// can't change again until we release the attack button
 				m_bCanChangeTarget = false;
 			}
 		}
@@ -1639,6 +1673,8 @@ void CWeaponMedigun::ItemPostFrame( void )
 //-----------------------------------------------------------------------------
 bool CWeaponMedigun::Lower( void )
 {
+	ResetVRLeverState();
+
 	// Stop healing if we are
 	if ( m_bHealing )
 	{
@@ -2728,6 +2764,158 @@ void CWeaponMedigun::HookAttributes( void )
 
 	m_flOverHealExpert = 0.f;
 	CALL_ATTRIB_HOOK_FLOAT_ON_OTHER( pOwner, m_flOverHealExpert, overheal_expert );
+}
+
+//-----------------------------------------------------------------------------
+// VR Lever Mechanic
+//-----------------------------------------------------------------------------
+bool CWeaponMedigun::ShouldUseVRLever() const
+{
+	if ( !tfvr_medigun_lever.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = ToTFPlayer( GetOwnerEntity() );
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	return IsHeldByVRHand();
+#else
+	return true;
+#endif
+}
+
+void CWeaponMedigun::ResetVRLeverState( void )
+{
+	m_bVRLeverEngaged = false;
+	m_flVRLeverProgress = 0.0f;
+	m_vecVRLeverLastHandPos = vec3_origin;
+}
+
+float CWeaponMedigun::GetVRLeverProgress() const
+{
+	return m_flVRLeverProgress;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Track right-hand forward push to engage/disengage healing lever.
+//          The lever latches forward when fully pushed (healing stays active
+//          even after releasing grip).  Pull back with grip to disengage.
+//-----------------------------------------------------------------------------
+void CWeaponMedigun::VRLeverPostFrame( void )
+{
+	CTFPlayer *pOwner = ToTFPlayer( GetOwnerEntity() );
+	if ( !pOwner )
+		return;
+
+#if defined( CLIENT_DLL )
+	if ( !pOwner->IsLocalPlayer() )
+		return;
+#endif
+
+	const bool bDebug = tfvr_medigun_lever_debug.GetBool();
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+	{
+		ResetVRLeverState();
+		return;
+	}
+
+	// Medigun is in the left hand; lever is operated by the right hand.
+	// Track right hand position relative to left hand so locomotion and
+	// reference-space shifts are cancelled out.
+	Vector vecLeverHand = pCmd->vrRawControllerPosR;
+	Vector vecWeaponHand = pCmd->vrRawControllerPosL;
+
+	if ( vecLeverHand == vec3_origin || vecWeaponHand == vec3_origin )
+		return;
+
+	Vector vecHandRelative = vecLeverHand - vecWeaponHand;
+
+	const float flLeverDist = tfvr_medigun_lever_distance.GetFloat();
+	const float flSign      = tfvr_medigun_lever_sign.GetFloat();
+
+	// Lever axis from the weapon hand (left controller) orientation — the
+	// lever is physically part of the weapon so its push direction follows
+	// the weapon's frame.
+	QAngle angWeaponHand = pCmd->vrRawControllerAngL;
+	matrix3x4_t controllerMatrix;
+	AngleMatrix( angWeaponHand, controllerMatrix );
+
+	int iAxisCol = clamp( tfvr_medigun_lever_axis.GetInt(), 0, 2 );
+	Vector vecLeverAxis;
+	MatrixGetColumn( controllerMatrix, iAxisCol, vecLeverAxis );
+	VectorNormalize( vecLeverAxis );
+
+	if ( !pCmd->vrWeaponArmed )
+	{
+		if ( !m_bVRLeverEngaged )
+		{
+			// Not engaged and grip released — spring back toward 0
+			if ( m_flVRLeverProgress > 0.0f )
+			{
+				m_flVRLeverProgress = MAX( m_flVRLeverProgress - gpGlobals->frametime * 8.0f, 0.0f );
+				if ( bDebug && m_flVRLeverProgress == 0.0f )
+					DevMsg( "[VR MediLever] Spring back to idle\n" );
+			}
+			m_vecVRLeverLastHandPos = vec3_origin;
+		}
+		else
+		{
+			// Engaged — lever stays latched at 1.0, slide reference so
+			// there is no jump when grip returns.
+			m_flVRLeverProgress = 1.0f;
+			m_vecVRLeverLastHandPos = vecHandRelative;
+		}
+		return;
+	}
+
+	// First frame with grip: seed the reference position
+	if ( m_vecVRLeverLastHandPos == vec3_origin )
+	{
+		m_vecVRLeverLastHandPos = vecHandRelative;
+		if ( bDebug )
+			DevMsg( "[VR MediLever] Tracking started\n" );
+		return;
+	}
+
+	Vector vecFrameDelta = vecHandRelative - m_vecVRLeverLastHandPos;
+	float  flFrameDisp   = DotProduct( vecFrameDelta, vecLeverAxis ) * flSign;
+	m_vecVRLeverLastHandPos = vecHandRelative;
+
+	if ( !m_bVRLeverEngaged )
+	{
+		// Pushing forward: accumulate toward 1.0
+		m_flVRLeverProgress += flFrameDisp / MAX( flLeverDist, 0.01f );
+		m_flVRLeverProgress = clamp( (float)m_flVRLeverProgress, 0.0f, 1.0f );
+
+		if ( bDebug )
+			DevMsg( "[VR MediLever] Push: %.2f\n", (float)m_flVRLeverProgress );
+
+		if ( m_flVRLeverProgress >= 1.0f )
+		{
+			m_bVRLeverEngaged = true;
+			if ( bDebug )
+				DevMsg( "[VR MediLever] ENGAGED — healing active\n" );
+		}
+	}
+	else
+	{
+		// Pulling back: accumulate toward 0.0
+		m_flVRLeverProgress += flFrameDisp / MAX( flLeverDist, 0.01f );
+		m_flVRLeverProgress = clamp( (float)m_flVRLeverProgress, 0.0f, 1.0f );
+
+		if ( bDebug )
+			DevMsg( "[VR MediLever] Pull: %.2f\n", (float)m_flVRLeverProgress );
+
+		if ( m_flVRLeverProgress <= 0.0f )
+		{
+			m_bVRLeverEngaged = false;
+			if ( bDebug )
+				DevMsg( "[VR MediLever] DISENGAGED — healing stopped\n" );
+		}
+	}
 }
 
 

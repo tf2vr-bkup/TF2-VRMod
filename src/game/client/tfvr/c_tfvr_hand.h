@@ -264,6 +264,15 @@ private:
 	int m_iFireOnSequence;         // fire_on sequence (healing beam starts)
 	int m_iFireOffSequence;        // fire_off sequence (healing beam ends)
 	bool m_bMedigunWasHealing;     // Previous frame healing state for edge detection
+
+	// VR medigun lever: entity sequence drives the body (idle/fire_on/loop/off),
+	// SetupBones overrides lever bone + right hand with the lever animation.
+	bool m_bMedigunLeverActive;        // Lever is being operated
+	int  m_iMedigunLeverSeq;           // Lever animation sequence to sample in SetupBones
+	float m_flMedigunLeverCycle;       // Lever animation cycle (maps to progress)
+	bool m_bMedigunBodyPastHalf;       // Body state crossed the 0.5 lever threshold
+	matrix3x4_t m_matMedigunGripTarget; // Cached bip_hand_R world transform after fire anim
+	bool m_bMedigunGripTargetValid;     // True when m_matMedigunGripTarget is usable
 	
 	// Flamethrower fire animation state tracking
 	bool m_bFlamethrowerWasFiring;   // Previous frame firing state for edge detection

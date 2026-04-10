@@ -33,9 +33,11 @@ ConVar tfvr_controller_tracking_debug("tfvr_controller_tracking_debug", "0", FCV
 
 extern ConVar tfvr_scattergun_lever_reload;
 extern ConVar tfvr_twohand_enabled;
+extern ConVar tfvr_medigun_lever;
 
 ConVar tfvr_scattergun_lever_weapon_grip_threshold( "tfvr_scattergun_lever_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: weapon-hand grip analog (right_grip when gun is in right hand, else left_grip) must reach this (0-1) while two-handing" );
 ConVar tfvr_scattergun_lever_twohand_min_blend( "tfvr_scattergun_lever_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: minimum two-hand blend on the weapon hand before lever motion counts (0-1)" );
+ConVar tfvr_medigun_lever_grip_threshold( "tfvr_medigun_lever_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR medigun lever: right grip analog must reach this (0-1) to arm the lever" );
 
 // VR Turning ConVars
 ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap" );
@@ -933,8 +935,43 @@ static void TFVR_UpdateScattergunLeverArmedInCmd( CUserCmd *cmd )
 
 	if ( flGrip >= tfvr_scattergun_lever_weapon_grip_threshold.GetFloat() )
 	{
-		cmd->vrScattergunLeverArmed = true;
+		cmd->vrWeaponArmed = true;
 		cmd->vrWeaponHandIsRight = ( pWeaponHand == pRight );
+	}
+}
+
+static void TFVR_UpdateMedigunLeverArmedInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_medigun_lever.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	if ( !pLocal || !pLeft || !pRight )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || pWpn->GetWeaponID() != TF_WEAPON_MEDIGUN || !pWpn->IsHeldByVRHand() )
+		return;
+
+	// Medigun is always in the left hand; the right hand operates the lever
+	if ( pLeft->GetHeldWeapon() != pWpn )
+		return;
+
+	// Only arm the lever when the right hand is actually gripped onto the medigun
+	// (grip blend is managed on the RIGHT hand for the medigun case)
+	if ( !pRight->IsTwoHanding() )
+		return;
+
+	const float flGrip = g_pOpenXRManager->GetAnalogValue( "right_grip" );
+	if ( flGrip >= tfvr_medigun_lever_grip_threshold.GetFloat() )
+	{
+		cmd->vrWeaponArmed = true;
+		cmd->vrWeaponHandIsRight = false;
 	}
 }
 
@@ -942,7 +979,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 {
 	if ( cmd )
 	{
-		cmd->vrScattergunLeverArmed = false;
+		cmd->vrWeaponArmed = false;
 		cmd->vrWeaponHandIsRight = true;
 	}
 
@@ -959,6 +996,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
     }
 
 	TFVR_UpdateScattergunLeverArmedInCmd( cmd );
+	TFVR_UpdateMedigunLeverArmedInCmd( cmd );
     
     // Get controller poses
     VMatrix leftControllerPose, rightControllerPose;

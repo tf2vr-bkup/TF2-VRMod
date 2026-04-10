@@ -54,7 +54,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1), m_iReloadStartSequence(-1), m_iReloadLoopSequence(-1), m_iReloadEndSequence(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bMedigunLeverOverride(false), m_iMedigunLeverSeq(-1), m_flMedigunLeverCycle(0.0f), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1), m_iReloadStartSequence(-1), m_iReloadLoopSequence(-1), m_iReloadEndSequence(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
@@ -90,7 +90,82 @@ public:
 			}
 			m_bInSetupBones = false;
 		}
-		return BaseClass::SetupBones(pBoneToWorldOut, nMaxBones, boneMask, currentTime);
+		bool bResult = BaseClass::SetupBones(pBoneToWorldOut, nMaxBones, boneMask, currentTime);
+
+		CStudioHdr *pHdr = GetModelPtr();
+
+		// Medigun lever bone override: use lever animation's local transform
+		// relative to the lever bone's actual parent so it stays attached to the body.
+		if (bResult && pBoneToWorldOut && m_bMedigunLeverOverride && m_iMedigunLeverSeq >= 0 && pHdr)
+		{
+			int leverIdx = LookupBone("vm_weapon_bone_L");
+			if (leverIdx < 0)
+				leverIdx = LookupBone("vm_weapon_bone_l");
+			if (leverIdx >= 0 && leverIdx < nMaxBones)
+			{
+				const mstudiobone_t *pLeverBone = pHdr->pBone(leverIdx);
+				if (pLeverBone && pLeverBone->parent >= 0 && pLeverBone->parent < nMaxBones)
+				{
+					Vector samplePos[MAXSTUDIOBONES];
+					Quaternion sampleQ[MAXSTUDIOBONES];
+					float samplePoseParams[MAXSTUDIOPOSEPARAM];
+					for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+						samplePoseParams[i] = 0.0f;
+
+					IBoneSetup sampleSetup(pHdr, BONE_USED_BY_ANYTHING, samplePoseParams);
+					sampleSetup.InitPose(samplePos, sampleQ);
+					sampleSetup.AccumulatePose(samplePos, sampleQ, m_iMedigunLeverSeq,
+						m_flMedigunLeverCycle, 1.0f, gpGlobals->curtime, NULL);
+
+					matrix3x4_t leverLocal;
+					QuaternionMatrix(sampleQ[leverIdx], samplePos[leverIdx], leverLocal);
+					ConcatTransforms(pBoneToWorldOut[pLeverBone->parent], leverLocal, pBoneToWorldOut[leverIdx]);
+				}
+			}
+		}
+
+		// Medigun body animation: rotation-only on weapon_bone variants.
+		// The weapon body should only rotate during fire_on/loop/off, not translate.
+		// Use the body animation's rotation with the idle animation's position.
+		if (bResult && pBoneToWorldOut && m_eMedigunFireState != MEDIGUN_FIRE_IDLE && pHdr && m_iIdleSequence >= 0)
+		{
+			int numHdrBones = pHdr->numbones();
+
+			Vector idlePos[MAXSTUDIOBONES];
+			Quaternion idleQ[MAXSTUDIOBONES];
+			float idlePoseParams[MAXSTUDIOPOSEPARAM];
+			for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+				idlePoseParams[i] = 0.0f;
+			IBoneSetup idleSetup(pHdr, BONE_USED_BY_ANYTHING, idlePoseParams);
+			idleSetup.InitPose(idlePos, idleQ);
+			idleSetup.AccumulatePose(idlePos, idleQ, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+
+			Vector bodyPos[MAXSTUDIOBONES];
+			Quaternion bodyQ[MAXSTUDIOBONES];
+			float bodyPoseParams[MAXSTUDIOPOSEPARAM];
+			for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+				bodyPoseParams[i] = 0.0f;
+			IBoneSetup bodySetup(pHdr, BONE_USED_BY_ANYTHING, bodyPoseParams);
+			bodySetup.InitPose(bodyPos, bodyQ);
+			bodySetup.AccumulatePose(bodyPos, bodyQ, GetSequence(), GetCycle(), 1.0f, gpGlobals->curtime, NULL);
+
+			const char *wpnBoneNames[] = { "weapon_bone", "weapon_bone_L", "weapon_bone_l" };
+			for (int n = 0; n < ARRAYSIZE(wpnBoneNames); n++)
+			{
+				int wpnIdx = LookupBone(wpnBoneNames[n]);
+				if (wpnIdx < 0 || wpnIdx >= nMaxBones || wpnIdx >= numHdrBones)
+					continue;
+				const mstudiobone_t *pWpnBone = pHdr->pBone(wpnIdx);
+				if (!pWpnBone || pWpnBone->parent < 0 || pWpnBone->parent >= nMaxBones)
+					continue;
+
+				matrix3x4_t rotOnlyLocal;
+				QuaternionMatrix(bodyQ[wpnIdx], idlePos[wpnIdx], rotOnlyLocal);
+				ConcatTransforms(pBoneToWorldOut[pWpnBone->parent], rotOnlyLocal, pBoneToWorldOut[wpnIdx]);
+			}
+		}
+
+		return bResult;
 	}
 	
 	// Always suppress sound events on the render weapon — the viewmodel
@@ -233,7 +308,10 @@ public:
 		m_iFireLoopSequence = LookupSequence("fire_loop");
 		m_iFireOffSequence = LookupSequence("fire_off");
 		m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
-		
+		m_bMedigunLeverOverride = false;
+		m_iMedigunLeverSeq = -1;
+		m_flMedigunLeverCycle = 0.0f;
+
 		extern ConVar tfvr_weapon_fire_anim_debug;
 		if (tfvr_weapon_fire_anim_debug.GetBool())
 		{
@@ -241,6 +319,21 @@ public:
 				m_iFireOnSequence, m_iFireLoopSequence, m_iFireOffSequence);
 		}
 	}
+
+	// iType: 0 = fire_on, 1 = fire_off
+	void SetMedigunLeverBone(bool bActive, int iType, float flCycle)
+	{
+		m_bMedigunLeverOverride = bActive;
+		if (bActive)
+			m_iMedigunLeverSeq = (iType == 0) ? m_iFireOnSequence : m_iFireOffSequence;
+		else
+			m_iMedigunLeverSeq = -1;
+		m_flMedigunLeverCycle = flCycle;
+	}
+
+	int GetMedigunFireOnSeq() const { return m_iFireOnSequence; }
+	int GetMedigunFireLoopSeq() const { return m_iFireLoopSequence; }
+	int GetMedigunFireOffSeq() const { return m_iFireOffSequence; }
 	
 	void SetupBreadBiteAnimations()
 	{
@@ -623,6 +716,11 @@ private:
 	int m_iFireOffSequence;
 	int m_iFireLoopSequence;
 	MedigunFireState m_eMedigunFireState;
+
+	// Medigun lever bone override (lever bone scrubbed by progress in SetupBones)
+	bool m_bMedigunLeverOverride;
+	int  m_iMedigunLeverSeq;
+	float m_flMedigunLeverCycle;
 	
 	// Bread Bite weapon model animation state
 	bool m_bBreadBiteAnims;
@@ -779,6 +877,8 @@ ConVar tfvr_offhand_grip_blend_speed("tfvr_offhand_grip_blend_speed", "15", FCVA
 ConVar tfvr_offhand_grip_rotation_blend_speed("tfvr_offhand_grip_rotation_blend_speed", "8", FCVAR_ARCHIVE, "Speed of weapon rotation grip/ungrip transition (higher = faster)");
 ConVar tfvr_offhand_grip_ease_power("tfvr_offhand_grip_ease_power", "1.1", FCVAR_ARCHIVE, "Easing power for grip transitions (1=linear, 2+=ease-out, higher=sharper)");
 ConVar tfvr_offhand_grip_no_anchor("tfvr_offhand_grip_no_anchor", "0", FCVAR_CHEAT, "DEBUG: Disable anchor offset when gripping (use controller directly)");
+ConVar tfvr_medigun_lever_grip_release_mult("tfvr_medigun_lever_grip_release_mult", "3.5", FCVAR_ARCHIVE, "VR medigun lever: release distance multiplier when grip is active (higher = harder to detach)");
+ConVar tfvr_medigun_lever_grip_blend_speed("tfvr_medigun_lever_grip_blend_speed", "25", FCVAR_ARCHIVE, "VR medigun lever: blend speed when snapping to grip point (higher = firmer lock)");
 ConVar tfvr_hands_left_offset_roll("tfvr_hands_left_offset_roll", "0", FCVAR_ARCHIVE, "Roll offset for left VR hand (degrees)");
 
 // Rotation offset convars - right hand (DEFAULT/GLOBAL offsets)
@@ -1565,6 +1665,12 @@ C_TFVRHand::C_TFVRHand()
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
 	m_bMedigunWasHealing = false;
+	m_bMedigunLeverActive = false;
+	m_iMedigunLeverSeq = -1;
+	m_flMedigunLeverCycle = 0.0f;
+	m_bMedigunBodyPastHalf = false;
+	m_bMedigunGripTargetValid = false;
+	SetIdentityMatrix(m_matMedigunGripTarget);
 	m_bFlamethrowerWasFiring = false;
 	m_flFlamethrowerFireBlend = 0.0f;
 	m_vecLastValidPosition = vec3_origin;
@@ -1726,6 +1832,12 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
 	m_bMedigunWasHealing = false;
+	m_bMedigunLeverActive = false;
+	m_iMedigunLeverSeq = -1;
+	m_flMedigunLeverCycle = 0.0f;
+	m_bMedigunBodyPastHalf = false;
+	m_bMedigunGripTargetValid = false;
+	SetIdentityMatrix(m_matMedigunGripTarget);
 	m_bFlamethrowerWasFiring = false;
 	m_flFlamethrowerFireBlend = 0.0f;
 	m_iOffHandBone = -1;
@@ -3047,51 +3159,95 @@ void C_TFVRHand::Update()
 					}
 				}
 				
-				// Calculate distance to grip target (bip_hand_R position)
 				float distance = (rightHandPos - gripTargetPos).Length();
 				
 				float snapDist = tfvr_twohand_snap_distance.GetFloat();
 				float blendDist = tfvr_twohand_blend_distance.GetFloat();
-				
-				// Passive two-handing: Calculate blend amount based on distance only
-				// No grip button required for passive grip
-				float targetBlend = 0.0f;
-				if (distance <= snapDist)
+
+				// Check if grip button is held for active lever grip
+				extern ConVar tfvr_medigun_lever_grip_threshold;
+				float flGripValue = 0.0f;
+				if (g_pOpenXRManager)
+					flGripValue = g_pOpenXRManager->GetAnalogValue("right_grip");
+				bool bGripButtonHeld = flGripValue >= tfvr_medigun_lever_grip_threshold.GetFloat();
+
+				float gripRange = tfvr_offhand_grip_range.GetFloat() * 0.393701f;
+				bool bWasGripActive = m_bOffhandGripActive;
+
+				if (bGripButtonHeld)
 				{
-					targetBlend = 1.0f;
+					// Active lever grip: firm lock with larger release range
+					float effectiveRange = bWasGripActive
+						? gripRange * tfvr_medigun_lever_grip_release_mult.GetFloat()
+						: gripRange;
+					bool bWithinRange = distance <= effectiveRange;
+
+					m_bOffhandGripActive = bWithinRange;
+					if (m_bOffhandGripActive)
+						m_bWasOffhandGripActive = true;
+
+					if (m_bOffhandGripActive)
+					{
+						float leverBlendSpeed = tfvr_medigun_lever_grip_blend_speed.GetFloat();
+						float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+						m_flTwoHandBlend = EasedApproach(1.0f, m_flTwoHandBlend, leverBlendSpeed, gpGlobals->frametime, easePower);
+					}
+					else
+					{
+						float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+						float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+						m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+
+						if (m_flTwoHandBlend < 0.001f)
+							m_bWasOffhandGripActive = false;
+					}
 				}
-				else if (distance <= blendDist)
+				else
 				{
-					targetBlend = 1.0f - ((distance - snapDist) / (blendDist - snapDist));
+					// Passive two-handing: distance-based blending, no grip button
+					if (bWasGripActive)
+					{
+						float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+						float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+						m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+
+						if (m_flTwoHandBlend < 0.001f)
+							m_bWasOffhandGripActive = false;
+
+						m_bOffhandGripActive = false;
+					}
+					else
+					{
+						float targetBlend = 0.0f;
+						if (distance <= snapDist)
+						{
+							targetBlend = 1.0f;
+						}
+						else if (distance <= blendDist)
+						{
+							targetBlend = 1.0f - ((distance - snapDist) / (blendDist - snapDist));
+						}
+
+						float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+						float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+						m_flTwoHandBlend = EasedApproach(targetBlend, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+					}
 				}
-				
-				// Smoothly interpolate towards target blend
-				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
-				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
-				m_flTwoHandBlend = EasedApproach(targetBlend, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
-				
-				// NOTE: Passive grip does NOT set m_bOffhandGripActive or m_flGripRotationBlend
-				// This means the weapon rotation is NOT influenced by the right hand
-				
+
 				if (tfvr_twohand_debug.GetBool())
 				{
-					// MAGENTA box = medigun grip target (bip_hand_R from left hand model)
 					debugoverlay->AddBoxOverlay(gripTargetPos, Vector(-1,-1,-1), Vector(1,1,1), 
 						gripTargetAngles, 255, 0, 255, 128, 0.1f);
-					
-					// RED box = right hand middle finger position
 					debugoverlay->AddBoxOverlay(rightHandPos, Vector(-0.5f,-0.5f,-0.5f), Vector(0.5f,0.5f,0.5f), 
 						vec3_angle, 255, 0, 0, 128, 0.1f);
-					
-					// MAGENTA line = distance being measured
 					debugoverlay->AddLineOverlay(rightHandPos, gripTargetPos, 
 						255, 0, 255, true, 0.1f);
-					
+
 					static float lastDebugTime = 0;
 					if (gpGlobals->curtime - lastDebugTime > 0.5f)
 					{
-						DevMsg("Medigun RightGrip: dist=%.1f, snapDist=%.1f, blend=%.2f, target=%.2f\n", 
-							distance, snapDist, m_flTwoHandBlend, targetBlend);
+						DevMsg("Medigun RightGrip: dist=%.1f, gripActive=%d, blend=%.2f, gripBtn=%.2f\n", 
+							distance, m_bOffhandGripActive ? 1 : 0, m_flTwoHandBlend, flGripValue);
 						lastDebugTime = gpGlobals->curtime;
 					}
 				}
@@ -4007,17 +4163,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			}
 		}
 		
-		// During continuous-fire weapon animations (medigun, flamethrower), override
-		// the hand bone's LOCAL position with the idle value. This prevents the fire
-		// animation from translating the hand bone, which would shift the entire
-		// skeleton (including weapon_bone) and break weapon alignment.
-		// Rotation is preserved so the fire animation's grip squeeze still shows.
 		bool bMedigunFireActive = (m_eMedigunFireState != MEDIGUN_FIRE_IDLE) && m_bPlayingFireAnim;
-		if (bMedigunFireActive && m_bHandBoneOffsetValid)
-		{
-			posAnim[m_iHandBone] = m_vecIdleHandBoneLocalPos;
-		}
-		
+
 		// Build bone transforms from sampled animation
 		matrix3x4_t sampledBones[MAXSTUDIOBONES];
 		for (int i = 0; i < numBones; i++)
@@ -4261,6 +4408,30 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			ConcatTransforms(anchorDelta, sampledBones[i], pBoneToWorldOut[i]);
 		}
 
+		// Medigun fire: keep rotation from fire animations but pin position.
+		// The idle anchor lets the fire animation's rotation flow through to
+		// weapon_bone and fingers, but may also translate the hand.  Correct
+		// by sliding the entire skeleton so the hand bone stays at the
+		// controller position — rotations are preserved.
+		if (bMedigunFireActive && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+		{
+			Vector handWorldPos;
+			MatrixGetColumn(pBoneToWorldOut[m_iHandBone], 3, handWorldPos);
+
+			Vector controllerPos;
+			MatrixGetColumn(controllerTransform, 3, controllerPos);
+
+			Vector correction = controllerPos - handWorldPos;
+
+			for (int i = 0; i < numBones && i < nMaxBones; i++)
+			{
+				Vector bonePos;
+				MatrixGetColumn(pBoneToWorldOut[i], 3, bonePos);
+				bonePos += correction;
+				MatrixSetColumn(bonePos, 3, pBoneToWorldOut[i]);
+			}
+		}
+
 		// WRIST scope draw animation: the idle anchor preserves correct motion
 		// directions but lets the hand bone displace from the controller (like
 		// FULL_ARM). Correct this by translating the entire skeleton so the
@@ -4363,6 +4534,20 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			
 			// Position weapon from current bones (position offset applied later)
 			PositionWeaponFromBones(pBoneToWorldOut, nMaxBones);
+
+			// Cache bip_hand_R world transform for the right hand's grip target.
+			// At this point all bone modifications (fire anim rotation, lever
+			// override, position correction) are applied, so this is exactly
+			// where the grab hand should be.
+			if (m_iOffHandBone >= 0 && m_iOffHandBone < nMaxBones)
+			{
+				MatrixCopy(pBoneToWorldOut[m_iOffHandBone], m_matMedigunGripTarget);
+				m_bMedigunGripTargetValid = true;
+			}
+			else
+			{
+				m_bMedigunGripTargetValid = false;
+			}
 		}
 		else if (IsRightHand() && m_flTwoHandBlend > 0.01f)
 		{
@@ -4375,9 +4560,22 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			{
 				Vector gripTargetPos;
 				QAngle gripTargetAngles;
-				
-				// GetOffHandGripTarget on LEFT hand returns the bip_hand_R position in world space
-				if (pLeftHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true))
+
+				// Use the cached grip target from the left hand's SetupBones when
+				// available — it includes fire animation rotation and lever overrides.
+				// Fall back to GetOffHandGripTarget if not yet cached this frame.
+				bool bGotGrip = false;
+				if (pLeftHand->m_bMedigunGripTargetValid)
+				{
+					MatrixAngles(pLeftHand->m_matMedigunGripTarget, gripTargetAngles, gripTargetPos);
+					bGotGrip = true;
+				}
+				else
+				{
+					bGotGrip = pLeftHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true);
+				}
+
+				if (bGotGrip)
 				{
 					// Apply easing to the blend
 					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
@@ -5237,7 +5435,14 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	int seqToSample;
 	float cycleToSample;
 	
-	if (bUseCurrentAnimation && (m_bPlayingFireAnim || m_bPlayingChargeAnim))
+	if (bUseCurrentAnimation && m_bMedigunLeverActive && m_iMedigunLeverSeq >= 0)
+	{
+		// Medigun lever active: sample the lever animation so the right hand
+		// grip target follows the lever push, not the body animation.
+		seqToSample = m_iMedigunLeverSeq;
+		cycleToSample = m_flMedigunLeverCycle;
+	}
+	else if (bUseCurrentAnimation && (m_bPlayingFireAnim || m_bPlayingChargeAnim))
 	{
 		// Sample current fire/charge animation - grip target will move with recoil/charge
 		seqToSample = GetSequence();
@@ -5309,6 +5514,53 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 			SetIdentityMatrix(sampledBones[i]);
 	}
 	
+	// Medigun lever: if vm_weapon_bone_L exists on the arms model, derive
+	// the off-hand grip target from its displacement between idle and the
+	// lever animation.  If it doesn't exist, trust that the fire_on animation
+	// already moves bip_hand_R correctly (it should on the arms model).
+	if (m_bMedigunLeverActive && m_iMedigunLeverSeq >= 0 && m_iOffHandBone >= 0)
+	{
+		int leverBone = LookupBone("vm_weapon_bone_L");
+		if (leverBone < 0)
+			leverBone = LookupBone("vm_weapon_bone_l");
+
+		if (leverBone >= 0 && leverBone < numBones)
+		{
+			Vector posIdle[MAXSTUDIOBONES];
+			Quaternion qIdle[MAXSTUDIOBONES];
+			for (int i = 0; i < numBones; i++)
+			{
+				posIdle[i].Init();
+				qIdle[i].Init(0, 0, 0, 1);
+			}
+			boneSetup.InitPose(posIdle, qIdle);
+			if (m_iIdleSequence >= 0)
+				boneSetup.AccumulatePose(posIdle, qIdle, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+
+			matrix3x4_t idleBones[MAXSTUDIOBONES];
+			for (int i = 0; i < numBones; i++)
+			{
+				matrix3x4_t btp;
+				QuaternionMatrix(qIdle[i], posIdle[i], btp);
+				const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+				if (!pBone) { SetIdentityMatrix(idleBones[i]); continue; }
+				if (pBone->parent == -1)
+					MatrixCopy(btp, idleBones[i]);
+				else if (pBone->parent >= 0 && pBone->parent < numBones)
+					ConcatTransforms(idleBones[pBone->parent], btp, idleBones[i]);
+				else
+					SetIdentityMatrix(idleBones[i]);
+			}
+
+			matrix3x4_t invIdleLever;
+			MatrixInvert(idleBones[leverBone], invIdleLever);
+			matrix3x4_t leverDelta;
+			ConcatTransforms(sampledBones[leverBone], invIdleLever, leverDelta);
+
+			ConcatTransforms(leverDelta, idleBones[m_iOffHandBone], sampledBones[m_iOffHandBone]);
+		}
+	}
+
 	// Debug: show bip_hand_R position in model space (before VR transform)
 	if (tfvr_twohand_debug.GetBool() && IsLeftHand() && m_iOffHandBone >= 0)
 	{
@@ -5432,9 +5684,18 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		}
 	}
 	
-	// Use cached idle hand bone for anchor (standard path)
+	// Compute anchor delta that maps model-space → world-space.
+	// For medigun lever: use the sampled (lever) animation's hand bone so the
+	// grip target moves correctly with the lever push instead of being anchored
+	// to the idle pose.
 	matrix3x4_t anchorDelta;
-	if (m_bHandBoneOffsetValid)
+	if (m_bMedigunLeverActive && m_iMedigunLeverSeq >= 0)
+	{
+		matrix3x4_t invSampledHandBone;
+		MatrixInvert(sampledBones[m_iHandBone], invSampledHandBone);
+		ConcatTransforms(controllerTransform, invSampledHandBone, anchorDelta);
+	}
+	else if (m_bHandBoneOffsetValid)
 	{
 		matrix3x4_t invIdleHandBone;
 		MatrixInvert(m_matIdleHandBoneTransform, invIdleHandBone);
@@ -5452,9 +5713,11 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	matrix3x4_t offHandWorld;
 	ConcatTransforms(anchorDelta, sampledBones[m_iOffHandBone], offHandWorld);
 	
-	// Only apply middle finger offset for PIVOT calculation (bUseCurrentAnimation = false)
-	// For VISUAL hand positioning (bUseCurrentAnimation = true), use bip_hand_L directly
-	// so the hand wrist attaches to the correct point on the weapon
+	// Apply middle finger offset for PIVOT and DISTANCE calculations
+	// (bUseCurrentAnimation = false).  For VISUAL hand positioning
+	// (bUseCurrentAnimation = true), use bip_hand_R directly so the
+	// wrist aligns correctly — the distance check already uses the
+	// controller's middle finger, so the snap zone is centred properly.
 	bool bAppliedFingerOffset = false;
 	if (!bUseCurrentAnimation && pLeftHand)
 	{
@@ -7641,6 +7904,120 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		}
 	}
 
+	// Medigun body animation: rotation-only on ALL weapon_bone variants.
+	// When a body animation is playing (fire_on/loop/off), keep weapon_bone
+	// position from the idle pose and only apply the rotation from the body anim.
+	// Must cover both unsuffixed and suffixed since PositionWeaponFromBones
+	// reads weapon_bone_L on the medigun.
+	if (m_eMedigunFireState != MEDIGUN_FIRE_IDLE && m_iIdleSequence >= 0)
+	{
+		Vector idleBonePos[MAXSTUDIOBONES];
+		Quaternion idleBoneQ[MAXSTUDIOBONES];
+		float idlePoseParams[MAXSTUDIOPOSEPARAM];
+		for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+			idlePoseParams[i] = 0.0f;
+		IBoneSetup idleSetup(pStudioHdr, BONE_USED_BY_ANYTHING, idlePoseParams);
+		idleSetup.InitPose(idleBonePos, idleBoneQ);
+		idleSetup.AccumulatePose(idleBonePos, idleBoneQ, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL);
+
+		const char *wpnBoneNames[] = { "weapon_bone", "weapon_bone_L", "weapon_bone_l" };
+		for (int n = 0; n < ARRAYSIZE(wpnBoneNames); n++)
+		{
+			int wpnIdx = LookupBone(wpnBoneNames[n]);
+			if (wpnIdx < 0 || wpnIdx >= nMaxBones)
+				continue;
+			const mstudiobone_t *pWpnBone = pStudioHdr->pBone(wpnIdx);
+			if (!pWpnBone || pWpnBone->parent < 0 || pWpnBone->parent >= nMaxBones)
+				continue;
+
+			matrix3x4_t rotOnlyLocal;
+			QuaternionMatrix(q[wpnIdx], idleBonePos[wpnIdx], rotOnlyLocal);
+			ConcatTransforms(pBoneToWorldOut[pWpnBone->parent], rotOnlyLocal, pBoneToWorldOut[wpnIdx]);
+		}
+	}
+
+	// Medigun lever override:
+	// - vm_weapon_bone_L (lever): parent-relative local transform (stays attached to body)
+	// - bip_hand_R + fingers: model-space approach anchored at bip_hand_L (m_iHandBone)
+	//   because BaseClass::SetupBones may leave bip_hand_R's parent at the entity origin,
+	//   not at the VR controller position. Anchoring to bip_hand_L (which IS VR-positioned)
+	//   ensures the push hand follows the lever correctly.
+	if (m_bMedigunLeverActive && !m_bPlayingReloadAnim && m_iMedigunLeverSeq >= 0)
+	{
+		// Sample lever animation into local-space arrays
+		Vector leverLocalPos[MAXSTUDIOBONES];
+		Quaternion leverLocalQ[MAXSTUDIOBONES];
+		float leverPoseParams[MAXSTUDIOPOSEPARAM];
+		for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+			leverPoseParams[i] = 0.0f;
+
+		IBoneSetup leverSetup(pStudioHdr, BONE_USED_BY_ANYTHING, leverPoseParams);
+		leverSetup.InitPose(leverLocalPos, leverLocalQ);
+		leverSetup.AccumulatePose(leverLocalPos, leverLocalQ, m_iMedigunLeverSeq,
+			m_flMedigunLeverCycle, 1.0f, gpGlobals->curtime, NULL);
+
+		// Override vm_weapon_bone_L (lever): parent-relative keeps it attached to body
+		const char *leverNames[] = { "vm_weapon_bone_L", "vm_weapon_bone_l" };
+		for (int n = 0; n < ARRAYSIZE(leverNames); n++)
+		{
+			int leverBoneIdx = LookupBone(leverNames[n]);
+			if (leverBoneIdx < 0 || leverBoneIdx >= nMaxBones)
+				continue;
+			const mstudiobone_t *pLeverBone = pStudioHdr->pBone(leverBoneIdx);
+			if (!pLeverBone || pLeverBone->parent < 0 || pLeverBone->parent >= nMaxBones)
+				continue;
+			matrix3x4_t leverLocal;
+			QuaternionMatrix(leverLocalQ[leverBoneIdx], leverLocalPos[leverBoneIdx], leverLocal);
+			ConcatTransforms(pBoneToWorldOut[pLeverBone->parent], leverLocal, pBoneToWorldOut[leverBoneIdx]);
+		}
+
+		// Build full model-space skeleton from lever animation for the hand override
+		int numSkelBones = pStudioHdr->numbones();
+		matrix3x4_t leverWorld[MAXSTUDIOBONES];
+		for (int i = 0; i < numSkelBones; i++)
+		{
+			matrix3x4_t localMat;
+			QuaternionMatrix(leverLocalQ[i], leverLocalPos[i], localMat);
+			const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+			if (!pBone || pBone->parent < 0)
+				MatrixCopy(localMat, leverWorld[i]);
+			else
+				ConcatTransforms(leverWorld[pBone->parent], localMat, leverWorld[i]);
+		}
+
+		// Anchor bip_hand_R + fingers to bip_hand_L (m_iHandBone) which is VR-positioned.
+		// leverToVR maps from lever model-space to VR world-space via bip_hand_L.
+		if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+		{
+			matrix3x4_t invLeverHandBone;
+			MatrixInvert(leverWorld[m_iHandBone], invLeverHandBone);
+			matrix3x4_t leverToVR;
+			ConcatTransforms(pBoneToWorldOut[m_iHandBone], invLeverHandBone, leverToVR);
+
+			const char *handBones[] = {
+				"bip_hand_R", "bip_hand_r",
+				"bip_thumb_0_R", "bip_thumb_1_R", "bip_thumb_2_R",
+				"bip_index_0_R", "bip_index_1_R", "bip_index_2_R",
+				"bip_middle_0_R", "bip_middle_1_R", "bip_middle_2_R",
+				"bip_ring_0_R", "bip_ring_1_R", "bip_ring_2_R",
+				"bip_pinky_0_R", "bip_pinky_1_R", "bip_pinky_2_R",
+				"bip_thumb_0_r", "bip_thumb_1_r", "bip_thumb_2_r",
+				"bip_index_0_r", "bip_index_1_r", "bip_index_2_r",
+				"bip_middle_0_r", "bip_middle_1_r", "bip_middle_2_r",
+				"bip_ring_0_r", "bip_ring_1_r", "bip_ring_2_r",
+				"bip_pinky_0_r", "bip_pinky_1_r", "bip_pinky_2_r",
+			};
+			for (int i = 0; i < ARRAYSIZE(handBones); i++)
+			{
+				int boneIndex = LookupBone(handBones[i]);
+				if (boneIndex < 0 || boneIndex >= nMaxBones)
+					continue;
+
+				ConcatTransforms(leverToVR, leverWorld[boneIndex], pBoneToWorldOut[boneIndex]);
+			}
+		}
+	}
+
 	// WEAPON_BONE scope draw animation: the idle pose was applied to fingers
 	// above, now override weapon_bone with the draw animation's transform.
 	// Since the entity sequence stays at idle for this scope, compute the
@@ -8373,6 +8750,10 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		{
 			m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
 			m_bMedigunWasHealing = false;
+			m_bMedigunLeverActive = false;
+			m_iMedigunLeverSeq = -1;
+			m_flMedigunLeverCycle = 0.0f;
+			m_bMedigunBodyPastHalf = false;
 			
 			// fire_on (healing beam starts)
 			char vrName[128];
@@ -8726,6 +9107,10 @@ void C_TFVRHand::UnequipWeapon()
 	m_iFireOnSequence = -1;
 	m_iFireOffSequence = -1;
 	m_bMedigunWasHealing = false;
+	m_bMedigunLeverActive = false;
+	m_iMedigunLeverSeq = -1;
+	m_flMedigunLeverCycle = 0.0f;
+	m_bMedigunBodyPastHalf = false;
 	m_bFlamethrowerWasFiring = false;
 	m_flFlamethrowerFireBlend = 0.0f;
 
@@ -9029,6 +9414,8 @@ void C_TFVRHand::UpdateCritBoostEffect()
 //-----------------------------------------------------------------------------
 // Purpose: Drive medigun fire animations based on healing state
 //          fire_on -> fire_loop (while healing) -> fire_off -> idle
+//          When VR lever is active, animations are scrubbed by lever progress
+//          instead of driven by heal target boolean.
 //-----------------------------------------------------------------------------
 void C_TFVRHand::UpdateMedigunFireAnimation()
 {
@@ -9040,6 +9427,8 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 			m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
 			m_bMedigunWasHealing = false;
 			m_bPlayingFireAnim = false;
+			m_bMedigunLeverActive = false;
+			m_bMedigunBodyPastHalf = false;
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
@@ -9056,11 +9445,232 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 	if (!tfvr_weapon_fire_anim.GetBool())
 		return;
 	
-	// Check medigun healing state via public m_hHealingTarget
 	CWeaponMedigun *pMedigun = static_cast<CWeaponMedigun*>(pWeapon);
-	bool bIsHealing = (pMedigun->m_hHealingTarget.Get() != NULL);
-	
 	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+
+	// VR lever path: entity sequence drives hand + lever (scrubbed by progress),
+	// VR lever path: entity sequence drives the BODY (idle/fire_on/loop/off).
+	// SetupBones overrides lever bone + right hand with the lever animation.
+	// GetOffHandGripTarget uses the lever state so the right hand follows.
+	if (pMedigun->ShouldUseVRLever())
+	{
+		float flProgress = pMedigun->GetVRLeverProgress();
+		bool bEngaged = pMedigun->IsVRLeverEngaged();
+		bool bIsHealing = (pMedigun->m_hHealingTarget.Get() != NULL);
+		bool bDebug = tfvr_weapon_fire_anim_debug.GetBool();
+
+		// --- Store lever animation state for SetupBones + GetOffHandGripTarget ---
+		if (flProgress > 0.0f || bEngaged)
+		{
+			// Lever is being operated: scrub based on progress
+			m_bMedigunLeverActive = true;
+			if (!bEngaged)
+			{
+				m_iMedigunLeverSeq = m_iFireOnSequence;
+				m_flMedigunLeverCycle = flProgress;
+			}
+			else if (flProgress >= 1.0f)
+			{
+				m_iMedigunLeverSeq = m_iFireOnSequence;
+				m_flMedigunLeverCycle = 1.0f;
+			}
+			else
+			{
+				m_iMedigunLeverSeq = m_iFireOffSequence;
+				m_flMedigunLeverCycle = 1.0f - flProgress;
+			}
+		}
+		else if (m_eMedigunFireState != MEDIGUN_FIRE_IDLE)
+		{
+			// Lever is at rest but body is still transitioning (fire_off, etc.):
+			// pin hand/lever at rest pose so they don't follow the body animation
+			m_bMedigunLeverActive = true;
+			m_iMedigunLeverSeq = m_iFireOnSequence;
+			m_flMedigunLeverCycle = 0.0f;
+		}
+		else
+		{
+			m_bMedigunLeverActive = false;
+			m_iMedigunLeverSeq = -1;
+			m_flMedigunLeverCycle = 0.0f;
+		}
+
+		// --- Body animation: entity sequence driven by heal target ---
+		bool bNowPastHalf = flProgress >= 0.5f;
+		bool bJustCrossedDown = !bNowPastHalf && m_bMedigunBodyPastHalf;
+		m_bMedigunBodyPastHalf = bNowPastHalf;
+
+		switch (m_eMedigunFireState)
+		{
+		case MEDIGUN_FIRE_IDLE:
+			if (bIsHealing)
+			{
+				m_bPlayingDrawAnim = false;
+				if (m_iFireOnSequence >= 0)
+				{
+					SetSequence(m_iFireOnSequence);
+					SetCycle(0.0f);
+					SetPlaybackRate(1.0f);
+					m_bPlayingFireAnim = true;
+					m_flFireAnimStartTime = gpGlobals->curtime;
+					m_eMedigunFireState = MEDIGUN_FIRE_ON;
+					InvalidateBoneCache();
+
+					if (pRenderWeapon)
+						pRenderWeapon->PlayMedigunSequence(MEDIGUN_FIRE_ON);
+				}
+
+				if (bDebug)
+					DevMsg("VR Medigun Body: -> FIRE_ON (target acquired)\n");
+			}
+			break;
+
+		case MEDIGUN_FIRE_ON:
+			if (!bIsHealing || bJustCrossedDown)
+			{
+				if (m_iFireOffSequence >= 0)
+				{
+					SetSequence(m_iFireOffSequence);
+					SetCycle(0.0f);
+					SetPlaybackRate(1.0f);
+					m_flFireAnimStartTime = gpGlobals->curtime;
+					m_eMedigunFireState = MEDIGUN_FIRE_OFF;
+					InvalidateBoneCache();
+
+					if (pRenderWeapon)
+						pRenderWeapon->PlayMedigunSequence(MEDIGUN_FIRE_OFF);
+				}
+				else
+				{
+					if (m_iIdleSequence >= 0)
+					{
+						SetSequence(m_iIdleSequence);
+						SetCycle(0.0f);
+						SetPlaybackRate(0.0f);
+					}
+					m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
+					m_bPlayingFireAnim = false;
+				}
+
+				if (bDebug)
+					DevMsg("VR Medigun Body: -> FIRE_OFF (%s)\n",
+						bJustCrossedDown ? "lever pulled back" : "lost target");
+			}
+			else if (GetCycle() >= 1.0f)
+			{
+				if (m_iFireSequence >= 0)
+				{
+					SetSequence(m_iFireSequence);
+					SetCycle(0.0f);
+					SetPlaybackRate(1.0f);
+					m_eMedigunFireState = MEDIGUN_FIRE_LOOP;
+					InvalidateBoneCache();
+
+					if (pRenderWeapon)
+						pRenderWeapon->PlayMedigunSequence(MEDIGUN_FIRE_LOOP);
+
+					if (bDebug)
+						DevMsg("VR Medigun Body: -> FIRE_LOOP\n");
+				}
+			}
+			break;
+
+		case MEDIGUN_FIRE_LOOP:
+			if (!bIsHealing || bJustCrossedDown)
+			{
+				if (m_iFireOffSequence >= 0)
+				{
+					SetSequence(m_iFireOffSequence);
+					SetCycle(0.0f);
+					SetPlaybackRate(1.0f);
+					m_flFireAnimStartTime = gpGlobals->curtime;
+					m_eMedigunFireState = MEDIGUN_FIRE_OFF;
+					InvalidateBoneCache();
+
+					if (pRenderWeapon)
+						pRenderWeapon->PlayMedigunSequence(MEDIGUN_FIRE_OFF);
+				}
+				else
+				{
+					if (m_iIdleSequence >= 0)
+					{
+						SetSequence(m_iIdleSequence);
+						SetCycle(0.0f);
+						SetPlaybackRate(0.0f);
+					}
+					m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
+					m_bPlayingFireAnim = false;
+				}
+
+				if (bDebug)
+					DevMsg("VR Medigun Body: -> FIRE_OFF (%s)\n",
+						bJustCrossedDown ? "lever pulled back" : "lost target");
+			}
+			break;
+
+		case MEDIGUN_FIRE_OFF:
+			if (bIsHealing && bNowPastHalf)
+			{
+				if (m_iFireOnSequence >= 0)
+				{
+					SetSequence(m_iFireOnSequence);
+					SetCycle(0.0f);
+					SetPlaybackRate(1.0f);
+					m_flFireAnimStartTime = gpGlobals->curtime;
+					m_eMedigunFireState = MEDIGUN_FIRE_ON;
+					InvalidateBoneCache();
+
+					if (pRenderWeapon)
+						pRenderWeapon->PlayMedigunSequence(MEDIGUN_FIRE_ON);
+				}
+
+				if (bDebug)
+					DevMsg("VR Medigun Body: -> FIRE_ON (target during OFF)\n");
+			}
+			else if (GetCycle() >= 1.0f || (gpGlobals->curtime - m_flFireAnimStartTime) > 2.0f)
+			{
+				if (m_iIdleSequence >= 0)
+				{
+					SetSequence(m_iIdleSequence);
+					SetCycle(0.0f);
+					SetPlaybackRate(0.0f);
+				}
+				m_bPlayingFireAnim = false;
+				m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
+				InvalidateBoneCache();
+
+				if (pRenderWeapon)
+					pRenderWeapon->PlayMedigunSequence(MEDIGUN_FIRE_IDLE);
+
+				if (bDebug)
+					DevMsg("VR Medigun Body: -> IDLE (fire_off done)\n");
+			}
+			break;
+		}
+
+		// Sync lever bone override to render weapon
+		if (pRenderWeapon)
+		{
+			if (m_bMedigunLeverActive)
+			{
+				int iType = (m_iMedigunLeverSeq == m_iFireOffSequence) ? 1 : 0;
+				pRenderWeapon->SetMedigunLeverBone(true, iType, m_flMedigunLeverCycle);
+			}
+			else
+			{
+				pRenderWeapon->SetMedigunLeverBone(false, 0, 0.0f);
+			}
+		}
+
+		m_bMedigunWasHealing = bIsHealing;
+		return;
+	}
+
+	// Clear lever override when not using VR lever
+	m_bMedigunLeverActive = false;
+
+	// Non-VR-lever path: original boolean-driven state machine
+	bool bIsHealing = (pMedigun->m_hHealingTarget.Get() != NULL);
 	
 	switch (m_eMedigunFireState)
 	{
@@ -9106,7 +9716,6 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 	case MEDIGUN_FIRE_ON:
 		if (!bIsHealing)
 		{
-			// Healing stopped during fire_on - transition to fire_off
 			if (m_iFireOffSequence >= 0)
 			{
 				SetSequence(m_iFireOffSequence);
@@ -9140,7 +9749,6 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 		}
 		else if (GetCycle() >= 1.0f)
 		{
-			// fire_on completed, transition to fire_loop
 			if (m_iFireSequence >= 0)
 			{
 				SetSequence(m_iFireSequence);
@@ -9165,7 +9773,6 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 	case MEDIGUN_FIRE_LOOP:
 		if (!bIsHealing)
 		{
-			// Healing stopped - play fire_off
 			if (m_iFireOffSequence >= 0)
 			{
 				SetSequence(m_iFireOffSequence);
@@ -9197,13 +9804,11 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 				DevMsg("VR Medigun: Healing stopped - state -> %s\n",
 					m_eMedigunFireState == MEDIGUN_FIRE_OFF ? "FIRE_OFF" : "IDLE");
 		}
-		// fire_loop loops automatically via Source engine sequence flags
 		break;
 		
 	case MEDIGUN_FIRE_OFF:
 		if (bIsHealing)
 		{
-			// Healing restarted during fire_off - go back to fire_on
 			if (m_iFireOnSequence >= 0)
 			{
 				SetSequence(m_iFireOnSequence);
@@ -9235,7 +9840,6 @@ void C_TFVRHand::UpdateMedigunFireAnimation()
 		}
 		else if (GetCycle() >= 1.0f || (gpGlobals->curtime - m_flFireAnimStartTime) > 2.0f)
 		{
-			// fire_off completed - return to idle
 			if (m_iIdleSequence >= 0)
 			{
 				SetSequence(m_iIdleSequence);
