@@ -68,6 +68,14 @@ public:
 	virtual bool	Reload( void );
 	virtual void	WeaponReset( void );
 
+	virtual bool	ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
+
+	// VR pump reload state accessors (client hand animation reads these)
+	bool  IsVRPumpArmed() const        { return m_bVRPumpIsArmed; }
+	bool  IsVRPumpPullingBack() const  { return m_bVRPumpStrokeOut; }
+	bool  IsVRPumpPushingFwd() const   { return m_bVRPumpStrokeIn; }
+	float GetVRPumpStrokeProgress() const;
+
 public:
 	// ITFChargeUpWeapon
 	virtual bool CanCharge() { return true; }
@@ -119,6 +127,21 @@ protected:
 
 private:
 	CNetworkVar( float, m_flChargeBeginTime );
+
+	// VR pump reload
+	void	VRPumpReloadPostFrame( void );
+	void	VRCommitPumpShell( void );
+	void	ResetVRPumpGestureState( void );
+
+	CNetworkVar( bool, m_bVRPumpIsArmed );
+	CNetworkVector( m_vecVRPumpLastHandPos );
+	CNetworkVar( bool, m_bVRPumpStrokeOut );
+	CNetworkVar( bool, m_bVRPumpStrokeIn );
+	CNetworkVar( float, m_flVRPumpStrokeDist );
+	CNetworkVar( float, m_flNextVRPumpShellReadyTime );
+
+	int		m_iVRPumpLastClipForThrottle;
+
 	CTFPipebombLauncher( const CTFPipebombLauncher & ) {}
 };
 

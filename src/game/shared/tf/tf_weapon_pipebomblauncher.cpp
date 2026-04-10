@@ -11,6 +11,7 @@
 #include "in_buttons.h"
 #include "datacache/imdlcache.h"
 #include "tf_gamerules.h"
+#include "usercmd.h"
 
 // Client specific.
 #ifdef CLIENT_DLL
@@ -32,6 +33,18 @@
 
 #define TF_WEAPON_PIPEBOMB_LAUNCHER_CHARGE_SOUND	"Weapon_StickyBombLauncher.ChargeUp"
 
+extern ConVar tfvr_reload_throttle_scale;
+
+static inline float TFVR_ReloadThrottleScale()
+{
+	return MAX( 1.0f, tfvr_reload_throttle_scale.GetFloat() );
+}
+
+ConVar tfvr_sticky_pump_reload( "tfvr_sticky_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Demoman stickybomb launcher: 1 = load shells with weapon-forward pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
+ConVar tfvr_sticky_pump_distance( "tfvr_sticky_pump_distance", "4.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along weapon forward per pump stroke" );
+ConVar tfvr_sticky_pump_sign( "tfvr_sticky_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1) if pump direction feels inverted" );
+ConVar tfvr_sticky_pump_debug( "tfvr_sticky_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print stickybomb pump reload state to console" );
+
 //=============================================================================
 //
 // Weapon Pipebomb Launcher tables.
@@ -52,14 +65,32 @@ END_NETWORK_TABLE()
 BEGIN_NETWORK_TABLE( CTFPipebombLauncher, DT_WeaponPipebombLauncher )
 #ifdef CLIENT_DLL
 	RecvPropDataTable( "PipebombLauncherLocalData", 0, 0, &REFERENCE_RECV_TABLE( DT_PipebombLauncherLocalData ) ),
+	RecvPropBool( RECVINFO( m_bVRPumpIsArmed ) ),
+	RecvPropVector( RECVINFO( m_vecVRPumpLastHandPos ) ),
+	RecvPropBool( RECVINFO( m_bVRPumpStrokeOut ) ),
+	RecvPropBool( RECVINFO( m_bVRPumpStrokeIn ) ),
+	RecvPropFloat( RECVINFO( m_flVRPumpStrokeDist ) ),
+	RecvPropFloat( RECVINFO( m_flNextVRPumpShellReadyTime ) ),
 #else
 	SendPropDataTable( "PipebombLauncherLocalData", 0, &REFERENCE_SEND_TABLE( DT_PipebombLauncherLocalData ), SendProxy_SendLocalWeaponDataTable ),
+	SendPropBool( SENDINFO( m_bVRPumpIsArmed ) ),
+	SendPropVector( SENDINFO( m_vecVRPumpLastHandPos ), -1, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bVRPumpStrokeOut ) ),
+	SendPropBool( SENDINFO( m_bVRPumpStrokeIn ) ),
+	SendPropFloat( SENDINFO( m_flVRPumpStrokeDist ), 0, SPROP_NOSCALE ),
+	SendPropFloat( SENDINFO( m_flNextVRPumpShellReadyTime ) ),
 #endif	
 END_NETWORK_TABLE()
 
 #ifdef CLIENT_DLL
 BEGIN_PREDICTION_DATA( CTFPipebombLauncher )
-	DEFINE_FIELD(  m_flChargeBeginTime, FIELD_FLOAT )
+	DEFINE_FIELD( m_flChargeBeginTime, FIELD_FLOAT ),
+	DEFINE_PRED_FIELD( m_bVRPumpIsArmed, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_vecVRPumpLastHandPos, FIELD_VECTOR, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRPumpStrokeOut, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRPumpStrokeIn, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRPumpStrokeDist, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flNextVRPumpShellReadyTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 END_PREDICTION_DATA()
 #endif
 
@@ -91,6 +122,17 @@ CTFPipebombLauncher::CTFPipebombLauncher()
 	m_flNextBombCheckTime = 0;
 	m_bBombThinking = false;
 #endif
+
+	m_bVRPumpIsArmed = false;
+	m_vecVRPumpLastHandPos = vec3_origin;
+	m_bVRPumpStrokeOut = false;
+	m_bVRPumpStrokeIn = false;
+	m_flVRPumpStrokeDist = 0.0f;
+	m_flNextVRPumpShellReadyTime = 0.0f;
+	m_iVRPumpLastClipForThrottle = -1;
+
+	PrecacheScriptSound( "Weapon_StickyBombLauncher.BoltBack" );
+	PrecacheScriptSound( "Weapon_StickyBombLauncher.BoltForward" );
 }
 
 //-----------------------------------------------------------------------------
@@ -123,6 +165,10 @@ bool CTFPipebombLauncher::Holster( CBaseCombatWeapon *pSwitchingTo )
 #endif
 	m_flChargeBeginTime = 0;
 
+	ResetVRPumpGestureState();
+	m_flNextVRPumpShellReadyTime = 0.0f;
+	m_iVRPumpLastClipForThrottle = -1;
+
 	return BaseClass::Holster( pSwitchingTo );
 }
 
@@ -132,6 +178,22 @@ bool CTFPipebombLauncher::Holster( CBaseCombatWeapon *pSwitchingTo )
 bool CTFPipebombLauncher::Deploy( void )
 {
 	m_flChargeBeginTime = 0;
+
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+	{
+		AbortReload();
+		CTFPlayer *pOwner = GetTFPlayerOwner();
+		if ( pOwner && Clip1() == 0 && pOwner->GetAmmoCount( m_iPrimaryAmmoType ) > 0 )
+		{
+			const float flDelay = ( GetVRSinglyReloadStartThrottleInterval() + GetVRSinglyReloadShellThrottleInterval() ) * TFVR_ReloadThrottleScale();
+			m_flNextVRPumpShellReadyTime = gpGlobals->curtime + flDelay;
+		}
+		else
+		{
+			m_flNextVRPumpShellReadyTime = 0.0f;
+		}
+		m_iVRPumpLastClipForThrottle = Clip1();
+	}
 
 	return BaseClass::Deploy();
 }
@@ -176,6 +238,38 @@ void CTFPipebombLauncher::ItemPostFrame( void )
 				ForceLaunchGrenade();
 			}
 		}
+	}
+
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+	{
+		CTFPlayer *pOwner = GetTFPlayerOwner();
+#if defined( CLIENT_DLL )
+		if ( pOwner && pOwner->IsLocalPlayer() )
+#endif
+		{
+			if ( pOwner && pOwner->GetAmmoCount( m_iPrimaryAmmoType ) > 0 )
+			{
+				const int iClip = Clip1();
+
+				if ( m_iVRPumpLastClipForThrottle >= 0 )
+				{
+					const int nMaxClip = GetMaxClip1();
+					if ( ( iClip == 0 && m_iVRPumpLastClipForThrottle > 0 ) ||
+						( nMaxClip > 1 && m_iVRPumpLastClipForThrottle == nMaxClip && iClip == nMaxClip - 1 ) )
+					{
+						const float flDelay = ( GetVRSinglyReloadStartThrottleInterval() + GetVRSinglyReloadShellThrottleInterval() ) * TFVR_ReloadThrottleScale();
+						m_flNextVRPumpShellReadyTime = MAX( m_flNextVRPumpShellReadyTime, gpGlobals->curtime + flDelay );
+					}
+					else if ( iClip == nMaxClip )
+					{
+						m_flNextVRPumpShellReadyTime = 0.0f;
+					}
+				}
+				m_iVRPumpLastClipForThrottle = iClip;
+			}
+		}
+
+		VRPumpReloadPostFrame();
 	}
 }
 
@@ -661,5 +755,302 @@ bool CTFPipebombLauncher::Reload( void )
 	if ( m_flChargeBeginTime > 0 )
 		return false;
 
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+		return false;
+
 	return BaseClass::Reload();
+}
+
+//=============================================================================
+//
+// VR physical pump reload
+//
+//=============================================================================
+
+//-----------------------------------------------------------------------------
+bool CTFPipebombLauncher::ShouldSuppressAutoAndSinglyReloadForVR() const
+{
+	if ( GetWeaponID() != TF_WEAPON_PIPEBOMBLAUNCHER )
+		return false;
+	if ( !tfvr_sticky_pump_reload.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	return IsHeldByVRHand();
+#else
+	return true;
+#endif
+}
+
+//-----------------------------------------------------------------------------
+void CTFPipebombLauncher::ResetVRPumpGestureState( void )
+{
+	m_bVRPumpIsArmed = false;
+	m_vecVRPumpLastHandPos = vec3_origin;
+	m_bVRPumpStrokeOut = false;
+	m_bVRPumpStrokeIn = false;
+	m_flVRPumpStrokeDist = 0.0f;
+}
+
+//-----------------------------------------------------------------------------
+float CTFPipebombLauncher::GetVRPumpStrokeProgress() const
+{
+	float dist = tfvr_sticky_pump_distance.GetFloat();
+	return ( dist > 0.0f ) ? clamp( (float)m_flVRPumpStrokeDist / dist, 0.0f, 1.0f ) : 0.0f;
+}
+
+//-----------------------------------------------------------------------------
+void CTFPipebombLauncher::VRCommitPumpShell( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+	const CUserCmd *pCmdCommit = pOwner->GetCurrentUserCommand();
+	if ( !pCmdCommit || !pCmdCommit->vrWeaponArmed )
+		return;
+
+	if ( gpGlobals->curtime < m_flNextVRPumpShellReadyTime )
+		return;
+
+	if ( Clip1() >= GetMaxClip1() )
+		return;
+	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+		return;
+	if ( CheckReloadMisfire() )
+		return;
+
+	m_iClip1++;
+	pOwner->RemoveAmmo( 1, m_iPrimaryAmmoType );
+	m_flNextVRPumpShellReadyTime = gpGlobals->curtime + GetVRSinglyReloadShellThrottleInterval() * TFVR_ReloadThrottleScale();
+
+#ifdef CLIENT_DLL
+	if ( ShouldPlayClientReloadSound() )
+		WeaponSound( RELOAD );
+#else
+	WeaponSound( RELOAD );
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// Two-stroke gesture along weapon forward (pullback, then push forward) loads
+// one shell.  Mirrors CTFScatterGun::VRLeverReloadPostFrame but uses weapon
+// forward (controller matrix column 0) as the pump axis.
+//-----------------------------------------------------------------------------
+void CTFPipebombLauncher::VRPumpReloadPostFrame( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+#if defined( CLIENT_DLL )
+	if ( !pOwner->IsLocalPlayer() )
+		return;
+#endif
+
+	const bool bDebug = tfvr_sticky_pump_debug.GetBool();
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+	{
+		ResetVRPumpGestureState();
+		return;
+	}
+
+	// The pump hand is the OFF-hand (left for a right-hand weapon).
+	// Track pump-hand motion relative to the weapon hand (stable reference).
+	Vector vecPumpHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosL
+		: pCmd->vrRawControllerPosR;
+	Vector vecWeaponHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosR
+		: pCmd->vrRawControllerPosL;
+
+	if ( vecPumpHandRaw == vec3_origin || vecWeaponHandRaw == vec3_origin )
+		return;
+
+	Vector vecHandRelative = vecPumpHandRaw - vecWeaponHandRaw;
+
+	if ( Clip1() >= GetMaxClip1() || pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+	{
+		if ( bDebug && ( m_bVRPumpStrokeOut || m_bVRPumpStrokeIn ) )
+			DevMsg( "[VR StickyPump] Reset: clip full or no reserve ammo\n" );
+		ResetVRPumpGestureState();
+		return;
+	}
+
+	// Block pumping while fire or charge cycle is active
+	if ( gpGlobals->curtime < m_flNextPrimaryAttack || m_flChargeBeginTime > 0 )
+	{
+		m_bVRPumpIsArmed = false;
+		m_bVRPumpStrokeOut = false;
+		m_bVRPumpStrokeIn = false;
+		m_flVRPumpStrokeDist = 0.0f;
+		if ( m_vecVRPumpLastHandPos != vec3_origin )
+			m_vecVRPumpLastHandPos = vecHandRelative;
+		if ( bDebug )
+			DevMsg( "[VR StickyPump] Paused: fire/charge cooldown\n" );
+		return;
+	}
+
+	if ( !pCmd->vrWeaponArmed )
+	{
+		const bool bMidStroke = m_bVRPumpStrokeOut || m_bVRPumpStrokeIn;
+		if ( !bMidStroke )
+		{
+			if ( bDebug && m_vecVRPumpLastHandPos != vec3_origin )
+				DevMsg( "[VR StickyPump] Reset: not armed\n" );
+			ResetVRPumpGestureState();
+		}
+		else
+		{
+			m_vecVRPumpLastHandPos = vecHandRelative;
+			m_flVRPumpStrokeDist = 0.0f;
+			if ( bDebug )
+				DevMsg( "[VR StickyPump] Grip lost mid-stroke, holding state\n" );
+		}
+		return;
+	}
+
+	m_bVRPumpIsArmed = true;
+
+	const float flPumpDist     = tfvr_sticky_pump_distance.GetFloat();
+	const float flSign         = tfvr_sticky_pump_sign.GetFloat();
+	const float flReloadInterval = GetVRSinglyReloadShellThrottleInterval() * TFVR_ReloadThrottleScale();
+
+	// Pump axis = weapon forward (controller matrix column 0)
+	QAngle angWeaponHand = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerAngR
+		: pCmd->vrRawControllerAngL;
+
+	matrix3x4_t controllerMatrix;
+	AngleMatrix( angWeaponHand, controllerMatrix );
+
+	Vector vecPumpAxis;
+	MatrixGetColumn( controllerMatrix, 0, vecPumpAxis );
+	VectorNormalize( vecPumpAxis );
+
+	// First frame: seed the reference position
+	if ( m_vecVRPumpLastHandPos == vec3_origin )
+	{
+		m_vecVRPumpLastHandPos = vecHandRelative;
+		m_flVRPumpStrokeDist   = 0.0f;
+		if ( bDebug )
+			DevMsg( "[VR StickyPump] Tracking started\n" );
+		return;
+	}
+
+	// State machine: Neutral -> PullBack -> PushForward -> commit -> Neutral
+	if ( !m_bVRPumpStrokeOut && !m_bVRPumpStrokeIn )
+	{
+		if ( m_vecVRPumpLastHandPos != vec3_origin )
+		{
+			Vector vecFrameDelta = vecHandRelative - m_vecVRPumpLastHandPos;
+			float  flFrameDisp   = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+			if ( flFrameDisp < 0.0f )
+			{
+				m_flVRPumpStrokeDist += -flFrameDisp;
+			}
+			else
+			{
+				m_flVRPumpStrokeDist = MAX( m_flVRPumpStrokeDist - flFrameDisp * 2.0f, 0.0f );
+			}
+
+			if ( m_flVRPumpStrokeDist >= 0.5f )
+			{
+				m_bVRPumpStrokeOut = true;
+				m_vecVRPumpLastHandPos = vecHandRelative;
+				m_flVRPumpStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR StickyPump] Pullback started\n" );
+			}
+			else
+			{
+				m_vecVRPumpLastHandPos = vecHandRelative;
+			}
+		}
+		else
+		{
+			m_vecVRPumpLastHandPos = vecHandRelative;
+			m_flVRPumpStrokeDist = 0.0f;
+		}
+	}
+	else
+	{
+		Vector vecFrameDelta = vecHandRelative - m_vecVRPumpLastHandPos;
+		float  flFrameDisp   = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+		if ( m_bVRPumpStrokeOut )
+		{
+			if ( flFrameDisp < 0.0f )
+			{
+				m_flVRPumpStrokeDist += -flFrameDisp;
+			}
+			m_vecVRPumpLastHandPos = vecHandRelative;
+
+			if ( bDebug )
+				DevMsg( "[VR StickyPump] Pullback: %.2f / %.2f\n", (float)m_flVRPumpStrokeDist, flPumpDist );
+
+			if ( m_flVRPumpStrokeDist >= flPumpDist )
+			{
+				m_bVRPumpStrokeOut   = false;
+				m_bVRPumpStrokeIn    = true;
+				m_flVRPumpStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR StickyPump] Pullback complete, push forward to load\n" );
+
+#ifdef CLIENT_DLL
+				if ( prediction->IsFirstTimePredicted() )
+				{
+					EmitSound( "Weapon_StickyBombLauncher.BoltBack" );
+				}
+#endif
+			}
+		}
+		else if ( m_bVRPumpStrokeIn )
+		{
+			float flCompletionDist = flPumpDist * 0.9f;
+			float flMinPushTime = MAX( flReloadInterval * 0.5f, 0.05f );
+			float flMaxDistPerFrame = ( flCompletionDist / flMinPushTime ) * gpGlobals->frametime;
+
+			float flPrevDist = m_flVRPumpStrokeDist;
+			if ( flFrameDisp > 0.0f )
+			{
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flCompletionDist );
+			}
+			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.75f )
+			{
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flMaxDistPerFrame, flCompletionDist );
+			}
+			m_vecVRPumpLastHandPos = vecHandRelative;
+
+#ifdef CLIENT_DLL
+			float flSoundThreshold = flCompletionDist * 0.15f;
+			if ( prediction->IsFirstTimePredicted()
+				&& flPrevDist < flSoundThreshold
+				&& m_flVRPumpStrokeDist >= flSoundThreshold )
+			{
+				EmitSound( "Weapon_StickyBombLauncher.BoltForward" );
+			}
+#endif
+
+			if ( bDebug )
+				DevMsg( "[VR StickyPump] Push: %.2f / %.2f\n", (float)m_flVRPumpStrokeDist, flCompletionDist );
+
+			if ( m_flVRPumpStrokeDist >= flCompletionDist
+				&& gpGlobals->curtime >= m_flNextVRPumpShellReadyTime )
+			{
+				VRCommitPumpShell();
+				m_bVRPumpStrokeIn    = false;
+				m_flVRPumpStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR StickyPump] Shell loaded! Ready for next pump.\n" );
+			}
+		}
+	}
 }

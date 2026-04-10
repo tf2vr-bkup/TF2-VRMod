@@ -327,6 +327,7 @@ private:
 	int m_iLeverReloadSequence;        // reload sequence sampled for lever bone only
 	float m_flLeverReloadCycle;        // cycle within that lever sequence
 	void UpdateScattergunReloadAnimation();
+	void UpdateStickyPumpReloadAnimation();
 
 public:
 	bool IsBackstabReady() const { return m_bBackstabReady; }

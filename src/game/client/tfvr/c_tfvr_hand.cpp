@@ -13,6 +13,7 @@
 #include "tf/tf_weapon_bat.h"
 #include "tf/tf_weapon_knife.h"
 #include "tf/tf_weapon_shotgun.h"
+#include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weaponbase_melee.h"
 #include "c_baseviewmodel.h"
 #include "tf/tf_item_wearable.h"
@@ -728,17 +729,21 @@ private:
 	int m_iBreadBiteCritSeq;
 	int m_iBreadBiteIdleSeqs[3];
 
-	// Scattergun reload animation sequences (cached on weapon model)
+	// Pump/lever reload animation sequences (cached on weapon model)
 	int m_iReloadStartSequence;
 	int m_iReloadLoopSequence;
 	int m_iReloadEndSequence;
 
 public:
-	void SetupReloadAnimations()
+	void SetupReloadAnimations( const char *pszPrefix = "sg" )
 	{
-		m_iReloadStartSequence = LookupSequence("sg_reload_start");
-		m_iReloadLoopSequence  = LookupSequence("sg_reload_loop");
-		m_iReloadEndSequence   = LookupSequence("sg_reload_end");
+		char szBuf[64];
+		V_snprintf( szBuf, sizeof(szBuf), "%s_reload_start", pszPrefix );
+		m_iReloadStartSequence = LookupSequence( szBuf );
+		V_snprintf( szBuf, sizeof(szBuf), "%s_reload_loop", pszPrefix );
+		m_iReloadLoopSequence  = LookupSequence( szBuf );
+		V_snprintf( szBuf, sizeof(szBuf), "%s_reload_end", pszPrefix );
+		m_iReloadEndSequence   = LookupSequence( szBuf );
 	}
 
 	int GetReloadSequence(VRReloadAnimState state) const
@@ -2605,8 +2610,9 @@ void C_TFVRHand::Update()
 	// Update flamethrower fire animation (driven by weapon fire state)
 	UpdateFlamethrowerFireAnimation();
 
-	// Update scattergun lever reload animation (pump-driven cycle)
+	// Update pump/lever reload animation (pump-driven cycle)
 	UpdateScattergunReloadAnimation();
+	UpdateStickyPumpReloadAnimation();
 	
 	// Update backstab ready state (spy knife only).
 	// SetupBones uses this to drive the up/down/idle transition animations.
@@ -2825,10 +2831,28 @@ void C_TFVRHand::Update()
 		}
 		else if (pRightHand && pRightHand->GetHeldWeapon())
 		{
+			// Stickybomb launcher: instantly detach the off-hand while
+			// charging or firing so there is no single-frame pop.
+			bool bStickyBusy = false;
+			C_TFWeaponBase *pRightWpn = pRightHand->GetHeldWeapon();
+			if (pRightWpn && pRightWpn->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+			{
+				CTFPipebombLauncher *pSB = static_cast<CTFPipebombLauncher *>(pRightWpn);
+				bStickyBusy = (pSB->GetChargeBeginTime() > 0 || gpGlobals->curtime < pSB->m_flNextPrimaryAttack);
+			}
+
+			if (bStickyBusy)
+			{
+				m_bOffhandGripActive = false;
+				m_bWasOffhandGripActive = false;
+				m_flTwoHandBlend = 0.0f;
+				m_flGripRotationBlend = 0.0f;
+			}
+
 			Vector gripTargetPos;
 			QAngle gripTargetAngles;
 			
-			if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
+			if (!bStickyBusy && pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 			{
 				// Get our current hand position - use OpenXR middle finger base for aiming target
 				// This provides better pivot point alignment than the wrist
@@ -2869,7 +2893,7 @@ void C_TFVRHand::Update()
 				// Offhand grip is active when grip button is held AND within range
 				bool bGripJustActivated = !m_bOffhandGripActive && bGripButtonPressed && bWithinGripRange;
 				m_bOffhandGripActive = bGripButtonPressed && bWithinGripRange;
-				
+
 				// Track if grip was ever active (for blend-out tracking)
 				if (m_bOffhandGripActive)
 					m_bWasOffhandGripActive = true;
@@ -2964,9 +2988,20 @@ void C_TFVRHand::Update()
 					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
 					m_flTwoHandBlend = EasedApproach(1.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
 					
-					// Smoothly blend weapon rotation (separate speed) with easing
+					// Smoothly blend weapon rotation (separate speed) with easing.
+				// Stickybomb launcher: the off-hand pumps along the weapon
+				// axis, so two-hand grip must NOT steer the weapon direction.
+				C_TFWeaponBase *pGripWeapon = pRightHand ? pRightHand->GetHeldWeapon() : NULL;
+				bool bSuppressGripRotation = (pGripWeapon && pGripWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER);
+				if (!bSuppressGripRotation)
+				{
 					float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
 					m_flGripRotationBlend = EasedApproach(1.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
+				}
+				else
+				{
+					m_flGripRotationBlend = 0.0f;
+				}
 					
 					if (tfvr_twohand_debug.GetBool())
 					{
@@ -4685,7 +4720,41 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					// This ensures the left hand always matches the right hand's animation state
 					int rightSeq = pRightHand->GetSequence();
 					float rightCycle = pRightHand->GetCycle();
-					
+
+					// Stickybomb pump: the left hand IS the pump hand, so
+					// follow the pump animation for finger pose.  Scattergun
+					// pump is a right-hand action — left hand stays at idle.
+					if (pRightHand->m_bPlayingReloadAnim && pRightHand->m_iLeverReloadSequence >= 0
+						&& pRightHand->GetHeldWeapon()
+						&& pRightHand->GetHeldWeapon()->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+					{
+						const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iLeverReloadSequence);
+						if (pszSeqName)
+						{
+							int leftSeq = LookupSequence(pszSeqName);
+							if (leftSeq >= 0)
+							{
+								rightSeq = leftSeq;
+								rightCycle = pRightHand->m_flLeverReloadCycle;
+							}
+						}
+					}
+					else if (pRightHand->m_iReloadLoopSequence >= 0
+						&& pRightHand->GetHeldWeapon()
+						&& pRightHand->GetHeldWeapon()->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+					{
+						const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iReloadLoopSequence);
+						if (pszSeqName)
+						{
+							int leftSeq = LookupSequence(pszSeqName);
+							if (leftSeq >= 0)
+							{
+								rightSeq = leftSeq;
+								rightCycle = 0.0f;
+							}
+						}
+					}
+
 					// Sample animation on our (left hand) model using the right hand's state
 					float poseParams[MAXSTUDIOPOSEPARAM];
 					memset(poseParams, 0, sizeof(poseParams));
@@ -4701,8 +4770,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					}
 					gripBoneSetup.InitPose(gripPosAnim, gripQAnim);
 					
-					// Always use the right hand's current animation - the left hand model has
-					// the same animations, so this keeps both hands perfectly in sync
+					// Use the determined sequence - keeps both hands in sync
 					gripBoneSetup.AccumulatePose(gripPosAnim, gripQAnim, rightSeq, rightCycle, 1.0f, gpGlobals->curtime, NULL);
 					
 					// Build grip pose skeleton in model space
@@ -5442,11 +5510,29 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		seqToSample = m_iMedigunLeverSeq;
 		cycleToSample = m_flMedigunLeverCycle;
 	}
+	else if (bUseCurrentAnimation && m_bPlayingReloadAnim && m_iLeverReloadSequence >= 0
+		&& m_hHeldWeapon.Get()
+		&& m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+	{
+		// Stickybomb pump: the left hand IS the pump hand, so the grip
+		// target must follow the pump animation.  Scattergun pump is a
+		// right-hand action — the left hand stays at the idle foregrip.
+		seqToSample = m_iLeverReloadSequence;
+		cycleToSample = m_flLeverReloadCycle;
+	}
 	else if (bUseCurrentAnimation && (m_bPlayingFireAnim || m_bPlayingChargeAnim))
 	{
 		// Sample current fire/charge animation - grip target will move with recoil/charge
 		seqToSample = GetSequence();
 		cycleToSample = GetCycle();
+	}
+	else if (m_iReloadLoopSequence >= 0 && m_hHeldWeapon.Get()
+		&& m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+	{
+		// Stickybomb launcher: idle has no left-hand grip pose, so sample the
+		// reload loop at frame 0 to provide a stable pump-handle grip point.
+		seqToSample = m_iReloadLoopSequence;
+		cycleToSample = 0.0f;
 	}
 	else
 	{
@@ -5685,11 +5771,20 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	}
 	
 	// Compute anchor delta that maps model-space → world-space.
-	// For medigun lever: use the sampled (lever) animation's hand bone so the
-	// grip target moves correctly with the lever push instead of being anchored
-	// to the idle pose.
+	// Medigun lever and stickybomb pump sample non-idle sequences whose
+	// bip_hand position differs from idle, so anchor from the sampled
+	// animation's hand bone.  Everything else (including scattergun)
+	// uses the cached idle hand bone for a stable grip target.
+	bool bAnchorFromSampled = (m_bMedigunLeverActive && m_iMedigunLeverSeq >= 0);
+	if (!bAnchorFromSampled && m_hHeldWeapon.Get()
+		&& m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
+		&& seqToSample == m_iReloadLoopSequence && m_iReloadLoopSequence >= 0)
+	{
+		bAnchorFromSampled = true;
+	}
+
 	matrix3x4_t anchorDelta;
-	if (m_bMedigunLeverActive && m_iMedigunLeverSeq >= 0)
+	if (bAnchorFromSampled)
 	{
 		matrix3x4_t invSampledHandBone;
 		MatrixInvert(sampledBones[m_iHandBone], invSampledHandBone);
@@ -8599,6 +8694,25 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				m_iReloadStartSequence, m_iReloadLoopSequence, m_iReloadEndSequence,
 				m_flReloadLoopBottomCycle, GetModelName());
 		}
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+		{
+			m_iReloadLoopSequence  = LookupSequence("sb_reload_loop");
+
+			if (m_iReloadLoopSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iReloadLoopSequence, poseParams);
+					if (maxFrame > 0)
+						m_flReloadLoopBottomCycle = 10.0f / (float)maxFrame;
+				}
+			}
+
+			DevMsg("VR: Stickybomb reload sequences: loop=%d bottomCycle=%.3f on '%s'\n",
+				m_iReloadLoopSequence, m_flReloadLoopBottomCycle, GetModelName());
+		}
 
 		m_bAnimateIdle = false;
 		m_bLoopIdleOnHand = false;
@@ -8784,7 +8898,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	pRenderWeapon->SetupAnimations();
 
 	if (IsScattergunWeaponID(pWeapon->GetWeaponID()))
-		pRenderWeapon->SetupReloadAnimations();
+		pRenderWeapon->SetupReloadAnimations( "sg" );
+	else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+		pRenderWeapon->SetupReloadAnimations( "sb" );
 
 	// For fist/glove weapons, override with the correct idle pose so the
 	// vm_weapon_bone chain positions the mesh correctly.
@@ -10008,6 +10124,10 @@ void C_TFVRHand::UpdateScattergunReloadAnimation()
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
 	if (!pWeapon || !IsScattergunWeaponID(pWeapon->GetWeaponID()))
 	{
+		// Don't clear state if the stickybomb pump function manages it
+		if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+			return;
+
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
 		{
 			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
@@ -10153,6 +10273,115 @@ void C_TFVRHand::UpdateScattergunReloadAnimation()
 			m_iLeverReloadSequence = m_iReloadEndSequence;
 			m_flLeverReloadCycle = (duration > 0.0f) ? (elapsed / duration) : 0.0f;
 		}
+		break;
+	}
+
+	default:
+		break;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Stickybomb launcher VR pump reload animation — mirrors the
+//          scattergun lever animation but reads from CTFPipebombLauncher.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateStickyPumpReloadAnimation()
+{
+	if (m_iReloadLoopSequence < 0)
+		return;
+
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_PIPEBOMBLAUNCHER)
+	{
+		if (pWeapon && IsScattergunWeaponID(pWeapon->GetWeaponID()))
+			return;
+
+		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+		}
+		return;
+	}
+
+	CTFPipebombLauncher *pSB = static_cast<CTFPipebombLauncher *>(pWeapon);
+	bool bArmed = pSB->IsVRPumpArmed();
+
+	extern ConVar tfvr_sticky_pump_debug;
+	bool bDebug = tfvr_sticky_pump_debug.GetBool();
+
+	if (m_bPlayingFireAnim)
+		return;
+
+	// --- Edge detection: arm / disarm ---
+	if (bArmed && m_eReloadAnimState == VR_RELOAD_ANIM_NONE)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+		m_bPlayingReloadAnim = true;
+		m_bPlayingDrawAnim = false;
+		m_bPlayingChargeAnim = false;
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = 0.0f;
+		if (bDebug)
+			DevMsg("[VR StickyPump Anim] Armed – holding at loop start\n");
+	}
+	else if (!bArmed && m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+		m_bPlayingReloadAnim = false;
+		m_iLeverReloadSequence = -1;
+		m_flLeverReloadCycle = 0.0f;
+		if (bDebug)
+			DevMsg("[VR StickyPump Anim] Disarmed – back to idle\n");
+	}
+
+	// --- State machine (only HOLD and PUMPING, no start/end transitions) ---
+	switch (m_eReloadAnimState)
+	{
+	case VR_RELOAD_ANIM_HOLD:
+	{
+		if (pSB->IsVRPumpPullingBack() || pSB->IsVRPumpPushingFwd())
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_PUMPING;
+			if (bDebug)
+				DevMsg("[VR StickyPump Anim] Pumping started\n");
+		}
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = 0.0f;
+		break;
+	}
+
+	case VR_RELOAD_ANIM_PUMPING:
+	{
+		float progress = pSB->GetVRPumpStrokeProgress();
+		float cycle = 0.0f;
+
+		if (pSB->IsVRPumpPullingBack())
+		{
+			cycle = progress * m_flReloadLoopBottomCycle;
+		}
+		else if (pSB->IsVRPumpPushingFwd())
+		{
+			cycle = m_flReloadLoopBottomCycle + progress * (1.0f - m_flReloadLoopBottomCycle);
+		}
+		else
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+			m_iLeverReloadSequence = m_iReloadLoopSequence;
+			m_flLeverReloadCycle = 0.0f;
+			if (bDebug)
+				DevMsg("[VR StickyPump Anim] Pump complete, back to hold\n");
+			break;
+		}
+
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = clamp(cycle, 0.0f, 1.0f);
+
+		if (bDebug)
+			DevMsg("[VR StickyPump Anim] Pump cycle: %.3f (progress %.2f, pullback=%d)\n",
+				m_flLeverReloadCycle, progress, pSB->IsVRPumpPullingBack() ? 1 : 0);
 		break;
 	}
 
