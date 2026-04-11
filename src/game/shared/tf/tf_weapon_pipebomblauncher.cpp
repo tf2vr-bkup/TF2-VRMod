@@ -991,6 +991,13 @@ void CTFPipebombLauncher::VRPumpReloadPostFrame( void )
 			{
 				m_flVRPumpStrokeDist += -flFrameDisp;
 			}
+
+			float flMinPullTime = MAX( flReloadInterval * 0.5f, 0.05f );
+			float flMaxPullPerFrame = ( flPumpDist / flMinPullTime ) * gpGlobals->frametime;
+			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.75f )
+			{
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flMaxPullPerFrame, flPumpDist );
+			}
 			m_vecVRPumpLastHandPos = vecHandRelative;
 
 			if ( bDebug )

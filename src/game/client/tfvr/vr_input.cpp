@@ -14,6 +14,7 @@
 #include "tf/tf_shareddefs.h"
 #include "tf/tf_weapon_shotgun.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
+#include "tf/tf_weapon_raygun.h"
 #include "c_tfvr_hand.h"
 #include <game/client/iviewport.h>
 #include "viewport_panel_names.h"
@@ -36,6 +37,10 @@ extern ConVar tfvr_scattergun_lever_reload;
 extern ConVar tfvr_twohand_enabled;
 extern ConVar tfvr_medigun_lever;
 extern ConVar tfvr_sticky_pump_reload;
+extern ConVar tfvr_bison_pump_reload;
+
+ConVar tfvr_bison_pump_weapon_grip_threshold( "tfvr_bison_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR bison pump: off-hand grip analog must reach this (0-1) while two-handing" );
+ConVar tfvr_bison_pump_twohand_min_blend( "tfvr_bison_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR bison pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
 
 ConVar tfvr_scattergun_lever_weapon_grip_threshold( "tfvr_scattergun_lever_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: weapon-hand grip analog (right_grip when gun is in right hand, else left_grip) must reach this (0-1) while two-handing" );
 ConVar tfvr_scattergun_lever_twohand_min_blend( "tfvr_scattergun_lever_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: minimum two-hand blend on the weapon hand before lever motion counts (0-1)" );
@@ -1034,6 +1039,58 @@ static void TFVR_UpdateStickyPumpArmedInCmd( CUserCmd *cmd )
 	}
 }
 
+static void TFVR_UpdateBisonPumpArmedInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_bison_pump_reload.GetBool() || !tfvr_twohand_enabled.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || pWpn->GetWeaponID() != TF_WEAPON_RAYGUN || !pWpn->IsHeldByVRHand() )
+		return;
+
+	if ( gpGlobals->curtime < pWpn->m_flNextPrimaryAttack )
+		return;
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+
+	if ( !pWeaponHand || !pOffHand )
+		return;
+
+	// Only arm the pump when the off-hand is snapped to the reload grip
+	if ( !pWeaponHand->IsBisonOnReloadGrip() )
+		return;
+
+	const float flGrip = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "right_grip" )
+		: g_pOpenXRManager->GetAnalogValue( "left_grip" );
+
+	if ( flGrip >= tfvr_bison_pump_weapon_grip_threshold.GetFloat() )
+	{
+		cmd->vrWeaponArmed = true;
+		cmd->vrWeaponHandIsRight = ( pWeaponHand == pRight );
+	}
+}
+
 void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 {
 	if ( cmd )
@@ -1057,6 +1114,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	TFVR_UpdateScattergunLeverArmedInCmd( cmd );
 	TFVR_UpdateMedigunLeverArmedInCmd( cmd );
 	TFVR_UpdateStickyPumpArmedInCmd( cmd );
+	TFVR_UpdateBisonPumpArmedInCmd( cmd );
     
     // Get controller poses
     VMatrix leftControllerPose, rightControllerPose;

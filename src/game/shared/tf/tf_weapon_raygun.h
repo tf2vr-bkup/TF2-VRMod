@@ -40,6 +40,7 @@ public:
 	virtual bool		Holster( CBaseCombatWeapon *pSwitchingTo );
 	virtual bool		Deploy( void );
 	virtual void		ItemPostFrame( void );
+	virtual bool		Reload( void );
 
 	virtual void		PrimaryAttack( void );
 	virtual void		ModifyProjectile( CBaseEntity* pProj );
@@ -62,6 +63,14 @@ public:
 	}
 	virtual float		Energy_GetRechargeCost( void ) const { return 5.f; }
 
+	virtual bool		ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
+
+	// VR pump reload state accessors
+	bool  IsVRPumpArmed() const        { return m_bVRPumpIsArmed; }
+	bool  IsVRPumpPullingBack() const  { return m_bVRPumpStrokeOut; }
+	bool  IsVRPumpPushingFwd() const   { return m_bVRPumpStrokeIn; }
+	float GetVRPumpStrokeProgress() const;
+
 #ifdef CLIENT_DLL
 	virtual void		DispatchMuzzleFlash( const char* effectName, C_BaseEntity* pAttachEnt );
 	void				ClientEffectsThink( void );
@@ -77,6 +86,18 @@ private:
 	bool				m_bEffectsThinking;
 
 	CNetworkVar( bool, m_bUseNewProjectileCode );
+
+	// VR pump reload
+	void	VRPumpReloadPostFrame( void );
+	void	VRCommitPumpRecharge( void );
+	void	ResetVRPumpGestureState( void );
+
+	CNetworkVar( bool, m_bVRPumpIsArmed );
+	CNetworkVector( m_vecVRPumpLastHandPos );
+	CNetworkVar( bool, m_bVRPumpStrokeOut );
+	CNetworkVar( bool, m_bVRPumpStrokeIn );
+	CNetworkVar( float, m_flVRPumpStrokeDist );
+	CNetworkVar( float, m_flNextVRPumpRechargeTime );
 };
 
 

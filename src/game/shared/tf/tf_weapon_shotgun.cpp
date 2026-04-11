@@ -684,6 +684,13 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 			{
 				m_flVRLeverStrokeDist += -flFrameDisp;
 			}
+
+			float flMinPullTime = MAX( flReloadInterval * 0.5f, 0.05f );
+			float flMaxPullPerFrame = ( flLeverDist / flMinPullTime ) * gpGlobals->frametime;
+			if ( m_flVRLeverStrokeDist >= flLeverDist * 0.75f )
+			{
+				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + flMaxPullPerFrame, flLeverDist );
+			}
 			m_vecVRLeverLastHandPos = vecHandRelative;
 
 			if ( bDebug )
