@@ -3160,7 +3160,19 @@ void C_TFVRHand::Update()
 				}
 			}
 			
-			bool bGotGripTarget = pLeftHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles);
+			// Use the cached grip target (includes lever + fire animation position)
+			// so the snap zone follows the lever when it's pushed forward.
+			// Fall back to idle-based target if not cached yet.
+			bool bGotGripTarget = false;
+			if (pLeftHand->m_bMedigunGripTargetValid)
+			{
+				MatrixAngles(pLeftHand->m_matMedigunGripTarget, gripTargetAngles, gripTargetPos);
+				bGotGripTarget = true;
+			}
+			else
+			{
+				bGotGripTarget = pLeftHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles);
+			}
 			
 			if (tfvr_twohand_debug.GetBool())
 			{
