@@ -1,0 +1,33 @@
+// VR-specific weapon sounds
+
+"VR.ScattergunPumpDown"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_scatter_gun_pump_down.wav"
+}
+
+"VR.ScattergunPumpUp"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_scatter_gun_pump_up.wav"
+}
+
+"VR.BisonPumpOut"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_bison_reload_pump_out.wav"
+}
+
+"VR.BisonPumpIn"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_bison_reload_pump_in.wav"
+}
