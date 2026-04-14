@@ -7,6 +7,7 @@
 #include "tf_weapon_particle_cannon.h"
 #include "tf_fx_shared.h"
 #include "in_buttons.h"
+#include "usercmd.h"
 
 // Client specific.
 #ifdef CLIENT_DLL
@@ -16,6 +17,7 @@
 #include "soundenvelope.h"
 #include "particle_property.h"
 #include "c_tf_gamestats.h"
+#include "prediction.h"
 // Server specific.
 #else
 #include "tf_gamestats.h"
@@ -29,18 +31,40 @@
 //
 IMPLEMENT_NETWORKCLASS_ALIASED( TFParticleCannon, DT_ParticleCannon )
 
+ConVar tfvr_mangler_pump_reload( "tfvr_mangler_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Cow Mangler" );
+ConVar tfvr_mangler_pump_distance( "tfvr_mangler_pump_distance", "3.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke" );
+ConVar tfvr_mangler_pump_sign( "tfvr_mangler_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1)" );
+ConVar tfvr_mangler_pump_debug( "tfvr_mangler_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print mangler pump state to console" );
+
 BEGIN_NETWORK_TABLE( CTFParticleCannon, DT_ParticleCannon )
 #ifdef CLIENT_DLL
 	RecvPropFloat( RECVINFO( m_flChargeBeginTime ) ),
-	RecvPropInt( RECVINFO( m_iChargeEffect ) )
+	RecvPropInt( RECVINFO( m_iChargeEffect ) ),
+	RecvPropBool( RECVINFO( m_bVRPumpIsArmed ) ),
+	RecvPropVector( RECVINFO( m_vecVRPumpLastHandPos ) ),
+	RecvPropInt( RECVINFO( m_iVRPumpPhase ) ),
+	RecvPropFloat( RECVINFO( m_flVRPumpStrokeDist ) ),
+	RecvPropFloat( RECVINFO( m_flNextVRPumpRechargeTime ) ),
 #else
 	SendPropFloat( SENDINFO( m_flChargeBeginTime ) ),
-	SendPropInt( SENDINFO( m_iChargeEffect ) )
+	SendPropInt( SENDINFO( m_iChargeEffect ) ),
+	SendPropBool( SENDINFO( m_bVRPumpIsArmed ) ),
+	SendPropVector( SENDINFO( m_vecVRPumpLastHandPos ) ),
+	SendPropInt( SENDINFO( m_iVRPumpPhase ) ),
+	SendPropFloat( SENDINFO( m_flVRPumpStrokeDist ) ),
+	SendPropFloat( SENDINFO( m_flNextVRPumpRechargeTime ) ),
 #endif
 END_NETWORK_TABLE()
 
+#ifdef CLIENT_DLL
 BEGIN_PREDICTION_DATA( CTFParticleCannon )
+	DEFINE_PRED_FIELD( m_bVRPumpIsArmed, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_vecVRPumpLastHandPos, FIELD_VECTOR, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_iVRPumpPhase, FIELD_INTEGER, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRPumpStrokeDist, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flNextVRPumpRechargeTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 END_PREDICTION_DATA()
+#endif
 
 LINK_ENTITY_TO_CLASS( tf_weapon_particle_cannon, CTFParticleCannon );
 PRECACHE_WEAPON_REGISTER( tf_weapon_particle_cannon );
@@ -63,6 +87,16 @@ CTFParticleCannon::CTFParticleCannon() : CTFRocketLauncher()
 #ifdef CLIENT_DLL
 	m_bEffectsThinking = false;
 	m_iChargeEffectBase = 0;
+#endif
+
+	m_bVRPumpIsArmed = false;
+	m_vecVRPumpLastHandPos.Init();
+	m_iVRPumpPhase = 0;
+	m_flVRPumpStrokeDist = 0.0f;
+	m_flNextVRPumpRechargeTime = 0.0f;
+	m_iVRPumpSoundVariant = 0;
+#ifdef CLIENT_DLL
+	m_iVRPumpLastEmittedPhase = 0;
 #endif
 }
 
@@ -115,6 +149,7 @@ bool CTFParticleCannon::Holster( CBaseCombatWeapon *pSwitchingTo )
 
 	StopSound( "Weapon_CowMangler.Charging" );
 
+	ResetVRPumpGestureState();
 	return BaseClass::Holster( pSwitchingTo );
 }
 
@@ -130,6 +165,7 @@ bool CTFParticleCannon::Deploy( void )
 	SetContextThink( &CTFParticleCannon::ClientEffectsThink, gpGlobals->curtime + rand() % 5, "PC_EFFECTS_THINK" );
 #endif
 
+	ResetVRPumpGestureState();
 	return BaseClass::Deploy();
 }
 
@@ -149,6 +185,11 @@ void CTFParticleCannon::WeaponReset( void )
 void CTFParticleCannon::ItemPostFrame( void )
 {
 	BaseClass::ItemPostFrame();
+
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+	{
+		VRPumpReloadPostFrame();
+	}
 
 	if ( m_flChargeBeginTime > 0 )
 	{
@@ -356,6 +397,14 @@ void CTFParticleCannon::Precache()
 	PrecacheParticleSystem( "drg_cow_idle" );
 
 	PrecacheScriptSound( "Weapon_CowMangler.ReloadFinal" );
+
+	for ( int i = 1; i <= 4; i++ )
+	{
+		PrecacheScriptSound( UTIL_VarArgs( "VR.ManglerPumpUp%02d", i ) );
+		PrecacheScriptSound( UTIL_VarArgs( "VR.ManglerPumpDown%02d", i ) );
+	}
+	PrecacheScriptSound( "VR.ManglerPumpUpFinal" );
+	PrecacheScriptSound( "VR.ManglerPumpDownFinal" );
 }
 #endif
 
@@ -410,9 +459,12 @@ void CTFParticleCannon::ClientEffectsThink( void )
 
 	int iPoint = rand() % 4;
 
-	ParticleProp()->Init( this );
+	C_BaseAnimating *pEffectEnt = GetAppropriateWorldOrViewModel();
+	if ( !pEffectEnt )
+		pEffectEnt = this;
+	pEffectEnt->ParticleProp()->Init( pEffectEnt );
 	const char *pszIdleParticle = ( GetTeamNumber() == TF_TEAM_RED ) ? "drg_cow_idle" : "drg_cow_idle_blue";
-	CNewParticleEffect* pEffect = ParticleProp()->Create( pszIdleParticle, PATTACH_POINT_FOLLOW, mounts[iPoint] );
+	CNewParticleEffect* pEffect = pEffectEnt->ParticleProp()->Create( pszIdleParticle, PATTACH_POINT_FOLLOW, mounts[iPoint] );
 	if ( pEffect )
 	{
 		pEffect->SetControlPoint( CUSTOM_COLOR_CP1, GetParticleColor( 1 ) );
@@ -483,6 +535,9 @@ char const *CTFParticleCannon::GetShootSound( int iIndex ) const
 {
 	if ( iIndex == RELOAD )
 	{
+		if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+			return NULL;
+
 		bool bLastReload = (Energy_GetEnergy()+Energy_GetRechargeCost()) == Energy_GetMaxEnergy();
 		if ( bLastReload )
 		{
@@ -518,3 +573,349 @@ float CTFParticleCannon::GetAfterburnRateOnHit() const
 	return tf_particle_cannon_afterburn_rate;
 }
 #endif // GAME_DLL
+
+//-----------------------------------------------------------------------------
+// VR pump reload (3-stroke: up → down → return)
+//-----------------------------------------------------------------------------
+extern ConVar tfvr_reload_throttle_scale;
+
+static inline float TFVR_ManglerReloadThrottleScale()
+{
+	return MAX( 1.0f, tfvr_reload_throttle_scale.GetFloat() );
+}
+
+bool CTFParticleCannon::ShouldSuppressAutoAndSinglyReloadForVR() const
+{
+	if ( GetWeaponID() != TF_WEAPON_PARTICLE_CANNON )
+		return false;
+	if ( !tfvr_mangler_pump_reload.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	return IsHeldByVRHand();
+#else
+	return true;
+#endif
+}
+
+bool CTFParticleCannon::Reload( void )
+{
+	if ( ShouldSuppressAutoAndSinglyReloadForVR() )
+		return false;
+
+	return BaseClass::Reload();
+}
+
+void CTFParticleCannon::ResetVRPumpGestureState( void )
+{
+	m_bVRPumpIsArmed = false;
+	m_vecVRPumpLastHandPos = vec3_origin;
+	m_iVRPumpPhase = 0;
+	m_flVRPumpStrokeDist = 0.0f;
+	m_iVRPumpSoundVariant = 0;
+#ifdef CLIENT_DLL
+	m_iVRPumpLastEmittedPhase = 0;
+#endif
+}
+
+float CTFParticleCannon::GetVRPumpStrokeProgress() const
+{
+	float dist = tfvr_mangler_pump_distance.GetFloat();
+	return ( dist > 0.0f ) ? clamp( (float)m_flVRPumpStrokeDist / dist, 0.0f, 1.0f ) : 0.0f;
+}
+
+void CTFParticleCannon::VRCommitPumpRecharge( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+	const CUserCmd *pCmdCommit = pOwner->GetCurrentUserCommand();
+	if ( !pCmdCommit || !pCmdCommit->vrWeaponArmed )
+		return;
+
+	if ( gpGlobals->curtime < m_flNextVRPumpRechargeTime )
+		return;
+
+	if ( Energy_FullyCharged() )
+		return;
+
+	Energy_Recharge();
+	m_flNextVRPumpRechargeTime = gpGlobals->curtime + GetVRSinglyReloadShellThrottleInterval() * TFVR_ManglerReloadThrottleScale();
+}
+
+//-----------------------------------------------------------------------------
+// Three-stroke gesture along weapon forward:
+//   Phase 1 (up): positive axis motion
+//   Phase 2 (down): negative axis motion
+//   Phase 3 (return up): positive axis motion, then commit recharge
+//-----------------------------------------------------------------------------
+void CTFParticleCannon::VRPumpReloadPostFrame( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+#if defined( CLIENT_DLL )
+	if ( !pOwner->IsLocalPlayer() )
+		return;
+#endif
+
+	const bool bDebug = tfvr_mangler_pump_debug.GetBool();
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+	{
+		ResetVRPumpGestureState();
+		return;
+	}
+
+	Vector vecPumpHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosL
+		: pCmd->vrRawControllerPosR;
+	Vector vecWeaponHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosR
+		: pCmd->vrRawControllerPosL;
+
+	if ( vecPumpHandRaw == vec3_origin || vecWeaponHandRaw == vec3_origin )
+		return;
+
+	Vector vecHandRelative = vecPumpHandRaw - vecWeaponHandRaw;
+
+	if ( Energy_FullyCharged() )
+	{
+		if ( bDebug && m_iVRPumpPhase != 0 )
+			DevMsg( "[VR ManglerPump] Reset: fully charged\n" );
+		ResetVRPumpGestureState();
+		return;
+	}
+
+	if ( gpGlobals->curtime < m_flNextPrimaryAttack || m_flChargeBeginTime > 0 )
+	{
+		m_bVRPumpIsArmed = false;
+		m_iVRPumpPhase = 0;
+		m_flVRPumpStrokeDist = 0.0f;
+		if ( m_vecVRPumpLastHandPos != vec3_origin )
+			m_vecVRPumpLastHandPos = vecHandRelative;
+		if ( bDebug )
+			DevMsg( "[VR ManglerPump] Paused: fire/charge cooldown\n" );
+		return;
+	}
+
+	if ( !pCmd->vrWeaponArmed )
+	{
+		const bool bMidStroke = ( m_iVRPumpPhase != 0 );
+		if ( !bMidStroke )
+		{
+			if ( bDebug && m_vecVRPumpLastHandPos != vec3_origin )
+				DevMsg( "[VR ManglerPump] Reset: not armed\n" );
+			ResetVRPumpGestureState();
+		}
+		else
+		{
+			m_vecVRPumpLastHandPos = vecHandRelative;
+			m_flVRPumpStrokeDist = 0.0f;
+			if ( bDebug )
+				DevMsg( "[VR ManglerPump] Grip lost mid-stroke, holding state\n" );
+		}
+		return;
+	}
+
+	m_bVRPumpIsArmed = true;
+
+	const float flPumpDist     = tfvr_mangler_pump_distance.GetFloat();
+	const float flSign         = tfvr_mangler_pump_sign.GetFloat();
+	const float flReloadInterval = GetVRSinglyReloadShellThrottleInterval() * TFVR_ManglerReloadThrottleScale();
+
+	QAngle angWeaponHand = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerAngR
+		: pCmd->vrRawControllerAngL;
+
+	matrix3x4_t controllerMatrix;
+	AngleMatrix( angWeaponHand, controllerMatrix );
+
+	Vector vecPumpAxis;
+	MatrixGetColumn( controllerMatrix, 2, vecPumpAxis );
+	VectorNormalize( vecPumpAxis );
+
+	if ( m_vecVRPumpLastHandPos == vec3_origin )
+	{
+		m_vecVRPumpLastHandPos = vecHandRelative;
+		m_flVRPumpStrokeDist   = 0.0f;
+		if ( bDebug )
+			DevMsg( "[VR ManglerPump] Tracking started\n" );
+		return;
+	}
+
+	// Neutral state: detect initial upward motion to enter phase 1
+	if ( m_iVRPumpPhase == 0 )
+	{
+		if ( m_vecVRPumpLastHandPos != vec3_origin )
+		{
+			Vector vecFrameDelta = vecHandRelative - m_vecVRPumpLastHandPos;
+			float  flFrameDisp   = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+			if ( flFrameDisp > 0.0f )
+			{
+				m_flVRPumpStrokeDist += flFrameDisp;
+			}
+			else
+			{
+				m_flVRPumpStrokeDist = MAX( m_flVRPumpStrokeDist + flFrameDisp * 2.0f, 0.0f );
+			}
+
+			if ( m_flVRPumpStrokeDist >= 0.5f )
+			{
+				m_iVRPumpPhase = 1;
+				m_vecVRPumpLastHandPos = vecHandRelative;
+				m_flVRPumpStrokeDist = 0.0f;
+
+				// Pick sound variant: "final" if this recharge will fill the bar
+				bool bLastReload = ( Energy_GetEnergy() + Energy_GetRechargeCost() >= Energy_GetMaxEnergy() );
+				m_iVRPumpSoundVariant = bLastReload ? 0 : ( 1 + ( rand() % 4 ) );
+
+				if ( bDebug )
+					DevMsg( "[VR ManglerPump] Phase 1 (up) started, variant=%d\n", m_iVRPumpSoundVariant );
+			}
+			else
+			{
+				m_vecVRPumpLastHandPos = vecHandRelative;
+			}
+		}
+		else
+		{
+			m_vecVRPumpLastHandPos = vecHandRelative;
+			m_flVRPumpStrokeDist = 0.0f;
+		}
+	}
+	else
+	{
+		Vector vecFrameDelta = vecHandRelative - m_vecVRPumpLastHandPos;
+		float  flFrameDisp   = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+		float flMinStrokeTime = MAX( flReloadInterval * 0.5f, 0.05f );
+		float flMaxDistPerFrame = ( flPumpDist / flMinStrokeTime ) * gpGlobals->frametime;
+
+		if ( m_iVRPumpPhase == 1 )
+		{
+			// Phase 1: pump UP (positive axis)
+			if ( flFrameDisp > 0.0f )
+			{
+				m_flVRPumpStrokeDist += flFrameDisp;
+			}
+
+			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )
+			{
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flMaxDistPerFrame, flPumpDist );
+			}
+			m_vecVRPumpLastHandPos = vecHandRelative;
+
+			if ( bDebug )
+				DevMsg( "[VR ManglerPump] Up: %.2f / %.2f\n", (float)m_flVRPumpStrokeDist, flPumpDist );
+
+			if ( m_flVRPumpStrokeDist >= flPumpDist )
+			{
+				m_iVRPumpPhase = 2;
+				m_flVRPumpStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR ManglerPump] Phase 1 complete, entering phase 2 (down)\n" );
+
+#ifdef CLIENT_DLL
+				if ( m_iVRPumpLastEmittedPhase != 2 )
+				{
+					m_iVRPumpLastEmittedPhase = 2;
+					if ( m_iVRPumpSoundVariant == 0 )
+					{
+						EmitSound( "VR.ManglerPumpUpFinal" );
+					}
+					else
+					{
+						char szSound[64];
+						Q_snprintf( szSound, sizeof(szSound), "VR.ManglerPumpUp%02d", m_iVRPumpSoundVariant );
+						EmitSound( szSound );
+					}
+				}
+#endif
+			}
+		}
+		else if ( m_iVRPumpPhase == 2 )
+		{
+			// Phase 2: pump DOWN (negative axis)
+			if ( flFrameDisp < 0.0f )
+			{
+				m_flVRPumpStrokeDist += -flFrameDisp;
+			}
+
+			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )
+			{
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flMaxDistPerFrame, flPumpDist );
+			}
+			m_vecVRPumpLastHandPos = vecHandRelative;
+
+			if ( bDebug )
+				DevMsg( "[VR ManglerPump] Down: %.2f / %.2f\n", (float)m_flVRPumpStrokeDist, flPumpDist );
+
+			if ( m_flVRPumpStrokeDist >= flPumpDist )
+			{
+				m_iVRPumpPhase = 3;
+				m_flVRPumpStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR ManglerPump] Phase 2 complete, entering phase 3 (return)\n" );
+
+#ifdef CLIENT_DLL
+				if ( m_iVRPumpLastEmittedPhase != 3 )
+				{
+					m_iVRPumpLastEmittedPhase = 3;
+					if ( m_iVRPumpSoundVariant == 0 )
+					{
+						EmitSound( "VR.ManglerPumpDownFinal" );
+					}
+					else
+					{
+						char szSound[64];
+						Q_snprintf( szSound, sizeof(szSound), "VR.ManglerPumpDown%02d", m_iVRPumpSoundVariant );
+						EmitSound( szSound );
+					}
+				}
+#endif
+			}
+		}
+		else if ( m_iVRPumpPhase == 3 )
+		{
+			// Phase 3: return UP (positive axis), no sound, commit on completion
+			float flReturnDist = flPumpDist * 0.9f;
+
+			if ( flFrameDisp > 0.0f )
+			{
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flReturnDist );
+			}
+
+			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )
+			{
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flMaxDistPerFrame, flReturnDist );
+			}
+			m_vecVRPumpLastHandPos = vecHandRelative;
+
+			if ( bDebug )
+				DevMsg( "[VR ManglerPump] Return: %.2f / %.2f\n", (float)m_flVRPumpStrokeDist, flReturnDist );
+
+			if ( m_flVRPumpStrokeDist >= flReturnDist
+				&& gpGlobals->curtime >= m_flNextVRPumpRechargeTime )
+			{
+				VRCommitPumpRecharge();
+				m_iVRPumpPhase = 0;
+				m_flVRPumpStrokeDist = 0.0f;
+				m_iVRPumpSoundVariant = 0;
+#ifdef CLIENT_DLL
+				m_iVRPumpLastEmittedPhase = 0;
+#endif
+				if ( bDebug )
+					DevMsg( "[VR ManglerPump] Energy recharged! Ready for next pump.\n" );
+			}
+		}
+	}
+}

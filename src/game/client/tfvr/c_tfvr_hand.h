@@ -183,6 +183,7 @@ public:
 	// bUseCurrentAnimation: false = use idle (for stable weapon rotation), true = use current (for visual positioning)
 	bool GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation = false);
 	bool IsBisonOnReloadGrip() const { return m_bBisonUseReloadGrip; }
+	bool IsManglerOnReloadGrip() const { return m_bManglerUseReloadGrip; }
 	float GetTwoHandBlendAmount() const { return m_flTwoHandBlend; }
 	void SetTwoHandBlendAmount(float blend) { m_flTwoHandBlend = blend; }
 	bool IsTwoHanding() const { return m_flTwoHandBlend > 0.01f; }
@@ -330,6 +331,7 @@ private:
 	void UpdateScattergunReloadAnimation();
 	void UpdateStickyPumpReloadAnimation();
 	void UpdateBisonPumpReloadAnimation();
+	void UpdateManglerPumpReloadAnimation();
 
 public:
 	bool IsBackstabReady() const { return m_bBackstabReady; }
@@ -341,7 +343,8 @@ public:
 	bool m_bHandBoneOffsetValid;             // Whether the offset has been calculated
 	
 	// Two-handed weapon support
-	bool m_bBisonUseReloadGrip;  // Bison: true = snapped to reload grip, false = snapped to idle grip
+	bool m_bBisonUseReloadGrip;   // Bison: true = snapped to reload grip, false = snapped to idle grip
+	bool m_bManglerUseReloadGrip; // Mangler: same dual-grip system
 	float m_flTwoHandBlend;  // 0.0 = free hand, 1.0 = fully gripping weapon
 	int m_iOffHandBone;      // Bone index for the off-hand (bip_hand_L) on weapon hand's model
 	int m_iOffHandMiddleFingerBone;  // Bone index for bip_middle_0_L (for bind pose offset calc)

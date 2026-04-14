@@ -3205,9 +3205,17 @@ bool CTFWeaponBase::UsingViewModel()
 C_BaseAnimating *CTFWeaponBase::GetAppropriateWorldOrViewModel()
 {
 #ifdef CLIENT_DLL
-	// VR: Always use the weapon worldmodel (this) if held by VR hand
+	// VR: Use the render weapon so particles and effects attach at the
+	// correct VR position rather than the vanilla weapon entity position.
 	if ( m_bHeldByVRHand )
 	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand )
+		{
+			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
+			if ( pRenderWeapon )
+				return pRenderWeapon;
+		}
 		return this;
 	}
 #endif

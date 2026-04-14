@@ -994,7 +994,7 @@ void CTFPipebombLauncher::VRPumpReloadPostFrame( void )
 
 			float flMinPullTime = MAX( flReloadInterval * 0.5f, 0.05f );
 			float flMaxPullPerFrame = ( flPumpDist / flMinPullTime ) * gpGlobals->frametime;
-			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.75f )
+			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )
 			{
 				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flMaxPullPerFrame, flPumpDist );
 			}
@@ -1030,7 +1030,7 @@ void CTFPipebombLauncher::VRPumpReloadPostFrame( void )
 			{
 				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flCompletionDist );
 			}
-			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.75f )
+			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )
 			{
 				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flMaxDistPerFrame, flCompletionDist );
 			}

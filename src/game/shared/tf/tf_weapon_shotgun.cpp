@@ -687,7 +687,7 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 
 			float flMinPullTime = MAX( flReloadInterval * 0.5f, 0.05f );
 			float flMaxPullPerFrame = ( flLeverDist / flMinPullTime ) * gpGlobals->frametime;
-			if ( m_flVRLeverStrokeDist >= flLeverDist * 0.75f )
+			if ( m_flVRLeverStrokeDist >= flLeverDist * 0.60f )
 			{
 				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + flMaxPullPerFrame, flLeverDist );
 			}
@@ -754,7 +754,7 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 			{
 				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flCompletionDist );
 			}
-			if ( m_flVRLeverStrokeDist >= flLeverDist * 0.75f )
+			if ( m_flVRLeverStrokeDist >= flLeverDist * 0.60f )
 			{
 				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + flMaxDistPerFrame, flCompletionDist );
 			}

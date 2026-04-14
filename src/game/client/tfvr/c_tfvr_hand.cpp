@@ -15,6 +15,7 @@
 #include "tf/tf_weapon_shotgun.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_raygun.h"
+#include "tf/tf_weapon_particle_cannon.h"
 #include "tf/tf_weaponbase_melee.h"
 #include "c_baseviewmodel.h"
 #include "tf/tf_item_wearable.h"
@@ -56,7 +57,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bMedigunLeverOverride(false), m_iMedigunLeverSeq(-1), m_flMedigunLeverCycle(0.0f), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1), m_iReloadStartSequence(-1), m_iReloadLoopSequence(-1), m_iReloadEndSequence(-1) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bMedigunLeverOverride(false), m_iMedigunLeverSeq(-1), m_flMedigunLeverCycle(0.0f), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1), m_iReloadStartSequence(-1), m_iReloadLoopSequence(-1), m_iReloadEndSequence(-1), m_bPumpReloadActive(false), m_flPumpReloadCycle(0.0f) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
@@ -122,6 +123,64 @@ public:
 					matrix3x4_t leverLocal;
 					QuaternionMatrix(sampleQ[leverIdx], samplePos[leverIdx], leverLocal);
 					ConcatTransforms(pBoneToWorldOut[pLeverBone->parent], leverLocal, pBoneToWorldOut[leverIdx]);
+				}
+			}
+		}
+
+		// Pump reload: override descendant bones of weapon_bone on the
+		// render weapon model so lever/crank meshes animate with the pump.
+		if (bResult && pBoneToWorldOut && m_bPumpReloadActive && m_iReloadLoopSequence >= 0 && pHdr)
+		{
+			int wpnIdx = LookupBone("weapon_bone");
+			if (wpnIdx < 0)
+				wpnIdx = LookupBone("vm_weapon_bone");
+			if (wpnIdx >= 0 && wpnIdx < nMaxBones)
+			{
+				Vector samplePos[MAXSTUDIOBONES];
+				Quaternion sampleQ[MAXSTUDIOBONES];
+				float samplePoseParams[MAXSTUDIOPOSEPARAM];
+				for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+					samplePoseParams[i] = 0.0f;
+
+				IBoneSetup sampleSetup(pHdr, BONE_USED_BY_ANYTHING, samplePoseParams);
+				sampleSetup.InitPose(samplePos, sampleQ);
+				sampleSetup.AccumulatePose(samplePos, sampleQ, m_iReloadLoopSequence,
+					m_flPumpReloadCycle, 1.0f, gpGlobals->curtime, NULL);
+
+				// Build model-space transforms from the sampled pose
+				int numHdrBones = pHdr->numbones();
+				matrix3x4_t modelSpace[MAXSTUDIOBONES];
+				bool isDescendant[MAXSTUDIOBONES];
+				memset(isDescendant, 0, sizeof(isDescendant));
+
+				for (int i = 0; i < numHdrBones && i < MAXSTUDIOBONES; i++)
+				{
+					matrix3x4_t localMat;
+					QuaternionMatrix(sampleQ[i], samplePos[i], localMat);
+					const mstudiobone_t *pBone = pHdr->pBone(i);
+					if (!pBone || pBone->parent < 0)
+					{
+						MatrixCopy(localMat, modelSpace[i]);
+					}
+					else
+					{
+						ConcatTransforms(modelSpace[pBone->parent], localMat, modelSpace[i]);
+						if (pBone->parent == wpnIdx || isDescendant[pBone->parent])
+							isDescendant[i] = true;
+					}
+				}
+
+				matrix3x4_t weaponModelInv;
+				MatrixInvert(modelSpace[wpnIdx], weaponModelInv);
+
+				for (int i = 0; i < numHdrBones && i < nMaxBones; i++)
+				{
+					if (!isDescendant[i])
+						continue;
+
+					matrix3x4_t relToWeapon;
+					ConcatTransforms(weaponModelInv, modelSpace[i], relToWeapon);
+					ConcatTransforms(pBoneToWorldOut[wpnIdx], relToWeapon, pBoneToWorldOut[i]);
 				}
 			}
 		}
@@ -331,6 +390,12 @@ public:
 		else
 			m_iMedigunLeverSeq = -1;
 		m_flMedigunLeverCycle = flCycle;
+	}
+
+	void SetPumpReloadState(bool bActive, float flCycle)
+	{
+		m_bPumpReloadActive = bActive;
+		m_flPumpReloadCycle = flCycle;
 	}
 
 	int GetMedigunFireOnSeq() const { return m_iFireOnSequence; }
@@ -734,6 +799,10 @@ private:
 	int m_iReloadStartSequence;
 	int m_iReloadLoopSequence;
 	int m_iReloadEndSequence;
+
+	// Pump reload bone override (weapon_bone_1 scrubbed by pump cycle)
+	bool m_bPumpReloadActive;
+	float m_flPumpReloadCycle;
 
 public:
 	void SetupReloadAnimations( const char *pszPrefix = "sg" )
@@ -1688,6 +1757,7 @@ C_TFVRHand::C_TFVRHand()
 	m_bHandBoneOffsetValid = false;
 	m_iHandBone = -1;
 	m_bBisonUseReloadGrip = false;
+	m_bManglerUseReloadGrip = false;
 	m_flTwoHandBlend = 0.0f;
 	m_iOffHandBone = -1;
 	m_iOffHandMiddleFingerBone = -1;
@@ -2616,7 +2686,20 @@ void C_TFVRHand::Update()
 	UpdateScattergunReloadAnimation();
 	UpdateStickyPumpReloadAnimation();
 	UpdateBisonPumpReloadAnimation();
-	
+	UpdateManglerPumpReloadAnimation();
+
+	// Forward pump reload state to render weapon so weapon_bone_1 animates
+	{
+		C_VRRenderWeapon *pRW = dynamic_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+		if (pRW)
+		{
+			if (m_bPlayingReloadAnim && m_iLeverReloadSequence >= 0)
+				pRW->SetPumpReloadState(true, m_flLeverReloadCycle);
+			else
+				pRW->SetPumpReloadState(false, 0.0f);
+		}
+	}
+
 	// Update backstab ready state (spy knife only).
 	// SetupBones uses this to drive the up/down/idle transition animations.
 	if (m_iBackstabUpSequence >= 0 && IsRightHand())
@@ -2865,6 +2948,27 @@ void C_TFVRHand::Update()
 				m_flGripRotationBlend = 0.0f;
 			}
 
+			// Mangler: detach off-hand from reload grip while firing/charging.
+			// Include the fire animation duration so the hand stays detached
+			// until the visual recoil is fully done, preventing a brief
+			// interpolation to the wrong grip target.
+			bool bManglerBusy = false;
+			if (pRightWpn && pRightWpn->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+				&& pRightHand->IsManglerOnReloadGrip())
+			{
+				CTFParticleCannon *pMangler = static_cast<CTFParticleCannon *>(pRightWpn);
+				if (gpGlobals->curtime < pRightWpn->m_flNextPrimaryAttack
+					|| pMangler->GetChargeBeginTime() > 0
+					|| pRightHand->m_bPlayingFireAnim)
+				{
+					bManglerBusy = true;
+					m_bOffhandGripActive = false;
+					m_bWasOffhandGripActive = false;
+					m_flTwoHandBlend = 0.0f;
+					m_flGripRotationBlend = 0.0f;
+				}
+			}
+
 			// Bison dual grip: pick the closer of idle foregrip vs reload
 			// pump handle each frame (only when not actively pumping).
 			bool bBisonOnIdleGrip = false;
@@ -2918,10 +3022,59 @@ void C_TFVRHand::Update()
 				bBisonOnIdleGrip = !pRightHand->m_bBisonUseReloadGrip;
 			}
 
+			// Mangler dual grip: same closest-wins logic as Bison
+			bool bManglerOnIdleGrip = false;
+			if (!bManglerBusy
+				&& pRightWpn && pRightWpn->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+				&& !pRightHand->m_bPlayingReloadAnim
+				&& pRightHand->m_iReloadLoopSequence >= 0)
+			{
+				Vector leftHandPos = m_vecLastValidPosition;
+				if (m_pHandTracker)
+				{
+					Vector fp; QAngle fa;
+					if (m_pHandTracker->GetHandJoint(true, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fp, fa))
+						leftHandPos = fp;
+				}
+
+				Vector posA, posB;
+				QAngle angA, angB;
+
+				bool bOldFlag = pRightHand->m_bManglerUseReloadGrip;
+
+				pRightHand->m_bManglerUseReloadGrip = false;
+				bool bGotIdle = pRightHand->GetOffHandGripTarget(posA, angA);
+
+				pRightHand->m_bManglerUseReloadGrip = true;
+				bool bGotReload = pRightHand->GetOffHandGripTarget(posB, angB);
+
+				if (bGotIdle && bGotReload)
+				{
+					float distIdle = (leftHandPos - posA).LengthSqr();
+					float distReload = (leftHandPos - posB).LengthSqr();
+					pRightHand->m_bManglerUseReloadGrip = (distReload < distIdle);
+				}
+				else if (bGotReload)
+				{
+					pRightHand->m_bManglerUseReloadGrip = true;
+				}
+				else
+				{
+					pRightHand->m_bManglerUseReloadGrip = bOldFlag;
+				}
+
+				if (bOldFlag != pRightHand->m_bManglerUseReloadGrip)
+				{
+					m_flTwoHandBlend = MAX( m_flTwoHandBlend * 0.3f, 0.0f );
+				}
+
+				bManglerOnIdleGrip = !pRightHand->m_bManglerUseReloadGrip;
+			}
+
 			Vector gripTargetPos;
 			QAngle gripTargetAngles;
 
-			if (!bStickyBusy && !bBisonBusy && pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
+			if (!bStickyBusy && !bBisonBusy && !bManglerBusy && pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 			{
 				// Get our current hand position - use OpenXR middle finger base for aiming target
 				// This provides better pivot point alignment than the wrist
@@ -2965,6 +3118,7 @@ void C_TFVRHand::Update()
 
 				// Bison idle grip is passive-only: no squeeze required,
 				// no rotation influence - hand just follows by proximity.
+				// Mangler idle grip supports active grip for a stable hold.
 				if (bBisonOnIdleGrip)
 				{
 					m_bOffhandGripActive = false;
@@ -3074,6 +3228,12 @@ void C_TFVRHand::Update()
 				if (!bSuppressGripRotation && pGripWeapon
 					&& pGripWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
 					&& pRightHand->IsBisonOnReloadGrip())
+				{
+					bSuppressGripRotation = true;
+				}
+				if (!bSuppressGripRotation && pGripWeapon
+					&& pGripWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+					&& pRightHand->IsManglerOnReloadGrip())
 				{
 					bSuppressGripRotation = true;
 				}
@@ -4823,7 +4983,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					int pumpWeaponID = pRightHand->GetHeldWeapon()
 						? pRightHand->GetHeldWeapon()->GetWeaponID() : -1;
 					bool bIsPumpWeapon = (pumpWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER
-						|| pumpWeaponID == TF_WEAPON_RAYGUN);
+						|| pumpWeaponID == TF_WEAPON_RAYGUN
+						|| pumpWeaponID == TF_WEAPON_PARTICLE_CANNON);
 
 					if (bIsPumpWeapon && pRightHand->m_bPlayingReloadAnim
 						&& pRightHand->m_iLeverReloadSequence >= 0)
@@ -4841,9 +5002,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					}
 					else if (bIsPumpWeapon && pRightHand->m_iReloadLoopSequence >= 0
 						&& (pumpWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER
-							|| (pumpWeaponID == TF_WEAPON_RAYGUN && pRightHand->IsBisonOnReloadGrip())))
+							|| (pumpWeaponID == TF_WEAPON_RAYGUN && pRightHand->IsBisonOnReloadGrip())
+							|| (pumpWeaponID == TF_WEAPON_PARTICLE_CANNON && pRightHand->IsManglerOnReloadGrip())))
 					{
-						// Stickybomb / Bison reload grip idle: use reload loop at frame 0
+						// Stickybomb / Bison / Mangler reload grip idle: use reload loop at frame 0
 						const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iReloadLoopSequence);
 						if (pszSeqName)
 						{
@@ -5614,11 +5776,11 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	else if (bUseCurrentAnimation && m_bPlayingReloadAnim && m_iLeverReloadSequence >= 0
 		&& m_hHeldWeapon.Get()
 		&& (m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
-			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_RAYGUN))
+			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
+			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
 	{
-		// Stickybomb/Bison pump: the left hand IS the pump hand, so the grip
-		// target must follow the pump animation.  Scattergun pump is a
-		// right-hand action — the left hand stays at the idle foregrip.
+		// Stickybomb/Bison/Mangler pump: the left hand IS the pump hand, so the grip
+		// target must follow the pump animation.
 		seqToSample = m_iLeverReloadSequence;
 		cycleToSample = m_flLeverReloadCycle;
 	}
@@ -5644,9 +5806,17 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		seqToSample = m_iReloadLoopSequence;
 		cycleToSample = 0.0f;
 	}
+	else if (m_iReloadLoopSequence >= 0 && m_hHeldWeapon.Get()
+		&& m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+		&& m_bManglerUseReloadGrip)
+	{
+		// Mangler: off-hand is closer to the reload grip (pump handle).
+		seqToSample = m_iReloadLoopSequence;
+		cycleToSample = 0.0f;
+	}
 	else
 	{
-		// Sample idle animation - grip target stays stable (also Bison idle foregrip)
+		// Sample idle animation - grip target stays stable (also Bison/Mangler idle foregrip)
 		seqToSample = m_iIdleSequence >= 0 ? m_iIdleSequence : GetSequence();
 		cycleToSample = 0.0f;
 	}
@@ -5885,17 +6055,48 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	// bip_hand position differs from idle, so anchor from the sampled
 	// animation's hand bone.  Everything else (including scattergun)
 	// uses the cached idle hand bone for a stable grip target.
+	//
+	// The Cow Mangler is a special case: its handle_bone (crank) is
+	// positioned in SetupBones relative to weapon_bone, so the off-hand
+	// must also be anchored from weapon_bone to stay aligned with it.
 	bool bAnchorFromSampled = (m_bMedigunLeverActive && m_iMedigunLeverSeq >= 0);
+	bool bAnchorFromWeaponBone = false;
 	if (!bAnchorFromSampled && m_hHeldWeapon.Get()
-		&& (m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
-			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_RAYGUN)
 		&& seqToSample == m_iReloadLoopSequence && m_iReloadLoopSequence >= 0)
 	{
-		bAnchorFromSampled = true;
+		if (m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+			&& m_bHasIdleWeaponBone)
+		{
+			bAnchorFromWeaponBone = true;
+		}
+		else if (m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
+			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_RAYGUN)
+		{
+			bAnchorFromSampled = true;
+		}
 	}
 
 	matrix3x4_t anchorDelta;
-	if (bAnchorFromSampled)
+	if (bAnchorFromWeaponBone)
+	{
+		int wpnBoneIdx = LookupBone("weapon_bone");
+		if (wpnBoneIdx >= 0 && wpnBoneIdx < numBones)
+		{
+			matrix3x4_t weaponBoneWorld;
+			ConcatTransforms(controllerTransform, m_matIdleWeaponBoneLocal, weaponBoneWorld);
+
+			matrix3x4_t invSampledWeaponBone;
+			MatrixInvert(sampledBones[wpnBoneIdx], invSampledWeaponBone);
+			ConcatTransforms(weaponBoneWorld, invSampledWeaponBone, anchorDelta);
+		}
+		else
+		{
+			matrix3x4_t invSampledHandBone;
+			MatrixInvert(sampledBones[m_iHandBone], invSampledHandBone);
+			ConcatTransforms(controllerTransform, invSampledHandBone, anchorDelta);
+		}
+	}
+	else if (bAnchorFromSampled)
 	{
 		matrix3x4_t invSampledHandBone;
 		MatrixInvert(sampledBones[m_iHandBone], invSampledHandBone);
@@ -7947,6 +8148,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		"bip_ring_0", "bip_ring_1", "bip_ring_2",
 		"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
 		"weapon_bone_1",
+		"handle_bone",
 		"weapon_bone",
 	};
 
@@ -8020,16 +8222,19 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		}
 	}
 
-	// Reload override: sample the reload animation and apply finger bones
-	// (hand animates with the lever) plus weapon_bone_1 (lever) relative
-	// to weapon_bone.  weapon_bone itself stays at the idle pose set above
-	// so the weapon body doesn't move.
+	// Reload override: sample the reload animation and apply hand + finger
+	// bones so the hand follows the pump/lever motion.  If a lever bone
+	// exists on the hand model (weapon_bone_1 or handle_bone), also
+	// position it relative to weapon_bone so it stays with the weapon body.
+	//
+	// For left-hand-pump weapons (Stickybomb, Bison, Mangler) this code
+	// runs on the RIGHT hand (which holds the weapon).  Only the lever
+	// bone override is needed there — skip bip_hand and finger overrides
+	// so the right hand keeps its VR controller position and finger tracking.
 	if (m_bPlayingReloadAnim && !m_bPlayingFireAnim && m_iLeverReloadSequence >= 0)
 	{
-		int leverBoneIdx = LookupBone("weapon_bone_1");
 		int weaponBoneIdx = LookupBone("weapon_bone");
-		if (leverBoneIdx >= 0 && leverBoneIdx < nMaxBones &&
-			weaponBoneIdx >= 0 && weaponBoneIdx < nMaxBones)
+		if (weaponBoneIdx >= 0 && weaponBoneIdx < nMaxBones)
 		{
 			Vector reloadPos[MAXSTUDIOBONES];
 			Quaternion reloadQ[MAXSTUDIOBONES];
@@ -8042,71 +8247,101 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 			reloadBoneSetup.AccumulatePose(reloadPos, reloadQ, m_iLeverReloadSequence,
 				m_flLeverReloadCycle, 1.0f, gpGlobals->curtime, NULL);
 
-			// Position bip_hand so the reload animation's hand pose is
-			// applied relative to weapon_bone (which stays at idle).
-			// weapon_bone is a child of bip_hand, so:
-			//   bip_hand = weapon_bone_world * inverse(weapon_bone_local_in_reload)
-			if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+			// Determine whether this hand is the pump hand.
+			// Scattergun: right hand pumps.  Everything else: left hand pumps.
+			bool bIsLeftHandPumpWeapon = false;
+			if (m_hHeldWeapon.Get())
 			{
-				matrix3x4_t reloadWeaponBoneLocal;
-				QuaternionMatrix(reloadQ[weaponBoneIdx], reloadPos[weaponBoneIdx], reloadWeaponBoneLocal);
-
-				matrix3x4_t reloadWeaponBoneLocalInv;
-				MatrixInvert(reloadWeaponBoneLocal, reloadWeaponBoneLocalInv);
-
-				ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], reloadWeaponBoneLocalInv, pBoneToWorldOut[m_iHandBone]);
+				int wid = m_hHeldWeapon->GetWeaponID();
+				bIsLeftHandPumpWeapon = (wid == TF_WEAPON_PIPEBOMBLAUNCHER
+					|| wid == TF_WEAPON_RAYGUN
+					|| wid == TF_WEAPON_PARTICLE_CANNON);
 			}
+			bool bThisHandPumps = bIsLeftHandPumpWeapon ? IsLeftHand() : IsRightHand();
 
-			// Override finger bones with reload animation so the hand
-			// grips and moves with the lever.  Processed parent-first
-			// so child bones use updated parent transforms.
-			const char *reloadFingerPrefixes[] = {
-				"bip_thumb_0", "bip_thumb_1", "bip_thumb_2",
-				"bip_index_0", "bip_index_1", "bip_index_2",
-				"bip_middle_0", "bip_middle_1", "bip_middle_2",
-				"bip_ring_0", "bip_ring_1", "bip_ring_2",
-				"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
-			};
-			for (int i = 0; i < ARRAYSIZE(reloadFingerPrefixes); i++)
+			if (bThisHandPumps)
 			{
-				char boneName[64];
-				const char *sfx = IsLeftHand() ? "_L" : "_R";
-				V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
-				int boneIndex = LookupBone(boneName);
-				if (boneIndex < 0 || boneIndex >= nMaxBones)
+				// Position bip_hand so the reload animation's hand pose is
+				// applied relative to weapon_bone (which stays at idle).
+				// weapon_bone is a child of bip_hand, so:
+				//   bip_hand = weapon_bone_world * inverse(weapon_bone_local_in_reload)
+				if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
 				{
-					sfx = IsLeftHand() ? "_l" : "_r";
-					V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
-					boneIndex = LookupBone(boneName);
+					matrix3x4_t reloadWeaponBoneLocal;
+					QuaternionMatrix(reloadQ[weaponBoneIdx], reloadPos[weaponBoneIdx], reloadWeaponBoneLocal);
+
+					matrix3x4_t reloadWeaponBoneLocalInv;
+					MatrixInvert(reloadWeaponBoneLocal, reloadWeaponBoneLocalInv);
+
+					ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], reloadWeaponBoneLocalInv, pBoneToWorldOut[m_iHandBone]);
 				}
-				if (boneIndex < 0 || boneIndex >= nMaxBones)
-					boneIndex = LookupBone(reloadFingerPrefixes[i]);
-				if (boneIndex < 0 || boneIndex >= nMaxBones)
-					continue;
 
-				const mstudiobone_t *pBone = pStudioHdr->pBone(boneIndex);
-				if (!pBone || pBone->parent < 0 || pBone->parent >= nMaxBones)
-					continue;
+				// Override finger bones with reload animation so the hand
+				// grips and moves with the lever.  Processed parent-first
+				// so child bones use updated parent transforms.
+				const char *reloadFingerPrefixes[] = {
+					"bip_thumb_0", "bip_thumb_1", "bip_thumb_2",
+					"bip_index_0", "bip_index_1", "bip_index_2",
+					"bip_middle_0", "bip_middle_1", "bip_middle_2",
+					"bip_ring_0", "bip_ring_1", "bip_ring_2",
+					"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
+				};
+				for (int i = 0; i < ARRAYSIZE(reloadFingerPrefixes); i++)
+				{
+					char boneName[64];
+					const char *sfx = IsLeftHand() ? "_L" : "_R";
+					V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
+					int boneIndex = LookupBone(boneName);
+					if (boneIndex < 0 || boneIndex >= nMaxBones)
+					{
+						sfx = IsLeftHand() ? "_l" : "_r";
+						V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
+						boneIndex = LookupBone(boneName);
+					}
+					if (boneIndex < 0 || boneIndex >= nMaxBones)
+						boneIndex = LookupBone(reloadFingerPrefixes[i]);
+					if (boneIndex < 0 || boneIndex >= nMaxBones)
+						continue;
 
-				matrix3x4_t localBoneMatrix;
-				QuaternionMatrix(reloadQ[boneIndex], reloadPos[boneIndex], localBoneMatrix);
-				ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[boneIndex]);
+					const mstudiobone_t *pBone = pStudioHdr->pBone(boneIndex);
+					if (!pBone || pBone->parent < 0 || pBone->parent >= nMaxBones)
+						continue;
+
+					matrix3x4_t localBoneMatrix;
+					QuaternionMatrix(reloadQ[boneIndex], reloadPos[boneIndex], localBoneMatrix);
+					ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[boneIndex]);
+				}
 			}
 
-			// weapon_bone_1 (lever): position relative to weapon_bone so
-			// the lever stays attached to the weapon body rather than
-			// following the pumping hand.
-			matrix3x4_t reloadWeaponLocal, reloadLeverLocal;
-			QuaternionMatrix(reloadQ[weaponBoneIdx], reloadPos[weaponBoneIdx], reloadWeaponLocal);
-			QuaternionMatrix(reloadQ[leverBoneIdx], reloadPos[leverBoneIdx], reloadLeverLocal);
+			// Lever bone: weapon-specific lookup since both weapon_bone_1
+			// and handle_bone exist on the shared hand model.
+			int leverBoneIdx = -1;
+			if (m_hHeldWeapon.Get() && m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON)
+				leverBoneIdx = LookupBone("handle_bone");
+			else
+				leverBoneIdx = LookupBone("weapon_bone_1");
+			if (leverBoneIdx >= 0 && leverBoneIdx < nMaxBones)
+			{
+				// Build model-space transforms to handle any bone hierarchy
+				int numBones = pStudioHdr->numbones();
+				matrix3x4_t modelSpace[MAXSTUDIOBONES];
+				for (int i = 0; i < numBones && i < MAXSTUDIOBONES; i++)
+				{
+					matrix3x4_t localMat;
+					QuaternionMatrix(reloadQ[i], reloadPos[i], localMat);
+					const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+					if (!pBone || pBone->parent < 0)
+						MatrixCopy(localMat, modelSpace[i]);
+					else
+						ConcatTransforms(modelSpace[pBone->parent], localMat, modelSpace[i]);
+				}
 
-			matrix3x4_t weaponLocalInverse;
-			MatrixInvert(reloadWeaponLocal, weaponLocalInverse);
-
-			matrix3x4_t leverRelativeToWeapon;
-			ConcatTransforms(weaponLocalInverse, reloadLeverLocal, leverRelativeToWeapon);
-
-			ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], leverRelativeToWeapon, pBoneToWorldOut[leverBoneIdx]);
+				matrix3x4_t weaponModelInv;
+				MatrixInvert(modelSpace[weaponBoneIdx], weaponModelInv);
+				matrix3x4_t leverRelativeToWeapon;
+				ConcatTransforms(weaponModelInv, modelSpace[leverBoneIdx], leverRelativeToWeapon);
+				ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], leverRelativeToWeapon, pBoneToWorldOut[leverBoneIdx]);
+			}
 		}
 	}
 
@@ -8843,6 +9078,25 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			DevMsg("VR: Bison reload sequences: loop=%d bottomCycle=%.3f on '%s'\n",
 				m_iReloadLoopSequence, m_flReloadLoopBottomCycle, GetModelName());
 		}
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON)
+		{
+			m_iReloadLoopSequence  = LookupSequence("mangler_reload_loop");
+
+			if (m_iReloadLoopSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iReloadLoopSequence, poseParams);
+					if (maxFrame > 0)
+						m_flReloadLoopBottomCycle = 12.0f / (float)maxFrame;
+				}
+			}
+
+			DevMsg("VR: Mangler reload sequences: loop=%d bottomCycle=%.3f on '%s'\n",
+				m_iReloadLoopSequence, m_flReloadLoopBottomCycle, GetModelName());
+		}
 
 		m_bAnimateIdle = false;
 		m_bLoopIdleOnHand = false;
@@ -9033,6 +9287,8 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		pRenderWeapon->SetupReloadAnimations( "sb" );
 	else if (pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN)
 		pRenderWeapon->SetupReloadAnimations( "bison" );
+	else if (pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON)
+		pRenderWeapon->SetupReloadAnimations( "mangler" );
 
 	// For fist/glove weapons, override with the correct idle pose so the
 	// vm_weapon_bone chain positions the mesh correctly.
@@ -10256,9 +10512,10 @@ void C_TFVRHand::UpdateScattergunReloadAnimation()
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
 	if (!pWeapon || !IsScattergunWeaponID(pWeapon->GetWeaponID()))
 	{
-		// Don't clear state if the stickybomb/bison pump function manages it
+		// Don't clear state if another pump function manages it
 		if (pWeapon && (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
-			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN))
+			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
 			return;
 
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
@@ -10427,7 +10684,8 @@ void C_TFVRHand::UpdateStickyPumpReloadAnimation()
 	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_PIPEBOMBLAUNCHER)
 	{
 		if (pWeapon && (IsScattergunWeaponID(pWeapon->GetWeaponID())
-			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN))
+			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
 			return;
 
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
@@ -10537,7 +10795,8 @@ void C_TFVRHand::UpdateBisonPumpReloadAnimation()
 	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_RAYGUN)
 	{
 		if (pWeapon && (IsScattergunWeaponID(pWeapon->GetWeaponID())
-			|| pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER))
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
 			return;
 
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
@@ -10624,6 +10883,131 @@ void C_TFVRHand::UpdateBisonPumpReloadAnimation()
 		if (bDebug)
 			DevMsg("[VR BisonPump Anim] Pump cycle: %.3f (progress %.2f, pullback=%d)\n",
 				m_flLeverReloadCycle, progress, pBison->IsVRPumpPullingBack() ? 1 : 0);
+		break;
+	}
+
+	default:
+		break;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Cow Mangler VR pump reload animation — 3-phase (up/down/return).
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateManglerPumpReloadAnimation()
+{
+	if (m_iReloadLoopSequence < 0)
+		return;
+
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_PARTICLE_CANNON)
+	{
+		if (pWeapon && (IsScattergunWeaponID(pWeapon->GetWeaponID())
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
+			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN))
+			return;
+
+		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+		}
+		return;
+	}
+
+	CTFParticleCannon *pMangler = static_cast<CTFParticleCannon *>(pWeapon);
+	bool bArmed = pMangler->IsVRPumpArmed();
+
+	extern ConVar tfvr_mangler_pump_debug;
+	bool bDebug = tfvr_mangler_pump_debug.GetBool();
+
+	if (m_bPlayingFireAnim)
+		return;
+
+	if (bArmed && m_eReloadAnimState == VR_RELOAD_ANIM_NONE)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+		m_bPlayingReloadAnim = true;
+		m_bPlayingDrawAnim = false;
+		m_bPlayingChargeAnim = false;
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = 0.0f;
+		if (bDebug)
+			DevMsg("[VR ManglerPump Anim] Armed – holding at loop start\n");
+	}
+	else if (!bArmed && m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+		m_bPlayingReloadAnim = false;
+		m_iLeverReloadSequence = -1;
+		m_flLeverReloadCycle = 0.0f;
+		if (bDebug)
+			DevMsg("[VR ManglerPump Anim] Disarmed – back to idle\n");
+	}
+
+	// Cycle boundaries derived from frame layout:
+	//   Phase 1 up:     frames 0-12  → cycle 0 to bottomCycle
+	//   Phase 2 down:   frames 13-20 → cycle bottomCycle to midCycle
+	//   Phase 3 return: frames 20-24 → cycle midCycle to 1.0
+	// bottomCycle = 12/maxFrame (stored in m_flReloadLoopBottomCycle)
+	// midCycle    = 20/maxFrame = bottomCycle * (20/12)
+	float bottomCycle = m_flReloadLoopBottomCycle;
+	float midCycle = bottomCycle * (20.0f / 12.0f);
+
+	switch (m_eReloadAnimState)
+	{
+	case VR_RELOAD_ANIM_HOLD:
+	{
+		if (pMangler->GetVRPumpPhase() > 0)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_PUMPING;
+			if (bDebug)
+				DevMsg("[VR ManglerPump Anim] Pumping started\n");
+		}
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = 0.0f;
+		break;
+	}
+
+	case VR_RELOAD_ANIM_PUMPING:
+	{
+		float progress = pMangler->GetVRPumpStrokeProgress();
+		int phase = pMangler->GetVRPumpPhase();
+		float cycle = 0.0f;
+
+		if (phase == 1)
+		{
+			// Up: 0 → bottomCycle
+			cycle = progress * bottomCycle;
+		}
+		else if (phase == 2)
+		{
+			// Down: bottomCycle → midCycle
+			cycle = bottomCycle + progress * (midCycle - bottomCycle);
+		}
+		else if (phase == 3)
+		{
+			// Return: midCycle → 1.0
+			cycle = midCycle + progress * (1.0f - midCycle);
+		}
+		else
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+			m_iLeverReloadSequence = m_iReloadLoopSequence;
+			m_flLeverReloadCycle = 0.0f;
+			if (bDebug)
+				DevMsg("[VR ManglerPump Anim] Pump complete, back to hold\n");
+			break;
+		}
+
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = clamp(cycle, 0.0f, 1.0f);
+
+		if (bDebug)
+			DevMsg("[VR ManglerPump Anim] Pump cycle: %.3f (progress %.2f, phase=%d)\n",
+				m_flLeverReloadCycle, progress, phase);
 		break;
 	}
 

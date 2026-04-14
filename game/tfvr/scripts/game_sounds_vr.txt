@@ -31,3 +31,83 @@
 	"volume"	"1.0"
 	"wave"		"weapons/vr/vr_bison_reload_pump_in.wav"
 }
+
+"VR.ManglerPumpUp01"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_pump_up.wav"
+}
+
+"VR.ManglerPumpDown01"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_pump_down.wav"
+}
+
+"VR.ManglerPumpUp02"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_02_pump_up.wav"
+}
+
+"VR.ManglerPumpDown02"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_02_pump_down.wav"
+}
+
+"VR.ManglerPumpUp03"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_03_pump_up.wav"
+}
+
+"VR.ManglerPumpDown03"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_03_pump_down.wav"
+}
+
+"VR.ManglerPumpUp04"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_04_pump_up.wav"
+}
+
+"VR.ManglerPumpDown04"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_04_pump_down.wav"
+}
+
+"VR.ManglerPumpUpFinal"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_final_pump_up.wav"
+}
+
+"VR.ManglerPumpDownFinal"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_cow_mangler_reload_final_pump_down.wav"
+}

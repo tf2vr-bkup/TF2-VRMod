@@ -13,6 +13,7 @@
 #include "tf_weaponbase_rocket.h"
 #include "tf_weapon_sniperrifle.h"
 #include "tf_weapon_rocketlauncher.h"
+#include "usercmd.h"
 
 #ifdef CLIENT_DLL
 #include "particle_property.h"
@@ -53,6 +54,9 @@ public:
 	virtual bool	Deploy( void );
 	virtual void	WeaponReset( void );
 	virtual void	ItemPostFrame( void );
+	virtual bool	Reload( void );
+
+	virtual bool	ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
 
 	virtual void	PrimaryAttack( void );
 	virtual void	SecondaryAttack( void );
@@ -92,6 +96,11 @@ public:
 
 	virtual bool	OwnerCanTaunt( void );
 
+	// VR pump reload state accessors
+	bool  IsVRPumpArmed() const        { return m_bVRPumpIsArmed; }
+	int   GetVRPumpPhase() const       { return m_iVRPumpPhase; }
+	float GetVRPumpStrokeProgress() const;
+
 #ifdef GAME_DLL
 	virtual float	GetAfterburnRateOnHit() const OVERRIDE;
 	virtual float	GetInitialAfterburnDuration() const OVERRIDE { return 0.f; }
@@ -102,8 +111,21 @@ private:
 	CNetworkVar( int, m_iChargeEffect );
 	bool m_bChargedShot;
 
+	// VR pump reload (3-stroke: up → down → return)
+	void	VRPumpReloadPostFrame( void );
+	void	VRCommitPumpRecharge( void );
+	void	ResetVRPumpGestureState( void );
+
+	CNetworkVar( bool, m_bVRPumpIsArmed );
+	CNetworkVector( m_vecVRPumpLastHandPos );
+	CNetworkVar( int, m_iVRPumpPhase );       // 0=idle, 1=up, 2=down, 3=return
+	CNetworkVar( float, m_flVRPumpStrokeDist );
+	CNetworkVar( float, m_flNextVRPumpRechargeTime );
+
+	int		m_iVRPumpSoundVariant;             // 1-5, or 0 for "final"
 
 #ifdef CLIENT_DLL
+	int		m_iVRPumpLastEmittedPhase;         // dedup sound emission across prediction re-runs
 	bool		m_bEffectsThinking;
 	int			m_iChargeEffectBase;
 #endif
