@@ -184,6 +184,8 @@ public:
 	bool GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation = false);
 	bool IsBisonOnReloadGrip() const { return m_bBisonUseReloadGrip; }
 	bool IsManglerOnReloadGrip() const { return m_bManglerUseReloadGrip; }
+	bool IsPomsonOnReloadGrip() const { return m_bPomsonUseReloadGrip; }
+	bool IsPomsonRightGripLatched() const { return m_bPomsonRightGripLatched; }
 	float GetTwoHandBlendAmount() const { return m_flTwoHandBlend; }
 	void SetTwoHandBlendAmount(float blend) { m_flTwoHandBlend = blend; }
 	bool IsTwoHanding() const { return m_flTwoHandBlend > 0.01f; }
@@ -200,6 +202,7 @@ public:
 	bool IsPlayingFireAnim() const { return m_bPlayingFireAnim; }
 	bool ShouldAnimateIdle() const { return m_bAnimateIdle; }
 	int GetOffHandBoneIndex() const { return m_iOffHandBone; }
+	bool IsRightHandDetached() const { return m_bRightHandDetached; }
 
 private:
 	// Which hand this entity represents
@@ -317,6 +320,12 @@ private:
 	matrix3x4_t m_matIdleWeaponBoneLocal;
 	matrix3x4_t m_matIdleWeaponBoneWorld;
 	bool m_bHasIdleWeaponBone;
+	matrix3x4_t m_matOffHandToWeaponBone;  // weapon_bone relative to bip_hand_L (for Pomson detach)
+	bool m_bOffHandToWeaponBoneValid;
+	matrix3x4_t m_matPomsonDetachLeftToWeaponBone; // live weapon_bone relative to adjusted left controller at detach
+	bool m_bPomsonDetachLeftToWeaponBoneValid;
+	matrix3x4_t m_matPomsonDetachLeftToLeftHandBone; // live left visual hand relative to adjusted left controller at detach
+	bool m_bPomsonDetachLeftToLeftHandBoneValid;
 
 	// Scattergun VR lever reload animation
 	int m_iReloadStartSequence;
@@ -328,14 +337,22 @@ private:
 	bool m_bPlayingReloadAnim;
 	int m_iLeverReloadSequence;        // reload sequence sampled for lever bone only
 	float m_flLeverReloadCycle;        // cycle within that lever sequence
+	bool GetSampledBoneLocalTransform( const char *pszBoneName, int iSequence, float flCycle, matrix3x4_t &outLocalTransform );
+	bool GetSampledBoneModelSpaceDelta( const char *pszBoneName, int iSequence, float flBaseCycle, float flCurrentCycle, Vector &outLocalDelta );
+	bool GetPomsonAdjustedLeftControllerTransform( matrix3x4_t &outLeftControllerTransform ) const;
+	bool CapturePomsonDetachLeftToWeaponBone();
+	bool GetPomsonDetachedLeftHandWorld( matrix3x4_t &outLeftHandWorld );
 	void UpdateScattergunReloadAnimation();
 	void UpdateStickyPumpReloadAnimation();
 	void UpdateBisonPumpReloadAnimation();
 	void UpdateManglerPumpReloadAnimation();
+	void UpdatePomsonPumpReloadAnimation();
 
 public:
 	bool IsBackstabReady() const { return m_bBackstabReady; }
 	bool GetIdleWeaponBoneTransform( Vector &outPos, QAngle &outAng ) const;
+	bool GetPomsonDetachedWeaponBoneWorld( matrix3x4_t &outWeaponBoneWorld );
+	bool GetPomsonDetachedRightHandTarget( Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation = false );
 	
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose (model space)
@@ -345,6 +362,21 @@ public:
 	// Two-handed weapon support
 	bool m_bBisonUseReloadGrip;   // Bison: true = snapped to reload grip, false = snapped to idle grip
 	bool m_bManglerUseReloadGrip; // Mangler: same dual-grip system
+	bool m_bPomsonUseReloadGrip;  // Pomson: right-hand dual grip (idle vs reload)
+	bool m_bRightHandDetached;    // Pomson: right hand released from weapon, left hand positions weapon
+	bool m_bPomsonRightGripLatched; // Pomson: detached right hand is committed to current grip point
+	bool m_bPomsonRightGripWasPressed; // Pomson: previous-frame active grip state while detached
+	bool m_bPomsonSuppressPassiveGripPoint; // Pomson: recently released point should not passive reattach
+	bool m_bPomsonSuppressReloadGripPoint;  // true = reload point, false = idle point
+	// Hand offset relative to the Pomson grip target while snapping in.
+	matrix3x4_t m_matPomsonRightLatchOffset;
+	bool       m_bPomsonRightLatchOffsetValid;
+	// Last solved gripped pose and release state for Pomson blend-out.
+	matrix3x4_t m_matPomsonRightGripLastWorld;
+	bool       m_bPomsonRightGripLastWorldValid;
+	matrix3x4_t m_matPomsonRightUnlatchStart;
+	bool       m_bPomsonRightUnlatchStartValid;
+	bool       m_bPomsonRightUnlatchUseReloadGrip;
 	float m_flTwoHandBlend;  // 0.0 = free hand, 1.0 = fully gripping weapon
 	int m_iOffHandBone;      // Bone index for the off-hand (bip_hand_L) on weapon hand's model
 	int m_iOffHandMiddleFingerBone;  // Bone index for bip_middle_0_L (for bind pose offset calc)

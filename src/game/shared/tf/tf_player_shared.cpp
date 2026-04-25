@@ -10600,12 +10600,12 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 			{
 				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
 				{
-					// Apply manual offset from ConVars for fine-tuning
-					Vector forward, right, up;
-					AngleVectors( muzzleAngles, &forward, &right, &up );
-					muzzlePos += forward * tfvr_tracer_offset_forward.GetFloat();
-					muzzlePos += right * tfvr_tracer_offset_right.GetFloat();
-					muzzlePos += up * tfvr_tracer_offset_up.GetFloat();
+						// Apply manual offset from ConVars for fine-tuning
+						Vector forward, right, up;
+						AngleVectors( muzzleAngles, &forward, &right, &up );
+						muzzlePos += forward * tfvr_tracer_offset_forward.GetFloat();
+						muzzlePos += right * tfvr_tracer_offset_right.GetFloat();
+						muzzlePos += up * tfvr_tracer_offset_up.GetFloat();
 					
 					vecStart = muzzlePos;
 				}

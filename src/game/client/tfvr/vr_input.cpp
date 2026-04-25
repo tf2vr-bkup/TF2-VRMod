@@ -47,6 +47,10 @@ extern ConVar tfvr_mangler_pump_reload;
 ConVar tfvr_mangler_pump_weapon_grip_threshold( "tfvr_mangler_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR mangler pump: off-hand grip analog threshold" );
 ConVar tfvr_mangler_pump_twohand_min_blend( "tfvr_mangler_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR mangler pump: minimum two-hand blend before pump counts" );
 
+extern ConVar tfvr_pomson_pump_reload;
+ConVar tfvr_pomson_pump_weapon_grip_threshold( "tfvr_pomson_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR pomson pump: right-hand grip analog threshold for reload grip" );
+ConVar tfvr_pomson_pump_twohand_min_blend( "tfvr_pomson_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR pomson pump: minimum two-hand blend before right-hand detach" );
+
 ConVar tfvr_scattergun_lever_weapon_grip_threshold( "tfvr_scattergun_lever_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: weapon-hand grip analog (right_grip when gun is in right hand, else left_grip) must reach this (0-1) while two-handing" );
 ConVar tfvr_scattergun_lever_twohand_min_blend( "tfvr_scattergun_lever_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: minimum two-hand blend on the weapon hand before lever motion counts (0-1)" );
 ConVar tfvr_medigun_lever_grip_threshold( "tfvr_medigun_lever_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR medigun lever: right grip analog must reach this (0-1) to arm the lever" );
@@ -515,7 +519,33 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     bool bPrimaryAttack = g_pOpenXRManager->GetAnalogValue("primary_attack") > 0.5f;
     bool bSuppressPrimary = s_bVoiceGestureActive && !bLeftIsOffhand; // Right is offhand, uses primary_attack
     if (bPrimaryAttack && !bSuppressPrimary)
-        cmd->buttons |= IN_ATTACK;
+    {
+        bool bBlockPrimary = false;
+        C_TFPlayer *pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+        C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+        CTFWeaponBase *pActiveWeapon = pLocalPlayer ? pLocalPlayer->GetActiveTFWeapon() : NULL;
+        if ( pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON
+            && pRightHand && pRightHand->IsRightHandDetached() )
+        {
+            bBlockPrimary = true;
+        }
+
+        if ( !bBlockPrimary )
+            cmd->buttons |= IN_ATTACK;
+    }
+
+    // Pomson detach: the left hand can support/aim the weapon, but firing
+    // requires the right hand to be attached to the weapon grip.
+    {
+        C_TFPlayer *pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+        C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+        CTFWeaponBase *pActiveWeapon = pLocalPlayer ? pLocalPlayer->GetActiveTFWeapon() : NULL;
+        if ( pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON
+            && pRightHand && pRightHand->IsRightHandDetached() )
+        {
+            cmd->buttons &= ~IN_ATTACK;
+        }
+    }
 
     // Secondary attack - suppress if voice gesture is active AND left hand is offhand
     bool bSecondaryAttack = g_pOpenXRManager->GetAnalogValue("secondary_attack") > 0.5f;
@@ -1151,6 +1181,49 @@ static void TFVR_UpdateManglerPumpArmedInCmd( CUserCmd *cmd )
 	}
 }
 
+static void TFVR_UpdatePomsonPumpArmedInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_pomson_pump_reload.GetBool() || !tfvr_twohand_enabled.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || pWpn->GetWeaponID() != TF_WEAPON_DRG_POMSON || !pWpn->IsHeldByVRHand() )
+		return;
+
+	if ( gpGlobals->curtime < pWpn->m_flNextPrimaryAttack )
+		return;
+
+	// Pomson: right hand is the pump hand; it must be detached and on the reload grip.
+	if ( !pRight->IsRightHandDetached() )
+		return;
+
+	if ( !pRight->IsPomsonOnReloadGrip() )
+		return;
+
+	const float flMinBlend = clamp( tfvr_pomson_pump_twohand_min_blend.GetFloat(), 0.0f, 1.0f );
+	if ( !pRight->IsPomsonRightGripLatched() && pRight->GetTwoHandBlendAmount() < flMinBlend )
+		return;
+
+	// Right hand grip must be squeezed to arm the pump
+	const float flGrip = g_pOpenXRManager->GetAnalogValue( "right_grip" );
+
+	if ( flGrip >= tfvr_pomson_pump_weapon_grip_threshold.GetFloat() )
+	{
+		cmd->vrWeaponArmed = true;
+		// Weapon is controlled by left hand when right hand is detached
+		cmd->vrWeaponHandIsRight = false;
+	}
+}
+
 void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 {
 	if ( cmd )
@@ -1176,7 +1249,8 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	TFVR_UpdateStickyPumpArmedInCmd( cmd );
 	TFVR_UpdateBisonPumpArmedInCmd( cmd );
 	TFVR_UpdateManglerPumpArmedInCmd( cmd );
-    
+	TFVR_UpdatePomsonPumpArmedInCmd( cmd );
+
     // Get controller poses
     VMatrix leftControllerPose, rightControllerPose;
     bool leftValid = g_pOpenXRManager->GetLeftControllerPose(leftControllerPose);

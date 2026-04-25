@@ -57,7 +57,7 @@ class C_VRRenderWeapon : public C_BaseAnimating, public IHasOwner
 	DECLARE_CLASS(C_VRRenderWeapon, C_BaseAnimating);
 	
 public:
-	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bMedigunLeverOverride(false), m_iMedigunLeverSeq(-1), m_flMedigunLeverCycle(0.0f), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1), m_iReloadStartSequence(-1), m_iReloadLoopSequence(-1), m_iReloadEndSequence(-1), m_bPumpReloadActive(false), m_flPumpReloadCycle(0.0f) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
+	C_VRRenderWeapon() : m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_iIdleSequence(0), m_iFireSequence(-1), m_bPlayingFireAnim(false), m_bAnimateIdle(false), m_pCritBoostEffect(NULL), m_bCritBoostActive(false), m_iFireOnSequence(-1), m_iFireOffSequence(-1), m_iFireLoopSequence(-1), m_eMedigunFireState(MEDIGUN_FIRE_IDLE), m_bMedigunLeverOverride(false), m_iMedigunLeverSeq(-1), m_flMedigunLeverCycle(0.0f), m_bInSetupBones(false), m_bBreadBiteAnims(false), m_iBreadBiteSwingSeq(-1), m_iBreadBiteCritSeq(-1), m_iReloadStartSequence(-1), m_iReloadLoopSequence(-1), m_iReloadEndSequence(-1), m_bPumpReloadActive(false), m_flPumpReloadCycle(0.0f), m_bPumpReloadVmWeaponOverride(false), m_vecPumpReloadVmWeaponDelta(vec3_origin) { m_iBreadBiteIdleSeqs[0] = m_iBreadBiteIdleSeqs[1] = m_iBreadBiteIdleSeqs[2] = -1; }
 	
 	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
 	void SetSourceWeapon(C_TFWeaponBase *pWeapon) { m_hSourceWeapon = pWeapon; }
@@ -129,58 +129,125 @@ public:
 
 		// Pump reload: override descendant bones of weapon_bone on the
 		// render weapon model so lever/crank meshes animate with the pump.
-		if (bResult && pBoneToWorldOut && m_bPumpReloadActive && m_iReloadLoopSequence >= 0 && pHdr)
+		if (bResult && pBoneToWorldOut && m_bPumpReloadActive
+			&& (m_iReloadLoopSequence >= 0 || m_bPumpReloadVmWeaponOverride) && pHdr)
 		{
-			int wpnIdx = LookupBone("weapon_bone");
-			if (wpnIdx < 0)
-				wpnIdx = LookupBone("vm_weapon_bone");
-			if (wpnIdx >= 0 && wpnIdx < nMaxBones)
+			if (m_bPumpReloadVmWeaponOverride)
 			{
-				Vector samplePos[MAXSTUDIOBONES];
-				Quaternion sampleQ[MAXSTUDIOBONES];
-				float samplePoseParams[MAXSTUDIOPOSEPARAM];
-				for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
-					samplePoseParams[i] = 0.0f;
-
-				IBoneSetup sampleSetup(pHdr, BONE_USED_BY_ANYTHING, samplePoseParams);
-				sampleSetup.InitPose(samplePos, sampleQ);
-				sampleSetup.AccumulatePose(samplePos, sampleQ, m_iReloadLoopSequence,
-					m_flPumpReloadCycle, 1.0f, gpGlobals->curtime, NULL);
-
-				// Build model-space transforms from the sampled pose
-				int numHdrBones = pHdr->numbones();
-				matrix3x4_t modelSpace[MAXSTUDIOBONES];
-				bool isDescendant[MAXSTUDIOBONES];
-				memset(isDescendant, 0, sizeof(isDescendant));
-
-				for (int i = 0; i < numHdrBones && i < MAXSTUDIOBONES; i++)
+				int vmWeaponIdx = LookupBone("vm_weapon_bone");
+				int numHdrBones = MIN(pHdr->numbones(), MAXSTUDIOBONES);
+				if (vmWeaponIdx >= 0 && vmWeaponIdx < nMaxBones && vmWeaponIdx < numHdrBones)
 				{
-					matrix3x4_t localMat;
-					QuaternionMatrix(sampleQ[i], samplePos[i], localMat);
-					const mstudiobone_t *pBone = pHdr->pBone(i);
-					if (!pBone || pBone->parent < 0)
+					const mstudiobone_t *pVmWeaponBone = pHdr->pBone(vmWeaponIdx);
+					if (pVmWeaponBone && pVmWeaponBone->parent >= 0 && pVmWeaponBone->parent < nMaxBones)
 					{
-						MatrixCopy(localMat, modelSpace[i]);
-					}
-					else
-					{
-						ConcatTransforms(modelSpace[pBone->parent], localMat, modelSpace[i]);
-						if (pBone->parent == wpnIdx || isDescendant[pBone->parent])
-							isDescendant[i] = true;
+						matrix3x4_t oldVmWeaponWorld;
+						MatrixCopy(pBoneToWorldOut[vmWeaponIdx], oldVmWeaponWorld);
+
+						matrix3x4_t newVmWeaponWorld;
+						MatrixCopy(oldVmWeaponWorld, newVmWeaponWorld);
+
+						Vector axisX, axisY, axisZ, oldOrigin;
+						MatrixGetColumn(oldVmWeaponWorld, 0, axisX);
+						MatrixGetColumn(oldVmWeaponWorld, 1, axisY);
+						MatrixGetColumn(oldVmWeaponWorld, 2, axisZ);
+						MatrixGetColumn(oldVmWeaponWorld, 3, oldOrigin);
+
+						Vector newOrigin = oldOrigin
+							+ axisX * m_vecPumpReloadVmWeaponDelta.x
+							+ axisY * m_vecPumpReloadVmWeaponDelta.y
+							+ axisZ * m_vecPumpReloadVmWeaponDelta.z;
+						MatrixSetColumn(newOrigin, 3, newVmWeaponWorld);
+
+						matrix3x4_t oldVmWeaponInv;
+						MatrixInvert(oldVmWeaponWorld, oldVmWeaponInv);
+
+						bool isDescendant[MAXSTUDIOBONES];
+						memset(isDescendant, 0, sizeof(isDescendant));
+						isDescendant[vmWeaponIdx] = true;
+						for (int i = 0; i < numHdrBones && i < nMaxBones; i++)
+						{
+							const mstudiobone_t *pBone = pHdr->pBone(i);
+							if (!pBone || i == vmWeaponIdx)
+								continue;
+							if (pBone->parent >= 0 && pBone->parent < numHdrBones
+								&& isDescendant[pBone->parent])
+							{
+								isDescendant[i] = true;
+							}
+						}
+
+						for (int i = 0; i < numHdrBones && i < nMaxBones; i++)
+						{
+							if (!isDescendant[i])
+								continue;
+
+							if (i == vmWeaponIdx)
+							{
+								MatrixCopy(newVmWeaponWorld, pBoneToWorldOut[i]);
+								continue;
+							}
+
+							matrix3x4_t relToVmWeapon;
+							ConcatTransforms(oldVmWeaponInv, pBoneToWorldOut[i], relToVmWeapon);
+							ConcatTransforms(newVmWeaponWorld, relToVmWeapon, pBoneToWorldOut[i]);
+						}
 					}
 				}
-
-				matrix3x4_t weaponModelInv;
-				MatrixInvert(modelSpace[wpnIdx], weaponModelInv);
-
-				for (int i = 0; i < numHdrBones && i < nMaxBones; i++)
+			}
+			else if (m_iReloadLoopSequence >= 0)
+			{
+				int wpnIdx = LookupBone("weapon_bone");
+				if (wpnIdx < 0)
+					wpnIdx = LookupBone("vm_weapon_bone");
+				if (wpnIdx >= 0 && wpnIdx < nMaxBones)
 				{
-					if (!isDescendant[i])
-						continue;
+					Vector samplePos[MAXSTUDIOBONES];
+					Quaternion sampleQ[MAXSTUDIOBONES];
+					float samplePoseParams[MAXSTUDIOPOSEPARAM];
+					for (int i = 0; i < MAXSTUDIOPOSEPARAM; i++)
+						samplePoseParams[i] = 0.0f;
 
-					matrix3x4_t relToWeapon;
-					ConcatTransforms(weaponModelInv, modelSpace[i], relToWeapon);
-					ConcatTransforms(pBoneToWorldOut[wpnIdx], relToWeapon, pBoneToWorldOut[i]);
+					IBoneSetup sampleSetup(pHdr, BONE_USED_BY_ANYTHING, samplePoseParams);
+					sampleSetup.InitPose(samplePos, sampleQ);
+					sampleSetup.AccumulatePose(samplePos, sampleQ, m_iReloadLoopSequence,
+						m_flPumpReloadCycle, 1.0f, gpGlobals->curtime, NULL);
+
+					// Build model-space transforms from the sampled pose
+					int numHdrBones = pHdr->numbones();
+					matrix3x4_t modelSpace[MAXSTUDIOBONES];
+					bool isDescendant[MAXSTUDIOBONES];
+					memset(isDescendant, 0, sizeof(isDescendant));
+
+					for (int i = 0; i < numHdrBones && i < MAXSTUDIOBONES; i++)
+					{
+						matrix3x4_t localMat;
+						QuaternionMatrix(sampleQ[i], samplePos[i], localMat);
+						const mstudiobone_t *pBone = pHdr->pBone(i);
+						if (!pBone || pBone->parent < 0)
+						{
+							MatrixCopy(localMat, modelSpace[i]);
+						}
+						else
+						{
+							ConcatTransforms(modelSpace[pBone->parent], localMat, modelSpace[i]);
+							if (pBone->parent == wpnIdx || isDescendant[pBone->parent])
+								isDescendant[i] = true;
+						}
+					}
+
+					matrix3x4_t weaponModelInv;
+					MatrixInvert(modelSpace[wpnIdx], weaponModelInv);
+
+					for (int i = 0; i < numHdrBones && i < nMaxBones; i++)
+					{
+						if (!isDescendant[i])
+							continue;
+
+						matrix3x4_t relToWeapon;
+						ConcatTransforms(weaponModelInv, modelSpace[i], relToWeapon);
+						ConcatTransforms(pBoneToWorldOut[wpnIdx], relToWeapon, pBoneToWorldOut[i]);
+					}
 				}
 			}
 		}
@@ -392,10 +459,13 @@ public:
 		m_flMedigunLeverCycle = flCycle;
 	}
 
-	void SetPumpReloadState(bool bActive, float flCycle)
+	void SetPumpReloadState(bool bActive, float flCycle, const Vector *pVmWeaponBoneDelta = NULL)
 	{
 		m_bPumpReloadActive = bActive;
 		m_flPumpReloadCycle = flCycle;
+		m_bPumpReloadVmWeaponOverride = bActive && pVmWeaponBoneDelta;
+		if (m_bPumpReloadVmWeaponOverride)
+			m_vecPumpReloadVmWeaponDelta = *pVmWeaponBoneDelta;
 	}
 
 	int GetMedigunFireOnSeq() const { return m_iFireOnSequence; }
@@ -803,6 +873,8 @@ private:
 	// Pump reload bone override (weapon_bone_1 scrubbed by pump cycle)
 	bool m_bPumpReloadActive;
 	float m_flPumpReloadCycle;
+	bool m_bPumpReloadVmWeaponOverride;
+	Vector m_vecPumpReloadVmWeaponDelta;
 
 public:
 	void SetupReloadAnimations( const char *pszPrefix = "sg" )
@@ -942,6 +1014,7 @@ ConVar tfvr_twohand_enabled("tfvr_twohand_enabled", "1", FCVAR_ARCHIVE, "Enable 
 ConVar tfvr_twohand_snap_distance("tfvr_twohand_snap_distance", "8", FCVAR_ARCHIVE, "Distance (inches) at which off-hand snaps to weapon grip");
 ConVar tfvr_twohand_blend_distance("tfvr_twohand_blend_distance", "1", FCVAR_ARCHIVE, "Distance (inches) at which off-hand starts blending towards weapon grip");
 ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-handed grip debug info");
+ConVar tfvr_pomson_grip_debug("tfvr_pomson_grip_debug", "0", FCVAR_CHEAT, "Show Pomson right-hand grip target/easing debug overlays");
 
 // Offhand grip convars - grip button must be held to activate
 ConVar tfvr_offhand_grip_enabled("tfvr_offhand_grip_enabled", "1", FCVAR_ARCHIVE, "Enable offhand grip for two-handed weapon aiming");
@@ -1424,6 +1497,7 @@ ConVar tfvr_aim_stabilize_debug("tfvr_aim_stabilize_debug", "0", FCVAR_NONE, "Sh
 // Global storage for active VR hands - since we only support local player, use two pointers
 static C_TFVRHand *g_pLocalPlayerLeftHand = NULL;
 static C_TFVRHand *g_pLocalPlayerRightHand = NULL;
+static const float kPomsonGripLockBlend = 0.995f;
 
 //-----------------------------------------------------------------------------
 // Purpose: Eased approach - moves current toward target with ease-out curve
@@ -1758,6 +1832,23 @@ C_TFVRHand::C_TFVRHand()
 	m_iHandBone = -1;
 	m_bBisonUseReloadGrip = false;
 	m_bManglerUseReloadGrip = false;
+	m_bPomsonUseReloadGrip = false;
+	m_bRightHandDetached = false;
+	m_bPomsonRightGripLatched = false;
+	m_bPomsonRightGripWasPressed = false;
+	m_bPomsonSuppressPassiveGripPoint = false;
+	m_bPomsonSuppressReloadGripPoint = false;
+	SetIdentityMatrix(m_matPomsonRightLatchOffset);
+	m_bPomsonRightLatchOffsetValid = false;
+	SetIdentityMatrix(m_matPomsonRightGripLastWorld);
+	m_bPomsonRightGripLastWorldValid = false;
+	SetIdentityMatrix(m_matPomsonRightUnlatchStart);
+	m_bPomsonRightUnlatchStartValid = false;
+	m_bPomsonRightUnlatchUseReloadGrip = false;
+	SetIdentityMatrix(m_matPomsonDetachLeftToWeaponBone);
+	m_bPomsonDetachLeftToWeaponBoneValid = false;
+	SetIdentityMatrix(m_matPomsonDetachLeftToLeftHandBone);
+	m_bPomsonDetachLeftToLeftHandBoneValid = false;
 	m_flTwoHandBlend = 0.0f;
 	m_iOffHandBone = -1;
 	m_iOffHandMiddleFingerBone = -1;
@@ -1822,6 +1913,8 @@ C_TFVRHand::C_TFVRHand()
 	m_bHasIdleWeaponBone = false;
 	SetIdentityMatrix( m_matIdleWeaponBoneLocal );
 	SetIdentityMatrix( m_matIdleWeaponBoneWorld );
+	m_bOffHandToWeaponBoneValid = false;
+	SetIdentityMatrix( m_matOffHandToWeaponBone );
 
 	// Scattergun reload animation
 	m_iReloadStartSequence = -1;
@@ -1923,6 +2016,20 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bOffhandGripActive = false;
 	m_bWasOffhandGripActive = false;
 	m_flGripRotationBlend = 0.0f;
+	m_bPomsonRightGripWasPressed = false;
+	m_bPomsonSuppressPassiveGripPoint = false;
+	m_bPomsonSuppressReloadGripPoint = false;
+	SetIdentityMatrix(m_matPomsonRightLatchOffset);
+	m_bPomsonRightLatchOffsetValid = false;
+	SetIdentityMatrix(m_matPomsonRightGripLastWorld);
+	m_bPomsonRightGripLastWorldValid = false;
+	SetIdentityMatrix(m_matPomsonRightUnlatchStart);
+	m_bPomsonRightUnlatchStartValid = false;
+	m_bPomsonRightUnlatchUseReloadGrip = false;
+	SetIdentityMatrix(m_matPomsonDetachLeftToWeaponBone);
+	m_bPomsonDetachLeftToWeaponBoneValid = false;
+	SetIdentityMatrix(m_matPomsonDetachLeftToLeftHandBone);
+	m_bPomsonDetachLeftToLeftHandBoneValid = false;
 	m_bBoneMappingSetup = false;
 	m_bHandBoneOffsetValid = false;
 	m_iHandBone = -1;
@@ -2687,14 +2794,49 @@ void C_TFVRHand::Update()
 	UpdateStickyPumpReloadAnimation();
 	UpdateBisonPumpReloadAnimation();
 	UpdateManglerPumpReloadAnimation();
+	UpdatePomsonPumpReloadAnimation();
 
 	// Forward pump reload state to render weapon so weapon_bone_1 animates
 	{
 		C_VRRenderWeapon *pRW = dynamic_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
 		if (pRW)
 		{
-			if (m_bPlayingReloadAnim && m_iLeverReloadSequence >= 0)
-				pRW->SetPumpReloadState(true, m_flLeverReloadCycle);
+			C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+			bool bPomsonHeldSlide = pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON
+				&& m_eReloadAnimState != VR_RELOAD_ANIM_NONE
+				&& m_iLeverReloadSequence >= 0;
+			if ((m_bPlayingReloadAnim || bPomsonHeldSlide) && m_iLeverReloadSequence >= 0)
+			{
+				Vector vmWeaponBoneDelta;
+				Vector *pVmWeaponBoneDelta = NULL;
+				if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON
+					&& GetSampledBoneModelSpaceDelta("vm_weapon_bone", m_iLeverReloadSequence,
+						0.0f, m_flLeverReloadCycle, vmWeaponBoneDelta))
+				{
+					// Keep the authored slide on one local axis. The Pomson
+					// model's vm_weapon_bone axes do not match weapon forward.
+					float absX = fabsf(vmWeaponBoneDelta.x);
+					float absY = fabsf(vmWeaponBoneDelta.y);
+					float absZ = fabsf(vmWeaponBoneDelta.z);
+					if (absX >= absY && absX >= absZ)
+					{
+						vmWeaponBoneDelta.y = 0.0f;
+						vmWeaponBoneDelta.z = 0.0f;
+					}
+					else if (absY >= absZ)
+					{
+						vmWeaponBoneDelta.x = 0.0f;
+						vmWeaponBoneDelta.z = 0.0f;
+					}
+					else
+					{
+						vmWeaponBoneDelta.x = 0.0f;
+						vmWeaponBoneDelta.y = 0.0f;
+					}
+					pVmWeaponBoneDelta = &vmWeaponBoneDelta;
+				}
+				pRW->SetPumpReloadState(true, m_flLeverReloadCycle, pVmWeaponBoneDelta);
+			}
 			else
 				pRW->SetPumpReloadState(false, 0.0f);
 		}
@@ -3071,10 +3213,450 @@ void C_TFVRHand::Update()
 				bManglerOnIdleGrip = !pRightHand->m_bManglerUseReloadGrip;
 			}
 
+			// Pomson: right-hand detach and dual grip
+			bool bPomsonBusy = false;
+			bool bPomsonSnapTwoHandOnReattach = false;
+			if (pRightWpn && pRightWpn->GetWeaponID() == TF_WEAPON_DRG_POMSON)
+			{
+				// Detach when firing
+				if (pRightHand->m_bRightHandDetached
+					&& pRightHand->IsPomsonOnReloadGrip()
+					&& gpGlobals->curtime < pRightWpn->m_flNextPrimaryAttack)
+				{
+					bPomsonBusy = true;
+					pRightHand->m_bRightHandDetached = false;
+					pRightHand->m_bPomsonUseReloadGrip = false;
+					pRightHand->m_bPomsonRightGripLatched = false;
+					pRightHand->m_bPomsonRightLatchOffsetValid = false;
+					pRightHand->m_bPomsonRightGripLastWorldValid = false;
+					pRightHand->m_bPomsonRightUnlatchStartValid = false;
+					pRightHand->m_bPomsonRightGripWasPressed = false;
+					pRightHand->m_bPomsonSuppressPassiveGripPoint = false;
+					pRightHand->m_bPomsonSuppressReloadGripPoint = false;
+					pRightHand->m_bPomsonDetachLeftToWeaponBoneValid = false;
+					pRightHand->m_bPomsonDetachLeftToLeftHandBoneValid = false;
+				}
+
+				// Right-hand detach detection: only when left hand has active grip
+				if (!bPomsonBusy && m_bOffhandGripActive)
+				{
+					float rightGrip = 0.0f;
+					if (g_pOpenXRManager)
+						rightGrip = g_pOpenXRManager->GetAnalogValue("right_grip");
+					extern ConVar tfvr_pomson_pump_weapon_grip_threshold;
+					float detachThreshold = tfvr_pomson_pump_weapon_grip_threshold.GetFloat();
+
+					if (pRightHand->m_bRightHandDetached)
+					{
+						// Already detached: right grip now grabs Pomson idle/reload
+						// points.  The idle grip path below can reattach into the
+						// normal two-hand solver when the player squeezes it.
+					}
+					else
+					{
+						// Not detached: detach if right grip is released
+						if (rightGrip < detachThreshold * 0.7f)
+						{
+							pRightHand->CapturePomsonDetachLeftToWeaponBone();
+							pRightHand->m_bRightHandDetached = true;
+							pRightHand->m_bPomsonRightGripLatched = false;
+							pRightHand->m_bPomsonRightLatchOffsetValid = false;
+							pRightHand->m_bPomsonRightGripWasPressed = false;
+							pRightHand->m_bPomsonSuppressPassiveGripPoint = true;
+							pRightHand->m_bPomsonSuppressReloadGripPoint = false;
+							pRightHand->m_flTwoHandBlend = 1.0f;
+						}
+					}
+				}
+				else if (!bPomsonBusy && !m_bOffhandGripActive)
+				{
+					// Left hand not gripping - re-attach right hand
+					if (pRightHand->m_bRightHandDetached)
+					{
+						pRightHand->m_bRightHandDetached = false;
+						pRightHand->m_bPomsonUseReloadGrip = false;
+						pRightHand->m_bPomsonRightGripLatched = false;
+						pRightHand->m_bPomsonRightLatchOffsetValid = false;
+						pRightHand->m_bPomsonRightGripLastWorldValid = false;
+						pRightHand->m_bPomsonRightUnlatchStartValid = false;
+						pRightHand->m_bPomsonRightGripWasPressed = false;
+						pRightHand->m_bPomsonSuppressPassiveGripPoint = false;
+						pRightHand->m_bPomsonSuppressReloadGripPoint = false;
+						pRightHand->m_bPomsonDetachLeftToWeaponBoneValid = false;
+						pRightHand->m_bPomsonDetachLeftToLeftHandBoneValid = false;
+					}
+				}
+
+				// Pomson dual grip: active grip locks the chosen point, while
+				// passive hover can migrate to whichever point is currently closer.
+				if (pRightHand->m_bRightHandDetached
+					&& pRightHand->m_iReloadLoopSequence >= 0)
+				{
+					Vector rightWristPos = pRightHand->m_vecLastValidPosition;
+					Vector rightHandPos = rightWristPos;
+					COpenXRHandTracker *pRightTracker = pRightHand->GetHandTracker();
+					if (pRightTracker)
+					{
+						Vector fp; QAngle fa;
+						if (pRightTracker->GetHandJoint(false, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fp, fa))
+							rightHandPos = fp;
+					}
+
+					Vector posA, posB;
+					QAngle angA, angB;
+					bool bOldFlag = pRightHand->m_bPomsonUseReloadGrip;
+					extern ConVar tfvr_pomson_pump_weapon_grip_threshold;
+					float rightGrip = g_pOpenXRManager ? g_pOpenXRManager->GetAnalogValue("right_grip") : 0.0f;
+					bool bGripPressed = rightGrip >= tfvr_pomson_pump_weapon_grip_threshold.GetFloat();
+
+					pRightHand->m_bPomsonUseReloadGrip = false;
+					bool bGotIdle = pRightHand->GetPomsonDetachedRightHandTarget(posA, angA);
+
+					pRightHand->m_bPomsonUseReloadGrip = true;
+					bool bUseCurrentPomsonReloadTarget = pRightHand->m_iLeverReloadSequence >= 0
+						&& pRightHand->m_eReloadAnimState != VR_RELOAD_ANIM_NONE;
+					bool bGotReload = pRightHand->GetPomsonDetachedRightHandTarget(posB, angB, bUseCurrentPomsonReloadTarget);
+					float snapDist = tfvr_twohand_snap_distance.GetFloat();
+					float gripRange = tfvr_offhand_grip_range.GetFloat() * 0.393701f;
+					float distIdle = bGotIdle
+						? (rightHandPos - posA).Length()
+						: 1.0e30f;
+					float distReload = bGotReload
+						? (rightHandPos - posB).Length()
+						: 1.0e30f;
+					bool bSuppressIdlePassive = !bGripPressed
+						&& pRightHand->m_bPomsonSuppressPassiveGripPoint
+						&& !pRightHand->m_bPomsonSuppressReloadGripPoint;
+					bool bSuppressReloadPassive = !bGripPressed
+						&& pRightHand->m_bPomsonSuppressPassiveGripPoint
+						&& pRightHand->m_bPomsonSuppressReloadGripPoint;
+					bool bGotIdlePassive = bGotIdle && !bSuppressIdlePassive;
+					bool bGotReloadPassive = bGotReload && !bSuppressReloadPassive;
+					bool bReleasedActivePomsonGripThisFrame = pRightHand->m_bPomsonRightGripLatched
+						&& pRightHand->m_bPomsonRightGripWasPressed
+						&& !bGripPressed;
+
+					if (bReleasedActivePomsonGripThisFrame)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = bOldFlag;
+					}
+					else if (pRightHand->m_bPomsonRightUnlatchStartValid)
+					{
+						float otherDist = bOldFlag ? distIdle : distReload;
+						bool bGotOther = bGripPressed
+							? (bOldFlag ? bGotIdle : bGotReload)
+							: (bOldFlag ? bGotIdlePassive : bGotReloadPassive);
+						bool bCanSwitchToOther = bGotOther
+							&& otherDist <= (bGripPressed ? gripRange : snapDist);
+						pRightHand->m_bPomsonUseReloadGrip = bCanSwitchToOther ? !bOldFlag : bOldFlag;
+					}
+					else if (pRightHand->m_bPomsonRightGripLatched)
+					{
+						float currentDist = bOldFlag ? distReload : distIdle;
+						float otherDist = bOldFlag ? distIdle : distReload;
+						bool bGotCurrent = bOldFlag ? bGotReload : bGotIdle;
+						bool bGotOther = bGripPressed
+							? (bOldFlag ? bGotIdle : bGotReload)
+							: (bOldFlag ? bGotIdlePassive : bGotReloadPassive);
+						bool bPassiveSwitchToOther = !bGripPressed
+							&& bGotOther
+							&& otherDist <= snapDist
+							&& (!bGotCurrent || currentDist > snapDist || otherDist < currentDist);
+
+						// Active grip remains locked. Passive grip can migrate
+						// when the real hand is closer to the other point in range.
+						if (bPassiveSwitchToOther)
+						{
+							pRightHand->m_bPomsonUseReloadGrip = !bOldFlag;
+						}
+						else if (bGotCurrent)
+						{
+							pRightHand->m_bPomsonUseReloadGrip = bOldFlag;
+						}
+						else if (bGotReload)
+						{
+							pRightHand->m_bPomsonUseReloadGrip = true;
+							pRightHand->m_bPomsonRightGripLatched = false;
+							pRightHand->m_bPomsonRightLatchOffsetValid = false;
+						}
+						else if (bGotIdle)
+						{
+							pRightHand->m_bPomsonUseReloadGrip = false;
+							pRightHand->m_bPomsonRightGripLatched = false;
+							pRightHand->m_bPomsonRightLatchOffsetValid = false;
+						}
+						else
+						{
+							pRightHand->m_bPomsonUseReloadGrip = bOldFlag;
+							pRightHand->m_bPomsonRightGripLatched = false;
+							pRightHand->m_bPomsonRightLatchOffsetValid = false;
+						}
+					}
+					else if (bGripPressed && bGotIdle && bGotReload)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = (distReload < distIdle);
+					}
+					else if (bGripPressed && bGotIdle)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = false;
+					}
+					else if (bGripPressed && bGotReload)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = true;
+					}
+					else if (!bGripPressed && bGotIdle && bGotReload)
+					{
+						if (bGotIdlePassive && bGotReloadPassive)
+							pRightHand->m_bPomsonUseReloadGrip = (distReload < distIdle);
+						else if (bGotReloadPassive)
+							pRightHand->m_bPomsonUseReloadGrip = true;
+						else if (bGotIdlePassive)
+							pRightHand->m_bPomsonUseReloadGrip = false;
+						else
+							pRightHand->m_bPomsonUseReloadGrip = bOldFlag;
+					}
+					else if (!bGripPressed && bGotIdlePassive)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = false;
+					}
+					else if (!bGripPressed && bGotReloadPassive)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = true;
+					}
+					else if (bGotIdle && bGotReload)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = (distReload < distIdle);
+					}
+					else if (bGotReload)
+					{
+						pRightHand->m_bPomsonUseReloadGrip = true;
+					}
+					else
+					{
+						pRightHand->m_bPomsonUseReloadGrip = bOldFlag;
+					}
+
+					if (bOldFlag != pRightHand->m_bPomsonUseReloadGrip)
+					{
+						pRightHand->m_flTwoHandBlend = MAX( pRightHand->m_flTwoHandBlend * 0.3f, 0.0f );
+						pRightHand->m_bPomsonRightGripLatched = false;
+						pRightHand->m_bPomsonRightLatchOffsetValid = false;
+						pRightHand->m_bPomsonRightGripLastWorldValid = false;
+						pRightHand->m_bPomsonRightUnlatchStartValid = false;
+					}
+
+					if (tfvr_pomson_grip_debug.GetBool())
+					{
+						static float s_flLastPomsonTargetSelectDebug = 0.0f;
+						if (gpGlobals->curtime - s_flLastPomsonTargetSelectDebug > 0.25f)
+						{
+							DevMsg("PomsonGrip SELECT: selected=%s old=%s latched=%d pressed=%d gotIdle=%d gotReload=%d distIdle=%.3f distReload=%.3f blend=%.3f\n",
+								pRightHand->m_bPomsonUseReloadGrip ? "reload" : "idle",
+								bOldFlag ? "reload" : "idle",
+								pRightHand->m_bPomsonRightGripLatched ? 1 : 0,
+								bGripPressed ? 1 : 0,
+								bGotIdle ? 1 : 0,
+								bGotReload ? 1 : 0,
+								distIdle, distReload,
+								pRightHand->m_flTwoHandBlend);
+							s_flLastPomsonTargetSelectDebug = gpGlobals->curtime;
+						}
+					}
+				}
+				else if (!pRightHand->m_bRightHandDetached)
+				{
+					pRightHand->m_bPomsonUseReloadGrip = false;
+					pRightHand->m_bPomsonRightGripLatched = false;
+					pRightHand->m_bPomsonRightLatchOffsetValid = false;
+					pRightHand->m_bPomsonRightGripLastWorldValid = false;
+					pRightHand->m_bPomsonRightUnlatchStartValid = false;
+					pRightHand->m_bPomsonRightGripWasPressed = false;
+					pRightHand->m_bPomsonSuppressPassiveGripPoint = false;
+					pRightHand->m_bPomsonSuppressReloadGripPoint = false;
+				}
+
+				if (pRightHand->m_bRightHandDetached)
+				{
+					Vector targetPos;
+					QAngle targetAng;
+					float targetBlend = 0.0f;
+					bool bRightGripInSnapZone = false;
+					bool bRightGripPressedInRange = false;
+					bool bCurrentPomsonGripPressed = false;
+					float rightGrip = g_pOpenXRManager ? g_pOpenXRManager->GetAnalogValue("right_grip") : 0.0f;
+					extern ConVar tfvr_pomson_pump_weapon_grip_threshold;
+
+					bool bUseAnimatedPomsonTarget = pRightHand->m_bPomsonUseReloadGrip
+						&& pRightHand->m_iLeverReloadSequence >= 0
+						&& pRightHand->m_eReloadAnimState != VR_RELOAD_ANIM_NONE;
+					if (pRightHand->GetPomsonDetachedRightHandTarget(targetPos, targetAng, bUseAnimatedPomsonTarget))
+					{
+						Vector rightWristPos = pRightHand->m_vecLastValidPosition;
+						Vector rightHandPos = rightWristPos;
+						COpenXRHandTracker *pRightTracker = pRightHand->GetHandTracker();
+						if (pRightTracker)
+						{
+							Vector fp; QAngle fa;
+							if (pRightTracker->GetHandJoint(false, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fp, fa))
+								rightHandPos = fp;
+						}
+
+						float distance = (rightHandPos - targetPos).Length();
+						float snapDist = tfvr_twohand_snap_distance.GetFloat();
+						float blendDist = tfvr_twohand_blend_distance.GetFloat();
+						float gripRange = tfvr_offhand_grip_range.GetFloat() * 0.393701f;
+
+						bool bInSnapZone = distance <= snapDist;
+						bRightGripInSnapZone = bInSnapZone;
+						bool bGripPressed = rightGrip >= tfvr_pomson_pump_weapon_grip_threshold.GetFloat();
+						bCurrentPomsonGripPressed = bGripPressed;
+						bool bGripPressedInRange = bGripPressed && distance <= gripRange;
+						bRightGripPressedInRange = bGripPressedInRange;
+						bool bPassiveTargetSuppressed = !bGripPressed
+							&& pRightHand->m_bPomsonSuppressPassiveGripPoint
+							&& (pRightHand->m_bPomsonSuppressReloadGripPoint == pRightHand->m_bPomsonUseReloadGrip);
+						bool bReleasedActivePomsonGrip = pRightHand->m_bPomsonRightGripLatched
+							&& pRightHand->m_bPomsonRightGripWasPressed
+							&& !bGripPressed;
+						if (bReleasedActivePomsonGrip)
+						{
+							SetIdentityMatrix(pRightHand->m_matPomsonRightUnlatchStart);
+							pRightHand->m_bPomsonRightUnlatchStartValid = true;
+							pRightHand->m_bPomsonRightUnlatchUseReloadGrip = pRightHand->m_bPomsonUseReloadGrip;
+							pRightHand->m_bPomsonRightGripLatched = false;
+							pRightHand->m_bPomsonRightLatchOffsetValid = false;
+							pRightHand->m_bPomsonSuppressPassiveGripPoint = true;
+							pRightHand->m_bPomsonSuppressReloadGripPoint = pRightHand->m_bPomsonUseReloadGrip;
+							bPassiveTargetSuppressed = true;
+							targetBlend = 0.0f;
+						}
+						if (!pRightHand->m_bPomsonRightGripLatched
+							&& ((!bPassiveTargetSuppressed && bInSnapZone) || bGripPressedInRange))
+						{
+							pRightHand->m_bPomsonRightGripLatched = true;
+							pRightHand->m_bPomsonRightLatchOffsetValid = false;
+							pRightHand->m_bPomsonRightUnlatchStartValid = false;
+							if (bGripPressed
+								|| pRightHand->m_bPomsonSuppressReloadGripPoint != pRightHand->m_bPomsonUseReloadGrip)
+							{
+								pRightHand->m_bPomsonSuppressPassiveGripPoint = false;
+							}
+						}
+
+						// Once snapped, keep targeting the grip point so small
+						// controller jitter does not pull the rendered hand away.
+						if (pRightHand->m_bPomsonRightGripLatched)
+						{
+							targetBlend = 1.0f;
+							float releaseDist = MAX(blendDist, gripRange) * tfvr_offhand_grip_release_mult.GetFloat();
+							bool bPomsonGripCanRelease = pRightHand->m_flTwoHandBlend >= kPomsonGripLockBlend
+								|| distance > releaseDist * 1.5f;
+							if (distance > releaseDist && !bGripPressed && bPomsonGripCanRelease)
+							{
+								SetIdentityMatrix(pRightHand->m_matPomsonRightUnlatchStart);
+								pRightHand->m_bPomsonRightUnlatchStartValid = true;
+								pRightHand->m_bPomsonRightUnlatchUseReloadGrip = pRightHand->m_bPomsonUseReloadGrip;
+								pRightHand->m_bPomsonRightGripLatched = false;
+								pRightHand->m_bPomsonRightLatchOffsetValid = false;
+								targetBlend = 0.0f;
+							}
+							else if (tfvr_pomson_grip_debug.GetBool()
+								&& distance > releaseDist && !bGripPressed && !bPomsonGripCanRelease)
+							{
+								static float s_flLastPomsonReleaseSuppressedDebug = 0.0f;
+								if (gpGlobals->curtime - s_flLastPomsonReleaseSuppressedDebug > 0.25f)
+								{
+									DevMsg("PomsonGrip RELEASE suppressed until eased: grip=%s blend=%.3f distance=%.3f release=%.3f\n",
+										pRightHand->m_bPomsonUseReloadGrip ? "reload" : "idle",
+										pRightHand->m_flTwoHandBlend, distance, releaseDist);
+									s_flLastPomsonReleaseSuppressedDebug = gpGlobals->curtime;
+								}
+							}
+						}
+						else if (distance <= snapDist && !bPassiveTargetSuppressed)
+						{
+							targetBlend = 1.0f;
+						}
+					}
+
+					float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+					if (pRightHand->m_bPomsonRightGripLatched && targetBlend >= 1.0f)
+					{
+						// Pomson latch must reach the authoritative lock in finite
+						// time. Exponential approach can visually stall short of
+						// the target, leaving the hand in a start-dependent pose.
+						float step = MAX(blendSpeed, 1.0f) * gpGlobals->frametime;
+						pRightHand->m_flTwoHandBlend = MIN(1.0f, pRightHand->m_flTwoHandBlend + step);
+					}
+					else
+					{
+						pRightHand->m_flTwoHandBlend = EasedApproach(targetBlend, pRightHand->m_flTwoHandBlend,
+							blendSpeed, gpGlobals->frametime, easePower);
+					}
+					if (targetBlend >= 1.0f && pRightHand->m_flTwoHandBlend >= kPomsonGripLockBlend)
+						pRightHand->m_flTwoHandBlend = 1.0f;
+					else if (targetBlend <= 0.0f && pRightHand->m_flTwoHandBlend < 0.001f)
+					{
+						pRightHand->m_flTwoHandBlend = 0.0f;
+						pRightHand->m_bPomsonRightUnlatchStartValid = false;
+						pRightHand->m_bPomsonRightGripLastWorldValid = false;
+						pRightHand->m_bPomsonSuppressPassiveGripPoint = false;
+					}
+					pRightHand->m_bPomsonRightGripWasPressed = bCurrentPomsonGripPressed
+						&& pRightHand->m_bPomsonRightGripLatched;
+
+					if (!pRightHand->m_bPomsonUseReloadGrip
+						&& (pRightHand->m_bPomsonRightGripLatched || bRightGripInSnapZone || bRightGripPressedInRange)
+						&& rightGrip >= tfvr_pomson_pump_weapon_grip_threshold.GetFloat())
+					{
+						bPomsonSnapTwoHandOnReattach = m_bOffhandGripActive;
+						pRightHand->m_bRightHandDetached = false;
+						pRightHand->m_bPomsonUseReloadGrip = false;
+						pRightHand->m_bPomsonRightGripLatched = false;
+						pRightHand->m_bPomsonRightLatchOffsetValid = false;
+						pRightHand->m_bPomsonRightGripLastWorldValid = false;
+						pRightHand->m_bPomsonRightUnlatchStartValid = false;
+						pRightHand->m_bPomsonRightGripWasPressed = false;
+						pRightHand->m_bPomsonSuppressPassiveGripPoint = false;
+						pRightHand->m_bPomsonSuppressReloadGripPoint = false;
+						pRightHand->m_bPomsonDetachLeftToWeaponBoneValid = false;
+						pRightHand->m_bPomsonDetachLeftToLeftHandBoneValid = false;
+						pRightHand->m_flTwoHandBlend = 0.0f;
+						pRightHand->m_bPlayingReloadAnim = false;
+					}
+				}
+				else
+				{
+					pRightHand->m_bPomsonRightGripLatched = false;
+					pRightHand->m_bPomsonRightLatchOffsetValid = false;
+					pRightHand->m_flTwoHandBlend = 0.0f;
+				}
+			}
+			else
+			{
+				// Not a Pomson - clear detach state
+				if (pRightHand->m_bRightHandDetached)
+				{
+					pRightHand->m_bRightHandDetached = false;
+					pRightHand->m_bPomsonUseReloadGrip = false;
+					pRightHand->m_bPomsonRightGripLatched = false;
+					pRightHand->m_bPomsonRightLatchOffsetValid = false;
+					pRightHand->m_bPomsonRightGripLastWorldValid = false;
+					pRightHand->m_bPomsonRightUnlatchStartValid = false;
+					pRightHand->m_bPomsonRightGripWasPressed = false;
+					pRightHand->m_bPomsonSuppressPassiveGripPoint = false;
+					pRightHand->m_bPomsonSuppressReloadGripPoint = false;
+					pRightHand->m_bPomsonDetachLeftToWeaponBoneValid = false;
+					pRightHand->m_bPomsonDetachLeftToLeftHandBoneValid = false;
+					pRightHand->m_flTwoHandBlend = 0.0f;
+				}
+			}
+
 			Vector gripTargetPos;
 			QAngle gripTargetAngles;
 
-			if (!bStickyBusy && !bBisonBusy && !bManglerBusy && pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
+			if (!bStickyBusy && !bBisonBusy && !bManglerBusy && !bPomsonBusy && pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 			{
 				// Get our current hand position - use OpenXR middle finger base for aiming target
 				// This provides better pivot point alignment than the wrist
@@ -3116,6 +3698,30 @@ void C_TFVRHand::Update()
 				bool bGripJustActivated = !m_bOffhandGripActive && bGripButtonPressed && bWithinGripRange;
 				m_bOffhandGripActive = bGripButtonPressed && bWithinGripRange;
 
+				// If Pomson reattached to the right hand while the left grip was
+				// already held, enter the normal active two-hand solver at full
+				// blend immediately instead of easing or waiting on range.
+				if (bPomsonSnapTwoHandOnReattach && bGripButtonPressed)
+				{
+					m_bOffhandGripActive = true;
+					bGripJustActivated = true;
+					m_bWasOffhandGripActive = true;
+					m_flTwoHandBlend = 1.0f;
+					m_flGripRotationBlend = 1.0f;
+				}
+
+				// Pomson right-hand detach: when the right hand is detached, the
+				// grip target comes from the right hand's skeleton which is now at
+				// the controller, NOT at the weapon.  The range check is meaningless
+				// in this state — keep the grip active as long as the left grip
+				// button is held so the detach state doesn't immediately collapse.
+				if (pRightHand && pRightHand->IsRightHandDetached() && bGripButtonPressed)
+				{
+					m_bOffhandGripActive = true;
+					if (!bGripJustActivated && !m_bWasOffhandGripActive)
+						bGripJustActivated = true;
+				}
+
 				// Bison idle grip is passive-only: no squeeze required,
 				// no rotation influence - hand just follows by proximity.
 				// Mangler idle grip supports active grip for a stable hold.
@@ -3149,6 +3755,21 @@ void C_TFVRHand::Update()
 				// If offhand grip is active, calculate the weapon rotation offset
 				if (m_bOffhandGripActive)
 				{
+					// Pomson right-hand detach: the weapon follows the left
+					// hand.  GetOffHandGripTarget now returns a corrected
+					// position, so keep blending m_flTwoHandBlend toward 1.0
+					// for left-hand finger posing.  Suppress grip ROTATION
+					// since the weapon's aim is inherent to the left hand.
+					bool bRightDetached = pRightHand && pRightHand->IsRightHandDetached();
+					if (bRightDetached)
+					{
+						float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+						float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+						m_flTwoHandBlend = EasedApproach(1.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+						m_flGripRotationBlend = 0.0f;
+					}
+					else
+					{
 					// Get OpenXR positions: right wrist, left middle finger base
 					Vector rightWristOpenXR = pRightHand->GetAbsOrigin(); // fallback
 					Vector leftFingerBaseOpenXR = leftHandPos; // already has left middle finger base from above
@@ -3269,6 +3890,7 @@ void C_TFVRHand::Update()
 						debugoverlay->AddBoxOverlay(rightWristOpenXR, Vector(-1,-1,-1), Vector(1,1,1), 
 							vec3_angle, 255, 255, 255, 128, 0.1f);
 					}
+					} // else !bRightDetached
 				}
 				else
 				{
@@ -3368,7 +3990,11 @@ void C_TFVRHand::Update()
 	
 	// Right-hand passive grip for left-hand medigun
 	// When left hand holds medigun, right hand can do passive grip (position only, no weapon rotation)
-	if (IsRightHand() && tfvr_twohand_enabled.GetBool())
+	bool bSkipRightHandMedigunPassiveGrip = IsRightHand()
+		&& m_bRightHandDetached
+		&& m_hHeldWeapon.Get()
+		&& m_hHeldWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON;
+	if (IsRightHand() && tfvr_twohand_enabled.GetBool() && !bSkipRightHandMedigunPassiveGrip)
 	{
 		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
 		
@@ -4183,7 +4809,129 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		int numBones = pStudioHdr->numbones();
 		int currentSeq = GetSequence();
 		float currentCycle = GetCycle();
-		
+
+		if (m_bRightHandDetached && IsRightHand()
+			&& m_flTwoHandBlend >= kPomsonGripLockBlend
+			&& m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+		{
+			Vector gripTargetPos;
+			QAngle gripTargetAngles;
+			bool bUsePumpAnimTarget = m_bPomsonUseReloadGrip
+				&& m_iLeverReloadSequence >= 0
+				&& m_eReloadAnimState != VR_RELOAD_ANIM_NONE;
+
+			if (GetPomsonDetachedRightHandTarget(gripTargetPos, gripTargetAngles, bUsePumpAnimTarget))
+			{
+				int seqToSample = m_iIdleSequence;
+				float cycleToSample = 0.0f;
+				if (m_bPomsonUseReloadGrip && m_iReloadLoopSequence >= 0)
+				{
+					seqToSample = m_iReloadLoopSequence;
+					if (bUsePumpAnimTarget)
+					{
+						seqToSample = m_iLeverReloadSequence;
+						cycleToSample = m_flLeverReloadCycle;
+					}
+				}
+
+				int safeBoneCount = MIN(numBones, MAXSTUDIOBONES);
+				if (seqToSample >= 0 && m_iHandBone < safeBoneCount)
+				{
+					float poseParameters[MAXSTUDIOPOSEPARAM];
+					memset(poseParameters, 0, sizeof(poseParameters));
+
+					IBoneSetup gripBoneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
+					Vector gripPosAnim[MAXSTUDIOBONES];
+					Quaternion gripQAnim[MAXSTUDIOBONES];
+					for (int i = 0; i < MAXSTUDIOBONES; i++)
+					{
+						gripPosAnim[i].Init();
+						gripQAnim[i].Init(0, 0, 0, 1);
+					}
+
+					gripBoneSetup.InitPose(gripPosAnim, gripQAnim);
+					gripBoneSetup.AccumulatePose(gripPosAnim, gripQAnim, seqToSample, cycleToSample,
+						1.0f, gpGlobals->curtime, NULL);
+
+					matrix3x4_t gripModelBones[MAXSTUDIOBONES];
+					for (int i = 0; i < safeBoneCount; i++)
+					{
+						matrix3x4_t boneToParent;
+						QuaternionMatrix(gripQAnim[i], gripPosAnim[i], boneToParent);
+
+						const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+						if (!pBone)
+						{
+							SetIdentityMatrix(gripModelBones[i]);
+							continue;
+						}
+
+						if (pBone->parent == -1)
+							MatrixCopy(boneToParent, gripModelBones[i]);
+						else if (pBone->parent >= 0 && pBone->parent < i)
+							ConcatTransforms(gripModelBones[pBone->parent], boneToParent, gripModelBones[i]);
+						else
+							SetIdentityMatrix(gripModelBones[i]);
+					}
+
+					matrix3x4_t gripTargetWorld;
+					AngleMatrix(gripTargetAngles, gripTargetPos, gripTargetWorld);
+
+					matrix3x4_t gripAnchorDelta;
+					matrix3x4_t invGripHand;
+					MatrixInvert(gripModelBones[m_iHandBone], invGripHand);
+					ConcatTransforms(gripTargetWorld, invGripHand, gripAnchorDelta);
+
+					for (int i = 0; i < safeBoneCount && i < nMaxBones; i++)
+					{
+						ConcatTransforms(gripAnchorDelta, gripModelBones[i], pBoneToWorldOut[i]);
+					}
+
+					// Enforce the invariant used by the Pomson grip debug: the
+					// solved hand bone center must match the computed target.
+					Vector solvedHandPos;
+					MatrixGetColumn(pBoneToWorldOut[m_iHandBone], 3, solvedHandPos);
+					Vector residual = gripTargetPos - solvedHandPos;
+					if (residual.LengthSqr() > 0.000001f)
+					{
+						for (int i = 0; i < safeBoneCount && i < nMaxBones; i++)
+						{
+							Vector bonePos;
+							MatrixGetColumn(pBoneToWorldOut[i], 3, bonePos);
+							bonePos += residual;
+							MatrixSetColumn(bonePos, 3, pBoneToWorldOut[i]);
+						}
+					}
+
+					PositionWeaponFromBones(pBoneToWorldOut, nMaxBones);
+
+					if (tfvr_twohand_debug.GetBool() || tfvr_pomson_grip_debug.GetBool())
+					{
+						MatrixGetColumn(pBoneToWorldOut[m_iHandBone], 3, solvedHandPos);
+						debugoverlay->AddBoxOverlay(gripTargetPos, Vector(-1.5f, -1.5f, -1.5f),
+							Vector(1.5f, 1.5f, 1.5f), gripTargetAngles, 0, 255, 0, 180, 0.1f);
+						debugoverlay->AddBoxOverlay(solvedHandPos, Vector(-1.25f, -1.25f, -1.25f),
+							Vector(1.25f, 1.25f, 1.25f), vec3_angle, 255, 0, 0, 180, 0.1f);
+						debugoverlay->AddLineOverlay(gripTargetPos, solvedHandPos, 255, 255, 255, true, 0.1f);
+
+						static float s_flLastPomsonSnapDebug = 0.0f;
+						if (tfvr_pomson_grip_debug.GetBool() && gpGlobals->curtime - s_flLastPomsonSnapDebug > 0.25f)
+						{
+							DevMsg("PomsonGrip SNAP: grip=%s target=(%.2f %.2f %.2f) wrist=(%.2f %.2f %.2f) error=%.3f pump=%d seq=%d cycle=%.3f\n",
+								m_bPomsonUseReloadGrip ? "reload" : "idle",
+								gripTargetPos.x, gripTargetPos.y, gripTargetPos.z,
+								solvedHandPos.x, solvedHandPos.y, solvedHandPos.z,
+								(solvedHandPos - gripTargetPos).Length(),
+								bUsePumpAnimTarget ? 1 : 0, seqToSample, cycleToSample);
+							s_flLastPomsonSnapDebug = gpGlobals->curtime;
+						}
+					}
+
+					return true;
+				}
+			}
+		}
+
 		// If fire or charge animation is playing, use the actual current sequence
 		// so the hand bone movement produces visible position offset on the weapon.
 		// Draw animations with WRIST or FULL_ARM scope also drive the skeleton.
@@ -4665,7 +5413,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				}
 			}
 		}
-		
+
 		// Calculate anchor delta from hand bone to controller
 		// anchorDelta = controller * inverse(handBone)
 		// When backstab or bread bite animation is active, the sampled
@@ -4782,10 +5530,411 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					// follows the player's real fingers.
 					ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 				}
+				else if (m_bRightHandDetached
+					&& (m_flTwoHandBlend < 0.01f
+						|| (!m_bPomsonRightGripLatched && m_bPomsonRightUnlatchStartValid)))
+				{
+					// Pomson: right hand is free, or is blending out from a
+					// released grip point, so the live end pose is the controller hand.
+					ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+				}
+				else if (m_bRightHandDetached && m_bPomsonUseReloadGrip
+					&& (m_flTwoHandBlend >= 0.01f || m_bPomsonRightGripLatched)
+					&& !m_bPlayingReloadAnim && m_iReloadLoopSequence >= 0)
+				{
+					// Pomson detached reload grip idle: use reload loop frame 0
+					// so the right hand grabs the pump handle before motion starts.
+					ApplyWeaponPose(pBoneToWorldOut, nMaxBones, NULL, m_iReloadLoopSequence, 0.0f);
+				}
 				else
 				{
 					// Normal idle: overlay the weapon grip pose onto fingers + weapon_bone
 					ApplyWeaponPose(pBoneToWorldOut, nMaxBones);
+				}
+			}
+
+			if (m_bRightHandDetached && IsRightHand()
+				&& m_flTwoHandBlend > 0.001f
+				&& m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+			{
+				Vector gripTargetPos;
+				QAngle gripTargetAngles;
+				bool bUsePumpAnimTarget = m_bPomsonUseReloadGrip
+					&& m_iLeverReloadSequence >= 0
+					&& m_eReloadAnimState != VR_RELOAD_ANIM_NONE;
+				if (GetPomsonDetachedRightHandTarget(gripTargetPos, gripTargetAngles, bUsePumpAnimTarget))
+				{
+					matrix3x4_t gripTargetWorld;
+					AngleMatrix(gripTargetAngles, gripTargetPos, gripTargetWorld);
+
+					if (m_bPomsonRightGripLatched && !m_bPomsonRightLatchOffsetValid)
+					{
+						// Store the easing start relative to the moving grip target, not
+						// world space, so player/weapon motion does not drag the hand behind.
+						matrix3x4_t invGripTargetWorld;
+						MatrixInvert(gripTargetWorld, invGripTargetWorld);
+						ConcatTransforms(invGripTargetWorld, pBoneToWorldOut[m_iHandBone], m_matPomsonRightLatchOffset);
+						m_bPomsonRightLatchOffsetValid = true;
+						m_bPomsonRightUnlatchStartValid = false;
+					}
+
+					matrix3x4_t latchStartWorld;
+					bool bHaveLatchStartWorld = m_bPomsonRightGripLatched && m_bPomsonRightLatchOffsetValid;
+					if (bHaveLatchStartWorld)
+					{
+						ConcatTransforms(gripTargetWorld, m_matPomsonRightLatchOffset, latchStartWorld);
+					}
+					bool bBlendOutFromUnlatch = !m_bPomsonRightGripLatched && m_bPomsonRightUnlatchStartValid;
+					matrix3x4_t unlatchStartWorld;
+					if (bBlendOutFromUnlatch)
+					{
+						matrix3x4_t unlatchTargetWorld;
+						if (m_bPomsonRightUnlatchUseReloadGrip == m_bPomsonUseReloadGrip)
+						{
+							MatrixCopy(gripTargetWorld, unlatchTargetWorld);
+						}
+						else
+						{
+							Vector unlatchTargetPos;
+							QAngle unlatchTargetAngles;
+							bool bSavedUseReloadGrip = m_bPomsonUseReloadGrip;
+							m_bPomsonUseReloadGrip = m_bPomsonRightUnlatchUseReloadGrip;
+							bool bUseUnlatchPumpAnimTarget = m_bPomsonUseReloadGrip
+								&& m_iLeverReloadSequence >= 0
+								&& m_eReloadAnimState != VR_RELOAD_ANIM_NONE;
+							bool bGotUnlatchTarget = GetPomsonDetachedRightHandTarget(
+								unlatchTargetPos, unlatchTargetAngles, bUseUnlatchPumpAnimTarget);
+							m_bPomsonUseReloadGrip = bSavedUseReloadGrip;
+
+							if (bGotUnlatchTarget)
+								AngleMatrix(unlatchTargetAngles, unlatchTargetPos, unlatchTargetWorld);
+							else
+								MatrixCopy(gripTargetWorld, unlatchTargetWorld);
+						}
+						MatrixCopy(unlatchTargetWorld, unlatchStartWorld);
+					}
+
+					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+					float easedBlend = ApplyEaseOutToBlend(m_flTwoHandBlend, easePower, m_bPomsonRightGripLatched);
+					bool bPomsonLatchLocked = m_bPomsonRightGripLatched && m_flTwoHandBlend >= 1.0f;
+					if (bPomsonLatchLocked)
+						easedBlend = 1.0f;
+
+					Vector livePos;
+					QAngle liveAngles;
+					if (bHaveLatchStartWorld)
+						MatrixAngles(latchStartWorld, liveAngles, livePos);
+					else
+						MatrixAngles(pBoneToWorldOut[m_iHandBone], liveAngles, livePos);
+
+					Quaternion liveQuat;
+					AngleQuaternion(liveAngles, liveQuat);
+
+					Quaternion gripQuat, blendTargetQuat, blendedQuat;
+					AngleQuaternion(gripTargetAngles, gripQuat);
+					Vector blendTargetPos = gripTargetPos;
+					blendTargetQuat = gripQuat;
+					if (bBlendOutFromUnlatch)
+					{
+						MatrixAngles(unlatchStartWorld, blendTargetQuat, blendTargetPos);
+					}
+					Vector blendedPos;
+					Vector desiredHandPos;
+					Quaternion desiredHandQuat;
+					if (easedBlend >= 1.0f)
+					{
+						desiredHandPos = blendTargetPos;
+						desiredHandQuat = blendTargetQuat;
+					}
+					else
+					{
+						VectorLerp(livePos, blendTargetPos, easedBlend, desiredHandPos);
+						SafeQuaternionSlerp(liveQuat, blendTargetQuat, easedBlend, desiredHandQuat);
+					}
+					matrix3x4_t desiredHandWorld;
+					QuaternionMatrix(desiredHandQuat, desiredHandPos, desiredHandWorld);
+
+					int seqToSample = m_iIdleSequence;
+					float cycleToSample = 0.0f;
+					bool bSampleReloadGrip = bBlendOutFromUnlatch
+						? m_bPomsonRightUnlatchUseReloadGrip
+						: m_bPomsonUseReloadGrip;
+					if (bSampleReloadGrip && m_iReloadLoopSequence >= 0)
+					{
+						seqToSample = m_iReloadLoopSequence;
+						bool bSamplePumpAnimTarget = bBlendOutFromUnlatch
+							? (m_bPomsonRightUnlatchUseReloadGrip
+								&& m_iLeverReloadSequence >= 0
+								&& m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+							: bUsePumpAnimTarget;
+						if (bSamplePumpAnimTarget)
+						{
+							seqToSample = m_iLeverReloadSequence;
+							cycleToSample = m_flLeverReloadCycle;
+						}
+					}
+
+					matrix3x4_t debugHardSnapHand;
+					bool bDebugHaveHardSnapHand = false;
+					bool bAppliedGripPose = false;
+					if (seqToSample >= 0)
+					{
+						float poseParameters[MAXSTUDIOPOSEPARAM];
+						memset(poseParameters, 0, sizeof(poseParameters));
+
+						IBoneSetup gripBoneSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters);
+						Vector gripPosAnim[MAXSTUDIOBONES];
+						Quaternion gripQAnim[MAXSTUDIOBONES];
+						for (int i = 0; i < MAXSTUDIOBONES; i++)
+						{
+							gripPosAnim[i].Init();
+							gripQAnim[i].Init(0, 0, 0, 1);
+						}
+
+						gripBoneSetup.InitPose(gripPosAnim, gripQAnim);
+						gripBoneSetup.AccumulatePose(gripPosAnim, gripQAnim, seqToSample, cycleToSample,
+							1.0f, gpGlobals->curtime, NULL);
+
+						matrix3x4_t gripModelBones[MAXSTUDIOBONES];
+						for (int i = 0; i < numBones && i < MAXSTUDIOBONES; i++)
+						{
+							matrix3x4_t boneToParent;
+							QuaternionMatrix(gripQAnim[i], gripPosAnim[i], boneToParent);
+
+							const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+							if (!pBone)
+							{
+								SetIdentityMatrix(gripModelBones[i]);
+								continue;
+							}
+
+							if (pBone->parent == -1)
+								MatrixCopy(boneToParent, gripModelBones[i]);
+							else if (pBone->parent >= 0 && pBone->parent < i)
+								ConcatTransforms(gripModelBones[pBone->parent], boneToParent, gripModelBones[i]);
+							else
+								SetIdentityMatrix(gripModelBones[i]);
+						}
+
+						matrix3x4_t invGripHand;
+						MatrixInvert(gripModelBones[m_iHandBone], invGripHand);
+
+						matrix3x4_t gripAnchorDelta;
+						ConcatTransforms(gripTargetWorld, invGripHand, gripAnchorDelta);
+						ConcatTransforms(gripAnchorDelta, gripModelBones[m_iHandBone], debugHardSnapHand);
+						bDebugHaveHardSnapHand = true;
+						matrix3x4_t blendTargetAnchorDelta;
+						if (bBlendOutFromUnlatch)
+							ConcatTransforms(unlatchStartWorld, invGripHand, blendTargetAnchorDelta);
+						else
+							MatrixCopy(gripAnchorDelta, blendTargetAnchorDelta);
+						matrix3x4_t latchStartAnchorDelta;
+						bool bBlendFromLatchStart = bHaveLatchStartWorld
+							&& easedBlend < 1.0f;
+						if (bBlendFromLatchStart)
+						{
+							ConcatTransforms(latchStartWorld, invGripHand, latchStartAnchorDelta);
+						}
+
+						matrix3x4_t blendedAnchorDelta;
+						if (easedBlend >= 1.0f)
+						{
+							MatrixCopy(blendTargetAnchorDelta, blendedAnchorDelta);
+						}
+						else
+						{
+							matrix3x4_t startAnchorDelta;
+							if (bBlendFromLatchStart)
+							{
+								MatrixCopy(latchStartAnchorDelta, startAnchorDelta);
+							}
+							else
+							{
+								// Use the current wrist only to derive a single rigid
+								// start anchor. The target pose itself remains the
+								// authored grip skeleton, avoiding per-bone drift.
+								ConcatTransforms(pBoneToWorldOut[m_iHandBone], invGripHand, startAnchorDelta);
+							}
+
+							Vector startAnchorPos, gripAnchorPos, blendedAnchorPos;
+							Quaternion startAnchorQuat, gripAnchorQuat, blendedAnchorQuat;
+							MatrixAngles(startAnchorDelta, startAnchorQuat, startAnchorPos);
+							MatrixAngles(blendTargetAnchorDelta, gripAnchorQuat, gripAnchorPos);
+							VectorLerp(startAnchorPos, gripAnchorPos, easedBlend, blendedAnchorPos);
+							SafeQuaternionSlerp(startAnchorQuat, gripAnchorQuat, easedBlend, blendedAnchorQuat);
+							QuaternionMatrix(blendedAnchorQuat, blendedAnchorPos, blendedAnchorDelta);
+						}
+
+						for (int i = 0; i < numBones && i < nMaxBones; i++)
+						{
+							const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+							if (!pBone)
+								continue;
+
+							ConcatTransforms(blendedAnchorDelta, gripModelBones[i], pBoneToWorldOut[i]);
+						}
+
+						bAppliedGripPose = true;
+					}
+
+					if (!bAppliedGripPose)
+					{
+						if (bPomsonLatchLocked)
+						{
+							blendedPos = blendTargetPos;
+							blendedQuat = blendTargetQuat;
+						}
+						else
+						{
+							VectorLerp(livePos, blendTargetPos, easedBlend, blendedPos);
+							QuaternionSlerp(liveQuat, blendTargetQuat, easedBlend, blendedQuat);
+						}
+
+						Vector posOffset = blendedPos - livePos;
+
+						Quaternion invLiveQuat;
+						QuaternionInvert(liveQuat, invLiveQuat);
+						Quaternion rotDelta;
+						QuaternionMult(blendedQuat, invLiveQuat, rotDelta);
+
+						matrix3x4_t rotDeltaMatrix;
+						QuaternionMatrix(rotDelta, vec3_origin, rotDeltaMatrix);
+
+						for (int i = 0; i < numBones && i < nMaxBones; i++)
+						{
+							Vector bonePos;
+							QAngle boneAngles;
+							MatrixAngles(pBoneToWorldOut[i], boneAngles, bonePos);
+
+							bonePos += posOffset;
+
+							Vector relPos = bonePos - blendedPos;
+							Vector rotatedRelPos;
+							VectorRotate(relPos, rotDeltaMatrix, rotatedRelPos);
+							bonePos = blendedPos + rotatedRelPos;
+
+							Quaternion boneQuat;
+							AngleQuaternion(boneAngles, boneQuat);
+							Quaternion rotatedQuat;
+							QuaternionMult(rotDelta, boneQuat, rotatedQuat);
+
+							QAngle rotatedAngles;
+							QuaternionAngles(rotatedQuat, rotatedAngles);
+							AngleMatrix(rotatedAngles, bonePos, pBoneToWorldOut[i]);
+						}
+					}
+
+					if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+					{
+						matrix3x4_t currentHandInv;
+						MatrixInvert(pBoneToWorldOut[m_iHandBone], currentHandInv);
+
+						matrix3x4_t handCorrection;
+						ConcatTransforms(desiredHandWorld, currentHandInv, handCorrection);
+
+						for (int i = 0; i < numBones && i < nMaxBones; i++)
+						{
+							matrix3x4_t correctedBone;
+							ConcatTransforms(handCorrection, pBoneToWorldOut[i], correctedBone);
+							MatrixCopy(correctedBone, pBoneToWorldOut[i]);
+						}
+
+						// Last-resort positional invariant. If any transform math
+						// above leaves tiny or non-tiny residual drift, translate
+						// the whole solved skeleton so the debug wrist center is
+						// exactly the intended eased hand position.
+						Vector correctedHandPos;
+						MatrixGetColumn(pBoneToWorldOut[m_iHandBone], 3, correctedHandPos);
+						Vector residual = desiredHandPos - correctedHandPos;
+						if (residual.LengthSqr() > 0.000001f)
+						{
+							for (int i = 0; i < numBones && i < nMaxBones; i++)
+							{
+								Vector bonePos;
+								MatrixGetColumn(pBoneToWorldOut[i], 3, bonePos);
+								bonePos += residual;
+								MatrixSetColumn(bonePos, 3, pBoneToWorldOut[i]);
+							}
+						}
+					}
+
+					if (m_bPomsonRightGripLatched)
+					{
+						MatrixCopy(pBoneToWorldOut[m_iHandBone], m_matPomsonRightGripLastWorld);
+						m_bPomsonRightGripLastWorldValid = true;
+					}
+
+					if (tfvr_twohand_debug.GetBool() || tfvr_pomson_grip_debug.GetBool())
+					{
+						Vector solvedHandPos;
+						MatrixGetColumn(pBoneToWorldOut[m_iHandBone], 3, solvedHandPos);
+						Vector hardSnapHandPos = gripTargetPos;
+						if (bDebugHaveHardSnapHand)
+							MatrixGetColumn(debugHardSnapHand, 3, hardSnapHandPos);
+						Vector latchStartPos = vec3_origin;
+						if (bHaveLatchStartWorld)
+							MatrixGetColumn(latchStartWorld, 3, latchStartPos);
+						Vector controllerPos = m_vecLastValidPosition;
+						Vector fingerPos = controllerPos;
+						if (m_pHandTracker)
+						{
+							QAngle fingerAngles;
+							m_pHandTracker->GetHandJoint(false, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fingerPos, fingerAngles);
+						}
+
+						debugoverlay->AddBoxOverlay(gripTargetPos, Vector(-1.5f, -1.5f, -1.5f),
+							Vector(1.5f, 1.5f, 1.5f), gripTargetAngles, 0, 255, 0, 180, 0.1f);
+						debugoverlay->AddBoxOverlay(solvedHandPos, Vector(-1.25f, -1.25f, -1.25f),
+							Vector(1.25f, 1.25f, 1.25f), vec3_angle, 255, 0, 0, 180, 0.1f);
+						if (bDebugHaveHardSnapHand)
+						{
+							debugoverlay->AddBoxOverlay(hardSnapHandPos, Vector(-1.0f, -1.0f, -1.0f),
+								Vector(1.0f, 1.0f, 1.0f), vec3_angle, 255, 255, 255, 180, 0.1f);
+							debugoverlay->AddLineOverlay(hardSnapHandPos, solvedHandPos, 255, 0, 255, true, 0.1f);
+						}
+						if (bHaveLatchStartWorld)
+						{
+							debugoverlay->AddBoxOverlay(latchStartPos, Vector(-1.0f, -1.0f, -1.0f),
+								Vector(1.0f, 1.0f, 1.0f), vec3_angle, 255, 255, 0, 180, 0.1f);
+						}
+						debugoverlay->AddBoxOverlay(controllerPos, Vector(-0.75f, -0.75f, -0.75f),
+							Vector(0.75f, 0.75f, 0.75f), vec3_angle, 255, 128, 0, 160, 0.1f);
+						debugoverlay->AddBoxOverlay(fingerPos, Vector(-0.75f, -0.75f, -0.75f),
+							Vector(0.75f, 0.75f, 0.75f), vec3_angle, 0, 128, 255, 160, 0.1f);
+						debugoverlay->AddLineOverlay(gripTargetPos, solvedHandPos, 255, 255, 255, true, 0.1f);
+
+						int middleBone = LookupBone("bip_middle_0_R");
+						if (middleBone < 0)
+							middleBone = LookupBone("bip_middle_0_r");
+						if (middleBone >= 0 && middleBone < nMaxBones)
+						{
+							Vector middlePos;
+							MatrixGetColumn(pBoneToWorldOut[middleBone], 3, middlePos);
+							debugoverlay->AddBoxOverlay(middlePos, Vector(-1.0f, -1.0f, -1.0f),
+								Vector(1.0f, 1.0f, 1.0f), vec3_angle, 0, 128, 255, 180, 0.1f);
+						}
+
+						static float s_flLastPomsonLatchDebug = 0.0f;
+						if (tfvr_pomson_grip_debug.GetBool() && gpGlobals->curtime - s_flLastPomsonLatchDebug > 0.25f)
+						{
+							DevMsg("PomsonGrip EASE: grip=%s blend=%.3f eased=%.3f latched=%d offset=%d pumpTarget=%d seq=%d cycle=%.3f target=(%.2f %.2f %.2f) easedWrist=(%.2f %.2f %.2f) snapWrist=(%.2f %.2f %.2f) errEase=%.3f errSnap=%.3f ctrlDist=%.3f fingerDist=%.3f latchDist=%.3f\n",
+								m_bPomsonUseReloadGrip ? "reload" : "idle",
+								m_flTwoHandBlend, easedBlend,
+								m_bPomsonRightGripLatched ? 1 : 0,
+								m_bPomsonRightLatchOffsetValid ? 1 : 0,
+								bUsePumpAnimTarget ? 1 : 0,
+								seqToSample, cycleToSample,
+								gripTargetPos.x, gripTargetPos.y, gripTargetPos.z,
+								solvedHandPos.x, solvedHandPos.y, solvedHandPos.z,
+								hardSnapHandPos.x, hardSnapHandPos.y, hardSnapHandPos.z,
+								(solvedHandPos - gripTargetPos).Length(),
+								(hardSnapHandPos - gripTargetPos).Length(),
+								(controllerPos - gripTargetPos).Length(),
+								(fingerPos - gripTargetPos).Length(),
+								bHaveLatchStartWorld ? (latchStartPos - gripTargetPos).Length() : -1.0f);
+							s_flLastPomsonLatchDebug = gpGlobals->curtime;
+						}
+					}
 				}
 			}
 			// When bBackstabPose is true, the main AccumulatePose already
@@ -4797,9 +5946,14 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			// during backstab and draw animations.  Only capture from the
 			// idle path -- when an animation is actively playing, reconstruct
 			// the world transform from the cached local offset + current hand.
-			bool bNeedsStableWeaponBone = (m_iBackstabUpSequence >= 0) || m_bPlayingDrawAnim;
+			bool bIsPomsonDetachWeapon = (m_hHeldWeapon.Get() && m_hHeldWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON);
+			bool bNeedsStableWeaponBone = (m_iBackstabUpSequence >= 0) || m_bPlayingDrawAnim || bIsPomsonDetachWeapon;
 			bool bAnimPlaying = bBackstabPose || m_bPlayingDrawAnim;
-			if (!bAnimPlaying && bNeedsStableWeaponBone)
+			// When the right hand is detached, ApplyWeaponPose was skipped so
+			// bip_hand_L and weapon_bone are at base-animation positions, not
+			// the weapon-posed positions.  Preserve the last good cached values.
+			bool bPomsonDetachedSkipCache = bIsPomsonDetachWeapon && m_bRightHandDetached;
+			if (!bAnimPlaying && bNeedsStableWeaponBone && !bPomsonDetachedSkipCache)
 			{
 				int wpnBone = LookupBone("weapon_bone");
 				if (wpnBone >= 0 && wpnBone < nMaxBones && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
@@ -4808,6 +5962,14 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					MatrixInvert(pBoneToWorldOut[m_iHandBone], invHand);
 					ConcatTransforms(invHand, pBoneToWorldOut[wpnBone], m_matIdleWeaponBoneLocal);
 					m_bHasIdleWeaponBone = true;
+
+					if (m_iOffHandBone >= 0 && m_iOffHandBone < nMaxBones)
+					{
+						matrix3x4_t invOffHand;
+						MatrixInvert(pBoneToWorldOut[m_iOffHandBone], invOffHand);
+						ConcatTransforms(invOffHand, pBoneToWorldOut[wpnBone], m_matOffHandToWeaponBone);
+						m_bOffHandToWeaponBoneValid = true;
+					}
 				}
 			}
 
@@ -4968,8 +6130,22 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				
 				// Pass true to get the animated grip position (follows fire animation recoil)
 				// This is for visual positioning - weapon rotation uses separate call with false
-				if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true))
+			if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true))
 				{
+					// Pomson right-hand detach: preserve the left visual hand
+					// offset captured at detach, matching the weapon's captured
+					// left-controller offset.  Fall back to the current hand
+					// position for older/no-capture paths.
+					if (pRightHand->IsRightHandDetached()
+						&& m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+					{
+						matrix3x4_t detachedLeftHandWorld;
+						if (pRightHand->GetPomsonDetachedLeftHandWorld(detachedLeftHandWorld))
+							MatrixAngles(detachedLeftHandWorld, gripTargetAngles, gripTargetPos);
+						else
+							MatrixAngles(pBoneToWorldOut[m_iHandBone], gripTargetAngles, gripTargetPos);
+					}
+
 					bUsedGripPose = true;
 					
 					// Sample the right hand's CURRENT animation for the left hand finger pose
@@ -4982,11 +6158,28 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					// pump is a right-hand action — left hand stays at idle.
 					int pumpWeaponID = pRightHand->GetHeldWeapon()
 						? pRightHand->GetHeldWeapon()->GetWeaponID() : -1;
+					bool bPomsonDetached = (pumpWeaponID == TF_WEAPON_DRG_POMSON
+						&& pRightHand->IsRightHandDetached());
 					bool bIsPumpWeapon = (pumpWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER
 						|| pumpWeaponID == TF_WEAPON_RAYGUN
 						|| pumpWeaponID == TF_WEAPON_PARTICLE_CANNON);
 
-					if (bIsPumpWeapon && pRightHand->m_bPlayingReloadAnim
+					if (bPomsonDetached && pRightHand->m_iIdleSequence >= 0)
+					{
+						// The left hand remains the support grip while the right
+						// hand pumps, so keep its pose tied to the idle grip.
+						const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iIdleSequence);
+						if (pszSeqName)
+						{
+							int leftSeq = LookupSequence(pszSeqName);
+							if (leftSeq >= 0)
+							{
+								rightSeq = leftSeq;
+								rightCycle = 0.0f;
+							}
+						}
+					}
+					else if (bIsPumpWeapon && pRightHand->m_bPlayingReloadAnim
 						&& pRightHand->m_iLeverReloadSequence >= 0)
 					{
 						const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iLeverReloadSequence);
@@ -5097,7 +6290,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 							
 							QuaternionMatrix(blendedQuat, blendedPos, pBoneToWorldOut[i]);
 						}
-						
+
 						if (tfvr_twohand_debug.GetBool())
 						{
 							static float lastDebugTime = 0;
@@ -5777,10 +6970,10 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		&& m_hHeldWeapon.Get()
 		&& (m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
 			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
-			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
+			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON))
 	{
-		// Stickybomb/Bison/Mangler pump: the left hand IS the pump hand, so the grip
-		// target must follow the pump animation.
+		// Pump weapons: the pump hand drives the grip target.
 		seqToSample = m_iLeverReloadSequence;
 		cycleToSample = m_flLeverReloadCycle;
 	}
@@ -5811,6 +7004,14 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		&& m_bManglerUseReloadGrip)
 	{
 		// Mangler: off-hand is closer to the reload grip (pump handle).
+		seqToSample = m_iReloadLoopSequence;
+		cycleToSample = 0.0f;
+	}
+	else if (m_iReloadLoopSequence >= 0 && m_hHeldWeapon.Get()
+		&& m_hHeldWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON
+		&& m_bPomsonUseReloadGrip)
+	{
+		// Pomson: right hand is closer to the reload grip.
 		seqToSample = m_iReloadLoopSequence;
 		cycleToSample = 0.0f;
 	}
@@ -6050,6 +7251,22 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 		}
 	}
 	
+	// Pomson right-hand detach: the weapon is driven from the captured
+	// left-controller offset, but the animation sampling above still used this
+	// (right) hand's controller as the reference.  Override controllerTransform
+	// to a virtual right hand derived from the detached weapon_bone so
+	// bip_hand_L ends up in the same frame as the visible weapon.
+	if (m_bRightHandDetached && m_bHasIdleWeaponBone)
+	{
+		matrix3x4_t wpnWorld;
+		if (GetPomsonDetachedWeaponBoneWorld(wpnWorld))
+		{
+			matrix3x4_t invLocal;
+			MatrixInvert(m_matIdleWeaponBoneLocal, invLocal);
+			ConcatTransforms(wpnWorld, invLocal, controllerTransform);
+		}
+	}
+
 	// Compute anchor delta that maps model-space → world-space.
 	// Medigun lever and stickybomb pump sample non-idle sequences whose
 	// bip_hand position differs from idle, so anchor from the sampled
@@ -6070,7 +7287,8 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 			bAnchorFromWeaponBone = true;
 		}
 		else if (m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
-			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_RAYGUN)
+			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
+			|| m_hHeldWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON)
 		{
 			bAnchorFromSampled = true;
 		}
@@ -6231,6 +7449,442 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	return true;
 }
 
+bool C_TFVRHand::GetSampledBoneLocalTransform( const char *pszBoneName, int iSequence, float flCycle, matrix3x4_t &outLocalTransform )
+{
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr || !pszBoneName || iSequence < 0 )
+		return false;
+
+	int boneIndex = LookupBone( pszBoneName );
+	int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	if ( boneIndex < 0 || boneIndex >= numBones )
+		return false;
+
+	float poseParameters[MAXSTUDIOPOSEPARAM];
+	memset( poseParameters, 0, sizeof( poseParameters ) );
+
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters );
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, iSequence, flCycle, 1.0f, gpGlobals->curtime, NULL );
+	QuaternionMatrix( qAnim[boneIndex], posAnim[boneIndex], outLocalTransform );
+	return true;
+}
+
+bool C_TFVRHand::GetSampledBoneModelSpaceDelta( const char *pszBoneName, int iSequence, float flBaseCycle, float flCurrentCycle, Vector &outLocalDelta )
+{
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr || !pszBoneName || iSequence < 0 )
+		return false;
+
+	int boneIndex = LookupBone( pszBoneName );
+	int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	if ( boneIndex < 0 || boneIndex >= numBones )
+		return false;
+
+	int referenceBone = LookupBone( "weapon_bone" );
+	if ( referenceBone < 0 )
+		referenceBone = LookupBone( "weapon_bone_R" );
+	if ( referenceBone < 0 )
+		referenceBone = LookupBone( "weapon_bone_L" );
+	if ( referenceBone < 0 )
+		referenceBone = LookupBone( "weapon_bone_l" );
+	if ( referenceBone < 0 || referenceBone >= numBones || referenceBone == boneIndex )
+		referenceBone = -1;
+
+	float poseParameters[MAXSTUDIOPOSEPARAM];
+	memset( poseParameters, 0, sizeof( poseParameters ) );
+
+	Vector posBase[MAXSTUDIOBONES];
+	Quaternion qBase[MAXSTUDIOBONES];
+	Vector posCurrent[MAXSTUDIOBONES];
+	Quaternion qCurrent[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posBase[i].Init();
+		qBase[i].Init( 0, 0, 0, 1 );
+		posCurrent[i].Init();
+		qCurrent[i].Init( 0, 0, 0, 1 );
+	}
+
+	IBoneSetup baseSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters );
+	baseSetup.InitPose( posBase, qBase );
+	baseSetup.AccumulatePose( posBase, qBase, iSequence, flBaseCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	IBoneSetup currentSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters );
+	currentSetup.InitPose( posCurrent, qCurrent );
+	currentSetup.AccumulatePose( posCurrent, qCurrent, iSequence, flCurrentCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t baseModelBones[MAXSTUDIOBONES];
+	matrix3x4_t currentModelBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones; i++ )
+	{
+		matrix3x4_t baseLocal;
+		matrix3x4_t currentLocal;
+		QuaternionMatrix( qBase[i], posBase[i], baseLocal );
+		QuaternionMatrix( qCurrent[i], posCurrent[i], currentLocal );
+
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( baseModelBones[i] );
+			SetIdentityMatrix( currentModelBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+		{
+			MatrixCopy( baseLocal, baseModelBones[i] );
+			MatrixCopy( currentLocal, currentModelBones[i] );
+		}
+		else if ( pBone->parent >= 0 && pBone->parent < i )
+		{
+			ConcatTransforms( baseModelBones[pBone->parent], baseLocal, baseModelBones[i] );
+			ConcatTransforms( currentModelBones[pBone->parent], currentLocal, currentModelBones[i] );
+		}
+		else
+		{
+			SetIdentityMatrix( baseModelBones[i] );
+			SetIdentityMatrix( currentModelBones[i] );
+		}
+	}
+
+	matrix3x4_t baseBoneSpace;
+	matrix3x4_t currentBoneSpace;
+	if ( referenceBone >= 0 )
+	{
+		// Measure the slide relative to the weapon body, not the hand
+		// model root. Otherwise whole-weapon pose motion gets applied twice.
+		matrix3x4_t invBaseReference;
+		matrix3x4_t invCurrentReference;
+		MatrixInvert( baseModelBones[referenceBone], invBaseReference );
+		MatrixInvert( currentModelBones[referenceBone], invCurrentReference );
+		ConcatTransforms( invBaseReference, baseModelBones[boneIndex], baseBoneSpace );
+		ConcatTransforms( invCurrentReference, currentModelBones[boneIndex], currentBoneSpace );
+	}
+	else
+	{
+		MatrixCopy( baseModelBones[boneIndex], baseBoneSpace );
+		MatrixCopy( currentModelBones[boneIndex], currentBoneSpace );
+	}
+
+	matrix3x4_t invBaseModel;
+	MatrixInvert( baseBoneSpace, invBaseModel );
+
+	matrix3x4_t deltaInBaseBoneSpace;
+	ConcatTransforms( invBaseModel, currentBoneSpace, deltaInBaseBoneSpace );
+	MatrixGetColumn( deltaInBaseBoneSpace, 3, outLocalDelta );
+	return true;
+}
+
+bool C_TFVRHand::GetPomsonAdjustedLeftControllerTransform( matrix3x4_t &outLeftControllerTransform ) const
+{
+	C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+	if ( !pLeftHand )
+		return false;
+
+	AngleMatrix( pLeftHand->m_angLastValidAngles, pLeftHand->m_vecLastValidPosition, outLeftControllerTransform );
+
+	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+	int ownerClass = pOwner ? pOwner->GetPlayerClass()->GetClassIndex() : TF_CLASS_UNDEFINED;
+	QAngle leftRotOffset( 0, 0, 0 );
+	if ( !GetPerClassHandOffset( ownerClass, true, leftRotOffset ) )
+	{
+		leftRotOffset.x = tfvr_hands_left_offset_pitch.GetFloat();
+		leftRotOffset.y = tfvr_hands_left_offset_yaw.GetFloat();
+		leftRotOffset.z = tfvr_hands_left_offset_roll.GetFloat();
+	}
+	if ( leftRotOffset.x != 0 || leftRotOffset.y != 0 || leftRotOffset.z != 0 )
+	{
+		matrix3x4_t offsetMatrix;
+		AngleMatrix( leftRotOffset, vec3_origin, offsetMatrix );
+		matrix3x4_t temp;
+		ConcatTransforms( outLeftControllerTransform, offsetMatrix, temp );
+		MatrixCopy( temp, outLeftControllerTransform );
+	}
+
+	Vector leftPosOffset( 0, 0, 0 );
+	if ( !GetPerClassHandPositionOffset( ownerClass, true, leftPosOffset ) )
+	{
+		leftPosOffset.x = tfvr_hands_left_offset_x.GetFloat();
+		leftPosOffset.y = tfvr_hands_left_offset_y.GetFloat();
+		leftPosOffset.z = tfvr_hands_left_offset_z.GetFloat();
+	}
+	if ( leftPosOffset.x != 0 || leftPosOffset.y != 0 || leftPosOffset.z != 0 )
+	{
+		Vector px, py, pz;
+		MatrixGetColumn( outLeftControllerTransform, 0, px );
+		MatrixGetColumn( outLeftControllerTransform, 1, py );
+		MatrixGetColumn( outLeftControllerTransform, 2, pz );
+		Vector worldOffset = px * leftPosOffset.x + py * leftPosOffset.y + pz * leftPosOffset.z;
+		Vector leftPos;
+		MatrixGetColumn( outLeftControllerTransform, 3, leftPos );
+		leftPos += worldOffset;
+		MatrixSetColumn( leftPos, 3, outLeftControllerTransform );
+	}
+
+	return true;
+}
+
+bool C_TFVRHand::CapturePomsonDetachLeftToWeaponBone()
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !IsRightHand() || !pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_DRG_POMSON )
+	{
+		m_bPomsonDetachLeftToWeaponBoneValid = false;
+		m_bPomsonDetachLeftToLeftHandBoneValid = false;
+		return false;
+	}
+
+	matrix3x4_t leftControllerTransform;
+	matrix3x4_t weaponBoneWorld;
+	if ( !GetPomsonAdjustedLeftControllerTransform( leftControllerTransform )
+		|| !GetCachedWeaponBoneTransform( weaponBoneWorld ) )
+	{
+		m_bPomsonDetachLeftToWeaponBoneValid = false;
+		m_bPomsonDetachLeftToLeftHandBoneValid = false;
+		return false;
+	}
+
+	matrix3x4_t invLeftController;
+	MatrixInvert( leftControllerTransform, invLeftController );
+	ConcatTransforms( invLeftController, weaponBoneWorld, m_matPomsonDetachLeftToWeaponBone );
+	m_bPomsonDetachLeftToWeaponBoneValid = true;
+
+	Vector leftGripPos;
+	QAngle leftGripAngles;
+	if ( GetOffHandGripTarget( leftGripPos, leftGripAngles, true ) )
+	{
+		matrix3x4_t leftHandWorld;
+		AngleMatrix( leftGripAngles, leftGripPos, leftHandWorld );
+		ConcatTransforms( invLeftController, leftHandWorld, m_matPomsonDetachLeftToLeftHandBone );
+		m_bPomsonDetachLeftToLeftHandBoneValid = true;
+	}
+	else
+	{
+		m_bPomsonDetachLeftToLeftHandBoneValid = false;
+	}
+
+	return true;
+}
+
+bool C_TFVRHand::GetPomsonDetachedLeftHandWorld( matrix3x4_t &outLeftHandWorld )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !IsRightHand() || !m_bRightHandDetached || !pWeapon
+		|| pWeapon->GetWeaponID() != TF_WEAPON_DRG_POMSON
+		|| !m_bPomsonDetachLeftToLeftHandBoneValid )
+	{
+		return false;
+	}
+
+	matrix3x4_t leftControllerTransform;
+	if ( !GetPomsonAdjustedLeftControllerTransform( leftControllerTransform ) )
+		return false;
+
+	ConcatTransforms( leftControllerTransform, m_matPomsonDetachLeftToLeftHandBone, outLeftHandWorld );
+	return true;
+}
+
+bool C_TFVRHand::GetPomsonDetachedWeaponBoneWorld( matrix3x4_t &outWeaponBoneWorld )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !IsRightHand() || !m_bRightHandDetached || !pWeapon
+		|| pWeapon->GetWeaponID() != TF_WEAPON_DRG_POMSON )
+	{
+		return false;
+	}
+
+	matrix3x4_t leftControllerTransform;
+	if ( !GetPomsonAdjustedLeftControllerTransform( leftControllerTransform ) )
+		return false;
+
+	if ( m_bPomsonDetachLeftToWeaponBoneValid )
+	{
+		ConcatTransforms( leftControllerTransform, m_matPomsonDetachLeftToWeaponBone, outWeaponBoneWorld );
+		return true;
+	}
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr || m_iIdleSequence < 0 )
+		return false;
+
+	int leftGripBone = LookupBone( "bip_hand_L" );
+	if ( leftGripBone < 0 )
+		leftGripBone = LookupBone( "ValveBiped.Bip01_L_Hand" );
+	if ( leftGripBone < 0 )
+		leftGripBone = LookupBone( "bip_hand_l" );
+	if ( leftGripBone < 0 )
+		leftGripBone = LookupBone( "weapon_bone_L" );
+
+	int weaponBone = LookupBone( "weapon_bone" );
+	if ( weaponBone < 0 )
+		weaponBone = LookupBone( "weapon_bone_R" );
+	if ( weaponBone < 0 )
+		weaponBone = LookupBone( "weapon_bone_L" );
+	if ( weaponBone < 0 )
+		weaponBone = LookupBone( "weapon_bone_l" );
+
+	int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	if ( leftGripBone < 0 || leftGripBone >= numBones
+		|| weaponBone < 0 || weaponBone >= numBones )
+	{
+		return false;
+	}
+
+	float poseParameters[MAXSTUDIOPOSEPARAM];
+	memset( poseParameters, 0, sizeof( poseParameters ) );
+
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters );
+	Vector posIdle[MAXSTUDIOBONES];
+	Quaternion qIdle[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posIdle[i].Init();
+		qIdle[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posIdle, qIdle );
+	boneSetup.AccumulatePose( posIdle, qIdle, m_iIdleSequence, 0.0f, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t idleBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones; i++ )
+	{
+		matrix3x4_t boneToParent;
+		QuaternionMatrix( qIdle[i], posIdle[i], boneToParent );
+
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( idleBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( boneToParent, idleBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones )
+			ConcatTransforms( idleBones[pBone->parent], boneToParent, idleBones[i] );
+		else
+			SetIdentityMatrix( idleBones[i] );
+	}
+
+	matrix3x4_t invIdleLeftGrip;
+	MatrixInvert( idleBones[leftGripBone], invIdleLeftGrip );
+
+	matrix3x4_t detachedWeaponAnchor;
+	ConcatTransforms( leftControllerTransform, invIdleLeftGrip, detachedWeaponAnchor );
+	ConcatTransforms( detachedWeaponAnchor, idleBones[weaponBone], outWeaponBoneWorld );
+	return true;
+}
+
+bool C_TFVRHand::GetPomsonDetachedRightHandTarget( Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !IsRightHand() || !m_bRightHandDetached || !pWeapon
+		|| pWeapon->GetWeaponID() != TF_WEAPON_DRG_POMSON )
+	{
+		return false;
+	}
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr || m_iIdleSequence < 0 )
+		return false;
+
+	int rightHandBone = m_iHandBone;
+	if ( rightHandBone < 0 )
+		rightHandBone = LookupBone( "bip_hand_R" );
+	if ( rightHandBone < 0 )
+		rightHandBone = LookupBone( "ValveBiped.Bip01_R_Hand" );
+	if ( rightHandBone < 0 )
+		rightHandBone = LookupBone( "bip_hand_r" );
+
+	int weaponBone = LookupBone( "weapon_bone" );
+	if ( weaponBone < 0 )
+		weaponBone = LookupBone( "weapon_bone_R" );
+	if ( weaponBone < 0 )
+		weaponBone = LookupBone( "weapon_bone_L" );
+	if ( weaponBone < 0 )
+		weaponBone = LookupBone( "weapon_bone_l" );
+
+	int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	if ( rightHandBone < 0 || rightHandBone >= numBones
+		|| weaponBone < 0 || weaponBone >= numBones )
+	{
+		return false;
+	}
+
+	matrix3x4_t detachedWeaponBoneWorld;
+	if ( !GetPomsonDetachedWeaponBoneWorld( detachedWeaponBoneWorld ) )
+		return false;
+
+	int seqToSample = m_iIdleSequence;
+	float cycleToSample = 0.0f;
+	if ( m_bPomsonUseReloadGrip && m_iReloadLoopSequence >= 0 )
+	{
+		seqToSample = m_iReloadLoopSequence;
+		if ( bUseCurrentAnimation && m_iLeverReloadSequence >= 0 )
+		{
+			seqToSample = m_iLeverReloadSequence;
+			cycleToSample = m_flLeverReloadCycle;
+		}
+	}
+
+	float poseParameters[MAXSTUDIOPOSEPARAM];
+	memset( poseParameters, 0, sizeof( poseParameters ) );
+
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParameters );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones; i++ )
+	{
+		matrix3x4_t boneToParent;
+		QuaternionMatrix( qAnim[i], posAnim[i], boneToParent );
+
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( boneToParent, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones )
+			ConcatTransforms( sampledBones[pBone->parent], boneToParent, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	matrix3x4_t invSampledWeaponBone;
+	MatrixInvert( sampledBones[weaponBone], invSampledWeaponBone );
+
+	matrix3x4_t rightHandToWeapon;
+	ConcatTransforms( invSampledWeaponBone, sampledBones[rightHandBone], rightHandToWeapon );
+
+	matrix3x4_t rightHandWorld;
+	ConcatTransforms( detachedWeaponBoneWorld, rightHandToWeapon, rightHandWorld );
+	MatrixAngles( rightHandWorld, outAngles, outPos );
+	return true;
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Position weapon using bone matrices from SetupBones
 //          Called during SetupBones after pose is applied to weapon_bone
@@ -6267,6 +7921,127 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		else
 			MatrixCopy(pBoneToWorldOut[handAlignBone], m_matWeaponBoneWorld);
 		m_bWeaponBoneWorldValid = true;
+	}
+
+	// Pomson right-hand detach: position weapon at left hand instead of right hand
+	if (m_bRightHandDetached && IsRightHand())
+	{
+		C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+		if (pRenderWeapon)
+		{
+			matrix3x4_t detachedWeaponBoneWorld;
+			if (!GetPomsonDetachedWeaponBoneWorld(detachedWeaponBoneWorld))
+			{
+				return;
+			}
+
+			MatrixCopy(detachedWeaponBoneWorld, m_matWeaponBoneWorld);
+			m_bWeaponBoneWorldValid = true;
+
+			int rwWeaponBone = pRenderWeapon->LookupBone("weapon_bone");
+			if (rwWeaponBone < 0)
+				rwWeaponBone = pRenderWeapon->LookupBone("vm_weapon_bone");
+			if (rwWeaponBone < 0)
+				rwWeaponBone = pRenderWeapon->LookupBone("weapon_bone_R");
+			if (rwWeaponBone < 0)
+				rwWeaponBone = pRenderWeapon->LookupBone("weapon_bone_L");
+			if (rwWeaponBone >= 0)
+			{
+				CStudioHdr *pWeaponHdr = pRenderWeapon->GetModelPtr();
+				if (pWeaponHdr)
+				{
+					matrix3x4_t weaponBoneModelSpace;
+					SetIdentityMatrix(weaponBoneModelSpace);
+
+					bool bGotWeaponBoneModelSpace = false;
+					int weaponBoneCount = MIN(pWeaponHdr->numbones(), MAXSTUDIOBONES);
+					int renderSeq = pRenderWeapon->GetSequence();
+					if (renderSeq >= 0 && rwWeaponBone < weaponBoneCount)
+					{
+						float poseParameters[MAXSTUDIOPOSEPARAM];
+						memset(poseParameters, 0, sizeof(poseParameters));
+
+						IBoneSetup weaponBoneSetup(pWeaponHdr, BONE_USED_BY_ANYTHING, poseParameters);
+						Vector weaponPosAnim[MAXSTUDIOBONES];
+						Quaternion weaponQAnim[MAXSTUDIOBONES];
+						for (int i = 0; i < MAXSTUDIOBONES; i++)
+						{
+							weaponPosAnim[i].Init();
+							weaponQAnim[i].Init(0, 0, 0, 1);
+						}
+
+						weaponBoneSetup.InitPose(weaponPosAnim, weaponQAnim);
+						weaponBoneSetup.AccumulatePose(weaponPosAnim, weaponQAnim, renderSeq, pRenderWeapon->GetCycle(),
+							1.0f, gpGlobals->curtime, NULL);
+
+						matrix3x4_t weaponModelBones[MAXSTUDIOBONES];
+						for (int i = 0; i < weaponBoneCount && i < MAXSTUDIOBONES; i++)
+						{
+							matrix3x4_t boneToParent;
+							QuaternionMatrix(weaponQAnim[i], weaponPosAnim[i], boneToParent);
+
+							const mstudiobone_t *pBone = pWeaponHdr->pBone(i);
+							if (!pBone)
+							{
+								SetIdentityMatrix(weaponModelBones[i]);
+								continue;
+							}
+
+							if (pBone->parent == -1)
+								MatrixCopy(boneToParent, weaponModelBones[i]);
+							else if (pBone->parent >= 0 && pBone->parent < i)
+								ConcatTransforms(weaponModelBones[pBone->parent], boneToParent, weaponModelBones[i]);
+							else
+								SetIdentityMatrix(weaponModelBones[i]);
+						}
+
+						MatrixCopy(weaponModelBones[rwWeaponBone], weaponBoneModelSpace);
+						bGotWeaponBoneModelSpace = true;
+					}
+
+					if (!bGotWeaponBoneModelSpace)
+					{
+						int currentBone = rwWeaponBone;
+						while (currentBone >= 0)
+						{
+							mstudiobone_t *pBone = pWeaponHdr->pBone(currentBone);
+							if (!pBone) break;
+							matrix3x4_t localBoneMatrix;
+							QAngle localAng;
+							QuaternionAngles(pBone->quat, localAng);
+							AngleMatrix(localAng, pBone->pos, localBoneMatrix);
+							matrix3x4_t temp;
+							ConcatTransforms(localBoneMatrix, weaponBoneModelSpace, temp);
+							MatrixCopy(temp, weaponBoneModelSpace);
+							currentBone = pBone->parent;
+						}
+					}
+
+					matrix3x4_t weaponBoneInverse;
+					MatrixInvert(weaponBoneModelSpace, weaponBoneInverse);
+					matrix3x4_t weaponTransform;
+					ConcatTransforms(detachedWeaponBoneWorld, weaponBoneInverse, weaponTransform);
+					Vector wPos; QAngle wAng;
+					MatrixAngles(weaponTransform, wAng, wPos);
+					pRenderWeapon->SetAbsOrigin(wPos);
+					pRenderWeapon->SetAbsAngles(wAng);
+					pRenderWeapon->SetNetworkOrigin(wPos);
+					pRenderWeapon->ResetLatched();
+					pRenderWeapon->InvalidateBoneCache();
+					pRenderWeapon->SetupBones(NULL, -1, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+				}
+			}
+
+			// Cache muzzle position for effects
+			int muzzleAttach = pRenderWeapon->LookupAttachment("muzzle");
+			if (muzzleAttach > 0)
+			{
+				pRenderWeapon->GetAttachment(muzzleAttach, m_vecCachedMuzzlePos, m_angCachedMuzzleAngles);
+				m_bCachedMuzzleValid = true;
+			}
+
+			return;
+		}
 	}
 
 	// Position the RENDER weapon based on hand's alignment bone
@@ -8982,6 +10757,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		m_bBackstabLowering = false;
 		m_flLastBackstabUpdateTime = 0.0f;
 		m_bHasIdleWeaponBone = false;
+		m_bOffHandToWeaponBoneValid = false;
 		if (playerClass == TF_CLASS_SPY && V_stristr(weaponClass, "knife"))
 		{
 			const char *knifePrefix = GetSpyKnifeAnimPrefix(pWeapon);
@@ -9095,6 +10871,25 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			}
 
 			DevMsg("VR: Mangler reload sequences: loop=%d bottomCycle=%.3f on '%s'\n",
+				m_iReloadLoopSequence, m_flReloadLoopBottomCycle, GetModelName());
+		}
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON)
+		{
+			m_iReloadLoopSequence  = LookupSequence("pomson_reload_loop");
+
+			if (m_iReloadLoopSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iReloadLoopSequence, poseParams);
+					if (maxFrame > 0)
+						m_flReloadLoopBottomCycle = 6.0f / (float)maxFrame;
+				}
+			}
+
+			DevMsg("VR: Pomson reload sequences: loop=%d bottomCycle=%.3f on '%s'\n",
 				m_iReloadLoopSequence, m_flReloadLoopBottomCycle, GetModelName());
 		}
 
@@ -9289,6 +11084,8 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		pRenderWeapon->SetupReloadAnimations( "bison" );
 	else if (pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON)
 		pRenderWeapon->SetupReloadAnimations( "mangler" );
+	else if (pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON)
+		pRenderWeapon->SetupReloadAnimations( "pomson" );
 
 	// For fist/glove weapons, override with the correct idle pose so the
 	// vm_weapon_bone chain positions the mesh correctly.
@@ -9580,6 +11377,21 @@ void C_TFVRHand::UnequipWeapon()
 	m_iCachedMuzzleWeaponID = -1;
 	m_iOffHandBone = -1;
 	m_iOffHandMiddleFingerBone = -1;
+	m_bPomsonUseReloadGrip = false;
+	m_bRightHandDetached = false;
+	m_bPomsonRightGripLatched = false;
+	m_bPomsonRightLatchOffsetValid = false;
+	m_bPomsonRightGripLastWorldValid = false;
+	m_bPomsonRightUnlatchStartValid = false;
+	m_bPomsonRightUnlatchUseReloadGrip = false;
+	m_bPomsonRightGripWasPressed = false;
+	m_bPomsonSuppressPassiveGripPoint = false;
+	m_bPomsonSuppressReloadGripPoint = false;
+	m_bOffHandToWeaponBoneValid = false;
+	SetIdentityMatrix( m_matPomsonDetachLeftToWeaponBone );
+	m_bPomsonDetachLeftToWeaponBoneValid = false;
+	SetIdentityMatrix( m_matPomsonDetachLeftToLeftHandBone );
+	m_bPomsonDetachLeftToLeftHandBoneValid = false;
 	
 	// Reset animation state so next weapon/grip uses fresh lookups
 	m_iIdleSequence = -1;
@@ -10515,7 +12327,8 @@ void C_TFVRHand::UpdateScattergunReloadAnimation()
 		// Don't clear state if another pump function manages it
 		if (pWeapon && (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
 			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
-			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+			|| pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON))
 			return;
 
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
@@ -10685,7 +12498,8 @@ void C_TFVRHand::UpdateStickyPumpReloadAnimation()
 	{
 		if (pWeapon && (IsScattergunWeaponID(pWeapon->GetWeaponID())
 			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
-			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+			|| pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON))
 			return;
 
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
@@ -10796,7 +12610,8 @@ void C_TFVRHand::UpdateBisonPumpReloadAnimation()
 	{
 		if (pWeapon && (IsScattergunWeaponID(pWeapon->GetWeaponID())
 			|| pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
-			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON
+			|| pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON))
 			return;
 
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
@@ -10904,7 +12719,8 @@ void C_TFVRHand::UpdateManglerPumpReloadAnimation()
 	{
 		if (pWeapon && (IsScattergunWeaponID(pWeapon->GetWeaponID())
 			|| pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
-			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN))
+			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
+			|| pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON))
 			return;
 
 		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
@@ -11008,6 +12824,171 @@ void C_TFVRHand::UpdateManglerPumpReloadAnimation()
 		if (bDebug)
 			DevMsg("[VR ManglerPump Anim] Pump cycle: %.3f (progress %.2f, phase=%d)\n",
 				m_flLeverReloadCycle, progress, phase);
+		break;
+	}
+
+	default:
+		break;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Pomson VR pump reload animation — 2-phase, right hand pumps.
+//          Mirrors the Bison pump animation but reads from CTFDRGPomson
+//          (which inherits CTFRaygun's VR pump state).
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdatePomsonPumpReloadAnimation()
+{
+	if (m_iReloadLoopSequence < 0)
+		return;
+
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_DRG_POMSON)
+	{
+		if (pWeapon && (IsScattergunWeaponID(pWeapon->GetWeaponID())
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
+			|| pWeapon->GetWeaponID() == TF_WEAPON_RAYGUN
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON))
+			return;
+
+		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+		}
+		return;
+	}
+
+	if (gpGlobals->curtime < pWeapon->m_flNextPrimaryAttack
+		&& m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+		m_bPlayingReloadAnim = false;
+		m_iLeverReloadSequence = -1;
+		m_flLeverReloadCycle = 0.0f;
+		return;
+	}
+
+	bool bPumpGripActive = m_bRightHandDetached && m_bPomsonUseReloadGrip
+		&& (m_bPomsonRightGripLatched || m_flTwoHandBlend > 0.01f);
+	bool bHeldPomsonSlide = m_eReloadAnimState != VR_RELOAD_ANIM_NONE
+		&& m_iLeverReloadSequence >= 0;
+	if (!bPumpGripActive)
+	{
+		if (bHeldPomsonSlide)
+		{
+			// The pump hand is not actively driving the animation. Keep the
+			// weapon slide at its last cycle, but let both hands use non-pump
+			// poses (including the idle/main grip).
+			m_bPlayingReloadAnim = false;
+			return;
+		}
+
+		if (m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+		}
+		return;
+	}
+
+	CTFRaygun *pPomson = static_cast<CTFRaygun *>(pWeapon);
+	bool bArmed = pPomson->IsVRPumpArmed();
+
+	extern ConVar tfvr_pomson_pump_debug;
+	bool bDebug = tfvr_pomson_pump_debug.GetBool();
+
+	if (m_bPlayingFireAnim)
+		return;
+
+	if (bPumpGripActive && bHeldPomsonSlide)
+	{
+		// Re-entering the reload grip should make the right hand follow the
+		// held/pumping slide again. Idle/main grip remains slide-only because
+		// bPumpGripActive is false there.
+		m_bPlayingReloadAnim = true;
+	}
+
+	if (bArmed && m_eReloadAnimState == VR_RELOAD_ANIM_NONE)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+		m_bPlayingReloadAnim = true;
+		m_bPlayingDrawAnim = false;
+		m_bPlayingChargeAnim = false;
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = 0.0f;
+		if (bDebug)
+			DevMsg("[VR PomsonPump Anim] Armed – holding at loop start\n");
+	}
+	else if (!bArmed && m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+	{
+		if (m_bRightHandDetached)
+		{
+			// Letting go of the pump while detached should leave the slide at
+			// its last authored cycle. Continue driving the hand only while it
+			// is actually on the reload/pump grip.
+			m_bPlayingReloadAnim = bPumpGripActive;
+			if (m_iLeverReloadSequence < 0)
+				m_iLeverReloadSequence = m_iReloadLoopSequence;
+			return;
+		}
+
+		m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+		m_bPlayingReloadAnim = false;
+		m_iLeverReloadSequence = -1;
+		m_flLeverReloadCycle = 0.0f;
+		if (bDebug)
+			DevMsg("[VR PomsonPump Anim] Disarmed – back to idle\n");
+	}
+
+	switch (m_eReloadAnimState)
+	{
+	case VR_RELOAD_ANIM_HOLD:
+	{
+		if (pPomson->IsVRPumpPullingBack() || pPomson->IsVRPumpPushingFwd())
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_PUMPING;
+			if (bDebug)
+				DevMsg("[VR PomsonPump Anim] Pumping started\n");
+		}
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = 0.0f;
+		break;
+	}
+
+	case VR_RELOAD_ANIM_PUMPING:
+	{
+		float progress = pPomson->GetVRPumpStrokeProgress();
+		float cycle = 0.0f;
+
+		if (pPomson->IsVRPumpPullingBack())
+		{
+			cycle = progress * m_flReloadLoopBottomCycle;
+		}
+		else if (pPomson->IsVRPumpPushingFwd())
+		{
+			cycle = m_flReloadLoopBottomCycle + progress * (1.0f - m_flReloadLoopBottomCycle);
+		}
+		else
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+			m_iLeverReloadSequence = m_iReloadLoopSequence;
+			m_flLeverReloadCycle = 0.0f;
+			if (bDebug)
+				DevMsg("[VR PomsonPump Anim] Pump complete, back to hold\n");
+			break;
+		}
+
+		m_iLeverReloadSequence = m_iReloadLoopSequence;
+		m_flLeverReloadCycle = clamp(cycle, 0.0f, 1.0f);
+
+		if (bDebug)
+			DevMsg("[VR PomsonPump Anim] Pump cycle: %.3f (progress %.2f, pullback=%d)\n",
+				m_flLeverReloadCycle, progress, pPomson->IsVRPumpPullingBack() ? 1 : 0);
 		break;
 	}
 

@@ -32,6 +32,11 @@ ConVar tfvr_bison_pump_distance( "tfvr_bison_pump_distance", "4.0", FCVAR_REPLIC
 ConVar tfvr_bison_pump_sign( "tfvr_bison_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1)" );
 ConVar tfvr_bison_pump_debug( "tfvr_bison_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print bison pump state to console" );
 
+ConVar tfvr_pomson_pump_reload( "tfvr_pomson_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Pomson 6000" );
+ConVar tfvr_pomson_pump_distance( "tfvr_pomson_pump_distance", "3.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke (Pomson)" );
+ConVar tfvr_pomson_pump_sign( "tfvr_pomson_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1) (Pomson)" );
+ConVar tfvr_pomson_pump_debug( "tfvr_pomson_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print pomson pump state to console" );
+
 BEGIN_NETWORK_TABLE( CTFRaygun, DT_WeaponRaygun )
 #ifdef GAME_DLL
 	SendPropBool( SENDINFO( m_bUseNewProjectileCode ) ),
@@ -321,7 +326,9 @@ void CTFRaygun::ResetVRPumpGestureState( void )
 
 float CTFRaygun::GetVRPumpStrokeProgress() const
 {
-	float dist = tfvr_bison_pump_distance.GetFloat();
+	float dist = ( GetWeaponID() == TF_WEAPON_DRG_POMSON )
+		? tfvr_pomson_pump_distance.GetFloat()
+		: tfvr_bison_pump_distance.GetFloat();
 	return ( dist > 0.0f ) ? clamp( (float)m_flVRPumpStrokeDist / dist, 0.0f, 1.0f ) : 0.0f;
 }
 
@@ -360,7 +367,9 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 		return;
 #endif
 
-	const bool bDebug = tfvr_bison_pump_debug.GetBool();
+	const bool bIsPomson = ( GetWeaponID() == TF_WEAPON_DRG_POMSON );
+	const bool bDebug = bIsPomson ? tfvr_pomson_pump_debug.GetBool() : tfvr_bison_pump_debug.GetBool();
+	const char *pszTag = bIsPomson ? "PomsonPump" : "BisonPump";
 
 	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
 	if ( !pCmd )
@@ -384,7 +393,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 	if ( Energy_FullyCharged() )
 	{
 		if ( bDebug && ( m_bVRPumpStrokeOut || m_bVRPumpStrokeIn ) )
-			DevMsg( "[VR BisonPump] Reset: fully charged\n" );
+			DevMsg( "[VR %s] Reset: fully charged\n", pszTag );
 		ResetVRPumpGestureState();
 		return;
 	}
@@ -398,7 +407,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 		if ( m_vecVRPumpLastHandPos != vec3_origin )
 			m_vecVRPumpLastHandPos = vecHandRelative;
 		if ( bDebug )
-			DevMsg( "[VR BisonPump] Paused: fire cooldown\n" );
+			DevMsg( "[VR %s] Paused: fire cooldown\n", pszTag );
 		return;
 	}
 
@@ -408,7 +417,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 		if ( !bMidStroke )
 		{
 			if ( bDebug && m_vecVRPumpLastHandPos != vec3_origin )
-				DevMsg( "[VR BisonPump] Reset: not armed\n" );
+				DevMsg( "[VR %s] Reset: not armed\n", pszTag );
 			ResetVRPumpGestureState();
 		}
 		else
@@ -416,15 +425,15 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 			m_vecVRPumpLastHandPos = vecHandRelative;
 			m_flVRPumpStrokeDist = 0.0f;
 			if ( bDebug )
-				DevMsg( "[VR BisonPump] Grip lost mid-stroke, holding state\n" );
+				DevMsg( "[VR %s] Grip lost mid-stroke, holding state\n", pszTag );
 		}
 		return;
 	}
 
 	m_bVRPumpIsArmed = true;
 
-	const float flPumpDist     = tfvr_bison_pump_distance.GetFloat();
-	const float flSign         = tfvr_bison_pump_sign.GetFloat();
+	const float flPumpDist     = bIsPomson ? tfvr_pomson_pump_distance.GetFloat() : tfvr_bison_pump_distance.GetFloat();
+	const float flSign         = bIsPomson ? tfvr_pomson_pump_sign.GetFloat() : tfvr_bison_pump_sign.GetFloat();
 	const float flReloadInterval = GetVRSinglyReloadShellThrottleInterval() * TFVR_BisonReloadThrottleScale();
 
 	QAngle angWeaponHand = pCmd->vrWeaponHandIsRight
@@ -443,7 +452,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 		m_vecVRPumpLastHandPos = vecHandRelative;
 		m_flVRPumpStrokeDist   = 0.0f;
 		if ( bDebug )
-			DevMsg( "[VR BisonPump] Tracking started\n" );
+			DevMsg( "[VR %s] Tracking started\n", pszTag );
 		return;
 	}
 
@@ -469,7 +478,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 				m_vecVRPumpLastHandPos = vecHandRelative;
 				m_flVRPumpStrokeDist = 0.0f;
 				if ( bDebug )
-					DevMsg( "[VR BisonPump] Pullback started\n" );
+					DevMsg( "[VR %s] Pullback started\n", pszTag );
 			}
 			else
 			{
@@ -503,7 +512,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 			m_vecVRPumpLastHandPos = vecHandRelative;
 
 			if ( bDebug )
-				DevMsg( "[VR BisonPump] Pullback: %.2f / %.2f\n", (float)m_flVRPumpStrokeDist, flPumpDist );
+				DevMsg( "[VR %s] Pullback: %.2f / %.2f\n", pszTag, (float)m_flVRPumpStrokeDist, flPumpDist );
 
 			if ( m_flVRPumpStrokeDist >= flPumpDist )
 			{
@@ -511,7 +520,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 				m_bVRPumpStrokeIn    = true;
 				m_flVRPumpStrokeDist = 0.0f;
 				if ( bDebug )
-					DevMsg( "[VR BisonPump] Pullback complete, push forward to recharge\n" );
+					DevMsg( "[VR %s] Pullback complete, push forward to recharge\n", pszTag );
 
 #ifdef CLIENT_DLL
 				if ( prediction->IsFirstTimePredicted() )
@@ -549,7 +558,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 #endif
 
 			if ( bDebug )
-				DevMsg( "[VR BisonPump] Push: %.2f / %.2f\n", (float)m_flVRPumpStrokeDist, flCompletionDist );
+				DevMsg( "[VR %s] Push: %.2f / %.2f\n", pszTag, (float)m_flVRPumpStrokeDist, flCompletionDist );
 
 			if ( m_flVRPumpStrokeDist >= flCompletionDist
 				&& gpGlobals->curtime >= m_flNextVRPumpRechargeTime )
@@ -558,10 +567,26 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 				m_bVRPumpStrokeIn    = false;
 				m_flVRPumpStrokeDist = 0.0f;
 				if ( bDebug )
-					DevMsg( "[VR BisonPump] Energy recharged! Ready for next pump.\n" );
+					DevMsg( "[VR %s] Energy recharged! Ready for next pump.\n", pszTag );
 			}
 		}
 	}
+}
+
+bool CTFDRGPomson::ShouldSuppressAutoAndSinglyReloadForVR() const
+{
+	if ( !tfvr_pomson_pump_reload.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	return IsHeldByVRHand();
+#else
+	return true;
+#endif
 }
 
 void CTFDRGPomson::Precache()
@@ -583,5 +608,8 @@ void CTFDRGPomson::GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset,
 	BaseClass::GetProjectileFireSetup( pPlayer, vecOffset, vecSrc, angForward, bHitTeammates, flEndDist );
 
 	// adjust to line up with the weapon muzzle
-	vecSrc->z -= 13.0f;
+	if ( !pPlayer || !pPlayer->IsInVRMode() )
+	{
+		vecSrc->z -= 13.0f;
+	}
 }
