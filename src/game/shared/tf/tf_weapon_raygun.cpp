@@ -252,8 +252,11 @@ void CTFRaygun::ClientEffectsThink( void )
 
 	SetContextThink( &CTFRaygun::ClientEffectsThink, gpGlobals->curtime + 2 + rand() % 5, "EFFECTS_THINK" );
 
-	ParticleProp()->Init( this );
-	CNewParticleEffect* pEffect = ParticleProp()->Create( GetIdleParticleEffect(), PATTACH_POINT_FOLLOW, "muzzle" );
+	C_BaseAnimating *pAttachEnt = GetAppropriateWorldOrViewModel();
+	if ( !pAttachEnt )
+		return;
+
+	CNewParticleEffect* pEffect = pAttachEnt->ParticleProp()->Create( GetIdleParticleEffect(), PATTACH_POINT_FOLLOW, "muzzle" );
 	if ( pEffect )
 	{
 		pEffect->SetControlPoint( CUSTOM_COLOR_CP1, GetParticleColor( 1 ) );
