@@ -132,6 +132,12 @@ static ConVar cl_maxrenderable_dist("cl_maxrenderable_dist", "3000", FCVAR_CHEAT
 
 ConVar r_entityclips( "r_entityclips", "1" ); //FIXME: Nvidia drivers before 81.94 on cards that support user clip planes will have problems with this, require driver update? Detect and disable?
 
+ConVar tfvr_comfort_vignette_enabled( "tfvr_comfort_vignette_enabled", "0", FCVAR_ARCHIVE, "Enable a comfort vignette while moving in VR" );
+ConVar tfvr_comfort_vignette_strength( "tfvr_comfort_vignette_strength", "0.5", FCVAR_ARCHIVE, "VR comfort vignette strength while moving (0.0-2.0)" );
+ConVar tfvr_comfort_vignette_velocity_threshold( "tfvr_comfort_vignette_velocity_threshold", "50", FCVAR_ARCHIVE, "Player velocity threshold for the VR comfort vignette (Source units per second)" );
+static ConVar tfvr_comfort_vignette_blend_speed( "tfvr_comfort_vignette_blend_speed", "7.0", FCVAR_ARCHIVE, "How quickly the VR comfort vignette fades in and out" );
+extern bool g_bTFVRSmoothTurningActive;
+
 // Matches the version in the engine
 static ConVar r_drawopaqueworld( "r_drawopaqueworld", "1", FCVAR_CHEAT );
 static ConVar r_drawtranslucentworld( "r_drawtranslucentworld", "1", FCVAR_CHEAT );
@@ -833,6 +839,7 @@ CLIENTEFFECT_REGISTER_BEGIN( PrecachePostProcessingEffects )
 	CLIENTEFFECT_MATERIAL( "dev/pyro_vignette_border" )
 	CLIENTEFFECT_MATERIAL( "dev/pyro_vignette" )
 	CLIENTEFFECT_MATERIAL( "dev/pyro_post" )
+	CLIENTEFFECT_MATERIAL( "pp/vignette" )
 #endif
 
 CLIENTEFFECT_REGISTER_END_CONDITIONAL( engine->GetDXSupportLevel() >= 90 )
@@ -974,6 +981,7 @@ CViewRender::CViewRender()
 	m_BaseDrawFlags = 0;
 	m_pActiveRenderer = NULL;
 	m_pCurrentlyDrawingEntity = NULL;
+	m_flComfortVignetteOpacity = 0.0f;
 
 	m_szCurrentScriptMaterialName[0] = '\0';
 }
@@ -1412,6 +1420,97 @@ void CViewRender::SetScreenOverlayMaterial( IMaterial *pMaterial )
 IMaterial *CViewRender::GetScreenOverlayMaterial( )
 {
 	return m_ScreenOverlayMaterial;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Initializes the post material used by the VR comfort vignette
+//-----------------------------------------------------------------------------
+void CViewRender::InitComfortVignetteMaterial()
+{
+	if ( m_ComfortVignetteMaterial )
+		return;
+
+	m_ComfortVignetteMaterial.Init( "pp/vignette", TEXTURE_GROUP_OTHER, true );
+}
+
+static float TFVRComfortVignetteInterpTo( float flCurrent, float flTarget, float flDeltaTime, float flInterpSpeed )
+{
+	if ( flInterpSpeed <= 0.0f )
+		return flTarget;
+
+	const float flDist = flTarget - flCurrent;
+	if ( fabs( flDist ) < 0.001f )
+		return flTarget;
+
+	return flCurrent + flDist * clamp( flDeltaTime * flInterpSpeed, 0.0f, 1.0f );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Draws a movement comfort vignette into each VR eye
+//-----------------------------------------------------------------------------
+void CViewRender::PerformComfortVignetteOverlay( const CViewSetup &view, int x, int y, int w, int h )
+{
+	NOTE_UNUSED( x );
+	NOTE_UNUSED( y );
+
+	if ( !UseVR() || view.m_eStereoEye == STEREO_EYE_MONO || !tfvr_comfort_vignette_enabled.GetBool() )
+	{
+		m_flComfortVignetteOpacity = 0.0f;
+		return;
+	}
+
+	if ( !m_ComfortVignetteMaterial || m_ComfortVignetteMaterial->IsErrorMaterial() )
+		return;
+
+	const float flStrength = clamp( tfvr_comfort_vignette_strength.GetFloat(), 0.0f, 2.0f );
+	if ( flStrength <= 0.0f )
+		return;
+
+	if ( view.m_eStereoEye == STEREO_EYE_RIGHT )
+	{
+		float flPlayerSpeed = 0.0f;
+		C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+		if ( pPlayer )
+		{
+			const Vector vecVelocity = pPlayer->GetAbsVelocity();
+			flPlayerSpeed = vecVelocity.Length();
+		}
+
+		const float flVelocityThreshold = MAX( tfvr_comfort_vignette_velocity_threshold.GetFloat(), 0.0f );
+		const bool bPlayerMoving = ( flVelocityThreshold <= 0.0f ) ? ( flPlayerSpeed > 0.0f ) : ( flPlayerSpeed >= flVelocityThreshold );
+		const float flTargetOpacity = ( bPlayerMoving || g_bTFVRSmoothTurningActive ) ? flStrength : 0.0f;
+
+		m_flComfortVignetteOpacity = TFVRComfortVignetteInterpTo(
+			m_flComfortVignetteOpacity,
+			flTargetOpacity,
+			gpGlobals->frametime,
+			tfvr_comfort_vignette_blend_speed.GetFloat() );
+	}
+
+	if ( m_flComfortVignetteOpacity <= 0.001f )
+		return;
+
+	VPROF( "CViewRender::PerformComfortVignetteOverlay()" );
+	tmZone( TELEMETRY_LEVEL0, TMZF_NONE, "%s", __FUNCTION__ );
+
+	const float flInnerRadius = clamp( 0.75f - ( 0.35f * flStrength ), 0.15f, 0.85f );
+	const float flOuterRadius = clamp( flInnerRadius + 0.30f, flInnerRadius + 0.05f, 1.0f );
+
+	bool bFound = false;
+	IMaterialVar *pOpacity = m_ComfortVignetteMaterial->FindVar( "$vopacity", &bFound );
+	if ( pOpacity )
+		pOpacity->SetFloatValue( m_flComfortVignetteOpacity );
+
+	IMaterialVar *pInnerRadius = m_ComfortVignetteMaterial->FindVar( "$vinnerradius", &bFound );
+	if ( pInnerRadius )
+		pInnerRadius->SetFloatValue( flInnerRadius );
+
+	IMaterialVar *pOuterRadius = m_ComfortVignetteMaterial->FindVar( "$vouterradius", &bFound );
+	if ( pOuterRadius )
+		pOuterRadius->SetFloatValue( flOuterRadius );
+
+	CMatRenderContextPtr pRenderContext( materials );
+	pRenderContext->DrawScreenSpaceRectangle( m_ComfortVignetteMaterial, 0, 0, w, h, 0, 0, w - 1, h - 1, w, h );
 }
 
 
@@ -2407,6 +2506,7 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 		IMaterial* pMaterial = blend ? m_ModulateSingleColor : m_TranslucentSingleColor;
 		render->ViewDrawFade( color, pMaterial );
 		PerformScreenOverlay( viewRender.x, viewRender.y, viewRender.width, viewRender.height );
+		PerformComfortVignetteOverlay( viewRender, viewRender.x, viewRender.y, viewRender.width, viewRender.height );
 
 		// Prevent sound stutter if going slow
 		engine->Sound_ExtraUpdate();	

@@ -1,0 +1,12 @@
+#include "common_ps_fxc.h"
+
+const HALF opacity : register( c0 );
+const HALF innerRadius : register( c1 );
+const HALF outerRadius : register( c2 );
+
+HALF4 main( float2 iTexCoord : TEXCOORD0 ) : COLOR
+{
+	float2 toCenter = iTexCoord.xy - 0.5f;
+	float occlude = smoothstep( innerRadius, outerRadius, 2.0f * length( toCenter ) );
+	return float4( 0.0f, 0.0f, 0.0f, saturate( occlude * opacity ) );
+}

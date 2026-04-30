@@ -1019,9 +1019,12 @@ Handles VR thumbstick turning - smooth and snap turning
 // Static variables for smooth turning interpolation
 static float s_flAccumulatedTurnInput = 0.0f;
 static float s_flLastTurnUpdateTime = 0.0f;
+bool g_bTFVRSmoothTurningActive = false;
 
 void ProcessVRTurning(CUserCmd* cmd, float frametime)
 {
+    g_bTFVRSmoothTurningActive = false;
+
     if (!UseVR() || !g_pOpenXRManager)
         return;
 
@@ -1066,6 +1069,8 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
 
     if (turningMode == 1) // Smooth turning
     {
+        g_bTFVRSmoothTurningActive = true;
+
         float turnRate = tfvr_smooth_turn_rate.GetFloat();
         
         // Use fixed tick interval for consistent turning speed regardless of framerate

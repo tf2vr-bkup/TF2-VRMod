@@ -15,6 +15,8 @@ sdk_screenspaceeffect_vs20.fxc
 
 sdk_bloomadd_ps2x.fxc
 
+post_vignette_ps20.fxc
+
 vgui_rounded_vs20.fxc
 vgui_rounded_ps20.fxc
 vgui_rounded_ps20b.fxc

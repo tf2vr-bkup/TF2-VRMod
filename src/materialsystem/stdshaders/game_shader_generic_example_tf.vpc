@@ -15,4 +15,9 @@ $Project "Game Shaders (TF)"
 	{
 		$File	"vgui_rounded.cpp"
 	}
+
+	$Folder	"Custom VR Shaders"
+	{
+		$File	"Post_Vignette.cpp"
+	}
 }

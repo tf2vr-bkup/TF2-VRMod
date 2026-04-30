@@ -311,6 +311,8 @@ void CViewRender::Init( void )
 
 	m_TranslucentSingleColor.Init( "debug/debugtranslucentsinglecolor", TEXTURE_GROUP_OTHER );
 	m_ModulateSingleColor.Init( "engine/modulatesinglecolor", TEXTURE_GROUP_OTHER );
+	InitComfortVignetteMaterial();
+	m_flComfortVignetteOpacity = 0.0f;
 	
 	extern CMaterialReference g_material_WriteZ;
 	g_material_WriteZ.Init( "engine/writez", TEXTURE_GROUP_OTHER );
@@ -361,6 +363,7 @@ void CViewRender::Shutdown( void )
 {
 	m_TranslucentSingleColor.Shutdown( );
 	m_ModulateSingleColor.Shutdown( );
+	m_ComfortVignetteMaterial.Shutdown();
 	m_ScreenOverlayMaterial.Shutdown();
 	m_UnderWaterOverlayMaterial.Shutdown();
 	beams->ShutdownBeams();

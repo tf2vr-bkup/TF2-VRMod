@@ -456,6 +456,8 @@ private:
 	void			SetScreenOverlayMaterial( IMaterial *pMaterial );
 	IMaterial		*GetScreenOverlayMaterial( );
 	void			PerformScreenOverlay( int x, int y, int w, int h );
+	void			InitComfortVignetteMaterial();
+	void			PerformComfortVignetteOverlay( const CViewSetup &view, int x, int y, int w, int h );
 
 	void			RenderVREyeToScreen(const CViewSetup &view, StereoEye_t eye);
 
@@ -499,6 +501,8 @@ private:
 	CMaterialReference	m_ModulateSingleColor;
 	CMaterialReference	m_ScreenOverlayMaterial;
 	CMaterialReference m_UnderWaterOverlayMaterial;
+	CMaterialReference	m_ComfortVignetteMaterial;
+	float				m_flComfortVignetteOpacity;
 
 	CMaterialReference	m_ScriptOverlayMaterial;
 	char m_szCurrentScriptMaterialName[ MAX_PATH ];
