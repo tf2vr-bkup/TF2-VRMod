@@ -271,6 +271,11 @@ public:
 		char maptmp[256];
 		const char *pszCleanMapName = GetCleanMapName( mapname, maptmp );
 
+		if ( filesystem->FileExists( "scripts/game_sounds_vr.txt", "GAME" ) )
+		{
+			soundemitterbase->AddSoundOverrides( "scripts/game_sounds_vr.txt", true );
+		}
+
 		// Load in any map specific overrides
 		char scriptfile[ 512 ];
 #if defined( TF_CLIENT_DLL ) || defined( TF_DLL )
