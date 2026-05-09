@@ -6,7 +6,9 @@
 #include "cbase.h"
 #include "vr_world_ui_queue.h"
 #include "VGuiMatSurface/IMatSystemSurface.h"
+#include "materialsystem/imaterialsystem.h"
 #include "tier0/vprof.h"
+#include <float.h>
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -25,6 +27,68 @@ ConVar tfvr_world_ui_queue_enabled("tfvr_world_ui_queue_enabled", "1", FCVAR_ARC
 
 ConVar tfvr_world_ui_queue_debug("tfvr_world_ui_queue_debug", "0", FCVAR_NONE,
     "Debug output for VR world UI queue");
+
+static bool TFVR_IsFiniteFloat(float value)
+{
+    return value == value && value > -FLT_MAX && value < FLT_MAX;
+}
+
+static bool TFVR_IsValidWorldUIDimensions(int pixelWidth, int pixelHeight, float worldWidth, float worldHeight)
+{
+    return pixelWidth > 0 && pixelHeight > 0
+        && pixelWidth <= 16384 && pixelHeight <= 16384
+        && TFVR_IsFiniteFloat(worldWidth) && TFVR_IsFiniteFloat(worldHeight)
+        && worldWidth > 0.0f && worldHeight > 0.0f
+        && worldWidth < 10000.0f && worldHeight < 10000.0f;
+}
+
+static bool TFVR_IsValidWorldUITransform(const VMatrix& transform)
+{
+    for (int row = 0; row < 4; ++row)
+    {
+        for (int col = 0; col < 4; ++col)
+        {
+            if (!TFVR_IsFiniteFloat(transform[row][col]))
+                return false;
+        }
+    }
+
+    Vector panelRight(transform[0][0], transform[1][0], transform[2][0]);
+    Vector panelUp(transform[0][1], transform[1][1], transform[2][1]);
+    Vector panelForward(transform[0][2], transform[1][2], transform[2][2]);
+    Vector panelPos = transform.GetTranslation();
+
+    return panelRight.LengthSqr() > 0.0001f
+        && panelUp.LengthSqr() > 0.0001f
+        && panelForward.LengthSqr() > 0.0001f
+        && panelPos.LengthSqr() < 100000000.0f;
+}
+
+static bool TFVR_ShouldRenderWorldUIPanel(vgui::Panel* pPanel, const VMatrix& transform,
+                                          int pixelWidth, int pixelHeight,
+                                          float worldWidth, float worldHeight,
+                                          const char *pszContext)
+{
+    if (!pPanel)
+        return false;
+
+    if (!TFVR_IsValidWorldUIDimensions(pixelWidth, pixelHeight, worldWidth, worldHeight))
+    {
+        DevMsg("VR World UI Queue: skipping invalid panel dimensions in %s panel='%s' pixels=%dx%d world=%.3fx%.3f\n",
+               pszContext, pPanel->GetName(), pixelWidth, pixelHeight, worldWidth, worldHeight);
+        return false;
+    }
+
+    if (!TFVR_IsValidWorldUITransform(transform))
+    {
+        Vector pos = transform.GetTranslation();
+        DevMsg("VR World UI Queue: skipping invalid panel transform in %s panel='%s' pos=(%.3f %.3f %.3f)\n",
+               pszContext, pPanel->GetName(), pos.x, pos.y, pos.z);
+        return false;
+    }
+
+    return true;
+}
 
 //=============================================================================
 // Implementation
@@ -76,7 +140,11 @@ void CVRWorldUIQueue::QueuePanel(vgui::Panel* pPanel, const VMatrix& transform,
                                   int priority,
                                   bool bRestoreVisibility, bool bWasVisible)
 {
-    if (!m_bInitialized || !pPanel || pixelWidth <= 0 || pixelHeight <= 0)
+    if (!m_bInitialized)
+        return;
+
+    if (!TFVR_ShouldRenderWorldUIPanel(pPanel, transform, pixelWidth, pixelHeight,
+                                       worldWidth, worldHeight, "QueuePanel"))
         return;
     
     if (!tfvr_world_ui_queue_enabled.GetBool())
@@ -88,7 +156,7 @@ void CVRWorldUIQueue::QueuePanel(vgui::Panel* pPanel, const VMatrix& transform,
         }
         
         g_pMatSystemSurface->DisableClipping(true);
-        
+
         g_pMatSystemSurface->DrawPanelIn3DSpace(
             pPanel->GetVPanel(),
             transform,
@@ -129,6 +197,7 @@ void CVRWorldUIQueue::QueuePanel(vgui::Panel* pPanel, const VMatrix& transform,
         DevMsg("VR World UI Queue: Queued panel %s at distance %.1f, priority %d\n",
                pPanel->GetName(), item.distanceFromHead, priority);
     }
+
 }
 
 // Comparison function for sorting render items
@@ -180,13 +249,17 @@ void CVRWorldUIQueue::FlushRenderQueue()
     for (int i = 0; i < m_renderQueue.Count(); i++)
     {
         VRWorldUIRenderItem& item = m_renderQueue[i];
+
+        if (!TFVR_ShouldRenderWorldUIPanel(item.pPanel, item.transform, item.pixelWidth, item.pixelHeight,
+                                           item.worldWidth, item.worldHeight, "FlushRenderQueue"))
+            continue;
         
         // Make panel visible for rendering if needed
         if (item.bRestoreVisibility)
         {
             item.pPanel->SetVisible(true);
         }
-        
+
         g_pMatSystemSurface->DrawPanelIn3DSpace(
             item.pPanel->GetVPanel(),
             item.transform,

@@ -66,6 +66,8 @@ static void MirrorResolutionChanged(IConVar *var, const char *pOldValue, float f
 ConVar tfvr_mirror_resolution("tfvr_mirror_resolution", "720", FCVAR_ARCHIVE,
 	"Desktop mirror resolution preset. Values: 720, 1080, 1440, 2160.",
 	MirrorResolutionChanged);
+ConVar tfvr_openxr_use_dxvk_device("tfvr_openxr_use_dxvk_device", "0", FCVAR_ARCHIVE,
+	"Use DXVK's Vulkan device for the OpenXR session. 0 restores the pre-April-2 dedicated OpenXR Vulkan context path.");
 
 static void MirrorResolutionChanged(IConVar *var, const char *pOldValue, float flOldValue)
 {
@@ -325,7 +327,7 @@ bool COpenXRManager::Initialize()
         // Don't return false - hand tracking is optional
     }
 
-    if (!dxvkInitOpenXR(m_instance, m_systemId, m_session, m_referenceSpace, m_headSpace))
+    if (!dxvkInitOpenXR(m_instance, m_systemId, m_session, m_referenceSpace, m_headSpace, xrGetInstanceProcAddr))
     {
         DevMsg("Failed to send OpenXR info to DXVK");
         return false;
@@ -536,6 +538,13 @@ bool COpenXRManager::CreateOpenXRInstance()
         return false;
     }
     extensionsToEnable.push_back(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+    DevMsg("OpenXR: Vulkan enable2 extension available - Vulkan2 session binding enabled\n");
+
+    bool hasVulkanEnable = isExtensionAvailable(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+    if (hasVulkanEnable) {
+        extensionsToEnable.push_back(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+        DevMsg("OpenXR: Legacy Vulkan enable extension available - WineOpenXR validation path enabled\n");
+    }
     
     // Optional: Hand tracking
     bool hasHandTracking = isExtensionAvailable(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
@@ -665,6 +674,19 @@ bool COpenXRManager::CreateOpenXRInstance()
         DevMsg("Failed to get xrGetVulkanGraphicsDevice2KHR function: %d\n", result);
         return false;
     }
+
+    result = xrGetInstanceProcAddr
+    (
+        m_instance,
+        "xrGetVulkanGraphicsDeviceKHR",
+        reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnGetVulkanGraphicsDeviceKHR)
+    );
+
+    if (result != XR_SUCCESS || m_pfnGetVulkanGraphicsDeviceKHR == nullptr)
+    {
+        m_pfnGetVulkanGraphicsDeviceKHR = nullptr;
+        DevMsg("OpenXR: Legacy xrGetVulkanGraphicsDeviceKHR unavailable (%d); continuing with Vulkan2 path only\n", result);
+    }
     
     DevMsg("OpenXR instance created with Vulkan 2 support!\n");
     return true;
@@ -701,12 +723,120 @@ bool COpenXRManager::CreateSession()
         return false;
     }
     
-    // Try to use DXVK's existing VkDevice for the OpenXR session binding.
+    // Try to use DXVK's existing VkDevice for the OpenXR session binding only
+    // when explicitly enabled. The default mirrors the live/pre-April-2 path.
     bool usedDxvkDevice = false;
-    if (dxvkGetVulkanDeviceInfo(&m_vkInstance, &m_vkPhysicalDevice, &m_vkDevice, &m_vkQueue, &m_vkQueueFamilyIndex))
+    if (!tfvr_openxr_use_dxvk_device.GetBool())
     {
-        DevMsg("VR: Using DXVK's Vulkan device for OpenXR session (shared device mode)\n");
+        DevMsg("VR: DXVK Vulkan device sharing disabled; creating dedicated Vulkan context\n");
+        if (!CreateVulkanContext(&graphicsRequirements))
+        {
+            DevMsg("Vulkan context creation failed!\n");
+            return false;
+        }
+        m_vkQueueIndex = 0;
+    }
+    else if (dxvkGetVulkanDeviceInfo(&m_vkInstance, &m_vkPhysicalDevice, &m_vkDevice, &m_vkQueue, &m_vkQueueFamilyIndex))
+    {
+        m_vkQueueIndex = 0;
+        DevMsg("VR: Using DXVK's Vulkan device for OpenXR session (shared device mode, queue family %u, queue index %u)\n",
+            m_vkQueueFamilyIndex, m_vkQueueIndex);
         usedDxvkDevice = true;
+
+        // Some runtimes (Monado/WiVRn through WineOpenXR) require xrCreateVulkanInstanceKHR
+        // to receive vkGetInstanceProcAddr before xrGetVulkanGraphicsDevice2KHR can validate
+        // even an externally-created Vulkan instance such as DXVK's.
+        {
+            VkApplicationInfo appInfo{};
+            appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+            appInfo.apiVersion = graphicsRequirements.minApiVersionSupported;
+            appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+            appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+            appInfo.pApplicationName = "TF2VR";
+            appInfo.pEngineName = "Source Engine";
+
+            VkInstanceCreateInfo instanceCreateInfo{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+            instanceCreateInfo.pApplicationInfo = &appInfo;
+
+            XrVulkanInstanceCreateInfoKHR primeCreateInfo{ XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR };
+            primeCreateInfo.systemId = m_systemId;
+            primeCreateInfo.pfnGetInstanceProcAddr = vkGetInstanceProcAddr;
+            primeCreateInfo.vulkanCreateInfo = &instanceCreateInfo;
+            primeCreateInfo.vulkanAllocator = nullptr;
+
+            VkInstance primeInstance = VK_NULL_HANDLE;
+            VkResult primeVkResult = VK_SUCCESS;
+            XrResult primeXrResult = m_pfnCreateVulkanInstanceKHR(m_instance, &primeCreateInfo, &primeInstance, &primeVkResult);
+            if (primeXrResult == XR_SUCCESS && primeVkResult == VK_SUCCESS)
+            {
+                DevMsg("VR: Primed OpenXR Vulkan instance callbacks for DXVK shared-device validation\n");
+                vkDestroyInstance(primeInstance, nullptr);
+            }
+            else
+            {
+                DevMsg("VR: Failed to prime OpenXR Vulkan instance callbacks. XrResult: %d, VkResult: %d\n",
+                    primeXrResult, primeVkResult);
+            }
+        }
+
+        XrVulkanGraphicsDeviceGetInfoKHR deviceGetInfo{ XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR };
+        deviceGetInfo.systemId = m_systemId;
+        deviceGetInfo.vulkanInstance = m_vkInstance;
+
+        VkPhysicalDevice openxrPhysicalDevice = VK_NULL_HANDLE;
+        result = m_pfnGetVulkanGraphicsDevice2KHR(m_instance, &deviceGetInfo, &openxrPhysicalDevice);
+        if (result != XR_SUCCESS)
+        {
+            DevMsg("VR: xrGetVulkanGraphicsDevice2KHR failed for DXVK instance (%d), falling back to dedicated Vulkan context\n", result);
+            usedDxvkDevice = false;
+        }
+        else if (openxrPhysicalDevice != m_vkPhysicalDevice)
+        {
+            DevMsg("VR: OpenXR selected a different Vulkan physical device (%p) than DXVK (%p), falling back to dedicated Vulkan context\n",
+                (void*)openxrPhysicalDevice, (void*)m_vkPhysicalDevice);
+            usedDxvkDevice = false;
+        }
+        else
+        {
+            DevMsg("VR: OpenXR accepted DXVK physical device %p for shared-device session\n", (void*)openxrPhysicalDevice);
+        }
+
+        if (usedDxvkDevice && m_pfnGetVulkanGraphicsDeviceKHR)
+        {
+            VkPhysicalDevice legacyOpenxrPhysicalDevice = VK_NULL_HANDLE;
+            XrResult legacyResult = m_pfnGetVulkanGraphicsDeviceKHR(
+                m_instance,
+                m_systemId,
+                m_vkInstance,
+                &legacyOpenxrPhysicalDevice);
+
+            if (legacyResult != XR_SUCCESS)
+            {
+                DevMsg("VR: Legacy xrGetVulkanGraphicsDeviceKHR failed for DXVK instance (%d), falling back to dedicated Vulkan context\n", legacyResult);
+                usedDxvkDevice = false;
+            }
+            else if (legacyOpenxrPhysicalDevice != m_vkPhysicalDevice)
+            {
+                DevMsg("VR: Legacy OpenXR selected a different Vulkan physical device (%p) than DXVK (%p), falling back to dedicated Vulkan context\n",
+                    (void*)legacyOpenxrPhysicalDevice, (void*)m_vkPhysicalDevice);
+                usedDxvkDevice = false;
+            }
+            else
+            {
+                DevMsg("VR: Legacy xrGetVulkanGraphicsDeviceKHR also accepted DXVK physical device %p\n",
+                    (void*)legacyOpenxrPhysicalDevice);
+            }
+        }
+
+        if (!usedDxvkDevice)
+        {
+            if (!CreateVulkanContext(&graphicsRequirements))
+            {
+                DevMsg("Vulkan context creation failed!\n");
+                return false;
+            }
+            m_vkQueueIndex = 0;
+        }
     }
     else
     {
@@ -716,6 +846,7 @@ bool COpenXRManager::CreateSession()
             DevMsg("Vulkan context creation failed!\n");
             return false;
         }
+        m_vkQueueIndex = 0;
     }
    
     // Set up Vulkan graphics binding - use the Vulkan2KHR version 
@@ -724,7 +855,7 @@ bool COpenXRManager::CreateSession()
     graphicsBinding.physicalDevice = m_vkPhysicalDevice;
     graphicsBinding.device = m_vkDevice;
     graphicsBinding.queueFamilyIndex = m_vkQueueFamilyIndex;
-    graphicsBinding.queueIndex = 0;
+    graphicsBinding.queueIndex = m_vkQueueIndex;
 
     // Create OpenXR session
     XrSessionCreateInfo sessionInfo{ XR_TYPE_SESSION_CREATE_INFO };
@@ -743,10 +874,12 @@ bool COpenXRManager::CreateSession()
                 DevMsg("Vulkan context creation failed!\n");
                 return false;
             }
+            m_vkQueueIndex = 0;
             graphicsBinding.instance = m_vkInstance;
             graphicsBinding.physicalDevice = m_vkPhysicalDevice;
             graphicsBinding.device = m_vkDevice;
             graphicsBinding.queueFamilyIndex = m_vkQueueFamilyIndex;
+            graphicsBinding.queueIndex = m_vkQueueIndex;
             
             result = xrCreateSession(m_instance, &sessionInfo, &m_session);
             if (!XR_SUCCEEDED(result))

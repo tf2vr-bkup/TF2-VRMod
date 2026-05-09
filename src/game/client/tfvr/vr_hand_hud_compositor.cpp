@@ -124,6 +124,8 @@ ConVar tfvr_status_hud_matchstatus_scale("tfvr_status_hud_matchstatus_scale", "1
 
 ConVar tfvr_status_hud_debug_bg("tfvr_status_hud_debug_bg", "0", FCVAR_ARCHIVE, 
     "Show debug background for compositor bounds");
+ConVar tfvr_status_hud_allow_player_model("tfvr_status_hud_allow_player_model", "0", FCVAR_ARCHIVE,
+    "Allow the embedded 3D class model panel in the VR status HUD. 0 uses the safer image/label-only capture path.");
 
 //=============================================================================
 // ConVars - Weapon HUD (right hand: ammo/meters)
@@ -286,6 +288,54 @@ static vgui::Panel* GetSlotPanel(const VRHudElementSlot_t& slot)
     }
     
     return nullptr;
+}
+
+//-----------------------------------------------------------------------------
+// The vanilla player status panel may contain CTFPlayerModelPanel, which renders
+// a live 3D model from inside VGUI. That path can leave shader state dirty when
+// the panel is captured into the VR hand HUD, so hide it for this capture pass.
+//-----------------------------------------------------------------------------
+struct VRPanelVisibilityRestore_t
+{
+    vgui::Panel* pPanel;
+    bool bWasVisible;
+};
+
+static int HideStatusHUDUnsafeChildren(vgui::Panel* pPanel, VRPanelVisibilityRestore_t* pRestore, int nMaxRestore)
+{
+    if (!pPanel || tfvr_status_hud_allow_player_model.GetBool())
+        return 0;
+
+    const char* pszUnsafePanels[] =
+    {
+        "classmodelpanel",
+        "classmodelpanelBG",
+    };
+
+    int nRestoreCount = 0;
+    for (int i = 0; i < ARRAYSIZE(pszUnsafePanels) && nRestoreCount < nMaxRestore; i++)
+    {
+        vgui::Panel* pChild = pPanel->FindChildByName(pszUnsafePanels[i], true);
+        if (!pChild)
+            continue;
+
+        pRestore[nRestoreCount].pPanel = pChild;
+        pRestore[nRestoreCount].bWasVisible = pChild->IsVisible();
+        nRestoreCount++;
+
+        pChild->SetVisible(false);
+    }
+
+    return nRestoreCount;
+}
+
+static void RestorePanelVisibility(VRPanelVisibilityRestore_t* pRestore, int nRestoreCount)
+{
+    for (int i = nRestoreCount - 1; i >= 0; i--)
+    {
+        if (pRestore[i].pPanel)
+            pRestore[i].pPanel->SetVisible(pRestore[i].bWasVisible);
+    }
 }
 
 //=============================================================================
@@ -489,7 +539,16 @@ void CVRHUDCompositor::Paint()
         bool bWasVisible = pPanel->IsVisible();
         pPanel->SetVisible(true);
         
+        VRPanelVisibilityRestore_t restorePanels[2];
+        int nRestoreCount = 0;
+        if (V_strcmp(slot.szName, "CTFHudPlayerStatus") == 0)
+        {
+            nRestoreCount = HideStatusHUDUnsafeChildren(pPanel, restorePanels, ARRAYSIZE(restorePanels));
+        }
+
         PaintPanelAtOffset(pPanel, finalX, finalY, scale);
+
+        RestorePanelVisibility(restorePanels, nRestoreCount);
         
         // Restore visibility state
         pPanel->SetVisible(bWasVisible);

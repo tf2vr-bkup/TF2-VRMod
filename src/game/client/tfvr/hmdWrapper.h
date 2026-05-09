@@ -11,7 +11,7 @@ enum SourceEngineState {
     SOURCE_STATE_TRANSITION = 3    // Brief transitions
 };
 
-extern "C" bool __declspec(dllexport) dxvkInitOpenXR(XrInstance instance, XrSystemId systemId, XrSession session, XrSpace referenceSpace, XrSpace headSpace);
+extern "C" bool __declspec(dllexport) dxvkInitOpenXR(XrInstance instance, XrSystemId systemId, XrSession session, XrSpace referenceSpace, XrSpace headSpace, PFN_xrGetInstanceProcAddr getInstanceProcAddr);
 extern "C" void __declspec(dllexport) dxvkShutdownOpenXR();
 extern "C" void __declspec(dllexport) dxvkSetRenderTextureSize(uint32_t width, uint32_t height, int msaa);
 extern "C" bool __declspec(dllexport) dxvkBeginFrame();

@@ -197,17 +197,19 @@ private:
     bool InitializeSharedRenderTarget(); // Initialize the shared render target
 
     // OpenXR Function bindings
-    PFN_xrGetVulkanGraphicsRequirements2KHR m_pfnGetVulkanGraphicsRequirements2KHR;
-    PFN_xrCreateVulkanInstanceKHR m_pfnCreateVulkanInstanceKHR;
-    PFN_xrCreateVulkanDeviceKHR m_pfnCreateVulkanDeviceKHR;
-    PFN_xrGetVulkanGraphicsDevice2KHR m_pfnGetVulkanGraphicsDevice2KHR;
+    PFN_xrGetVulkanGraphicsRequirements2KHR m_pfnGetVulkanGraphicsRequirements2KHR = nullptr;
+    PFN_xrCreateVulkanInstanceKHR m_pfnCreateVulkanInstanceKHR = nullptr;
+    PFN_xrCreateVulkanDeviceKHR m_pfnCreateVulkanDeviceKHR = nullptr;
+    PFN_xrGetVulkanGraphicsDevice2KHR m_pfnGetVulkanGraphicsDevice2KHR = nullptr;
+    PFN_xrGetVulkanGraphicsDeviceKHR m_pfnGetVulkanGraphicsDeviceKHR = nullptr;
 
     // Vulkan related
-    VkInstance m_vkInstance;
-    VkPhysicalDevice m_vkPhysicalDevice;
-    VkDevice m_vkDevice;
-    VkQueue m_vkQueue;
-    uint32_t m_vkQueueFamilyIndex;
+    VkInstance m_vkInstance = nullptr;
+    VkPhysicalDevice m_vkPhysicalDevice = nullptr;
+    VkDevice m_vkDevice = nullptr;
+    VkQueue m_vkQueue = nullptr;
+    uint32_t m_vkQueueFamilyIndex = 0;
+    uint32_t m_vkQueueIndex = 0;
 
     uint32_t m_currentRenderBufferIndex;
 

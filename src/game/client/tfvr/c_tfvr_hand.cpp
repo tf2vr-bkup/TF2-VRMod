@@ -47,6 +47,8 @@
 // Forward declarations for Bread Bite variant selection (defined with fists helpers below)
 static int GetBreadBiteIdleVariant();
 static int GetBreadBiteDrawVariant();
+static const char *TFVR_GetRenderableModelName(C_BaseAnimating *pRenderable);
+static bool TFVR_ValidateHandRenderable(C_BaseAnimating *pRenderable, const char *pszLabel);
 
 //-----------------------------------------------------------------------------
 // Purpose: Custom render weapon class that implements IHasOwner for material proxies
@@ -741,6 +743,8 @@ public:
 		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
 		if (!pOwner)
 			return 0;
+		if (!TFVR_ValidateHandRenderable(this, "render weapon"))
+			return 0;
 		
 		int ret = 0;
 		bool bInvuln = pOwner->m_Shared.IsInvulnerable();
@@ -1005,6 +1009,41 @@ ConVar tfvr_hands_shadow_bounds("tfvr_hands_shadow_bounds", "10000", FCVAR_CHEAT
 ConVar tfvr_hands_shadow_distance("tfvr_hands_shadow_distance", "2000", FCVAR_CHEAT, "Shadow cast distance for VR hands");
 ConVar tfvr_hands_shadow_type("tfvr_hands_shadow_type", "2", FCVAR_CHEAT, "Shadow type for VR hands (0=none, 1=simple, 2=texture, 3=texture_dynamic)");
 ConVar tfvr_hands_shadow_debug("tfvr_hands_shadow_debug", "0", FCVAR_CHEAT, "Show shadow debug info for VR hands");
+
+static const char *TFVR_GetRenderableModelName(C_BaseAnimating *pRenderable)
+{
+	if (!pRenderable)
+		return "(null entity)";
+
+	const model_t *pModel = pRenderable->GetModel();
+	if (!pModel)
+		return "(null model)";
+
+	return modelinfo ? modelinfo->GetModelName(pModel) : "(modelinfo unavailable)";
+}
+
+static bool TFVR_ValidateHandRenderable(C_BaseAnimating *pRenderable, const char *pszLabel)
+{
+	if (!pRenderable)
+		return false;
+
+	const model_t *pModel = pRenderable->GetModel();
+	if (!pModel)
+	{
+		DevMsg("VR Hand Draw: skipping %s - null model\n", pszLabel);
+		return false;
+	}
+
+	CStudioHdr *pStudioHdr = pRenderable->GetModelPtr();
+	if (!pStudioHdr || !pStudioHdr->IsValid())
+	{
+		DevMsg("VR Hand Draw: skipping %s - invalid studio header for '%s'\n",
+			pszLabel, TFVR_GetRenderableModelName(pRenderable));
+		return false;
+	}
+
+	return true;
+}
 
 // Muzzle position mode for effects (sounds, muzzle flash, tracers)
 ConVar tfvr_muzzle_direct_mode("tfvr_muzzle_direct_mode", "0", FCVAR_ARCHIVE, "Use controller pose directly for muzzle position (0=attachment system, 1=direct controller+offset)");
@@ -10375,8 +10414,12 @@ int C_TFVRHand::DrawModel(int flags)
 
 		if (m_hRenderWeapon.Get())
 		{
-			VRHandLayer_AddRenderable(m_hRenderWeapon.Get());
-			VRHandLayer_AddParticleOwner(m_hRenderWeapon.Get());
+			C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
+			if (TFVR_ValidateHandRenderable(pRenderWeapon, "render weapon"))
+			{
+				VRHandLayer_AddRenderable(pRenderWeapon);
+				VRHandLayer_AddParticleOwner(pRenderWeapon);
+			}
 		}
 
 		// Source weapon creates particles like loose cannon sparks
@@ -10385,8 +10428,12 @@ int C_TFVRHand::DrawModel(int flags)
 
 		if (m_hLeftHandWatch.Get())
 		{
-			VRHandLayer_AddRenderable(m_hLeftHandWatch.Get());
-			VRHandLayer_AddParticleOwner(m_hLeftHandWatch.Get());
+			C_BaseAnimating *pWatch = m_hLeftHandWatch.Get();
+			if (TFVR_ValidateHandRenderable(pWatch, "left hand watch"))
+			{
+				VRHandLayer_AddRenderable(pWatch);
+				VRHandLayer_AddParticleOwner(pWatch);
+			}
 		}
 		if (m_hLeftHandBall.Get() && m_iLastBallAmmo > 0)
 		{
@@ -10394,7 +10441,9 @@ int C_TFVRHand::DrawModel(int flags)
 		}
 		if (m_hLeftHandShield.Get())
 		{
-			VRHandLayer_AddRenderable(m_hLeftHandShield.Get());
+			C_BaseAnimating *pShield = m_hLeftHandShield.Get();
+			if (TFVR_ValidateHandRenderable(pShield, "left hand shield"))
+				VRHandLayer_AddRenderable(pShield);
 		}
 
 		return 0;
@@ -10416,6 +10465,7 @@ int C_TFVRHand::DrawModel(int flags)
 	
 	int ret = 0;
 	bool bInvuln = pOwner->m_Shared.IsInvulnerable();
+	const char *pszHandLabel = IsLeftHand() ? "left hand" : "right hand";
 	
 	// Apply ubercharge material override
 	if (bInvuln && (flags & STUDIO_RENDER))
@@ -10437,77 +10487,94 @@ int C_TFVRHand::DrawModel(int flags)
 	// temporarily clear it here for the actual draw.
 	if (m_hLeftHandBall.Get() && m_iLastBallAmmo > 0)
 	{
-		m_hLeftHandBall->RemoveEffects(EF_NODRAW);
-		m_hLeftHandBall->DrawModel(flags);
-		m_hLeftHandBall->AddEffects(EF_NODRAW);
+		C_BaseAnimating *pBall = m_hLeftHandBall.Get();
+		if (TFVR_ValidateHandRenderable(pBall, "left hand ball"))
+		{
+			pBall->RemoveEffects(EF_NODRAW);
+			pBall->DrawModel(flags);
+			pBall->AddEffects(EF_NODRAW);
+		}
 	}
 
 	if (m_hLeftHandShield.Get())
 	{
-		if (bInvuln && (flags & STUDIO_RENDER))
-			modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+		C_BaseAnimating *pShield = m_hLeftHandShield.Get();
+		if (TFVR_ValidateHandRenderable(pShield, "left hand shield"))
+		{
+			if (bInvuln && (flags & STUDIO_RENDER))
+				modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
 
-		m_hLeftHandShield->RemoveEffects(EF_NODRAW);
-		m_hLeftHandShield->DrawModel(flags);
-		m_hLeftHandShield->AddEffects(EF_NODRAW);
+			pShield->RemoveEffects(EF_NODRAW);
+			pShield->DrawModel(flags);
+			pShield->AddEffects(EF_NODRAW);
 
-		if (bInvuln && (flags & STUDIO_RENDER))
-			modelrender->ForcedMaterialOverride(NULL);
+			if (bInvuln && (flags & STUDIO_RENDER))
+				modelrender->ForcedMaterialOverride(NULL);
+		}
 	}
 
 	if (m_hLeftHandWatch.Get())
 	{
-		if (bInvuln && (flags & STUDIO_RENDER))
-			modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+		C_BaseAnimating *pWatch = m_hLeftHandWatch.Get();
+		if (TFVR_ValidateHandRenderable(pWatch, "left hand watch"))
+		{
+			if (bInvuln && (flags & STUDIO_RENDER))
+				modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
 
-		m_hLeftHandWatch->RemoveEffects(EF_NODRAW);
-		m_hLeftHandWatch->DrawModel(flags);
-		m_hLeftHandWatch->AddEffects(EF_NODRAW);
+			pWatch->RemoveEffects(EF_NODRAW);
+			pWatch->DrawModel(flags);
+			pWatch->AddEffects(EF_NODRAW);
 
-		if (bInvuln && (flags & STUDIO_RENDER))
-			modelrender->ForcedMaterialOverride(NULL);
+			if (bInvuln && (flags & STUDIO_RENDER))
+				modelrender->ForcedMaterialOverride(NULL);
+		}
 	}
 
 	if (m_hLeftHandWatch.Get() && m_pWatchPanel && (flags & STUDIO_RENDER)
 		&& pOwner->GetPercentInvisible() < 1.0f)
 	{
 		C_BaseAnimating *pWatch = m_hLeftHandWatch.Get();
-		int iLL = pWatch->LookupAttachment("controlpanel0_ll");
-		int iUR = pWatch->LookupAttachment("controlpanel0_ur");
-		if (iLL > 0 && iUR > 0)
+		if (TFVR_ValidateHandRenderable(pWatch, "left hand watch panel"))
 		{
-			matrix3x4_t matLL;
-			Vector urPos;
-			pWatch->GetAttachment(iLL, matLL);
-			pWatch->GetAttachment(iUR, urPos);
+			int iLL = pWatch->LookupAttachment("controlpanel0_ll");
+			int iUR = pWatch->LookupAttachment("controlpanel0_ur");
+			if (iLL > 0 && iUR > 0)
+			{
+				matrix3x4_t matLL;
+				Vector urPos;
+				if (!pWatch->GetAttachment(iLL, matLL) || !pWatch->GetAttachment(iUR, urPos))
+					return ret;
 
-			Vector llPos, right, up, forward;
-			MatrixGetColumn(matLL, 3, llPos);
-			MatrixGetColumn(matLL, 0, right);
-			MatrixGetColumn(matLL, 1, up);
-			MatrixGetColumn(matLL, 2, forward);
+				Vector llPos, right, up, forward;
+				MatrixGetColumn(matLL, 3, llPos);
+				MatrixGetColumn(matLL, 0, right);
+				MatrixGetColumn(matLL, 1, up);
+				MatrixGetColumn(matLL, 2, forward);
 
-			matrix3x4_t invLL;
-			MatrixInvert(matLL, invLL);
-			Vector lrlocal;
-			VectorTransform(urPos, invLL, lrlocal);
+				matrix3x4_t invLL;
+				MatrixInvert(matLL, invLL);
+				Vector lrlocal;
+				VectorTransform(urPos, invLL, lrlocal);
 
-			VMatrix panelToWorld;
-			panelToWorld.Identity();
-			panelToWorld[0][0] = right.x;  panelToWorld[0][1] = up.x;  panelToWorld[0][2] = forward.x;
-			panelToWorld[1][0] = right.y;  panelToWorld[1][1] = up.y;  panelToWorld[1][2] = forward.y;
-			panelToWorld[2][0] = right.z;  panelToWorld[2][1] = up.z;  panelToWorld[2][2] = forward.z;
-			panelToWorld.SetTranslation(llPos);
+				VMatrix panelToWorld;
+				panelToWorld.Identity();
+				panelToWorld[0][0] = right.x;  panelToWorld[0][1] = up.x;  panelToWorld[0][2] = forward.x;
+				panelToWorld[1][0] = right.y;  panelToWorld[1][1] = up.y;  panelToWorld[1][2] = forward.y;
+				panelToWorld[2][0] = right.z;  panelToWorld[2][1] = up.z;  panelToWorld[2][2] = forward.z;
+				panelToWorld.SetTranslation(llPos);
 
-			int pixelW, pixelH;
-			m_pWatchPanel->GetSize(pixelW, pixelH);
+				int pixelW, pixelH;
+				m_pWatchPanel->GetSize(pixelW, pixelH);
+				if (pixelW <= 0 || pixelH <= 0)
+					return ret;
 
-			g_pMatSystemSurface->DisableClipping(true);
-			g_pMatSystemSurface->DrawPanelIn3DSpace(
-				m_pWatchPanel->GetVPanel(), panelToWorld,
-				pixelW, pixelH,
-				lrlocal.x, lrlocal.y);
-			g_pMatSystemSurface->DisableClipping(false);
+				g_pMatSystemSurface->DisableClipping(true);
+				g_pMatSystemSurface->DrawPanelIn3DSpace(
+					m_pWatchPanel->GetVPanel(), panelToWorld,
+					pixelW, pixelH,
+					lrlocal.x, lrlocal.y);
+				g_pMatSystemSurface->DisableClipping(false);
+			}
 		}
 	}
 
