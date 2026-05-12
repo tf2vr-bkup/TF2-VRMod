@@ -28,6 +28,7 @@ extern IVEngineClient *engine;
 // ConVars for input sensitivity and deadzone
 ConVar tfvr_move_sensitivity("tfvr_move_sensitivity", "1.0", FCVAR_ARCHIVE, "Sensitivity multiplier for VR movement");
 ConVar tfvr_thumbstick_deadzone("tfvr_thumbstick_deadzone", "0.1", FCVAR_ARCHIVE, "Deadzone for thumbstick movement");
+ConVar tfvr_locomotion_source( "tfvr_locomotion_source", "0", FCVAR_ARCHIVE, "VR locomotion direction source: 0=head, 1=primary hand, 2=offhand, 3=left hand, 4=right hand" );
 ConVar tfvr_use_hmd_angles("tfvr_use_hmd_angles", "0", FCVAR_ARCHIVE, "Use HMD angles for view");
 
 // Controller tracking ConVars
@@ -907,6 +908,53 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
     float sensitivity = tfvr_move_sensitivity.GetFloat();
     moveX *= sensitivity;
     moveY *= sensitivity;
+
+    int nLocomotionSource = clamp( tfvr_locomotion_source.GetInt(), 0, 4 );
+    if ( nLocomotionSource != 0 )
+    {
+        bool bUseLeftHand = false;
+        switch ( nLocomotionSource )
+        {
+        case 1:
+            bUseLeftHand = ( tfvr_primary_hand.GetInt() == 0 );
+            break;
+        case 2:
+            bUseLeftHand = ( tfvr_primary_hand.GetInt() != 0 );
+            break;
+        case 3:
+            bUseLeftHand = true;
+            break;
+        case 4:
+            bUseLeftHand = false;
+            break;
+        }
+
+        // Artificial locomotion is normally HMD-relative. For controller-relative
+        // modes, rotate the stick vector by the selected controller yaw relative
+        // to the raw HMD yaw before it is written into the head-relative usercmd.
+        VMatrix hmdPose = g_pOpenXRManager->GetMideyePose();
+        VMatrix locomotionPose;
+        bool bPoseValid = bUseLeftHand
+            ? g_pOpenXRManager->GetLeftControllerPoseRaw( locomotionPose )
+            : g_pOpenXRManager->GetRightControllerPoseRaw( locomotionPose );
+
+        if ( bPoseValid )
+        {
+            QAngle hmdAngles;
+            QAngle sourceAngles;
+            MatrixAngles( hmdPose.As3x4(), hmdAngles );
+            MatrixAngles( locomotionPose.As3x4(), sourceAngles );
+
+            float flDelta = DEG2RAD( sourceAngles[YAW] - hmdAngles[YAW] );
+            float flCos = cosf( flDelta );
+            float flSin = sinf( flDelta );
+
+            float flForward = moveY * flCos - moveX * flSin;
+            float flSide = moveY * flSin + moveX * flCos;
+            moveY = flForward;
+            moveX = flSide;
+        }
+    }
 
     //DevMsg("VR Movement: After sensitivity - x=%.2f y=%.2f\n", moveX, moveY);
 

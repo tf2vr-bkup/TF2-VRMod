@@ -2615,7 +2615,7 @@
 
 		"navUp"			"SettingsButtonSDK"
 		"navLeft"		"SettingsButtonSDK"
-		"navRight"		"SettingsButtonSDK"
+		"navRight"		"TFVRSettingsButtonSDK"
 
 		"sound_depressed"	"UI/buttonclick.wav"
 		"sound_released"	"UI/buttonclickrelease.wav"
@@ -2636,6 +2636,38 @@
 			"image"			"glyph_options"
 			"scaleImage"	"1"
 		}				
+	}
+
+	"TFVRSettingsButtonSDK"
+	{
+		"ControlName"	"CExImageButton"
+		"fieldName"		"TFVRSettingsButtonSDK"
+		"xpos"			"c+34+273"
+		"ypos"			"437"
+		"zpos"			"5"
+		"wide"			"34"
+		"tall"			"25"
+		"autoResize"	"0"
+		"pinCorner"		"3"
+		"visible"		"1"
+		"enabled"		"1"
+		"tabPosition"	"0"
+		"labelText"		"VR"
+		"font"			"HudFontSmallBold"
+		"textAlignment"	"center"
+		"dulltext"		"0"
+		"brighttext"	"0"
+		"default"		"1"
+		"Command"		"opentfvroptions"
+		"use_proportional_insets"	"1"
+
+		"navUp"			"SettingsButtonSDK"
+		"navLeft"		"TF2SettingsButtonSDK"
+		"navRight"		"SettingsButtonSDK"
+
+		"sound_depressed"	"UI/buttonclick.wav"
+		"sound_released"	"UI/buttonclickrelease.wav"
+		"image_drawcolor"	"235 226 202 255"
 	}
 	
 	"SettingsButton"
@@ -2711,6 +2743,7 @@
 
 		"navUp"			"Notifications_Panel"
 		"navLeft"		"SettingsButton"
+		"navRight"		"TFVRSettingsButton"
 
 		"sound_depressed"	"UI/buttonclick.wav"
 		"sound_released"	"UI/buttonclickrelease.wav"
@@ -2732,6 +2765,38 @@
 			"image"			"glyph_options"
 			"scaleImage"	"1"
 		}				
+	}
+
+	"TFVRSettingsButton"
+	{
+		"ControlName"	"CExImageButton"
+		"fieldName"		"TFVRSettingsButton"
+		"xpos"			"c-157+273"
+		"ypos"			"437"
+		"zpos"			"2"
+		"wide"			"34"
+		"tall"			"25"
+		"autoResize"	"0"
+		"pinCorner"		"3"
+		"visible"		"1"
+		"enabled"		"1"
+		"tabPosition"	"0"
+		"labelText"		"VR"
+		"font"			"HudFontSmallBold"
+		"textAlignment"	"center"
+		"dulltext"		"0"
+		"brighttext"	"0"
+		"default"		"1"
+		"Command"		"opentfvroptions"
+		"use_proportional_insets"	"1"
+
+		"navUp"			"Notifications_Panel"
+		"navLeft"		"TF2SettingsButton"
+		"navRight"		"NewUserForumsButton"
+
+		"sound_depressed"	"UI/buttonclick.wav"
+		"sound_released"	"UI/buttonclickrelease.wav"
+		"image_drawcolor"	"235 226 202 255"
 	}
 	
 	"NewUserForumsButton"

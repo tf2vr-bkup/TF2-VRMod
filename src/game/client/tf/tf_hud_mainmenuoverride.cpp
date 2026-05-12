@@ -1881,6 +1881,10 @@ void CHudMainMenuOverride::OnCommand( const char *command )
 	{
 		GetClientModeTFNormal()->GameUI()->SendMainMenuCommand( "engine opentf2options" );
 	}
+	else if ( !Q_stricmp( command, "opentfvroptions" ) )
+	{
+		GetClientModeTFNormal()->GameUI()->SendMainMenuCommand( "engine opentfvroptions" );
+	}
 	else if ( !Q_stricmp( command, "motd_prev" ) )
 	{
 		if ( m_iCurrentMOTD > 0 )

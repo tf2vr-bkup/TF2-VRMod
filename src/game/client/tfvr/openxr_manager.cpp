@@ -284,9 +284,16 @@ bool COpenXRManager::Initialize()
 {
     if (m_vrActive) return true;
 
+    auto failInitialize = [this](const char *pszStage) -> bool
+    {
+        DevMsg("OpenXR initialization failed during %s; cleaning up partial resources\n", pszStage);
+        Shutdown();
+        return false;
+    };
+
     // Initialize OpenXR
-    if (!CreateOpenXRInstance()) return false;
-    if (!GetSystem()) return false;
+    if (!CreateOpenXRInstance()) return failInitialize("create OpenXR instance");
+    if (!GetSystem()) return failInitialize("get OpenXR system");
 
     XrViewConfigurationView viewConfigs[2] = { {XR_TYPE_VIEW_CONFIGURATION_VIEW}, {XR_TYPE_VIEW_CONFIGURATION_VIEW} };
     XrResult result = xrEnumerateViewConfigurationViews(m_instance, m_systemId,
@@ -294,12 +301,12 @@ bool COpenXRManager::Initialize()
     if (!XR_SUCCEEDED(result))
     {
         DevMsg("Failed to enumerate view configurations: %d\n", result);
-        return false;
+        return failInitialize("enumerate view configuration views");
     }
 
-    if (!CreateSession()) return false;
-    if (!CreateReferenceSpace()) return false;
-    if (!CreateHeadSpace()) return false;
+    if (!CreateSession()) return failInitialize("create OpenXR session");
+    if (!CreateReferenceSpace()) return failInitialize("create reference space");
+    if (!CreateHeadSpace()) return failInitialize("create head space");
 
     // Initialize input system
     m_inputManager = new COpenXRInputManager(this);
@@ -308,7 +315,7 @@ bool COpenXRManager::Initialize()
         DevMsg("Failed to initialize input system\n");
         delete m_inputManager;
         m_inputManager = nullptr;
-        return false;
+        return failInitialize("initialize input system");
     }
 
     // Initialize hand tracking system
@@ -329,8 +336,8 @@ bool COpenXRManager::Initialize()
 
     if (!dxvkInitOpenXR(m_instance, m_systemId, m_session, m_referenceSpace, m_headSpace, xrGetInstanceProcAddr))
     {
-        DevMsg("Failed to send OpenXR info to DXVK");
-        return false;
+        DevMsg("Failed to send OpenXR info to DXVK\n");
+        return failInitialize("send OpenXR info to DXVK");
     }
 
     // Initialize VR Menu Manager
@@ -367,7 +374,10 @@ bool COpenXRManager::Initialize()
 
 void COpenXRManager::Shutdown() 
 {
-    if (!m_vrActive && !m_sessionInitialized) return;
+    if (!m_vrActive && !m_sessionInitialized && !m_instance && !m_session && !m_referenceSpace
+        && !m_headSpace && !m_viewSpace && !m_inputManager && !m_handTracker
+        && !m_menuManager && !m_laserPointer)
+        return;
 
     // Clean up VR Menu Manager
     if (m_menuManager)
@@ -1007,12 +1017,37 @@ void COpenXRManager::ReleaseResources()
     {
         xrDestroySwapchain(swapchain);
     }
+    m_swapchains.clear();
 
-    if (m_viewSpace) xrDestroySpace(m_viewSpace);
-    if (m_referenceSpace) xrDestroySpace(m_referenceSpace);
-    if (m_headSpace) xrDestroySpace(m_headSpace);
-    if (m_session) xrDestroySession(m_session);
-    if (m_instance) xrDestroyInstance(m_instance);
+    if (m_viewSpace)
+    {
+        xrDestroySpace(m_viewSpace);
+        m_viewSpace = XR_NULL_HANDLE;
+    }
+    if (m_referenceSpace)
+    {
+        xrDestroySpace(m_referenceSpace);
+        m_referenceSpace = XR_NULL_HANDLE;
+    }
+    if (m_headSpace)
+    {
+        xrDestroySpace(m_headSpace);
+        m_headSpace = XR_NULL_HANDLE;
+    }
+    if (m_session)
+    {
+        xrDestroySession(m_session);
+        m_session = XR_NULL_HANDLE;
+    }
+    if (m_instance)
+    {
+        xrDestroyInstance(m_instance);
+        m_instance = XR_NULL_HANDLE;
+    }
+
+    m_systemId = XR_NULL_SYSTEM_ID;
+    m_sessionRunning = false;
+    m_frameStarted = false;
 }
 
 bool COpenXRManager::BeginFrame()

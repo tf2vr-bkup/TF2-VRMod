@@ -22,6 +22,7 @@
 #include <vgui_controls/Panel.h>
 #include <KeyValues.h>
 #include "filesystem.h"
+#include "tfvr/tfvr_options_dialog.h"
 #include "matsys_controls/matsyscontrols.h"
 
 #ifdef SIXENSE
@@ -195,6 +196,7 @@ bool VGui_Startup( CreateInterfaceFn appSystemFactory )
 //-----------------------------------------------------------------------------
 void VGui_CreateGlobalPanels( void )
 {
+	VPANEL gameParent = enginevgui->GetPanel( PANEL_GAMEUIDLL );
 	VPANEL gameToolParent = enginevgui->GetPanel( PANEL_CLIENTDLL_TOOLS );
 	VPANEL toolParent = enginevgui->GetPanel( PANEL_TOOLS );
 #if defined( TRACK_BLOCKING_IO )
@@ -213,6 +215,8 @@ void VGui_CreateGlobalPanels( void )
 	netgraphpanel->Create( toolParent );
 	debugoverlaypanel->Create( gameToolParent );
 
+	tfvrOptions->Create( gameParent );
+
 #ifndef _X360
 	// Create mp3 player off of tool parent panel
 	MP3Player_Create( toolParent );
@@ -230,6 +234,7 @@ void VGui_Shutdown()
 	MP3Player_Destroy();
 #endif
 
+	tfvrOptions->Destroy();
 	netgraphpanel->Destroy();
 	debugoverlaypanel->Destroy();
 #if defined( TRACK_BLOCKING_IO )
