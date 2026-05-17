@@ -949,8 +949,8 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
             float flCos = cosf( flDelta );
             float flSin = sinf( flDelta );
 
-            float flForward = moveY * flCos - moveX * flSin;
-            float flSide = moveY * flSin + moveX * flCos;
+            float flForward = moveY * flCos + moveX * flSin;
+            float flSide = moveX * flCos - moveY * flSin;
             moveY = flForward;
             moveX = flSide;
         }
