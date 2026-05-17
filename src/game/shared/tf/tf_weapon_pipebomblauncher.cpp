@@ -41,7 +41,7 @@ static inline float TFVR_ReloadThrottleScale()
 }
 
 ConVar tfvr_sticky_pump_reload( "tfvr_sticky_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Demoman stickybomb launcher: 1 = load shells with weapon-forward pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
-ConVar tfvr_sticky_pump_distance( "tfvr_sticky_pump_distance", "4.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along weapon forward per pump stroke" );
+ConVar tfvr_sticky_pump_distance( "tfvr_sticky_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along weapon forward per pump stroke" );
 ConVar tfvr_sticky_pump_sign( "tfvr_sticky_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1) if pump direction feels inverted" );
 ConVar tfvr_sticky_pump_debug( "tfvr_sticky_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print stickybomb pump reload state to console" );
 
@@ -965,7 +965,7 @@ void CTFPipebombLauncher::VRPumpReloadPostFrame( void )
 			{
 				m_bVRPumpStrokeOut = true;
 				m_vecVRPumpLastHandPos = vecHandRelative;
-				m_flVRPumpStrokeDist = 0.0f;
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist - 0.5f, flPumpDist );
 				if ( bDebug )
 					DevMsg( "[VR StickyPump] Pullback started\n" );
 			}
@@ -1028,7 +1028,7 @@ void CTFPipebombLauncher::VRPumpReloadPostFrame( void )
 			float flPrevDist = m_flVRPumpStrokeDist;
 			if ( flFrameDisp > 0.0f )
 			{
-				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flCompletionDist );
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flFrameDisp, flCompletionDist );
 			}
 			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )
 			{

@@ -32,7 +32,7 @@
 IMPLEMENT_NETWORKCLASS_ALIASED( TFParticleCannon, DT_ParticleCannon )
 
 ConVar tfvr_mangler_pump_reload( "tfvr_mangler_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Cow Mangler" );
-ConVar tfvr_mangler_pump_distance( "tfvr_mangler_pump_distance", "3.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke" );
+ConVar tfvr_mangler_pump_distance( "tfvr_mangler_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke" );
 ConVar tfvr_mangler_pump_sign( "tfvr_mangler_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1)" );
 ConVar tfvr_mangler_pump_debug( "tfvr_mangler_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print mangler pump state to console" );
 
@@ -772,7 +772,7 @@ void CTFParticleCannon::VRPumpReloadPostFrame( void )
 			{
 				m_iVRPumpPhase = 1;
 				m_vecVRPumpLastHandPos = vecHandRelative;
-				m_flVRPumpStrokeDist = 0.0f;
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist - 0.5f, flPumpDist );
 
 				// Pick sound variant: "final" if this recharge will fill the bar
 				bool bLastReload = ( Energy_GetEnergy() + Energy_GetRechargeCost() >= Energy_GetMaxEnergy() );
@@ -891,7 +891,7 @@ void CTFParticleCannon::VRPumpReloadPostFrame( void )
 
 			if ( flFrameDisp > 0.0f )
 			{
-				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flReturnDist );
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flFrameDisp, flReturnDist );
 			}
 
 			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )

@@ -89,7 +89,7 @@ static inline float TFVR_ReloadThrottleScale()
 
 // 0 = vanilla TF2 behavior in VR too (auto-reload when idle + normal singly reload / reload key). 1 = manual lever only.
 ConVar tfvr_scattergun_lever_reload( "tfvr_scattergun_lever_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Scout scattergun: 1 = load shells with weapon-hand pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
-ConVar tfvr_scattergun_lever_distance( "tfvr_scattergun_lever_distance", "4.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along lever axis per pump stroke" );
+ConVar tfvr_scattergun_lever_distance( "tfvr_scattergun_lever_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along lever axis per pump stroke" );
 ConVar tfvr_scattergun_lever_sign( "tfvr_scattergun_lever_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply lever-axis motion (+1 or -1) if pump direction feels inverted" );
 ConVar tfvr_scattergun_lever_axis( "tfvr_scattergun_lever_axis", "2", FCVAR_REPLICATED, "VR: controller matrix column for pump axis (0=fwd, 1=right, 2=up)" );
 ConVar tfvr_scattergun_lever_debug( "tfvr_scattergun_lever_debug", "0", FCVAR_REPLICATED, "VR: 1 = print scattergun lever reload state to console" );
@@ -653,7 +653,7 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 			{
 				m_bVRLeverStrokeOut = true;
 				m_vecVRLeverLastHandPos = vecHandRelative;
-				m_flVRLeverStrokeDist = 0.0f;
+				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist - 0.5f, flLeverDist );
 				if ( bDebug )
 					DevMsg( "[VR Lever] Pump down started\n" );
 			}
@@ -752,7 +752,7 @@ void CTFScatterGun::VRLeverReloadPostFrame( void )
 			float flPrevDist = m_flVRLeverStrokeDist;
 			if ( flFrameDisp > 0.0f )
 			{
-				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flCompletionDist );
+				m_flVRLeverStrokeDist = MIN( m_flVRLeverStrokeDist + flFrameDisp, flCompletionDist );
 			}
 			if ( m_flVRLeverStrokeDist >= flLeverDist * 0.60f )
 			{

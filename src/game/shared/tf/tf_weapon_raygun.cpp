@@ -28,12 +28,12 @@
 IMPLEMENT_NETWORKCLASS_ALIASED( TFRaygun, DT_WeaponRaygun )
 
 ConVar tfvr_bison_pump_reload( "tfvr_bison_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Righteous Bison" );
-ConVar tfvr_bison_pump_distance( "tfvr_bison_pump_distance", "4.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke" );
+ConVar tfvr_bison_pump_distance( "tfvr_bison_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke" );
 ConVar tfvr_bison_pump_sign( "tfvr_bison_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1)" );
 ConVar tfvr_bison_pump_debug( "tfvr_bison_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print bison pump state to console" );
 
 ConVar tfvr_pomson_pump_reload( "tfvr_pomson_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Pomson 6000" );
-ConVar tfvr_pomson_pump_distance( "tfvr_pomson_pump_distance", "3.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke (Pomson)" );
+ConVar tfvr_pomson_pump_distance( "tfvr_pomson_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke (Pomson)" );
 ConVar tfvr_pomson_pump_sign( "tfvr_pomson_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1) (Pomson)" );
 ConVar tfvr_pomson_pump_debug( "tfvr_pomson_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print pomson pump state to console" );
 
@@ -479,7 +479,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 			{
 				m_bVRPumpStrokeOut = true;
 				m_vecVRPumpLastHandPos = vecHandRelative;
-				m_flVRPumpStrokeDist = 0.0f;
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist - 0.5f, flPumpDist );
 				if ( bDebug )
 					DevMsg( "[VR %s] Pullback started\n", pszTag );
 			}
@@ -542,7 +542,7 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 			float flPrevDist = m_flVRPumpStrokeDist;
 			if ( flFrameDisp > 0.0f )
 			{
-				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + MIN( flFrameDisp, flMaxDistPerFrame ), flCompletionDist );
+				m_flVRPumpStrokeDist = MIN( m_flVRPumpStrokeDist + flFrameDisp, flCompletionDist );
 			}
 			if ( m_flVRPumpStrokeDist >= flPumpDist * 0.60f )
 			{
