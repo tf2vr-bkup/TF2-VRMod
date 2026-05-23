@@ -69,6 +69,10 @@ ConVar tfvr_mirror_resolution("tfvr_mirror_resolution", "720", FCVAR_ARCHIVE,
 	MirrorResolutionChanged);
 ConVar tfvr_openxr_use_dxvk_device("tfvr_openxr_use_dxvk_device", "0", FCVAR_ARCHIVE,
 	"Use DXVK's Vulkan device for the OpenXR session. 0 restores the pre-April-2 dedicated OpenXR Vulkan context path.");
+ConVar tfvr_profile_openxr_beginframe("tfvr_profile_openxr_beginframe", "0", FCVAR_ARCHIVE,
+	"Log averaged DXVK/OpenXR BeginFrame timing breakdowns for profiling.");
+ConVar tfvr_profile_openxr_beginframe_interval("tfvr_profile_openxr_beginframe_interval", "120", FCVAR_ARCHIVE,
+	"Frames to average when tfvr_profile_openxr_beginframe is enabled.");
 
 static void MirrorResolutionChanged(IConVar *var, const char *pOldValue, float flOldValue)
 {
@@ -1054,7 +1058,86 @@ void COpenXRManager::ReleaseResources()
 bool COpenXRManager::BeginFrame()
 {
     VPROF_BUDGET("OpenXRManager::BeginFrame", VPROF_BUDGETGROUP_WORLD_RENDERING);
-    return dxvkBeginFrame();
+    bool bResult = dxvkBeginFrame();
+
+    if (bResult && tfvr_profile_openxr_beginframe.GetBool())
+    {
+        TF2VR_BeginFrameTimings timings = {};
+        if (dxvkGetLastBeginFrameTimings(&timings))
+        {
+            static int s_nSamples = 0;
+            static double s_totalMs = 0.0;
+            static double s_flushMs = 0.0;
+            static double s_syncMs = 0.0;
+            static double s_waitPreviousMs = 0.0;
+            static double s_waitPosesMs = 0.0;
+            static double s_xrWaitFrameMs = 0.0;
+            static double s_xrBeginFrameMs = 0.0;
+            static double s_xrLocateViewsMs = 0.0;
+            static double s_xrLocateHeadMs = 0.0;
+            static double s_peakTotalMs = 0.0;
+            static int s_nWaitedPrevious = 0;
+            static int s_nHadDevice = 0;
+            static uint32_t s_nTimeoutWarnings = 0;
+
+            s_nSamples++;
+            s_totalMs += timings.totalMs;
+            s_flushMs += timings.flushMs;
+            s_syncMs += timings.synchronizeCsThreadMs;
+            s_waitPreviousMs += timings.waitPreviousFrameMs;
+            s_waitPosesMs += timings.waitPosesMs;
+            s_xrWaitFrameMs += timings.xrWaitFrameMs;
+            s_xrBeginFrameMs += timings.xrBeginFrameMs;
+            s_xrLocateViewsMs += timings.xrLocateViewsMs;
+            s_xrLocateHeadMs += timings.xrLocateHeadMs;
+            if (timings.totalMs > s_peakTotalMs)
+                s_peakTotalMs = timings.totalMs;
+            s_nWaitedPrevious += timings.waitedPreviousFrame ? 1 : 0;
+            s_nHadDevice += timings.hadLastUsedDevice ? 1 : 0;
+            s_nTimeoutWarnings += timings.timeoutWarningCount;
+
+            int nInterval = tfvr_profile_openxr_beginframe_interval.GetInt();
+            if (nInterval < 1)
+                nInterval = 1;
+
+            if (s_nSamples >= nInterval)
+            {
+                double invSamples = 1.0 / s_nSamples;
+                Msg("TFVR BeginFrame avg over %d frames: total %.3f ms (peak %.3f), flush %.3f, syncCS %.3f, waitPrev %.3f, waitPoses %.3f [xrWait %.3f, xrBegin %.3f, locateViews %.3f, locateHead %.3f], device %d/%d, waitedPrev %d/%d, timeouts %u\n",
+                    s_nSamples,
+                    s_totalMs * invSamples,
+                    s_peakTotalMs,
+                    s_flushMs * invSamples,
+                    s_syncMs * invSamples,
+                    s_waitPreviousMs * invSamples,
+                    s_waitPosesMs * invSamples,
+                    s_xrWaitFrameMs * invSamples,
+                    s_xrBeginFrameMs * invSamples,
+                    s_xrLocateViewsMs * invSamples,
+                    s_xrLocateHeadMs * invSamples,
+                    s_nHadDevice, s_nSamples,
+                    s_nWaitedPrevious, s_nSamples,
+                    s_nTimeoutWarnings);
+
+                s_nSamples = 0;
+                s_totalMs = 0.0;
+                s_flushMs = 0.0;
+                s_syncMs = 0.0;
+                s_waitPreviousMs = 0.0;
+                s_waitPosesMs = 0.0;
+                s_xrWaitFrameMs = 0.0;
+                s_xrBeginFrameMs = 0.0;
+                s_xrLocateViewsMs = 0.0;
+                s_xrLocateHeadMs = 0.0;
+                s_peakTotalMs = 0.0;
+                s_nWaitedPrevious = 0;
+                s_nHadDevice = 0;
+                s_nTimeoutWarnings = 0;
+            }
+        }
+    }
+
+    return bResult;
 }
 
 bool COpenXRManager::EndFrame()

@@ -21,6 +21,25 @@ extern "C" void __declspec(dllexport) dxvkGetViews(XrView*& views, XrSpaceLocati
 extern "C" void __declspec(dllexport) dxvkSetSessionFocused(bool focused);
 extern "C" bool __declspec(dllexport) dxvkIsSessionFocused();
 
+struct TF2VR_BeginFrameTimings
+{
+    double totalMs;
+    double flushMs;
+    double synchronizeCsThreadMs;
+    double waitPreviousFrameMs;
+    double waitPosesMs;
+    double xrWaitFrameMs;
+    double xrBeginFrameMs;
+    double xrLocateViewsMs;
+    double xrLocateHeadMs;
+    bool hadLastUsedDevice;
+    bool waitedPreviousFrame;
+    bool waitPosesSucceeded;
+    uint32_t timeoutWarningCount;
+};
+
+extern "C" bool __declspec(dllexport) dxvkGetLastBeginFrameTimings(TF2VR_BeginFrameTimings* timings);
+
 // New VR Compositor State Management
 extern "C" void __declspec(dllexport) dxvkSetSourceState(int state);
 extern "C" bool __declspec(dllexport) dxvkIsCompositorActive();

@@ -7078,12 +7078,34 @@ void CViewRender::RenderVREyeToScreen(const CViewSetup &view, StereoEye_t eye)
 
 void CViewRender::RenderHUD(const CViewSetup &view)
 {
-	VPROF_BUDGET("VR_VGui_DrawHud", VPROF_BUDGETGROUP_OTHER_VGUI);
 	ITexture *pTexture = materials->FindTexture("_rt_vgui", NULL);
 
 	bool bPaintMainMenu = !building_cubemaps.GetBool() && (enginevgui && enginevgui->IsGameUIVisible());
 	int viewActualWidth = pTexture->GetActualWidth();
 	int viewActualHeight = pTexture->GetActualHeight();
+
+	if (UseVR())
+	{
+		static int s_nLastVRHUDPaintFrame = -1;
+		static int s_nLastVRHUDPaintWidth = 0;
+		static int s_nLastVRHUDPaintHeight = 0;
+
+		// Stereo eyes share the same VGUI texture; only the 3D placement is per-eye.
+		int nFrame = gpGlobals ? gpGlobals->framecount : -1;
+		if (nFrame >= 0 &&
+			s_nLastVRHUDPaintFrame == nFrame &&
+			s_nLastVRHUDPaintWidth == viewActualWidth &&
+			s_nLastVRHUDPaintHeight == viewActualHeight)
+		{
+			return;
+		}
+
+		s_nLastVRHUDPaintFrame = nFrame;
+		s_nLastVRHUDPaintWidth = viewActualWidth;
+		s_nLastVRHUDPaintHeight = viewActualHeight;
+	}
+
+	VPROF_BUDGET("VR_VGui_DrawHud", VPROF_BUDGETGROUP_OTHER_VGUI);
 
 	surface()->ForceScreenSizeOverride(true, viewActualWidth, viewActualHeight);
 
