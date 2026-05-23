@@ -1,4 +1,4 @@
-#include "cbase.h"
+﻿#include "cbase.h"
 #include "openxr_manager.h"
 #include "openxr_input.h"
 #include "openxr_hand_tracking.h"
@@ -9,6 +9,7 @@
 #include "iclientmode.h"
 #include "vr_input.h"
 #include "iinput.h"
+#include "tfvr_firsttime_wizard.h"
 #include "vr_laser_pointer.h"
 #include "vr_menu_manager.h"
 #include "engine/ivdebugoverlay.h"
@@ -2508,6 +2509,11 @@ void COpenXRManager::Update(float frametime)
 		}
 
 		m_currentRenderBufferIndex = 0;
+
+		if ( tfvr_show_firsttime_wizard.GetBool() )
+		{
+			ShowTFVRFirstTimeWizard( enginevgui->GetPanel( PANEL_GAMEUIDLL ) );
+		}
 	}
 
 	m_currentRenderBufferIndex = (++m_currentRenderBufferIndex) % VR_NUM_BUFFERS;

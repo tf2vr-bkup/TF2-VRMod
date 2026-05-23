@@ -52,6 +52,19 @@
 		"tabPosition"		"4"
 		"textAlignment"		"west"
 	}
+	"AutomaticReloads"
+	{
+		"ControlName"		"CheckButton"
+		"fieldName"			"AutomaticReloads"
+		"xpos"				"22"
+		"ypos"				"172"
+		"wide"				"220"
+		"tall"				"36"
+		"visible"			"1"
+		"enabled"			"1"
+		"tabPosition"		"5"
+		"textAlignment"		"west"
+	}
 	"MouthActivate"
 	{
 		"ControlName"		"CheckButton"
@@ -62,7 +75,7 @@
 		"tall"				"36"
 		"visible"			"1"
 		"enabled"			"1"
-		"tabPosition"		"5"
+		"tabPosition"		"6"
 		"textAlignment"		"west"
 	}
 	"VoiceGesture"
@@ -75,7 +88,7 @@
 		"tall"				"36"
 		"visible"			"1"
 		"enabled"			"1"
-		"tabPosition"		"6"
+		"tabPosition"		"7"
 		"textAlignment"		"west"
 	}
 	"WeaponWallClip"
@@ -88,7 +101,7 @@
 		"tall"				"36"
 		"visible"			"1"
 		"enabled"			"1"
-		"tabPosition"		"7"
+		"tabPosition"		"8"
 		"textAlignment"		"west"
 	}
 }

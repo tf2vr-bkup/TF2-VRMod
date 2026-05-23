@@ -1,0 +1,58 @@
+"resource/TFVRFirstTimeWelcome.res"
+{
+	"WelcomeLabel"
+	{
+		"ControlName"		"Label"
+		"fieldName"			"WelcomeLabel"
+		"xpos"				"22"
+		"ypos"				"22"
+		"wide"				"468"
+		"tall"				"128"
+		"visible"			"1"
+		"enabled"			"1"
+		"labelText"			"Welcome to TF2VR. This short setup will choose a few comfort and control defaults. You can change all of these later from TF2VR Options in the main menu."
+		"textAlignment"		"north-west"
+		"wrap"				"1"
+	}
+	"PrimaryHandLabel"
+	{
+		"ControlName"		"Label"
+		"fieldName"			"PrimaryHandLabel"
+		"xpos"				"22"
+		"ypos"				"164"
+		"wide"				"198"
+		"tall"				"24"
+		"visible"			"1"
+		"enabled"			"1"
+		"labelText"			"Primary hand"
+		"textAlignment"		"west"
+		"associate"			"PrimaryHand"
+	}
+	"PrimaryHand"
+	{
+		"ControlName"		"ComboBox"
+		"fieldName"			"PrimaryHand"
+		"xpos"				"22"
+		"ypos"				"190"
+		"wide"				"198"
+		"tall"				"24"
+		"visible"			"1"
+		"enabled"			"1"
+		"tabPosition"		"1"
+		"editable"			"0"
+	}
+	"PrimaryHandHelp"
+	{
+		"ControlName"		"Label"
+		"fieldName"			"PrimaryHandHelp"
+		"xpos"				"242"
+		"ypos"				"164"
+		"wide"				"236"
+		"tall"				"64"
+		"visible"			"1"
+		"enabled"			"1"
+		"labelText"			"Your primary hand controls most weapon interactions. The other hand is used for offhand grips and gestures."
+		"textAlignment"		"north-west"
+		"wrap"				"1"
+	}
+}

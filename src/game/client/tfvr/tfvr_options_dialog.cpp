@@ -99,6 +99,25 @@ namespace
 		default: return 0;
 		}
 	}
+
+	bool ArePumpReloadsAutomatic()
+	{
+		return GetCvarInt( "tfvr_scattergun_lever_reload", 1 ) == 0
+			&& GetCvarInt( "tfvr_sticky_pump_reload", 1 ) == 0
+			&& GetCvarInt( "tfvr_bison_pump_reload", 1 ) == 0
+			&& GetCvarInt( "tfvr_pomson_pump_reload", 1 ) == 0
+			&& GetCvarInt( "tfvr_mangler_pump_reload", 1 ) == 0;
+	}
+
+	void SetPumpReloadsAutomatic( bool bAutomatic )
+	{
+		const int nManualPumpReload = bAutomatic ? 0 : 1;
+		SetCvarInt( "tfvr_scattergun_lever_reload", nManualPumpReload );
+		SetCvarInt( "tfvr_sticky_pump_reload", nManualPumpReload );
+		SetCvarInt( "tfvr_bison_pump_reload", nManualPumpReload );
+		SetCvarInt( "tfvr_pomson_pump_reload", nManualPumpReload );
+		SetCvarInt( "tfvr_mangler_pump_reload", nManualPumpReload );
+	}
 }
 
 class CTFVROptionsSubPage : public PropertyPage
@@ -192,6 +211,11 @@ public:
 	CTFVROptionsSubControls( Panel *pParent )
 		: BaseClass( pParent, "TFVROptionsSubControls" )
 	{
+		m_pSmoothTurnRate = NULL;
+		m_pSnapTurnAngle = NULL;
+		m_pSmoothTurnRateLabel = NULL;
+		m_pSnapTurnAngleLabel = NULL;
+
 		m_pPrimaryHand = AddCombo( "PrimaryHand", "Primary hand", 2 );
 		m_pPrimaryHand->AddItem( "Left", NULL );
 		m_pPrimaryHand->AddItem( "Right", NULL );
@@ -209,12 +233,7 @@ public:
 		m_pTurningMode->AddItem( "Snap", NULL );
 
 		m_pSmoothTurnRate = AddSlider( "SmoothTurnRate", "Smooth turn speed", 30, 240 );
-		m_pSnapTurnAngle = AddCombo( "SnapTurnAngle", "Snap turn angle", 5 );
-		m_pSnapTurnAngle->AddItem( "15 degrees", NULL );
-		m_pSnapTurnAngle->AddItem( "30 degrees", NULL );
-		m_pSnapTurnAngle->AddItem( "45 degrees", NULL );
-		m_pSnapTurnAngle->AddItem( "60 degrees", NULL );
-		m_pSnapTurnAngle->AddItem( "90 degrees", NULL );
+		m_pSnapTurnAngle = AddSlider( "SnapTurnAngle", "Snap turn angle", 15, 90 );
 
 		StartRightColumn();
 		m_pMoveSensitivity = AddSlider( "MoveSensitivity", "Movement sensitivity", 25, 200 );
@@ -223,6 +242,8 @@ public:
 		m_pWeaponSwitchStick = AddCheck( "WeaponSwitchStick", "Right stick weapon switching" );
 
 		LoadControlSettings( "resource/TFVROptionsSubControls.res" );
+		m_pSmoothTurnRateLabel = FindChildByName( "SmoothTurnRateLabel" );
+		m_pSnapTurnAngleLabel = FindChildByName( "SnapTurnAngleLabel" );
 	}
 
 	void OnResetData() OVERRIDE
@@ -231,11 +252,12 @@ public:
 		m_pLocomotionSource->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_locomotion_source", 0 ), 5 ) );
 		m_pTurningMode->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_turning_mode", 1 ), 3 ) );
 		m_pSmoothTurnRate->SetValue( GetCvarInt( "tfvr_smooth_turn_rate", 120 ) );
-		m_pSnapTurnAngle->ActivateItem( SnapAngleToOption( GetCvarInt( "tfvr_snap_turn_angle", 45 ) ) );
+		m_pSnapTurnAngle->SetValue( GetCvarInt( "tfvr_snap_turn_angle", 45 ) );
 		m_pMoveSensitivity->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_move_sensitivity", 1.0f ) * 100.0f ) );
 		m_pThumbstickDeadzone->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_thumbstick_deadzone", 0.1f ) * 100.0f ) );
 		m_pTurnDeadzone->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_turn_deadzone", 0.3f ) * 100.0f ) );
 		m_pWeaponSwitchStick->SetSelected( GetCvarInt( "tfvr_weapon_switch_stick_enabled", 0 ) != 0 );
+		UpdateTurnControls();
 	}
 
 	void OnApplyChanges() OVERRIDE
@@ -244,7 +266,7 @@ public:
 		SetCvarInt( "tfvr_locomotion_source", m_pLocomotionSource->GetActiveItem() );
 		SetCvarInt( "tfvr_turning_mode", m_pTurningMode->GetActiveItem() );
 		SetCvarInt( "tfvr_smooth_turn_rate", m_pSmoothTurnRate->GetValue() );
-		SetCvarInt( "tfvr_snap_turn_angle", OptionToSnapAngle( m_pSnapTurnAngle->GetActiveItem() ) );
+		SetCvarInt( "tfvr_snap_turn_angle", m_pSnapTurnAngle->GetValue() );
 		SetCvarFloat( "tfvr_move_sensitivity", 0.01f * m_pMoveSensitivity->GetValue() );
 		SetCvarFloat( "tfvr_thumbstick_deadzone", 0.01f * m_pThumbstickDeadzone->GetValue() );
 		SetCvarFloat( "tfvr_turn_deadzone", 0.01f * m_pTurnDeadzone->GetValue() );
@@ -252,25 +274,37 @@ public:
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
 	}
 
-private:
-	int SnapAngleToOption( int nAngle )
+	MESSAGE_FUNC( OnTurnModeChanged, "TextChanged" )
 	{
-		if ( nAngle <= 15 ) return 0;
-		if ( nAngle <= 30 ) return 1;
-		if ( nAngle <= 45 ) return 2;
-		if ( nAngle <= 60 ) return 3;
-		return 4;
+		UpdateTurnControls();
+		PostActionSignal( new KeyValues( "ApplyButtonEnable" ) );
 	}
 
-	int OptionToSnapAngle( int nOption )
+private:
+	void UpdateTurnControls()
 	{
-		switch ( nOption )
+		if ( !m_pSmoothTurnRate || !m_pSnapTurnAngle )
+			return;
+
+		const int nTurningMode = m_pTurningMode->GetActiveItem();
+		const bool bShowSmooth = ( nTurningMode == 1 );
+		const bool bShowSnap = ( nTurningMode == 2 );
+
+		m_pSmoothTurnRate->SetVisible( bShowSmooth );
+		m_pSmoothTurnRate->SetEnabled( bShowSmooth );
+		m_pSnapTurnAngle->SetVisible( bShowSnap );
+		m_pSnapTurnAngle->SetEnabled( bShowSnap );
+
+		if ( m_pSmoothTurnRateLabel )
 		{
-		case 0: return 15;
-		case 1: return 30;
-		case 3: return 60;
-		case 4: return 90;
-		default: return 45;
+			m_pSmoothTurnRateLabel->SetVisible( bShowSmooth );
+			m_pSmoothTurnRateLabel->SetEnabled( bShowSmooth );
+		}
+
+		if ( m_pSnapTurnAngleLabel )
+		{
+			m_pSnapTurnAngleLabel->SetVisible( bShowSnap );
+			m_pSnapTurnAngleLabel->SetEnabled( bShowSnap );
 		}
 	}
 
@@ -278,7 +312,9 @@ private:
 	ComboBox *m_pLocomotionSource;
 	ComboBox *m_pTurningMode;
 	Slider *m_pSmoothTurnRate;
-	ComboBox *m_pSnapTurnAngle;
+	Slider *m_pSnapTurnAngle;
+	Panel *m_pSmoothTurnRateLabel;
+	Panel *m_pSnapTurnAngleLabel;
 	Slider *m_pMoveSensitivity;
 	Slider *m_pThumbstickDeadzone;
 	Slider *m_pTurnDeadzone;
@@ -299,7 +335,6 @@ public:
 		m_pSeatedMode = AddCheck( "SeatedMode", "Seated mode" );
 
 		StartRightColumn();
-		m_pPlayerHeight = AddSlider( "PlayerHeight", "Player height (inches)", 48, 84 );
 		m_pWorldScale = AddSlider( "WorldScale", "World scale", 36, 60 );
 		m_pDynamicWorldScale = AddCheck( "DynamicWorldScale", "Dynamic world scaling" );
 
@@ -312,7 +347,6 @@ public:
 		m_pVignetteStrength->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_comfort_vignette_strength", 0.5f ) * 100.0f ) );
 		m_pPhysicalCrouch->SetSelected( GetCvarInt( "tfvr_physical_crouch", 1 ) != 0 );
 		m_pSeatedMode->SetSelected( GetCvarInt( "tfvr_seated_mode", 0 ) != 0 );
-		m_pPlayerHeight->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_player_height", 67.0f ) ) );
 		m_pWorldScale->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_worldscale", 48.0f ) ) );
 		m_pDynamicWorldScale->SetSelected( GetCvarInt( "tfvr_dynamic_worldscale", 1 ) != 0 );
 	}
@@ -323,7 +357,6 @@ public:
 		SetCvarFloat( "tfvr_comfort_vignette_strength", 0.01f * m_pVignetteStrength->GetValue() );
 		SetCvarInt( "tfvr_physical_crouch", m_pPhysicalCrouch->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_seated_mode", m_pSeatedMode->IsSelected() ? 1 : 0 );
-		SetCvarInt( "tfvr_player_height", m_pPlayerHeight->GetValue() );
 		SetCvarInt( "tfvr_worldscale", m_pWorldScale->GetValue() );
 		SetCvarInt( "tfvr_dynamic_worldscale", m_pDynamicWorldScale->IsSelected() ? 1 : 0 );
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
@@ -334,7 +367,6 @@ private:
 	Slider *m_pVignetteStrength;
 	CheckButton *m_pPhysicalCrouch;
 	CheckButton *m_pSeatedMode;
-	Slider *m_pPlayerHeight;
 	Slider *m_pWorldScale;
 	CheckButton *m_pDynamicWorldScale;
 };
@@ -351,6 +383,7 @@ public:
 		m_pOffhandGrip = AddCheck( "OffhandGrip", "Offhand grip aiming" );
 		m_pPhysicalThrow = AddCheck( "PhysicalThrow", "Physical throwable weapons" );
 		m_pPhysicalBall = AddCheck( "PhysicalBall", "Physical Sandman/Wrap Assassin ball" );
+		m_pAutomaticReloads = AddCheck( "AutomaticReloads", "Auto-reload" );
 
 		StartRightColumn();
 		m_pMouthActivate = AddCheck( "MouthActivate", "Mouth activation for lunchbox items" );
@@ -366,6 +399,7 @@ public:
 		m_pOffhandGrip->SetSelected( GetCvarInt( "tfvr_offhand_grip_enabled", 1 ) != 0 );
 		m_pPhysicalThrow->SetSelected( GetCvarInt( "tfvr_physical_throw", 1 ) != 0 );
 		m_pPhysicalBall->SetSelected( GetCvarInt( "tfvr_physical_ball", 1 ) != 0 );
+		m_pAutomaticReloads->SetSelected( ArePumpReloadsAutomatic() );
 		m_pMouthActivate->SetSelected( GetCvarInt( "tfvr_mouth_activate_enabled", 1 ) != 0 );
 		m_pVoiceGesture->SetSelected( GetCvarInt( "tfvr_voice_gesture_enabled", 1 ) != 0 );
 		m_pWeaponWallClip->SetSelected( GetCvarInt( "tfvr_weapon_wall_clip_check", 1 ) != 0 );
@@ -377,6 +411,7 @@ public:
 		SetCvarInt( "tfvr_offhand_grip_enabled", m_pOffhandGrip->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_physical_throw", m_pPhysicalThrow->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_physical_ball", m_pPhysicalBall->IsSelected() ? 1 : 0 );
+		SetPumpReloadsAutomatic( m_pAutomaticReloads->IsSelected() );
 		SetCvarInt( "tfvr_mouth_activate_enabled", m_pMouthActivate->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_voice_gesture_enabled", m_pVoiceGesture->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_weapon_wall_clip_check", m_pWeaponWallClip->IsSelected() ? 1 : 0 );
@@ -388,6 +423,7 @@ private:
 	CheckButton *m_pOffhandGrip;
 	CheckButton *m_pPhysicalThrow;
 	CheckButton *m_pPhysicalBall;
+	CheckButton *m_pAutomaticReloads;
 	CheckButton *m_pMouthActivate;
 	CheckButton *m_pVoiceGesture;
 	CheckButton *m_pWeaponWallClip;

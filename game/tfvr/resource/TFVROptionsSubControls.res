@@ -85,8 +85,8 @@
 	{
 		"ControlName"		"Label"
 		"fieldName"			"SmoothTurnRateLabel"
-		"xpos"				"22"
-		"ypos"				"162"
+		"xpos"				"242"
+		"ypos"				"80"
 		"wide"				"198"
 		"tall"				"24"
 		"visible"			"1"
@@ -99,8 +99,8 @@
 	{
 		"ControlName"		"Slider"
 		"fieldName"			"SmoothTurnRate"
-		"xpos"				"22"
-		"ypos"				"186"
+		"xpos"				"242"
+		"ypos"				"104"
 		"wide"				"175"
 		"tall"				"50"
 		"visible"			"1"
@@ -125,16 +125,17 @@
 	}
 	"SnapTurnAngle"
 	{
-		"ControlName"		"ComboBox"
+		"ControlName"		"Slider"
 		"fieldName"			"SnapTurnAngle"
 		"xpos"				"242"
 		"ypos"				"104"
-		"wide"				"198"
-		"tall"				"24"
+		"wide"				"175"
+		"tall"				"50"
 		"visible"			"1"
 		"enabled"			"1"
 		"tabPosition"		"4"
-		"editable"			"0"
+		"leftText"			"15"
+		"rightText"			"90"
 	}
 	"MoveSensitivityLabel"
 	{
