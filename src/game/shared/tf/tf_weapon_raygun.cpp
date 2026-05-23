@@ -27,12 +27,12 @@
 
 IMPLEMENT_NETWORKCLASS_ALIASED( TFRaygun, DT_WeaponRaygun )
 
-ConVar tfvr_bison_pump_reload( "tfvr_bison_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Righteous Bison" );
+ConVar tfvr_bison_pump_reload( "tfvr_bison_pump_reload", "1", FCVAR_ARCHIVE, "VR: enable physical pump reload for Righteous Bison" );
 ConVar tfvr_bison_pump_distance( "tfvr_bison_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke" );
 ConVar tfvr_bison_pump_sign( "tfvr_bison_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1)" );
 ConVar tfvr_bison_pump_debug( "tfvr_bison_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print bison pump state to console" );
 
-ConVar tfvr_pomson_pump_reload( "tfvr_pomson_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Pomson 6000" );
+ConVar tfvr_pomson_pump_reload( "tfvr_pomson_pump_reload", "1", FCVAR_ARCHIVE, "VR: enable physical pump reload for Pomson 6000" );
 ConVar tfvr_pomson_pump_distance( "tfvr_pomson_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke (Pomson)" );
 ConVar tfvr_pomson_pump_sign( "tfvr_pomson_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1) (Pomson)" );
 ConVar tfvr_pomson_pump_debug( "tfvr_pomson_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print pomson pump state to console" );
@@ -304,16 +304,19 @@ bool CTFRaygun::ShouldSuppressAutoAndSinglyReloadForVR() const
 {
 	if ( GetWeaponID() != TF_WEAPON_RAYGUN )
 		return false;
-	if ( !tfvr_bison_pump_reload.GetBool() )
-		return false;
 
 	CTFPlayer *pOwner = GetTFPlayerOwner();
 	if ( !pOwner || !pOwner->IsInVRMode() )
 		return false;
 
 #ifdef CLIENT_DLL
+	if ( !tfvr_bison_pump_reload.GetBool() )
+		return false;
 	return IsHeldByVRHand();
 #else
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd || !pCmd->vrManualPumpReload )
+		return false;
 	return true;
 #endif
 }
@@ -578,16 +581,18 @@ void CTFRaygun::VRPumpReloadPostFrame( void )
 
 bool CTFDRGPomson::ShouldSuppressAutoAndSinglyReloadForVR() const
 {
-	if ( !tfvr_pomson_pump_reload.GetBool() )
-		return false;
-
 	CTFPlayer *pOwner = GetTFPlayerOwner();
 	if ( !pOwner || !pOwner->IsInVRMode() )
 		return false;
 
 #ifdef CLIENT_DLL
+	if ( !tfvr_pomson_pump_reload.GetBool() )
+		return false;
 	return IsHeldByVRHand();
 #else
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd || !pCmd->vrManualPumpReload )
+		return false;
 	return true;
 #endif
 }

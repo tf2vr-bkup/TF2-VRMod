@@ -88,7 +88,7 @@ static inline float TFVR_ReloadThrottleScale()
 }
 
 // 0 = vanilla TF2 behavior in VR too (auto-reload when idle + normal singly reload / reload key). 1 = manual lever only.
-ConVar tfvr_scattergun_lever_reload( "tfvr_scattergun_lever_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Scout scattergun: 1 = load shells with weapon-hand pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
+ConVar tfvr_scattergun_lever_reload( "tfvr_scattergun_lever_reload", "1", FCVAR_ARCHIVE, "VR Scout scattergun: 1 = load shells with weapon-hand pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
 ConVar tfvr_scattergun_lever_distance( "tfvr_scattergun_lever_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along lever axis per pump stroke" );
 ConVar tfvr_scattergun_lever_sign( "tfvr_scattergun_lever_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply lever-axis motion (+1 or -1) if pump direction feels inverted" );
 ConVar tfvr_scattergun_lever_axis( "tfvr_scattergun_lever_axis", "2", FCVAR_REPLICATED, "VR: controller matrix column for pump axis (0=fwd, 1=right, 2=up)" );
@@ -372,16 +372,19 @@ bool CTFScatterGun::ShouldSuppressAutoAndSinglyReloadForVR() const
 {
 	if ( !IsScattergunWeaponID( GetWeaponID() ) )
 		return false;
-	if ( !tfvr_scattergun_lever_reload.GetBool() )
-		return false;
 
 	CTFPlayer *pOwner = GetTFPlayerOwner();
 	if ( !pOwner || !pOwner->IsInVRMode() )
 		return false;
 
 #ifdef CLIENT_DLL
+	if ( !tfvr_scattergun_lever_reload.GetBool() )
+		return false;
 	return IsHeldByVRHand();
 #else
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd || !pCmd->vrManualPumpReload )
+		return false;
 	return true;
 #endif
 }

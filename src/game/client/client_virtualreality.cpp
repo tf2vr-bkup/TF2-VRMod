@@ -2131,6 +2131,10 @@ void CClientVirtualReality::Activate()
 	// Game specific VR config
 	engine->ExecuteClientCmd("exec tfvr\n");
 
+	// Keep the server-side VR flag in sync even when VR is activated after spawn.
+	KeyValues *kvMode = new KeyValues( "VRModeActive" );
+	engine->ServerCmdKeyValues( kvMode );
+
     vgui::surface()->SetSoftwareCursor( true );
 
 #if defined(POSIX)

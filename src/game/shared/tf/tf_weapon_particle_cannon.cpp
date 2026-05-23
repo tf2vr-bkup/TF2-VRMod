@@ -31,7 +31,7 @@
 //
 IMPLEMENT_NETWORKCLASS_ALIASED( TFParticleCannon, DT_ParticleCannon )
 
-ConVar tfvr_mangler_pump_reload( "tfvr_mangler_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: enable physical pump reload for Cow Mangler" );
+ConVar tfvr_mangler_pump_reload( "tfvr_mangler_pump_reload", "1", FCVAR_ARCHIVE, "VR: enable physical pump reload for Cow Mangler" );
 ConVar tfvr_mangler_pump_distance( "tfvr_mangler_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units per pump stroke" );
 ConVar tfvr_mangler_pump_sign( "tfvr_mangler_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1)" );
 ConVar tfvr_mangler_pump_debug( "tfvr_mangler_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print mangler pump state to console" );
@@ -588,16 +588,19 @@ bool CTFParticleCannon::ShouldSuppressAutoAndSinglyReloadForVR() const
 {
 	if ( GetWeaponID() != TF_WEAPON_PARTICLE_CANNON )
 		return false;
-	if ( !tfvr_mangler_pump_reload.GetBool() )
-		return false;
 
 	CTFPlayer *pOwner = GetTFPlayerOwner();
 	if ( !pOwner || !pOwner->IsInVRMode() )
 		return false;
 
 #ifdef CLIENT_DLL
+	if ( !tfvr_mangler_pump_reload.GetBool() )
+		return false;
 	return IsHeldByVRHand();
 #else
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd || !pCmd->vrManualPumpReload )
+		return false;
 	return true;
 #endif
 }

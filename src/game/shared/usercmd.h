@@ -67,6 +67,7 @@ public:
 		vrMeleeGripSpeedLeft = 0.0f;
 		vrBallAimActive = false;
 		vrPhysicalCrouch = false;
+		vrManualPumpReload = false;
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.0f;
@@ -121,6 +122,7 @@ public:
 		vrMeleeGripSpeedLeft = src.vrMeleeGripSpeedLeft;
 		vrBallAimActive		= src.vrBallAimActive;
 		vrPhysicalCrouch	= src.vrPhysicalCrouch;
+		vrManualPumpReload	= src.vrManualPumpReload;
 		vrWeaponArmed = src.vrWeaponArmed;
 		vrWeaponHandIsRight = src.vrWeaponHandIsRight;
 		forwardmove			= src.forwardmove;
@@ -182,6 +184,7 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrMeleeGripSpeedLeft, sizeof( vrMeleeGripSpeedLeft ) );
 		CRC32_ProcessBuffer( &crc, &vrBallAimActive, sizeof( vrBallAimActive ) );
 		CRC32_ProcessBuffer( &crc, &vrPhysicalCrouch, sizeof( vrPhysicalCrouch ) );
+		CRC32_ProcessBuffer( &crc, &vrManualPumpReload, sizeof( vrManualPumpReload ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponArmed, sizeof( vrWeaponArmed ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponHandIsRight, sizeof( vrWeaponHandIsRight ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
@@ -225,6 +228,7 @@ public:
 		vrMeleeGripSpeedLeft = 0.0f;
 		vrBallAimActive = false;
 		vrPhysicalCrouch = false;
+		vrManualPumpReload = false;
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.f;
@@ -282,6 +286,9 @@ public:
 
 	// VR physical crouch: true when player is physically crouching (HMD below threshold)
 	bool	vrPhysicalCrouch;
+
+	// VR pump/lever reload preference: true when active weapon should suppress normal reload.
+	bool	vrManualPumpReload;
 
 	// VR weapon lever/pump: grip held in position to operate the active weapon's physical mechanic
 	bool	vrWeaponArmed;

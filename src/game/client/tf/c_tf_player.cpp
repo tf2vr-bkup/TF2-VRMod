@@ -4231,7 +4231,8 @@ const QAngle& C_TFPlayer::GetRenderAngles()
 Vector C_TFPlayer::Weapon_ShootPosition( void )
 {
 	// Check if VR is active and controller tracking is enabled
-	if (IsInVRMode() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	const bool bLocalVRActive = IsLocalPlayer() && UseVR();
+	if ((IsInVRMode() || bLocalVRActive) && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
 		// Determine which hand holds the weapon (medigun uses left hand)
 		C_TFVRHand* pWeaponHand = NULL;
@@ -4292,7 +4293,8 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 QAngle C_TFPlayer::Weapon_ShootAngles( void )
 {
 	// Only use VR controller angles if VR is actually active
-	if (IsInVRMode() && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
+	const bool bLocalVRActive = IsLocalPlayer() && UseVR();
+	if ((IsInVRMode() || bLocalVRActive) && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
 		// Determine which hand holds the weapon (medigun uses left hand)
 		C_TFVRHand* pWeaponHand = NULL;
@@ -4365,7 +4367,7 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 C_BaseAnimating* C_TFPlayer::GetRenderedWeaponModel()
 {
 	// Check if VR is active and we have a VR render weapon
-	if (IsInVRMode() && IsLocalPlayer())
+	if (IsLocalPlayer() && (IsInVRMode() || UseVR()))
 	{
 		// Determine which hand holds the weapon (medigun uses left hand)
 		C_TFVRHand* pWeaponHand = NULL;

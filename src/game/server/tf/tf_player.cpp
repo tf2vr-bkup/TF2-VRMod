@@ -3278,8 +3278,20 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
 		m_bDuckWasPhysical = false;
 	m_clientEyePosition = ucmd->clientEyePosition;
 	m_flLastClientEyeUpdateTime = gpGlobals->curtime;
-    // Store VR controller positions for weapon shooting (only when client is using VR)
-    if (ucmd->playerToHmdOrigin != vec3_origin)
+    // Store VR controller positions for weapon shooting. Do not use HMD origin as
+    // a VR sentinel: the player can legitimately be at the playspace origin.
+    const bool bCommandCarriesVRData =
+        ucmd->playerToHmdOrigin != vec3_origin ||
+        ucmd->clientEyePosition != vec3_origin ||
+        ucmd->leftControllerOrigin != vec3_origin ||
+        ucmd->rightControllerOrigin != vec3_origin;
+    if ( bCommandCarriesVRData && !m_bInVRMode )
+    {
+        m_bInVRMode = true;
+    }
+
+    const bool bHasVRCommandData = m_bInVRMode || bCommandCarriesVRData;
+    if ( bHasVRCommandData )
     {
         m_leftControllerOrigin = ucmd->leftControllerOrigin;
         m_leftControllerAngles = ucmd->leftControllerAngles;
