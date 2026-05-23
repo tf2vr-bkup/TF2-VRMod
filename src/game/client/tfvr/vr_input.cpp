@@ -1272,10 +1272,39 @@ static void TFVR_UpdatePomsonPumpArmedInCmd( CUserCmd *cmd )
 	}
 }
 
+static bool TFVR_ShouldManualPumpReloadForActiveWeapon()
+{
+	if ( !tfvr_twohand_enabled.GetBool() )
+		return false;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	if ( !pLocal )
+		return false;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || !pWpn->IsHeldByVRHand() )
+		return false;
+
+	switch ( pWpn->GetWeaponID() )
+	{
+	case TF_WEAPON_PIPEBOMBLAUNCHER:
+		return tfvr_sticky_pump_reload.GetBool();
+	case TF_WEAPON_RAYGUN:
+		return tfvr_bison_pump_reload.GetBool();
+	case TF_WEAPON_PARTICLE_CANNON:
+		return tfvr_mangler_pump_reload.GetBool();
+	case TF_WEAPON_DRG_POMSON:
+		return tfvr_pomson_pump_reload.GetBool();
+	default:
+		return IsScattergunWeaponID( pWpn->GetWeaponID() ) && tfvr_scattergun_lever_reload.GetBool();
+	}
+}
+
 void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 {
 	if ( cmd )
 	{
+		cmd->vrManualPumpReload = false;
 		cmd->vrWeaponArmed = false;
 		cmd->vrWeaponHandIsRight = true;
 	}
@@ -1298,6 +1327,10 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	TFVR_UpdateBisonPumpArmedInCmd( cmd );
 	TFVR_UpdateManglerPumpArmedInCmd( cmd );
 	TFVR_UpdatePomsonPumpArmedInCmd( cmd );
+	if ( cmd )
+	{
+		cmd->vrManualPumpReload = TFVR_ShouldManualPumpReloadForActiveWeapon();
+	}
 
     // Get controller poses
     VMatrix leftControllerPose, rightControllerPose;

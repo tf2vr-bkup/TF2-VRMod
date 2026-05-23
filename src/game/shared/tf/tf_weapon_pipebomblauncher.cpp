@@ -40,7 +40,7 @@ static inline float TFVR_ReloadThrottleScale()
 	return MAX( 1.0f, tfvr_reload_throttle_scale.GetFloat() );
 }
 
-ConVar tfvr_sticky_pump_reload( "tfvr_sticky_pump_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Demoman stickybomb launcher: 1 = load shells with weapon-forward pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
+ConVar tfvr_sticky_pump_reload( "tfvr_sticky_pump_reload", "1", FCVAR_ARCHIVE, "VR Demoman stickybomb launcher: 1 = load shells with weapon-forward pump (requires two-handing + weapon-hand grip); 0 = standard auto/singly reload" );
 ConVar tfvr_sticky_pump_distance( "tfvr_sticky_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of weapon-hand motion along weapon forward per pump stroke" );
 ConVar tfvr_sticky_pump_sign( "tfvr_sticky_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply pump-axis motion (+1 or -1) if pump direction feels inverted" );
 ConVar tfvr_sticky_pump_debug( "tfvr_sticky_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print stickybomb pump reload state to console" );
@@ -772,16 +772,19 @@ bool CTFPipebombLauncher::ShouldSuppressAutoAndSinglyReloadForVR() const
 {
 	if ( GetWeaponID() != TF_WEAPON_PIPEBOMBLAUNCHER )
 		return false;
-	if ( !tfvr_sticky_pump_reload.GetBool() )
-		return false;
 
 	CTFPlayer *pOwner = GetTFPlayerOwner();
 	if ( !pOwner || !pOwner->IsInVRMode() )
 		return false;
 
 #ifdef CLIENT_DLL
+	if ( !tfvr_sticky_pump_reload.GetBool() )
+		return false;
 	return IsHeldByVRHand();
 #else
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd || !pCmd->vrManualPumpReload )
+		return false;
 	return true;
 #endif
 }

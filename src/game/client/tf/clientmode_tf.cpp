@@ -598,8 +598,9 @@ bool ClientModeTFNormal::ShouldDrawViewModel()
 	C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
 	if ( pPlayer )
 	{
-		// Don't draw viewmodel in VR mode - we use VR hand models instead
-		if ( pPlayer->IsInVRMode() )
+		// Don't draw viewmodel in VR mode - we use VR hand models instead.
+		// UseVR() covers the local client immediately, before the server flag round-trips.
+		if ( UseVR() || pPlayer->IsInVRMode() )
 			return false;
 		
 		if ( pPlayer->m_Shared.InCond( TF_COND_ZOOMED ) )
