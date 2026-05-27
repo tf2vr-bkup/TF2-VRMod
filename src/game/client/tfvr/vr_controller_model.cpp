@@ -199,6 +199,7 @@ CVRControllerModelManager::CVRControllerModelManager()
 	, m_xrGetRenderModelAssetData(nullptr)
 	, m_xrGetRenderModelAssetProperties(nullptr)
 	, m_xrEnumerateRenderModelSubactionPaths(nullptr)
+	, m_xrGetRenderModelPoseTopLevelUserPath(nullptr)
 	, m_xrCreateRenderModelSpace(nullptr)
 	, m_pControllerMaterial(nullptr)
 {
@@ -233,6 +234,7 @@ bool CVRControllerModelManager::Initialize(COpenXRManager* pOpenXRManager)
 		XR_FAILED(xrGetInstanceProcAddr(instance, "xrGetRenderModelAssetDataEXT", (PFN_xrVoidFunction*)&m_xrGetRenderModelAssetData)) ||
 		XR_FAILED(xrGetInstanceProcAddr(instance, "xrGetRenderModelAssetPropertiesEXT", (PFN_xrVoidFunction*)&m_xrGetRenderModelAssetProperties)) ||
 		XR_FAILED(xrGetInstanceProcAddr(instance, "xrEnumerateRenderModelSubactionPathsEXT", (PFN_xrVoidFunction*)&m_xrEnumerateRenderModelSubactionPaths)) ||
+		XR_FAILED(xrGetInstanceProcAddr(instance, "xrGetRenderModelPoseTopLevelUserPathEXT", (PFN_xrVoidFunction*)&m_xrGetRenderModelPoseTopLevelUserPath)) ||
 		XR_FAILED(xrGetInstanceProcAddr(instance, "xrCreateRenderModelSpaceEXT", (PFN_xrVoidFunction*)&m_xrCreateRenderModelSpace)))
 	{
 		DevMsg("VRControllerModel: Render model extension not fully available\n");
@@ -393,6 +395,10 @@ bool CVRControllerModelManager::LoadControllerModels()
 	DevMsg("VRControllerModel: Found %d render models\n", modelCount);
 	
 	XrInstance instance = m_pOpenXRManager->GetInstance();
+	XrPath leftHandPath = XR_NULL_PATH;
+	XrPath rightHandPath = XR_NULL_PATH;
+	xrStringToPath(instance, "/user/hand/left", &leftHandPath);
+	xrStringToPath(instance, "/user/hand/right", &rightHandPath);
 	
 	// Load each model
 	for (uint32_t i = 0; i < modelCount && i < 4; i++)
@@ -411,14 +417,54 @@ bool CVRControllerModelManager::LoadControllerModels()
 			continue;
 		}
 		
-		// Detect hand via subaction paths
+		// Detect which hand owns this render model
 		bool isLeftHand = false;
 		bool isRightHand = false;
 		
+		// Prefer the extension's explicit pose owner when available. Some runtimes
+		// report broad subaction paths that are not specific enough to identify a hand.
+		if (m_xrGetRenderModelPoseTopLevelUserPath && leftHandPath != XR_NULL_PATH && rightHandPath != XR_NULL_PATH)
+		{
+			XrPath candidatePaths[2] = { leftHandPath, rightHandPath };
+			XrInteractionRenderModelTopLevelUserPathGetInfoEXT topLevelInfo = {XR_TYPE_INTERACTION_RENDER_MODEL_TOP_LEVEL_USER_PATH_GET_INFO_EXT};
+			topLevelInfo.topLevelUserPathCount = 2;
+			topLevelInfo.topLevelUserPaths = candidatePaths;
+
+			XrPath topLevelUserPath = XR_NULL_PATH;
+			XrResult topLevelResult = m_xrGetRenderModelPoseTopLevelUserPath(tempRenderModel, &topLevelInfo, &topLevelUserPath);
+			if (XR_SUCCEEDED(topLevelResult))
+			{
+				if (topLevelUserPath == leftHandPath)
+				{
+					isLeftHand = true;
+					DevMsg("VRControllerModel: Model %d is left hand via top-level path\n", i);
+				}
+				else if (topLevelUserPath == rightHandPath)
+				{
+					isRightHand = true;
+					DevMsg("VRControllerModel: Model %d is right hand via top-level path\n", i);
+				}
+				else
+				{
+					char pathStr[256] = {0};
+					uint32_t pathLen = 0;
+					if (XR_SUCCEEDED(xrPathToString(instance, topLevelUserPath, sizeof(pathStr), &pathLen, pathStr)))
+					{
+						DevMsg("VRControllerModel: Model %d returned unexpected top-level path: %s\n", i, pathStr);
+					}
+				}
+			}
+			else
+			{
+				DevMsg("VRControllerModel: Failed to query top-level user path for model %d (result=%d)\n", i, topLevelResult);
+			}
+		}
+
 		XrInteractionRenderModelSubactionPathInfoEXT subactionInfo = {XR_TYPE_INTERACTION_RENDER_MODEL_SUBACTION_PATH_INFO_EXT};
 		uint32_t pathCount = 0;
 		
-		if (XR_SUCCEEDED(m_xrEnumerateRenderModelSubactionPaths(tempRenderModel, &subactionInfo, 0, &pathCount, nullptr)) && pathCount > 0)
+		if (!isLeftHand && !isRightHand &&
+			XR_SUCCEEDED(m_xrEnumerateRenderModelSubactionPaths(tempRenderModel, &subactionInfo, 0, &pathCount, nullptr)) && pathCount > 0)
 		{
 			CUtlVector<XrPath> paths;
 			paths.SetCount(pathCount);

@@ -173,6 +173,7 @@ private:
 	PFN_xrGetRenderModelAssetDataEXT m_xrGetRenderModelAssetData;
 	PFN_xrGetRenderModelAssetPropertiesEXT m_xrGetRenderModelAssetProperties;
 	PFN_xrEnumerateRenderModelSubactionPathsEXT m_xrEnumerateRenderModelSubactionPaths;
+	PFN_xrGetRenderModelPoseTopLevelUserPathEXT m_xrGetRenderModelPoseTopLevelUserPath;
 	PFN_xrCreateRenderModelSpaceEXT m_xrCreateRenderModelSpace;
 	
 	// Material for rendering
