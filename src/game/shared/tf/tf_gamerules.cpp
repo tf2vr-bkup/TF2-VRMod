@@ -15135,7 +15135,9 @@ void CTFGameRules::ClientCommandKeyValues( edict_t *pEntity, KeyValues *pKeyValu
 	CTFPlayer *pTFPlayer = ToTFPlayer( CBaseEntity::Instance( pEntity ) );
 
 	if ( !pTFPlayer )
+	{
 		return;
+	}
 
 	char const *pszCommand = pKeyValues->GetName();
 	if ( pszCommand && pszCommand[0] )
@@ -15382,7 +15384,10 @@ void CTFGameRules::ClientCommandKeyValues( edict_t *pEntity, KeyValues *pKeyValu
 		{
 			CSteamID steamID;
 			if ( !pTFPlayer->GetSteamID( &steamID ) )
+			{
+				Warning( "[TF2VR Inventory] Server received sdk_inventory but GetSteamID failed for %s.\n", pTFPlayer->GetPlayerName() );
 				return;
+			}
 
 			GTFGCClientSystem()->ProcessPlayerInventoryRequest( steamID, pKeyValues );
 		}
@@ -15417,8 +15422,8 @@ void CTFGameRules::RequestClientInventory( CSteamID steamID )
 	if ( !pPlayer )
 		return;
 
-	// Send them a user message to ask them to send us their inventory
-	// It will come back via a KeyValues message "sdk_inventory".
+	// Send them a user message to ask them to send us their inventory.
+	// The client returns it through the chunked tf2vr_sdkinv_* command path.
 	CSingleUserRecipientFilter filter( pPlayer );
 	UserMessageBegin( filter, "SdkRequestEquipment" );
 	MessageEnd();

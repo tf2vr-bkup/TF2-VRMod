@@ -60,6 +60,7 @@ ConVar tf_mm_debug_level( "tf_mm_debug_level", "4" );
 
 
 static ConVar mod_inventory_request_timeout( "mod_inventory_request_timeout", "300", FCVAR_NONE, "Seconds to wait for TF inventory before assuming failure" );
+static ConVar tfvr_inventory_debug_keyvalues( "tfvr_inventory_debug_keyvalues", "0", FCVAR_NONE, "Also send the legacy sdk_inventory KeyValues command for debugging." );
 
 
 using namespace GCSDK;
@@ -76,6 +77,68 @@ static const char* GetWebBaseUrl()
 	default:
 		return "https://www.teamfortress.com/";
 	}
+}
+
+static void SDK_BuildInventoryLoadoutString( KeyValues *pKV, CUtlString *pOut )
+{
+	pOut->Set( "" );
+
+	KeyValues *pLoadoutKV = pKV ? pKV->FindKey( "local_loadout" ) : NULL;
+	if ( !pLoadoutKV )
+		return;
+
+	bool bFirst = true;
+	FOR_EACH_TRUE_SUBKEY( pLoadoutKV, pClassKey )
+	{
+		const int iClass = V_atoi( pClassKey->GetName() );
+		FOR_EACH_SUBKEY( pClassKey, pLoadoutEntry )
+		{
+			const itemid_t uItemId = pLoadoutEntry->GetUint64();
+			if ( uItemId == INVALID_ITEM_ID || uItemId == 0 )
+				continue;
+
+			const int iSlot = V_atoi( pLoadoutEntry->GetName() );
+			char szEntry[128];
+			V_snprintf( szEntry, sizeof( szEntry ), "%s%d_%d_%llu", bFirst ? "" : ".", iClass, iSlot, uItemId );
+			pOut->Append( szEntry );
+			bFirst = false;
+		}
+	}
+}
+
+static void SDK_SendInventoryCommandField( const char *pszField, const char *pszValue )
+{
+	if ( !pszValue || !pszValue[0] )
+		return;
+
+	const int kChunkSize = 160;
+	const int nValueLen = V_strlen( pszValue );
+	for ( int nOffset = 0; nOffset < nValueLen; nOffset += kChunkSize )
+	{
+		const int nRemaining = nValueLen - nOffset;
+		const int nChunkLen = nRemaining < kChunkSize ? nRemaining : kChunkSize;
+		char szChunk[kChunkSize + 1];
+		memcpy( szChunk, pszValue + nOffset, nChunkLen );
+		szChunk[nChunkLen] = '\0';
+
+		engine->ServerCmd( CFmtStr( "tf2vr_sdkinv_chunk %s %s\n", pszField, szChunk ) );
+	}
+}
+
+static void SDK_SendInventoryCommandPayload( const char *pszMsg, const char *pszTicket, const char *pszLoadout )
+{
+	const int nMsgLen = V_strlen( pszMsg );
+	CUtlMemory<char> strMsgHex;
+	strMsgHex.EnsureCapacity( 2 * nMsgLen + 1 );
+	V_binarytohex( ( const byte * )pszMsg, nMsgLen, strMsgHex.Base(), strMsgHex.Count() );
+
+	// ServerCmdKeyValues no longer reliably delivers this inventory payload, so send it as
+	// small reliable text-command chunks and reconstruct the KeyValues server-side.
+	engine->ServerCmd( "tf2vr_sdkinv_begin\n" );
+	SDK_SendInventoryCommandField( "msghex", strMsgHex.Base() );
+	SDK_SendInventoryCommandField( "ticket", pszTicket );
+	SDK_SendInventoryCommandField( "loadout", pszLoadout );
+	engine->ServerCmd( "tf2vr_sdkinv_end\n" );
 }
 
 
@@ -354,10 +417,12 @@ void CTFGCClientSystem::WebapiInventoryThink()
 		state.m_hSteamAuthTicket = SteamUser()->GetAuthTicketForWebApi( "tf2sdk" );
 		if ( state.m_hSteamAuthTicket == k_HAuthTicketInvalid )
 		{
+			Warning( "[TF2VR Inventory] Failed to request client WebAPI auth ticket. appid=%d\n", engine->GetAppID() );
 			state.Backoff();
 			return;
 		}
 
+		DevMsg( "[TF2VR Inventory] Requested client WebAPI auth ticket. appid=%d handle=%u\n", engine->GetAppID(), state.m_hSteamAuthTicket );
 		state.m_eState = kWebapiInventoryState_WaitingForAuthToken;
 		break;
 
@@ -381,6 +446,7 @@ void CTFGCClientSystem::WebapiInventoryThink()
 		state.m_hInventoryRequest = SteamHTTP()->CreateHTTPRequest( k_EHTTPMethodGET, strUrl.Get() );
 		if ( state.m_hInventoryRequest == INVALID_HTTPREQUEST_HANDLE )
 		{
+			Warning( "[TF2VR Inventory] Failed to create GetInventory request. appid=%d url=%s\n", engine->GetAppID(), strUrl.Get() );
 			// try again next frame
 			return;
 		}
@@ -415,8 +481,10 @@ void CTFGCClientSystem::WebapiInventoryThink()
 		}
 
 		SteamAPICall_t callResult;
+		DevMsg( "[TF2VR Inventory] Sending GetInventory request. appid=%d url=%s ticket_bytes=%d\n", engine->GetAppID(), strUrl.Get(), state.m_bufAuthToken.Count() );
 		if ( !SteamHTTP()->SendHTTPRequest( state.m_hInventoryRequest, &callResult ) )
 		{
+			Warning( "[TF2VR Inventory] SteamHTTP failed to send GetInventory request.\n" );
 			state.Backoff();
 			return;
 		}
@@ -467,7 +535,9 @@ void CTFGCClientSystem::WebapiInventoryThink()
 
 		CGCClientSharedObjectCache* pSOCache = GetSOCache( SteamUser()->GetSteamID() );
 		if ( !pSOCache )
+		{
 			return;
+		}
 
 		// Build message to send server listing equipped items
 		CMsgAuthorizeServerItemRetrieval msgItems;
@@ -483,6 +553,7 @@ void CTFGCClientSystem::WebapiInventoryThink()
 		// Base64-encode it for communication across the wire in kv / webapi
 		// We need this encoded pre-auth-ticket generation.
 		Base64EncodeIntoUTLMemory( ( const uint8* )bufMsg.Base(), nByteSize, state.m_strMsgItems );
+		DevMsg( "[TF2VR Inventory] Built sdk_inventory payload. serialized_bytes=%d encoded_bytes=%d\n", nByteSize, V_strlen( state.m_strMsgItems.Base() ) );
 
 		// We now have encoded the latest state of the SO cache into our message -- if that changes, we need to re-build
 		// our message to the server.
@@ -522,6 +593,13 @@ void CTFGCClientSystem::WebapiInventoryThink()
 
 		// Request the auth ticket from steam and wait for it to arrive.
 		state.m_hServerAuthTicket = SteamUser()->GetAuthTicketForWebApi( strDigest );
+		if ( state.m_hServerAuthTicket == k_HAuthTicketInvalid )
+		{
+			Warning( "[TF2VR Inventory] Failed to request server equipment WebAPI auth ticket.\n" );
+			state.Backoff();
+			return;
+		}
+		DevMsg( "[TF2VR Inventory] Requested server equipment WebAPI auth ticket. handle=%u identity=%s\n", state.m_hServerAuthTicket, strDigest );
 		state.m_eState = kWebapiInventoryState_WaitingForServerAuthToken;
 		break;
 	}
@@ -564,8 +642,23 @@ void CTFGCClientSystem::WebapiInventoryThink()
 		// Add any server-specific fields so it knows what to do with the given inventory items (per-mod loadout may not match the user's real tf2 loadout)
 		SDK_AddServerInventoryInfo( kv, GetSOCache( SteamUser()->GetSteamID() ) );
 
+		CUtlString strCompactLoadout;
+		SDK_BuildInventoryLoadoutString( kv, &strCompactLoadout );
+		kv->SetString( "compact_loadout", strCompactLoadout.Get() );
+
 		// Send to the server
-		engine->ServerCmdKeyValues( kv );
+		SDK_SendInventoryCommandPayload( state.m_strMsgItems.Base(), strHexToken.Base(), strCompactLoadout.Get() );
+
+		if ( tfvr_inventory_debug_keyvalues.GetBool() )
+		{
+			DevMsg( "[TF2VR Inventory] Also sending legacy sdk_inventory KeyValues command.\n" );
+			engine->ServerCmdKeyValues( kv );
+		}
+		else
+		{
+			kv->deleteThis();
+		}
+
 		state.m_eState = kWebapiInventoryState_SentToServer;
 		break;
 	}
@@ -592,6 +685,8 @@ void CTFGCClientSystem::WebapiInventoryThink()
 
 void CTFGCClientSystem::ServerRequestEquipment()
 {
+	DevMsg( "[TF2VR Inventory] Server requested equipment resend. state=%d\n", m_WebapiInventory.m_eState );
+
 	// Something went wrong on the server side (e.g. steam invalidated our inventory auth ticket)
 	// Get a new one and try again.
 	if( m_WebapiInventory.m_eState == kWebapiInventoryState_SentToServer )
@@ -631,17 +726,24 @@ void CTFGCClientSystem::OnWebapiAuthTicketReceived( GetTicketForWebApiResponse_t
 
 	// Check that the request succeeded
 	if ( pInfo->m_eResult != k_EResultOK )
+	{
+		Warning( "[TF2VR Inventory] Client WebAPI auth ticket failed. result=%d\n", pInfo->m_eResult );
 		return;
+	}
 
 	// Validate the token makes sense
 	if ( pInfo->m_cubTicket < 0 || pInfo->m_cubTicket > pInfo->k_nCubTicketMaxLength )
+	{
+		Warning( "[TF2VR Inventory] Client WebAPI auth ticket has invalid size. bytes=%d\n", pInfo->m_cubTicket );
 		return;
+	}
 
 	// Copy the token
 	state.m_bufAuthToken.SetCount( pInfo->m_cubTicket );
 	memcpy( state.m_bufAuthToken.Base(), pInfo->m_rgubTicket, pInfo->m_cubTicket );
 
 	// Success
+	DevMsg( "[TF2VR Inventory] Client WebAPI auth ticket received. bytes=%d\n", pInfo->m_cubTicket );
 	state.RequestSucceeded();
 	state.m_eState = kWebapiInventoryState_AuthTokenReceived;
 }
@@ -662,17 +764,24 @@ void CTFGCClientSystem::OnWebapiServerAuthTicketReceived( GetTicketForWebApiResp
 
 	// Check that the request succeeded
 	if ( pInfo->m_eResult != k_EResultOK )
+	{
+		Warning( "[TF2VR Inventory] Server equipment WebAPI auth ticket failed. result=%d\n", pInfo->m_eResult );
 		return;
+	}
 
 	// Validate the token makes sense
 	if ( pInfo->m_cubTicket < 0 || pInfo->m_cubTicket > pInfo->k_nCubTicketMaxLength )
+	{
+		Warning( "[TF2VR Inventory] Server equipment WebAPI auth ticket has invalid size. bytes=%d\n", pInfo->m_cubTicket );
 		return;
+	}
 
 	// Copy the token
 	state.m_bufServerAuthToken.SetCount( pInfo->m_cubTicket );
 	memcpy( state.m_bufServerAuthToken.Base(), pInfo->m_rgubTicket, pInfo->m_cubTicket );
 
 	// Success
+	DevMsg( "[TF2VR Inventory] Server equipment WebAPI auth ticket received. bytes=%d\n", pInfo->m_cubTicket );
 	state.RequestSucceeded();
 	state.m_eState = kWebapiInventoryState_ServerAuthTokenReceived;
 }
@@ -680,12 +789,16 @@ void CTFGCClientSystem::OnWebapiServerAuthTicketReceived( GetTicketForWebApiResp
 void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo, bool bIOFailure )
 {
 	if ( !SteamHTTP() )
+	{
+		Warning( "[TF2VR Inventory] Cannot process GetInventory response: SteamHTTP is unavailable.\n" );
 		return; // probably shutting down, just ignore it
+	}
 
 	WebapiInventoryState_t& state = m_WebapiInventory;
 	if ( bIOFailure || !pInfo )
 	{
 		Assert( false );
+		Warning( "[TF2VR Inventory] GetInventory request IO failure. io_failure=%d has_info=%d\n", bIOFailure, pInfo != NULL );
 
 		// Failed to communicate with steam
 		// Free our http request (Can we be sure this is the right one?)
@@ -702,6 +815,7 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 	if ( pInfo->m_hRequest != state.m_hInventoryRequest )
 	{
 		Assert( false );
+		Warning( "[TF2VR Inventory] Ignoring stale GetInventory response. response_handle=%u expected_handle=%u\n", pInfo->m_hRequest, state.m_hInventoryRequest );
 		SteamHTTP()->ReleaseHTTPRequest( pInfo->m_hRequest );
 		return;
 	}
@@ -715,6 +829,7 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 
 	if ( !pInfo->m_bRequestSuccessful || pInfo->m_eStatusCode != k_EHTTPStatusCode200OK )
 	{
+		Warning( "[TF2VR Inventory] GetInventory HTTP failed. request_successful=%d status=%d\n", pInfo->m_bRequestSuccessful, pInfo->m_eStatusCode );
 		SteamHTTP()->ReleaseHTTPRequest( pInfo->m_hRequest );
 		return;
 	}
@@ -722,6 +837,7 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 	// Extract the result
 	uint32 unBytes;
 	Verify( SteamHTTP()->GetHTTPResponseBodySize( pInfo->m_hRequest, &unBytes ) );
+	DevMsg( "[TF2VR Inventory] GetInventory HTTP succeeded. response_bytes=%u\n", unBytes );
 	CUtlBuffer bufInventory;
 	bufInventory.EnsureCapacity( unBytes );
 	bufInventory.SeekPut( CUtlBuffer::SEEK_HEAD, unBytes );
@@ -734,7 +850,7 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 	GCSDK::CWebAPIValues* pValues = GCSDK::CWebAPIValues::ParseJSON( bufInventory );
 	if ( !pValues )
 	{
-		Warning( "Received invalid response to inventory request\n" );
+		Warning( "[TF2VR Inventory] Received invalid JSON response to GetInventory request.\n" );
 		return;
 	}
 
@@ -745,9 +861,11 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 		break;
 
 	case k_EResultFail:
+		Warning( "[TF2VR Inventory] GetInventory returned k_EResultFail; will retry after backoff.\n" );
 		return; // will retry after backoff timer expires
 
 	case k_EResultNotLoggedOn:
+		Warning( "[TF2VR Inventory] GetInventory returned k_EResultNotLoggedOn; requesting a fresh auth ticket.\n" );
 		// re-request authentication after backoff time
 		state.m_eState = kWebapiInventoryState_RequestAuthToken;
 		return;
@@ -756,7 +874,7 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 	{
 		CUtlString strError;
 		pValues->GetChildStringValue( strError, "error", "" );
-		Warning( "Received unexpected result code %d attempting to retrieve inventory. (%s)\n", nResult, strError.Get() );
+		Warning( "[TF2VR Inventory] GetInventory returned unexpected result code %d. (%s)\n", nResult, strError.Get() );
 		return;
 	}
 	}
@@ -765,7 +883,7 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 	CSteamID userSteamID( pValues->GetChildUInt64Value( "steamID" ) );
 	if ( !userSteamID.IsValid() || userSteamID.GetEAccountType() != k_EAccountTypeIndividual || userSteamID.GetEUniverse() != GetUniverse() )
 	{
-		Warning( "Inventory response has bad owner steam id (%s)\n", userSteamID.Render() );
+		Warning( "[TF2VR Inventory] GetInventory response has bad owner steam id (%s)\n", userSteamID.Render() );
 		return;
 	}
 
@@ -774,16 +892,17 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 		CUtlBuffer bufMsgSubscription;
 		if ( !pValues->BGetChildBinaryValue( bufMsgSubscription, "msg" ) )
 		{
-			Warning( "Inventory response missing inventory\n" );
+			Warning( "[TF2VR Inventory] GetInventory response failed to extract inventory msg.\n" );
 			return;
 		}
 		
 		CGCClientSharedObjectCache *pSOCache = GetGCClient()->AddLocalSOCache( userSteamID, bufMsgSubscription.Base(), bufMsgSubscription.TellPut() );
 		if ( !pSOCache )
 		{
-			Warning( "Inventory response failed to create SO cache (probably protobuf didn't parse)\n" );
+			Warning( "[TF2VR Inventory] GetInventory response failed to create SO cache (probably protobuf didn't parse).\n" );
 			return;
 		}
+		DevMsg( "[TF2VR Inventory] GetInventory created local SO cache. steamid=%s version=%llu\n", userSteamID.Render(), pSOCache->GetVersion() );
 
 		// Version should match the one they said we have
 		Assert( pSOCache->GetVersion() == pValues->GetChildUInt64Value( "version" ) );
@@ -796,6 +915,7 @@ void CTFGCClientSystem::OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo
 		if( pSOCache )
 		{
 			Assert( pSOCache->GetVersion() == pValues->GetChildUInt64Value( "version" ) );
+			DevMsg( "[TF2VR Inventory] GetInventory reported local SO cache is up to date. steamid=%s version=%llu\n", userSteamID.Render(), pSOCache->GetVersion() );
 		}
 	}
 
