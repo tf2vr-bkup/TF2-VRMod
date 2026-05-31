@@ -334,6 +334,8 @@ private:
 	VRReloadAnimState m_eReloadAnimState;
 	float m_flReloadAnimStartTime;
 	float m_flReloadLoopBottomCycle;   // cycle value at frame 5 of sg_reload_loop
+	float m_flShotgunPumpStartCycle;   // cycle value at frame 8 of fire
+	float m_flShotgunPumpEndCycle;     // cycle value at frame 16 of fire
 	bool m_bPlayingReloadAnim;
 	int m_iLeverReloadSequence;        // reload sequence sampled for lever bone only
 	float m_flLeverReloadCycle;        // cycle within that lever sequence
@@ -347,6 +349,7 @@ private:
 	void UpdateBisonPumpReloadAnimation();
 	void UpdateManglerPumpReloadAnimation();
 	void UpdatePomsonPumpReloadAnimation();
+	void UpdateShotgunPumpActionAnimation();
 
 public:
 	bool IsBackstabReady() const { return m_bBackstabReady; }

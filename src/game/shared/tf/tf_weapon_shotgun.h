@@ -50,7 +50,15 @@ public:
 
 	virtual int		GetWeaponID( void ) const			{ return TF_WEAPON_SHOTGUN_PRIMARY; }
 	virtual void	PrimaryAttack();
+	virtual void	ItemPostFrame( void ) OVERRIDE;
+	virtual bool	SendWeaponAnim( int iActivity ) OVERRIDE;
 	virtual void	PlayWeaponShootSound( void );
+
+	bool  IsVRShotgunPumpArmed() const       { return m_bVRShotgunPumpIsArmed; }
+	bool  IsVRShotgunPumpPullingBack() const { return m_bVRShotgunPumpStrokeOut; }
+	bool  IsVRShotgunPumpPushingFwd() const  { return m_bVRShotgunPumpStrokeIn; }
+	bool  NeedsVRShotgunPump() const         { return m_bVRShotgunPumpNeedsPump; }
+	float GetVRShotgunPumpStrokeProgress() const;
 
 #ifdef GAME_DLL
 	virtual CDmgAccumulator	*GetDmgAccumulator( void ) { return &m_Accumulator; }
@@ -60,8 +68,22 @@ protected:
 
 	void		Fire( CTFPlayer *pPlayer );
 	void		UpdatePunchAngles( CTFPlayer *pPlayer );
+	bool		ShouldUseVRShotgunPumpAction() const;
 
 private:
+
+	void		VRShotgunPumpActionPostFrame( void );
+	void		VRCommitShotgunPumpAction( void );
+	void		ResetVRShotgunPumpGestureState( void );
+
+	// Pump action state.  The "needs pump" bit gates firing; the rest only
+	// tracks the current physical stroke for predicted client animation.
+	CNetworkVar( bool, m_bVRShotgunPumpNeedsPump );
+	CNetworkVar( bool, m_bVRShotgunPumpIsArmed );
+	CNetworkVector( m_vecVRShotgunPumpLastHandPos );
+	CNetworkVar( bool, m_bVRShotgunPumpStrokeOut );
+	CNetworkVar( bool, m_bVRShotgunPumpStrokeIn );
+	CNetworkVar( float, m_flVRShotgunPumpStrokeDist );
 
 	CTFShotgun( const CTFShotgun & ) {}
 
@@ -104,6 +126,16 @@ inline bool IsScattergunWeaponID( int id )
 {
 	return id == TF_WEAPON_SCATTERGUN
 		|| id == TF_WEAPON_PEP_BRAWLER_BLASTER;
+}
+
+inline bool IsPumpActionShotgunWeaponID( int id )
+{
+	return id == TF_WEAPON_SHOTGUN_PRIMARY
+		|| id == TF_WEAPON_SHOTGUN_SOLDIER
+		|| id == TF_WEAPON_SHOTGUN_HWG
+		|| id == TF_WEAPON_SHOTGUN_PYRO
+		|| id == TF_WEAPON_SENTRY_REVENGE
+		|| id == TF_WEAPON_SHOTGUN_BUILDING_RESCUE;
 }
 
 // Scout version. Different models, possibly different behaviour later on

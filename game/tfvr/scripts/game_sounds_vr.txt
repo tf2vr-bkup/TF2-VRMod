@@ -16,6 +16,22 @@
 	"wave"		"weapons/vr/vr_scatter_gun_pump_up.wav"
 }
 
+"VR.ShotgunCockBack"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/shotgun_cock_back.wav"
+}
+
+"VR.ShotgunCockForward"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/shotgun_cock_forward.wav"
+}
+
 "VR.BisonPumpOut"
 {
 	"channel"	"CHAN_STATIC"

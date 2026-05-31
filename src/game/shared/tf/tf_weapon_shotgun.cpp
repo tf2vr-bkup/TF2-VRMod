@@ -35,7 +35,40 @@ extern ConVar tfvr_reload_throttle_scale;
 // Weapon Shotgun tables.
 //
 
-CREATE_SIMPLE_WEAPON_TABLE( TFShotgun, tf_weapon_shotgun_primary )
+IMPLEMENT_NETWORKCLASS_ALIASED( TFShotgun, DT_TFShotgun )
+
+BEGIN_NETWORK_TABLE( CTFShotgun, DT_TFShotgun )
+#if defined( CLIENT_DLL )
+	RecvPropBool( RECVINFO( m_bVRShotgunPumpNeedsPump ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunPumpIsArmed ) ),
+	RecvPropVector( RECVINFO( m_vecVRShotgunPumpLastHandPos ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunPumpStrokeOut ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunPumpStrokeIn ) ),
+	RecvPropFloat( RECVINFO( m_flVRShotgunPumpStrokeDist ) ),
+#else
+	SendPropBool( SENDINFO( m_bVRShotgunPumpNeedsPump ) ),
+	SendPropBool( SENDINFO( m_bVRShotgunPumpIsArmed ) ),
+	SendPropVector( SENDINFO( m_vecVRShotgunPumpLastHandPos ), -1, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bVRShotgunPumpStrokeOut ) ),
+	SendPropBool( SENDINFO( m_bVRShotgunPumpStrokeIn ) ),
+	SendPropFloat( SENDINFO( m_flVRShotgunPumpStrokeDist ), 0, SPROP_NOSCALE ),
+#endif
+END_NETWORK_TABLE()
+
+BEGIN_PREDICTION_DATA( CTFShotgun )
+#ifdef CLIENT_DLL
+	DEFINE_PRED_FIELD( m_bVRShotgunPumpNeedsPump, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunPumpIsArmed, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_vecVRShotgunPumpLastHandPos, FIELD_VECTOR, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunPumpStrokeOut, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunPumpStrokeIn, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRShotgunPumpStrokeDist, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+#endif
+END_PREDICTION_DATA()
+
+LINK_ENTITY_TO_CLASS( tf_weapon_shotgun_primary, CTFShotgun );
+PRECACHE_WEAPON_REGISTER( tf_weapon_shotgun_primary );
+
 CREATE_SIMPLE_WEAPON_TABLE( TFShotgun_Soldier, tf_weapon_shotgun_soldier )
 CREATE_SIMPLE_WEAPON_TABLE( TFShotgun_HWG, tf_weapon_shotgun_hwg )
 CREATE_SIMPLE_WEAPON_TABLE( TFShotgun_Pyro, tf_weapon_shotgun_pyro )
@@ -94,6 +127,12 @@ ConVar tfvr_scattergun_lever_sign( "tfvr_scattergun_lever_sign", "1", FCVAR_REPL
 ConVar tfvr_scattergun_lever_axis( "tfvr_scattergun_lever_axis", "2", FCVAR_REPLICATED, "VR: controller matrix column for pump axis (0=fwd, 1=right, 2=up)" );
 ConVar tfvr_scattergun_lever_debug( "tfvr_scattergun_lever_debug", "0", FCVAR_REPLICATED, "VR: 1 = print scattergun lever reload state to console" );
 
+ConVar tfvr_shotgun_pump_action( "tfvr_shotgun_pump_action", "1", FCVAR_ARCHIVE, "VR shotguns: require a physical pump between shots; toggled by the TF2VR auto-reload option" );
+ConVar tfvr_shotgun_pump_distance( "tfvr_shotgun_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of off-hand motion per shotgun pump stroke" );
+ConVar tfvr_shotgun_pump_sign( "tfvr_shotgun_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply shotgun pump-axis motion (+1 or -1) if pump direction feels inverted" );
+ConVar tfvr_shotgun_pump_axis( "tfvr_shotgun_pump_axis", "0", FCVAR_REPLICATED, "VR: controller matrix column for shotgun pump axis (0=fwd, 1=right, 2=up)" );
+ConVar tfvr_shotgun_pump_debug( "tfvr_shotgun_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print shotgun pump state to console" );
+
 //=============================================================================
 //
 // Weapon Shotgun functions.
@@ -121,6 +160,15 @@ bool CanScatterGunKnockBack( CTFWeaponBase *pWeapon, float flDamage, float flDis
 CTFShotgun::CTFShotgun()
 {
 	m_bReloadsSingly = true;
+	m_bVRShotgunPumpNeedsPump = false;
+	m_bVRShotgunPumpIsArmed = false;
+	m_vecVRShotgunPumpLastHandPos = vec3_origin;
+	m_bVRShotgunPumpStrokeOut = false;
+	m_bVRShotgunPumpStrokeIn = false;
+	m_flVRShotgunPumpStrokeDist = 0.0f;
+
+	PrecacheScriptSound( "VR.ShotgunCockBack" );
+	PrecacheScriptSound( "VR.ShotgunCockForward" );
 }
 
 //-----------------------------------------------------------------------------
@@ -131,10 +179,363 @@ void CTFShotgun::PrimaryAttack()
 	if ( !CanAttack() )
 		return;
 
+	if ( ShouldUseVRShotgunPumpAction() && m_bVRShotgunPumpNeedsPump )
+	{
+		m_flNextPrimaryAttack = gpGlobals->curtime + 0.1f;
+		return;
+	}
+
 	// Set the weapon mode.
 	m_iWeaponMode = TF_WEAPON_PRIMARY_MODE;
 
+	const int iClipBefore = Clip1();
 	BaseClass::PrimaryAttack();
+
+	if ( ShouldUseVRShotgunPumpAction() && Clip1() < iClipBefore )
+	{
+		m_bVRShotgunPumpNeedsPump = true;
+		ResetVRShotgunPumpGestureState();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+void CTFShotgun::ItemPostFrame( void )
+{
+	BaseClass::ItemPostFrame();
+
+	if ( ShouldUseVRShotgunPumpAction() )
+	{
+		VRShotgunPumpActionPostFrame();
+	}
+	else
+	{
+		ResetVRShotgunPumpGestureState();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+bool CTFShotgun::SendWeaponAnim( int iActivity )
+{
+	if ( iActivity == ACT_VM_PRIMARYATTACK && ShouldUseVRShotgunPumpAction() )
+	{
+#ifdef CLIENT_DLL
+		C_TFVRHand *pHand = NULL;
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+		{
+			pHand = pRightHand;
+		}
+		else
+		{
+			C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+			if ( pLeftHand && pLeftHand->GetHeldWeapon() == this )
+				pHand = pLeftHand;
+		}
+
+		if ( pHand )
+			pHand->PlayWeaponFireAnimation();
+#endif
+		return true;
+	}
+
+	return BaseClass::SendWeaponAnim( iActivity );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+bool CTFShotgun::ShouldUseVRShotgunPumpAction() const
+{
+	if ( !IsPumpActionShotgunWeaponID( GetWeaponID() ) )
+		return false;
+
+	if ( !tfvr_shotgun_pump_action.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	if ( IsHeldByVRHand() )
+		return true;
+
+	if ( pOwner->IsLocalPlayer() )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+			return true;
+
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		if ( pLeftHand && pLeftHand->GetHeldWeapon() == this )
+			return true;
+	}
+
+	return false;
+#else
+	return true;
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+void CTFShotgun::ResetVRShotgunPumpGestureState( void )
+{
+	m_bVRShotgunPumpIsArmed = false;
+	m_vecVRShotgunPumpLastHandPos = vec3_origin;
+	m_bVRShotgunPumpStrokeOut = false;
+	m_bVRShotgunPumpStrokeIn = false;
+	m_flVRShotgunPumpStrokeDist = 0.0f;
+}
+
+float CTFShotgun::GetVRShotgunPumpStrokeProgress() const
+{
+	float dist = tfvr_shotgun_pump_distance.GetFloat();
+	return ( dist > 0.0f ) ? clamp( (float)m_flVRShotgunPumpStrokeDist / dist, 0.0f, 1.0f ) : 0.0f;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+void CTFShotgun::VRCommitShotgunPumpAction( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+	const CUserCmd *pCmdCommit = pOwner->GetCurrentUserCommand();
+	if ( !pCmdCommit || !pCmdCommit->vrWeaponArmed )
+		return;
+
+	m_bVRShotgunPumpNeedsPump = false;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Two-stroke off-hand pump action along the weapon axis.
+//-----------------------------------------------------------------------------
+void CTFShotgun::VRShotgunPumpActionPostFrame( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+#if defined( CLIENT_DLL )
+	if ( !pOwner->IsLocalPlayer() )
+		return;
+#endif
+
+	if ( !m_bVRShotgunPumpNeedsPump )
+	{
+		ResetVRShotgunPumpGestureState();
+		return;
+	}
+
+	const bool bDebug = tfvr_shotgun_pump_debug.GetBool();
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+	{
+		ResetVRShotgunPumpGestureState();
+		return;
+	}
+
+	Vector vecPumpHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosL
+		: pCmd->vrRawControllerPosR;
+	Vector vecWeaponHandRaw = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerPosR
+		: pCmd->vrRawControllerPosL;
+
+	if ( vecPumpHandRaw == vec3_origin || vecWeaponHandRaw == vec3_origin )
+		return;
+
+	Vector vecHandRelative = vecPumpHandRaw - vecWeaponHandRaw;
+
+	if ( !pCmd->vrWeaponArmed )
+	{
+		const bool bMidStroke = m_bVRShotgunPumpStrokeOut || m_bVRShotgunPumpStrokeIn;
+		if ( !bMidStroke )
+		{
+			if ( bDebug && m_vecVRShotgunPumpLastHandPos != vec3_origin )
+				DevMsg( "[VR ShotgunPump] Reset: not armed\n" );
+			ResetVRShotgunPumpGestureState();
+		}
+		else
+		{
+			m_vecVRShotgunPumpLastHandPos = vecHandRelative;
+			m_flVRShotgunPumpStrokeDist = 0.0f;
+			if ( bDebug )
+				DevMsg( "[VR ShotgunPump] Grip lost mid-stroke, holding state\n" );
+		}
+		return;
+	}
+
+	m_bVRShotgunPumpIsArmed = true;
+
+	const float flPumpDist = tfvr_shotgun_pump_distance.GetFloat();
+	const float flSign = tfvr_shotgun_pump_sign.GetFloat();
+	const float flPumpInterval = MAX( m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeFireDelay * 0.5f, 0.05f );
+
+	QAngle angWeaponHand = pCmd->vrWeaponHandIsRight
+		? pCmd->vrRawControllerAngR
+		: pCmd->vrRawControllerAngL;
+
+	matrix3x4_t controllerMatrix;
+	AngleMatrix( angWeaponHand, controllerMatrix );
+
+	int iAxisCol = clamp( tfvr_shotgun_pump_axis.GetInt(), 0, 2 );
+	Vector vecPumpAxis;
+	MatrixGetColumn( controllerMatrix, iAxisCol, vecPumpAxis );
+	VectorNormalize( vecPumpAxis );
+
+	if ( m_vecVRShotgunPumpLastHandPos == vec3_origin )
+	{
+		m_vecVRShotgunPumpLastHandPos = vecHandRelative;
+		m_flVRShotgunPumpStrokeDist = 0.0f;
+		if ( bDebug )
+			DevMsg( "[VR ShotgunPump] Tracking started\n" );
+		return;
+	}
+
+	if ( !m_bVRShotgunPumpStrokeOut && !m_bVRShotgunPumpStrokeIn )
+	{
+		Vector vecFrameDelta = vecHandRelative - m_vecVRShotgunPumpLastHandPos;
+		float flFrameDisp = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+		if ( flFrameDisp < 0.0f )
+		{
+			m_flVRShotgunPumpStrokeDist += -flFrameDisp;
+		}
+		else
+		{
+			m_flVRShotgunPumpStrokeDist = MAX( m_flVRShotgunPumpStrokeDist - flFrameDisp * 2.0f, 0.0f );
+		}
+
+		if ( m_flVRShotgunPumpStrokeDist >= 0.5f )
+		{
+			m_bVRShotgunPumpStrokeOut = true;
+			m_vecVRShotgunPumpLastHandPos = vecHandRelative;
+			m_flVRShotgunPumpStrokeDist = MIN( m_flVRShotgunPumpStrokeDist - 0.5f, flPumpDist );
+			if ( bDebug )
+				DevMsg( "[VR ShotgunPump] Pullback started\n" );
+		}
+		else
+		{
+			m_vecVRShotgunPumpLastHandPos = vecHandRelative;
+		}
+	}
+	else
+	{
+		Vector vecFrameDelta = vecHandRelative - m_vecVRShotgunPumpLastHandPos;
+		float flFrameDisp = DotProduct( vecFrameDelta, vecPumpAxis ) * flSign;
+
+		if ( m_bVRShotgunPumpStrokeOut )
+		{
+			if ( flFrameDisp < 0.0f )
+			{
+				m_flVRShotgunPumpStrokeDist += -flFrameDisp;
+			}
+
+			float flMaxPullPerFrame = ( flPumpDist / flPumpInterval ) * gpGlobals->frametime;
+			if ( m_flVRShotgunPumpStrokeDist >= flPumpDist * 0.60f )
+			{
+				m_flVRShotgunPumpStrokeDist = MIN( m_flVRShotgunPumpStrokeDist + flMaxPullPerFrame, flPumpDist );
+			}
+			m_vecVRShotgunPumpLastHandPos = vecHandRelative;
+
+			if ( bDebug )
+				DevMsg( "[VR ShotgunPump] Pullback: %.2f / %.2f\n", (float)m_flVRShotgunPumpStrokeDist, flPumpDist );
+
+			if ( m_flVRShotgunPumpStrokeDist >= flPumpDist )
+			{
+				m_bVRShotgunPumpStrokeOut = false;
+				m_bVRShotgunPumpStrokeIn = true;
+				m_flVRShotgunPumpStrokeDist = 0.0f;
+				if ( bDebug )
+					DevMsg( "[VR ShotgunPump] Pullback complete, push forward\n" );
+
+#ifdef CLIENT_DLL
+				if ( prediction->IsFirstTimePredicted() )
+				{
+					EmitSound( "VR.ShotgunCockBack" );
+
+					if ( ShouldEjectBrass() )
+					{
+						CEffectData data;
+						bool bGotAttachment = false;
+
+						C_TFVRHand *pHand = pCmd->vrWeaponHandIsRight
+							? GetLocalPlayerRightHand()
+							: GetLocalPlayerLeftHand();
+						if ( pHand )
+						{
+							C_BaseAnimating *pRenderWeapon = pHand->GetRenderWeapon();
+							if ( pRenderWeapon )
+							{
+								int iEjectAttach = pRenderWeapon->LookupAttachment( "eject_brass" );
+								if ( iEjectAttach > 0 )
+								{
+									pRenderWeapon->GetAttachment( iEjectAttach, data.m_vOrigin, data.m_vAngles );
+									bGotAttachment = true;
+								}
+							}
+						}
+
+						if ( bGotAttachment )
+						{
+							data.m_nDamageType = GetAttributeContainer()->GetItem()
+								? GetAttributeContainer()->GetItem()->GetItemDefIndex() : 0;
+							data.m_nHitBox = GetWeaponID();
+							DispatchEffect( "TF_EjectBrass", data );
+						}
+					}
+				}
+#endif
+			}
+		}
+		else if ( m_bVRShotgunPumpStrokeIn )
+		{
+			float flCompletionDist = flPumpDist * 0.9f;
+			float flMaxDistPerFrame = ( flCompletionDist / flPumpInterval ) * gpGlobals->frametime;
+
+			float flPrevDist = m_flVRShotgunPumpStrokeDist;
+			if ( flFrameDisp > 0.0f )
+			{
+				m_flVRShotgunPumpStrokeDist = MIN( m_flVRShotgunPumpStrokeDist + flFrameDisp, flCompletionDist );
+			}
+			if ( m_flVRShotgunPumpStrokeDist >= flPumpDist * 0.60f )
+			{
+				m_flVRShotgunPumpStrokeDist = MIN( m_flVRShotgunPumpStrokeDist + flMaxDistPerFrame, flCompletionDist );
+			}
+			m_vecVRShotgunPumpLastHandPos = vecHandRelative;
+
+#ifdef CLIENT_DLL
+			float flSoundThreshold = flCompletionDist * 0.15f;
+			if ( prediction->IsFirstTimePredicted()
+				&& flPrevDist < flSoundThreshold
+				&& m_flVRShotgunPumpStrokeDist >= flSoundThreshold )
+			{
+				EmitSound( "VR.ShotgunCockForward" );
+			}
+#endif
+
+			if ( bDebug )
+				DevMsg( "[VR ShotgunPump] Push: %.2f / %.2f\n", (float)m_flVRShotgunPumpStrokeDist, flCompletionDist );
+
+			if ( m_flVRShotgunPumpStrokeDist >= flCompletionDist )
+			{
+				VRCommitShotgunPumpAction();
+				ResetVRShotgunPumpGestureState();
+				if ( bDebug )
+					DevMsg( "[VR ShotgunPump] Pump complete, ready to fire\n" );
+			}
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -189,7 +590,10 @@ void CTFShotgun_Revenge::PrimaryAttack()
 	if ( !CanAttack() )
 		return;
 
+	const int iClipBefore = Clip1();
 	BaseClass::PrimaryAttack();
+	if ( Clip1() >= iClipBefore )
+		return;
 
 	// Do this after the attack, so that we know if we are doing custom damage
 	CTFPlayer *pOwner = ToTFPlayer( GetPlayerOwner() );

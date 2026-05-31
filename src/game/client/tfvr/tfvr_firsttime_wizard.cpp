@@ -58,7 +58,8 @@ namespace
 			&& GetCvarInt( "tfvr_sticky_pump_reload", 1 ) == 0
 			&& GetCvarInt( "tfvr_bison_pump_reload", 1 ) == 0
 			&& GetCvarInt( "tfvr_pomson_pump_reload", 1 ) == 0
-			&& GetCvarInt( "tfvr_mangler_pump_reload", 1 ) == 0;
+			&& GetCvarInt( "tfvr_mangler_pump_reload", 1 ) == 0
+			&& GetCvarInt( "tfvr_shotgun_pump_action", 1 ) == 0;
 	}
 
 	void SetPumpReloadsAutomatic( bool bAutomatic )
@@ -69,6 +70,7 @@ namespace
 		SetCvarInt( "tfvr_bison_pump_reload", nManualPumpReload );
 		SetCvarInt( "tfvr_pomson_pump_reload", nManualPumpReload );
 		SetCvarInt( "tfvr_mangler_pump_reload", nManualPumpReload );
+		SetCvarInt( "tfvr_shotgun_pump_action", nManualPumpReload );
 	}
 }
 

@@ -40,6 +40,7 @@ extern ConVar tfvr_twohand_enabled;
 extern ConVar tfvr_medigun_lever;
 extern ConVar tfvr_sticky_pump_reload;
 extern ConVar tfvr_bison_pump_reload;
+extern ConVar tfvr_shotgun_pump_action;
 
 ConVar tfvr_bison_pump_weapon_grip_threshold( "tfvr_bison_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR bison pump: off-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_bison_pump_twohand_min_blend( "tfvr_bison_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR bison pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -54,6 +55,8 @@ ConVar tfvr_pomson_pump_twohand_min_blend( "tfvr_pomson_pump_twohand_min_blend",
 
 ConVar tfvr_scattergun_lever_weapon_grip_threshold( "tfvr_scattergun_lever_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: weapon-hand grip analog (right_grip when gun is in right hand, else left_grip) must reach this (0-1) while two-handing" );
 ConVar tfvr_scattergun_lever_twohand_min_blend( "tfvr_scattergun_lever_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: minimum two-hand blend on the weapon hand before lever motion counts (0-1)" );
+ConVar tfvr_shotgun_pump_weapon_grip_threshold( "tfvr_shotgun_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR shotgun pump: off-hand grip analog must reach this (0-1) while two-handing" );
+ConVar tfvr_shotgun_pump_twohand_min_blend( "tfvr_shotgun_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR shotgun pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
 ConVar tfvr_medigun_lever_grip_threshold( "tfvr_medigun_lever_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR medigun lever: right grip analog must reach this (0-1) to arm the lever" );
 ConVar tfvr_sticky_pump_weapon_grip_threshold( "tfvr_sticky_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR sticky pump: weapon-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_sticky_pump_twohand_min_blend( "tfvr_sticky_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR sticky pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -1032,6 +1035,54 @@ static void TFVR_UpdateScattergunLeverArmedInCmd( CUserCmd *cmd )
 	}
 }
 
+static void TFVR_UpdateShotgunPumpArmedInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_shotgun_pump_action.GetBool() || !tfvr_twohand_enabled.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || !IsPumpActionShotgunWeaponID( pWpn->GetWeaponID() ) || !pWpn->IsHeldByVRHand() )
+		return;
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+
+	if ( !pWeaponHand || !pOffHand )
+		return;
+
+	if ( pOffHand->GetTwoHandBlendAmount() < tfvr_shotgun_pump_twohand_min_blend.GetFloat() )
+		return;
+
+	const float flGrip = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "right_grip" )
+		: g_pOpenXRManager->GetAnalogValue( "left_grip" );
+
+	if ( flGrip >= tfvr_shotgun_pump_weapon_grip_threshold.GetFloat() )
+	{
+		cmd->vrWeaponArmed = true;
+		cmd->vrWeaponHandIsRight = ( pWeaponHand == pRight );
+	}
+}
+
 static void TFVR_UpdateMedigunLeverArmedInCmd( CUserCmd *cmd )
 {
 	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
@@ -1296,6 +1347,8 @@ static bool TFVR_ShouldManualPumpReloadForActiveWeapon()
 	case TF_WEAPON_DRG_POMSON:
 		return tfvr_pomson_pump_reload.GetBool();
 	default:
+		if ( IsPumpActionShotgunWeaponID( pWpn->GetWeaponID() ) )
+			return tfvr_shotgun_pump_action.GetBool();
 		return IsScattergunWeaponID( pWpn->GetWeaponID() ) && tfvr_scattergun_lever_reload.GetBool();
 	}
 }
@@ -1322,6 +1375,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
     }
 
 	TFVR_UpdateScattergunLeverArmedInCmd( cmd );
+	TFVR_UpdateShotgunPumpArmedInCmd( cmd );
 	TFVR_UpdateMedigunLeverArmedInCmd( cmd );
 	TFVR_UpdateStickyPumpArmedInCmd( cmd );
 	TFVR_UpdateBisonPumpArmedInCmd( cmd );
