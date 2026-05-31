@@ -111,10 +111,10 @@
 		"leftText"			"10 ms"
 		"rightText"			"1 s"
 	}
-	"RollInvert"
+	"SpectatorExtras"
 	{
 		"ControlName"		"CheckButton"
-		"fieldName"			"RollInvert"
+		"fieldName"			"SpectatorExtras"
 		"xpos"				"22"
 		"ypos"				"190"
 		"wide"				"220"
@@ -122,19 +122,6 @@
 		"visible"			"1"
 		"enabled"			"1"
 		"tabPosition"		"5"
-		"textAlignment"		"west"
-	}
-	"SpectatorExtras"
-	{
-		"ControlName"		"CheckButton"
-		"fieldName"			"SpectatorExtras"
-		"xpos"				"242"
-		"ypos"				"190"
-		"wide"				"220"
-		"tall"				"36"
-		"visible"			"1"
-		"enabled"			"1"
-		"tabPosition"		"6"
 		"textAlignment"		"west"
 	}
 }

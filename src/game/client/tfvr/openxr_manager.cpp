@@ -46,7 +46,6 @@ ConVar tfvr_crosshair_offset_y("tfvr_crosshair_offset_y", "0.0", FCVAR_ARCHIVE, 
 ConVar tfvr_crosshair_offset_z("tfvr_crosshair_offset_z", "0.0", FCVAR_ARCHIVE, "Crosshair Z-axis offset for fine-tuning aim");
 ConVar tfvr_crosshair_follow_controller_roll("tfvr_crosshair_follow_controller_roll", "1", FCVAR_ARCHIVE, "Make crosshair rotate with controller roll (1=enabled, 0=disabled)");
 ConVar tfvr_msaa("tfvr_msaa", "4", FCVAR_ARCHIVE, "Controls multi-sampling anti-aliasing levels in TFVR. Set to the number of samples to use.");
-ConVar tfvr_dynamic_worldscale("tfvr_dynamic_worldscale", "1", FCVAR_ARCHIVE, "Enable dynamic world scaling based on merc height and crouch state");
 ConVar tfvr_forcemaxlod("tfvr_forcemaxlod", "1", FCVAR_ARCHIVE);
 ConVar tfvr_hud_forward("tfvr_hud_forward", "500", FCVAR_ARCHIVE, "Apparent distance of the HUD in inches");
 ConVar tfvr_hud_scale("tfvr_hud_scale", "0.5", FCVAR_ARCHIVE);
@@ -108,11 +107,6 @@ namespace
 		// Get the base world scale ConVar
 		static ConVar* tfvr_worldscale = cvar->FindVar("tfvr_worldscale");
 		float baseWorldScale = tfvr_worldscale ? tfvr_worldscale->GetFloat() : 48.0f;
-		
-		// Check if dynamic scaling is enabled
-		static ConVar* tfvr_dynamic_worldscale = cvar->FindVar("tfvr_dynamic_worldscale");
-		if (!tfvr_dynamic_worldscale || !tfvr_dynamic_worldscale->GetBool())
-			return baseWorldScale;
 		
 		// Get local player to check class and crouch state
 		C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
@@ -1836,15 +1830,7 @@ CON_COMMAND(vr_debug_worldscale_aim, "Debug how world scale changes affect aim p
     Vector shootPos = pTFPlayer->Weapon_ShootPosition();
     DevMsg("Weapon Shoot Position: (%.2f, %.2f, %.2f)\n", shootPos.x, shootPos.y, shootPos.z);
     
-    // Check if dynamic scaling is enabled
-    ConVar* tfvr_dynamic_worldscale = cvar->FindVar("tfvr_dynamic_worldscale");
-    DevMsg("Dynamic Scaling: %s\n", 
-           tfvr_dynamic_worldscale && tfvr_dynamic_worldscale->GetBool() ? "ENABLED" : "DISABLED");
-    
-    if (!tfvr_dynamic_worldscale || !tfvr_dynamic_worldscale->GetBool())
-    {
-        DevMsg("NOTE: Dynamic world scaling is disabled. Enable with 'tfvr_dynamic_worldscale 1'\n");
-    }
+    DevMsg("Dynamic Scaling: ALWAYS ENABLED\n");
     
     DevMsg("\nTo test: Switch classes and run this command again to see scale changes.\n");
 }
@@ -1852,8 +1838,7 @@ CON_COMMAND(vr_debug_worldscale_aim, "Debug how world scale changes affect aim p
 CON_COMMAND(vr_test_scaling, "Test dynamic world scaling based on merc height")
 {
     DevMsg("VR Dynamic Scaling Test:\n");
-    DevMsg("  tfvr_dynamic_worldscale: %s\n", 
-           cvar->FindVar("tfvr_dynamic_worldscale")->GetBool() ? "Enabled" : "Disabled");
+    DevMsg("  Dynamic world scaling: Always enabled\n");
     DevMsg("  tfvr_worldscale: %.1f\n", 
            cvar->FindVar("tfvr_worldscale")->GetFloat());
     

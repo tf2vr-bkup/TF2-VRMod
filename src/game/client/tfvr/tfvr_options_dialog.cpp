@@ -241,7 +241,7 @@ public:
 		m_pMoveSensitivity = AddSlider( "MoveSensitivity", "Movement sensitivity", 25, 200 );
 		m_pThumbstickDeadzone = AddSlider( "ThumbstickDeadzone", "Thumbstick deadzone", 0, 50 );
 		m_pTurnDeadzone = AddSlider( "TurnDeadzone", "Turn deadzone", 0, 80 );
-		m_pWeaponSwitchStick = AddCheck( "WeaponSwitchStick", "Right stick weapon switching" );
+		m_pWeaponSwitchStick = AddCheck( "WeaponSwitchStick", "Right stick up/down quick switch" );
 
 		LoadControlSettings( "resource/TFVROptionsSubControls.res" );
 		m_pSmoothTurnRateLabel = FindChildByName( "SmoothTurnRateLabel" );
@@ -338,7 +338,6 @@ public:
 
 		StartRightColumn();
 		m_pWorldScale = AddSlider( "WorldScale", "World scale", 36, 60 );
-		m_pDynamicWorldScale = AddCheck( "DynamicWorldScale", "Dynamic world scaling" );
 
 		LoadControlSettings( "resource/TFVROptionsSubComfort.res" );
 	}
@@ -350,7 +349,6 @@ public:
 		m_pPhysicalCrouch->SetSelected( GetCvarInt( "tfvr_physical_crouch", 1 ) != 0 );
 		m_pSeatedMode->SetSelected( GetCvarInt( "tfvr_seated_mode", 0 ) != 0 );
 		m_pWorldScale->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_worldscale", 48.0f ) ) );
-		m_pDynamicWorldScale->SetSelected( GetCvarInt( "tfvr_dynamic_worldscale", 1 ) != 0 );
 	}
 
 	void OnApplyChanges() OVERRIDE
@@ -360,7 +358,6 @@ public:
 		SetCvarInt( "tfvr_physical_crouch", m_pPhysicalCrouch->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_seated_mode", m_pSeatedMode->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_worldscale", m_pWorldScale->GetValue() );
-		SetCvarInt( "tfvr_dynamic_worldscale", m_pDynamicWorldScale->IsSelected() ? 1 : 0 );
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
 	}
 
@@ -370,7 +367,6 @@ private:
 	CheckButton *m_pPhysicalCrouch;
 	CheckButton *m_pSeatedMode;
 	Slider *m_pWorldScale;
-	CheckButton *m_pDynamicWorldScale;
 };
 
 class CTFVROptionsSubGameplay : public CTFVROptionsSubPage
@@ -384,13 +380,12 @@ public:
 		m_pTwoHandGrip = AddCheck( "TwoHandGrip", "Two-handed weapon grip" );
 		m_pOffhandGrip = AddCheck( "OffhandGrip", "Offhand grip aiming" );
 		m_pPhysicalThrow = AddCheck( "PhysicalThrow", "Physical throwable weapons" );
-		m_pPhysicalBall = AddCheck( "PhysicalBall", "Physical Sandman/Wrap Assassin ball" );
+		m_pPhysicalBall = AddCheck( "PhysicalBall", "Physical bat/ball interaction" );
 		m_pAutomaticReloads = AddCheck( "AutomaticReloads", "Auto-reload" );
 
 		StartRightColumn();
 		m_pMouthActivate = AddCheck( "MouthActivate", "Mouth activation for lunchbox items" );
 		m_pVoiceGesture = AddCheck( "VoiceGesture", "Walkie-talkie voice gesture" );
-		m_pWeaponWallClip = AddCheck( "WeaponWallClip", "Prevent firing through walls" );
 
 		LoadControlSettings( "resource/TFVROptionsSubGameplay.res" );
 	}
@@ -404,7 +399,6 @@ public:
 		m_pAutomaticReloads->SetSelected( ArePumpReloadsAutomatic() );
 		m_pMouthActivate->SetSelected( GetCvarInt( "tfvr_mouth_activate_enabled", 1 ) != 0 );
 		m_pVoiceGesture->SetSelected( GetCvarInt( "tfvr_voice_gesture_enabled", 1 ) != 0 );
-		m_pWeaponWallClip->SetSelected( GetCvarInt( "tfvr_weapon_wall_clip_check", 1 ) != 0 );
 	}
 
 	void OnApplyChanges() OVERRIDE
@@ -416,7 +410,6 @@ public:
 		SetPumpReloadsAutomatic( m_pAutomaticReloads->IsSelected() );
 		SetCvarInt( "tfvr_mouth_activate_enabled", m_pMouthActivate->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_voice_gesture_enabled", m_pVoiceGesture->IsSelected() ? 1 : 0 );
-		SetCvarInt( "tfvr_weapon_wall_clip_check", m_pWeaponWallClip->IsSelected() ? 1 : 0 );
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
 	}
 
@@ -428,7 +421,6 @@ private:
 	CheckButton *m_pAutomaticReloads;
 	CheckButton *m_pMouthActivate;
 	CheckButton *m_pVoiceGesture;
-	CheckButton *m_pWeaponWallClip;
 };
 
 class CTFVROptionsSubVideo : public CTFVROptionsSubPage
@@ -454,7 +446,6 @@ public:
 		m_pForceMaxLOD = AddCheck( "ForceMaxLOD", "Force max LOD" );
 
 		StartRightColumn();
-		m_pShowBothEyes = AddCheck( "ShowBothEyes", "Show both eyes on mirror" );
 		m_pHUDOnMirror = AddCheck( "HUDOnMirror", "Show HUD on mirror" );
 		m_pMenuOnMirror = AddCheck( "MenuOnMirror", "Show menus on mirror" );
 
@@ -466,7 +457,6 @@ public:
 		m_pMirrorResolution->ActivateItem( MirrorResolutionToOption( GetCvarInt( "tfvr_mirror_resolution", 720 ) ) );
 		m_pMSAA->ActivateItem( MSAAToOption( GetCvarInt( "tfvr_msaa", 4 ) ) );
 		m_pForceMaxLOD->SetSelected( GetCvarInt( "tfvr_forcemaxlod", 1 ) != 0 );
-		m_pShowBothEyes->SetSelected( GetCvarInt( "tfvr_r_show_both_eyes", 0 ) != 0 );
 		m_pHUDOnMirror->SetSelected( GetCvarInt( "tfvr_hud_on_mirror", 1 ) != 0 );
 		m_pMenuOnMirror->SetSelected( GetCvarInt( "tfvr_menu_on_mirror", 1 ) != 0 );
 	}
@@ -476,7 +466,6 @@ public:
 		SetCvarInt( "tfvr_mirror_resolution", OptionToMirrorResolution( m_pMirrorResolution->GetActiveItem() ) );
 		SetCvarInt( "tfvr_msaa", OptionToMSAA( m_pMSAA->GetActiveItem() ) );
 		SetCvarInt( "tfvr_forcemaxlod", m_pForceMaxLOD->IsSelected() ? 1 : 0 );
-		SetCvarInt( "tfvr_r_show_both_eyes", m_pShowBothEyes->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_hud_on_mirror", m_pHUDOnMirror->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_menu_on_mirror", m_pMenuOnMirror->IsSelected() ? 1 : 0 );
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
@@ -486,7 +475,6 @@ private:
 	ComboBox *m_pMirrorResolution;
 	ComboBox *m_pMSAA;
 	CheckButton *m_pForceMaxLOD;
-	CheckButton *m_pShowBothEyes;
 	CheckButton *m_pHUDOnMirror;
 	CheckButton *m_pMenuOnMirror;
 };
@@ -509,7 +497,6 @@ public:
 
 		StartRightColumn();
 		m_pYawPitchSmoothing = AddSlider( "YawPitchSmoothing", "Yaw/pitch smoothing", 10, 1000 );
-		m_pRollInvert = AddCheck( "RollInvert", "Invert roll compensation" );
 		m_pSpectatorExtras = AddCheck( "SpectatorExtras", "Spectator status overlays" );
 
 		LoadControlSettings( "resource/TFVROptionsSubSpectator.res" );
@@ -521,7 +508,6 @@ public:
 		m_pSpectatorZoom->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_spectator_zoom", 1.1f ) * 100.0f ) );
 		m_pRollSmoothing->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_spectator_roll_halflife", 0.5f ) * 1000.0f ) );
 		m_pYawPitchSmoothing->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_spectator_yawpitch_halflife", 0.09f ) * 1000.0f ) );
-		m_pRollInvert->SetSelected( GetCvarInt( "tfvr_spectator_roll_invert", 0 ) != 0 );
 		m_pSpectatorExtras->SetSelected( GetCvarInt( "tfvr_spectator_extras_enabled", 1 ) != 0 );
 	}
 
@@ -531,7 +517,6 @@ public:
 		SetCvarFloat( "tfvr_spectator_zoom", 0.01f * m_pSpectatorZoom->GetValue() );
 		SetCvarFloat( "tfvr_spectator_roll_halflife", 0.001f * m_pRollSmoothing->GetValue() );
 		SetCvarFloat( "tfvr_spectator_yawpitch_halflife", 0.001f * m_pYawPitchSmoothing->GetValue() );
-		SetCvarInt( "tfvr_spectator_roll_invert", m_pRollInvert->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_spectator_extras_enabled", m_pSpectatorExtras->IsSelected() ? 1 : 0 );
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
 	}
@@ -541,7 +526,6 @@ private:
 	Slider *m_pSpectatorZoom;
 	Slider *m_pRollSmoothing;
 	Slider *m_pYawPitchSmoothing;
-	CheckButton *m_pRollInvert;
 	CheckButton *m_pSpectatorExtras;
 };
 

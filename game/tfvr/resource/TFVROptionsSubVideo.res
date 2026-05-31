@@ -58,19 +58,6 @@
 	{
 		"ControlName"		"CheckButton"
 		"fieldName"			"ForceMaxLOD"
-		"xpos"				"22"
-		"ypos"				"90"
-		"wide"				"220"
-		"tall"				"36"
-		"visible"			"1"
-		"enabled"			"1"
-		"tabPosition"		"3"
-		"textAlignment"		"west"
-	}
-	"ShowBothEyes"
-	{
-		"ControlName"		"CheckButton"
-		"fieldName"			"ShowBothEyes"
 		"xpos"				"242"
 		"ypos"				"90"
 		"wide"				"220"
@@ -97,13 +84,13 @@
 	{
 		"ControlName"		"CheckButton"
 		"fieldName"			"MenuOnMirror"
-		"xpos"				"242"
-		"ypos"				"126"
+		"xpos"				"22"
+		"ypos"				"90"
 		"wide"				"220"
 		"tall"				"36"
 		"visible"			"1"
 		"enabled"			"1"
-		"tabPosition"		"6"
+		"tabPosition"		"3"
 		"textAlignment"		"west"
 	}
 }

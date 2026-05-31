@@ -87,7 +87,6 @@ ConVar tf_scout_hype_pep_mod( "tf_scout_hype_pep_mod", "1.0", FCVAR_REPLICATED |
 ConVar tf_scout_hype_pep_max( "tf_scout_hype_pep_max", "99.0", FCVAR_REPLICATED | FCVAR_CHEAT | FCVAR_DEVELOPMENTONLY );
 ConVar tf_scout_hype_pep_min_damage( "tf_scout_hype_pep_min_damage", "5.0", FCVAR_REPLICATED | FCVAR_CHEAT | FCVAR_DEVELOPMENTONLY );
 
-ConVar tfvr_weapon_wall_clip_check( "tfvr_weapon_wall_clip_check", "1", FCVAR_REPLICATED | FCVAR_NOT_CONNECTED, "Prevent VR weapons from firing when the muzzle is clipped through a wall" );
 ConVar tfvr_weapon_wall_clip_fan_offset( "tfvr_weapon_wall_clip_fan_offset", "12", FCVAR_REPLICATED | FCVAR_NOT_CONNECTED, "Lateral offset (units) for fan traces that distinguish gates/walls from corner peeks" );
 ConVar tfvr_reload_throttle_scale( "tfvr_reload_throttle_scale", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR manual reload: scales minimum shell intervals derived from TF2 reload timing; values below 1 are clamped to 1 so reload is never faster than stock TF2" );
 
@@ -4997,9 +4996,6 @@ bool CTFWeaponBase::CanAttack()
 //-----------------------------------------------------------------------------
 bool CTFWeaponBase::IsVRMuzzleClippedThroughWall( CTFPlayer *pPlayer ) const
 {
-	if ( !tfvr_weapon_wall_clip_check.GetBool() )
-		return false;
-
 	if ( !pPlayer->IsInVRMode() )
 		return false;
 

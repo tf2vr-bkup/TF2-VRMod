@@ -91,17 +91,4 @@
 		"tabPosition"		"7"
 		"textAlignment"		"west"
 	}
-	"WeaponWallClip"
-	{
-		"ControlName"		"CheckButton"
-		"fieldName"			"WeaponWallClip"
-		"xpos"				"242"
-		"ypos"				"100"
-		"wide"				"230"
-		"tall"				"36"
-		"visible"			"1"
-		"enabled"			"1"
-		"tabPosition"		"8"
-		"textAlignment"		"west"
-	}
 }
