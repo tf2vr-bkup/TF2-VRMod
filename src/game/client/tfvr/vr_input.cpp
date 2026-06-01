@@ -1040,7 +1040,7 @@ static void TFVR_UpdateShotgunPumpArmedInCmd( CUserCmd *cmd )
 	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
 		return;
 
-	if ( !tfvr_shotgun_pump_action.GetBool() || !tfvr_twohand_enabled.GetBool() )
+	if ( !tfvr_twohand_enabled.GetBool() )
 		return;
 
 	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
@@ -1051,6 +1051,9 @@ static void TFVR_UpdateShotgunPumpArmedInCmd( CUserCmd *cmd )
 
 	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
 	if ( !pWpn || !IsPumpActionShotgunWeaponID( pWpn->GetWeaponID() ) || !pWpn->IsHeldByVRHand() )
+		return;
+
+	if ( !tfvr_shotgun_pump_action.GetBool() && !pWpn->IsReloading() )
 		return;
 
 	C_TFVRHand *pWeaponHand = NULL;

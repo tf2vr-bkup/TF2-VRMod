@@ -10,6 +10,7 @@
 #include "tf_fx_shared.h"
 #include "takedamageinfo.h"
 #include "tf_gamerules.h"
+#include "in_buttons.h"
 
 // Client specific.
 #if defined( CLIENT_DLL )
@@ -23,7 +24,6 @@
 #include "tf_player.h"
 #include "ilagcompensationmanager.h"
 #include "collisionutils.h"
-#include "in_buttons.h"
 #endif
 
 #include "usercmd.h"
@@ -45,6 +45,11 @@ BEGIN_NETWORK_TABLE( CTFShotgun, DT_TFShotgun )
 	RecvPropBool( RECVINFO( m_bVRShotgunPumpStrokeOut ) ),
 	RecvPropBool( RECVINFO( m_bVRShotgunPumpStrokeIn ) ),
 	RecvPropFloat( RECVINFO( m_flVRShotgunPumpStrokeDist ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunSuppressAutoReload ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunPumpStartedDuringReload ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunSuppressNextPumpEject ) ),
+	RecvPropFloat( RECVINFO( m_flVRShotgunResumeAutoReloadTime ) ),
+	RecvPropFloat( RECVINFO( m_flVRShotgunSuppressReloadSoundUntil ) ),
 #else
 	SendPropBool( SENDINFO( m_bVRShotgunPumpNeedsPump ) ),
 	SendPropBool( SENDINFO( m_bVRShotgunPumpIsArmed ) ),
@@ -52,6 +57,11 @@ BEGIN_NETWORK_TABLE( CTFShotgun, DT_TFShotgun )
 	SendPropBool( SENDINFO( m_bVRShotgunPumpStrokeOut ) ),
 	SendPropBool( SENDINFO( m_bVRShotgunPumpStrokeIn ) ),
 	SendPropFloat( SENDINFO( m_flVRShotgunPumpStrokeDist ), 0, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bVRShotgunSuppressAutoReload ) ),
+	SendPropBool( SENDINFO( m_bVRShotgunPumpStartedDuringReload ) ),
+	SendPropBool( SENDINFO( m_bVRShotgunSuppressNextPumpEject ) ),
+	SendPropFloat( SENDINFO( m_flVRShotgunResumeAutoReloadTime ), 0, SPROP_NOSCALE ),
+	SendPropFloat( SENDINFO( m_flVRShotgunSuppressReloadSoundUntil ), 0, SPROP_NOSCALE ),
 #endif
 END_NETWORK_TABLE()
 
@@ -63,6 +73,11 @@ BEGIN_PREDICTION_DATA( CTFShotgun )
 	DEFINE_PRED_FIELD( m_bVRShotgunPumpStrokeOut, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_bVRShotgunPumpStrokeIn, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_flVRShotgunPumpStrokeDist, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunSuppressAutoReload, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunPumpStartedDuringReload, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunSuppressNextPumpEject, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRShotgunResumeAutoReloadTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRShotgunSuppressReloadSoundUntil, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 #endif
 END_PREDICTION_DATA()
 
@@ -131,6 +146,7 @@ ConVar tfvr_shotgun_pump_action( "tfvr_shotgun_pump_action", "1", FCVAR_ARCHIVE,
 ConVar tfvr_shotgun_pump_distance( "tfvr_shotgun_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of off-hand motion per shotgun pump stroke" );
 ConVar tfvr_shotgun_pump_sign( "tfvr_shotgun_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply shotgun pump-axis motion (+1 or -1) if pump direction feels inverted" );
 ConVar tfvr_shotgun_pump_axis( "tfvr_shotgun_pump_axis", "0", FCVAR_REPLICATED, "VR: shotgun pump axis source (0=two-hand grip direction, 1=raw weapon hand right, 2=raw weapon hand up)" );
+ConVar tfvr_shotgun_pump_reload_restart_delay( "tfvr_shotgun_pump_reload_restart_delay", "0.45", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: seconds before auto-reload resumes after a shotgun pump cancels reload" );
 ConVar tfvr_shotgun_pump_debug( "tfvr_shotgun_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print shotgun pump state to console" );
 
 //=============================================================================
@@ -166,6 +182,11 @@ CTFShotgun::CTFShotgun()
 	m_bVRShotgunPumpStrokeOut = false;
 	m_bVRShotgunPumpStrokeIn = false;
 	m_flVRShotgunPumpStrokeDist = 0.0f;
+	m_bVRShotgunSuppressAutoReload = false;
+	m_bVRShotgunPumpStartedDuringReload = false;
+	m_bVRShotgunSuppressNextPumpEject = false;
+	m_flVRShotgunResumeAutoReloadTime = 0.0f;
+	m_flVRShotgunSuppressReloadSoundUntil = 0.0f;
 
 	PrecacheScriptSound( "VR.ShotgunCockBack" );
 	PrecacheScriptSound( "VR.ShotgunCockForward" );
@@ -181,6 +202,11 @@ void CTFShotgun::PrimaryAttack()
 
 	if ( ShouldUseVRShotgunPumpAction() && m_bVRShotgunPumpNeedsPump )
 	{
+		if ( m_flNextEmptySoundTime < gpGlobals->curtime )
+		{
+			WeaponSound( EMPTY );
+			m_flNextEmptySoundTime = gpGlobals->curtime + 0.5f;
+		}
 		m_flNextPrimaryAttack = gpGlobals->curtime + 0.1f;
 		return;
 	}
@@ -191,10 +217,16 @@ void CTFShotgun::PrimaryAttack()
 	const int iClipBefore = Clip1();
 	BaseClass::PrimaryAttack();
 
-	if ( ShouldUseVRShotgunPumpAction() && Clip1() < iClipBefore )
+	if ( Clip1() < iClipBefore )
 	{
-		m_bVRShotgunPumpNeedsPump = true;
-		ResetVRShotgunPumpGestureState();
+		m_bVRShotgunSuppressAutoReload = false;
+		m_bVRShotgunSuppressNextPumpEject = false;
+		m_flVRShotgunResumeAutoReloadTime = 0.0f;
+		if ( ShouldUseVRShotgunPumpAction() )
+		{
+			m_bVRShotgunPumpNeedsPump = true;
+			ResetVRShotgunPumpGestureState();
+		}
 	}
 }
 
@@ -203,9 +235,62 @@ void CTFShotgun::PrimaryAttack()
 //-----------------------------------------------------------------------------
 void CTFShotgun::ItemPostFrame( void )
 {
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( m_flVRShotgunSuppressReloadSoundUntil > gpGlobals->curtime )
+	{
+		StopVRShotgunReloadSounds();
+	}
+
+	if ( m_bVRShotgunSuppressAutoReload )
+	{
+		if ( !pOwner
+			|| Clip1() >= GetMaxClip1()
+			|| pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0
+			|| ( pOwner->m_nButtons & IN_RELOAD )
+			|| gpGlobals->curtime >= m_flVRShotgunResumeAutoReloadTime )
+		{
+			m_bVRShotgunSuppressAutoReload = false;
+			m_flVRShotgunResumeAutoReloadTime = 0.0f;
+		}
+	}
+
+	bool bWasReloading = IsReloading();
+	if ( bWasReloading || m_bVRShotgunPumpStartedDuringReload )
+	{
+		VRShotgunPumpActionPostFrame();
+		if ( bWasReloading && !IsReloading() )
+			return;
+	}
+
+	bWasReloading = IsReloading();
+	const int iClipBeforeReloadFrame = Clip1();
 	BaseClass::ItemPostFrame();
 
-	if ( ShouldUseVRShotgunPumpAction() )
+	if ( ShouldUseVRShotgunPumpAction()
+		&& bWasReloading
+		&& Clip1() > iClipBeforeReloadFrame
+		&& m_bVRShotgunSuppressNextPumpEject
+		&& Clip1() > 0 )
+	{
+		const bool bPumpGestureInProgress = m_bVRShotgunPumpStrokeOut || m_bVRShotgunPumpStrokeIn || m_flVRShotgunPumpStrokeDist > 0.0f;
+		m_bVRShotgunPumpNeedsPump = true;
+		if ( !bPumpGestureInProgress )
+			ResetVRShotgunPumpGestureState();
+	}
+
+	if ( ShouldUseVRShotgunPumpAction()
+		&& bWasReloading
+		&& !IsReloading()
+		&& !m_bVRShotgunSuppressAutoReload
+		&& Clip1() > 0 )
+	{
+		const bool bPumpGestureInProgress = m_bVRShotgunPumpStrokeOut || m_bVRShotgunPumpStrokeIn || m_flVRShotgunPumpStrokeDist > 0.0f;
+		m_bVRShotgunPumpNeedsPump = true;
+		if ( !bPumpGestureInProgress )
+			ResetVRShotgunPumpGestureState();
+	}
+
+	if ( ShouldUseVRShotgunPumpAction() || IsReloading() )
 	{
 		VRShotgunPumpActionPostFrame();
 	}
@@ -218,8 +303,47 @@ void CTFShotgun::ItemPostFrame( void )
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
+void CTFShotgun::ItemBusyFrame( void )
+{
+	if ( m_flVRShotgunSuppressReloadSoundUntil > gpGlobals->curtime )
+	{
+		StopVRShotgunReloadSounds();
+	}
+
+	if ( m_bVRShotgunSuppressAutoReload && gpGlobals->curtime >= m_flVRShotgunResumeAutoReloadTime )
+	{
+		m_bVRShotgunSuppressAutoReload = false;
+		m_flVRShotgunResumeAutoReloadTime = 0.0f;
+	}
+
+	const bool bWasReloading = IsReloading();
+	if ( bWasReloading || m_bVRShotgunPumpStartedDuringReload )
+	{
+		VRShotgunPumpActionPostFrame();
+		if ( bWasReloading && !IsReloading() )
+			return;
+	}
+
+	BaseClass::ItemBusyFrame();
+
+	if ( !bWasReloading && ( ShouldUseVRShotgunPumpAction() || IsReloading() ) )
+	{
+		VRShotgunPumpActionPostFrame();
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
 bool CTFShotgun::SendWeaponAnim( int iActivity )
 {
+	if ( iActivity == ACT_RELOAD_FINISH && ShouldUseVRShotgunPumpAction() )
+	{
+		// Manual pump mode owns the cocking motion/sounds. Suppress the
+		// legacy reload-finish pump so it does not double-play.
+		return true;
+	}
+
 	if ( iActivity == ACT_VM_PRIMARYATTACK && ShouldUseVRShotgunPumpAction() )
 	{
 #ifdef CLIENT_DLL
@@ -243,6 +367,17 @@ bool CTFShotgun::SendWeaponAnim( int iActivity )
 	}
 
 	return BaseClass::SendWeaponAnim( iActivity );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+void CTFShotgun::WeaponSound( WeaponSound_t sound_type, float soundtime )
+{
+	if ( sound_type == RELOAD && m_flVRShotgunSuppressReloadSoundUntil > gpGlobals->curtime )
+		return;
+
+	BaseClass::WeaponSound( sound_type, soundtime );
 }
 
 //-----------------------------------------------------------------------------
@@ -284,6 +419,19 @@ bool CTFShotgun::ShouldUseVRShotgunPumpAction() const
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
+bool CTFShotgun::ShouldSuppressAutoAndSinglyReloadForVR() const
+{
+	return m_bVRShotgunSuppressAutoReload && gpGlobals->curtime < m_flVRShotgunResumeAutoReloadTime;
+}
+
+bool CTFShotgun::CanVRShotgunPumpCancelReload( void )
+{
+	return IsReloading() && Clip1() > m_iReloadStartClipAmount;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
 void CTFShotgun::ResetVRShotgunPumpGestureState( void )
 {
 	m_bVRShotgunPumpIsArmed = false;
@@ -291,6 +439,62 @@ void CTFShotgun::ResetVRShotgunPumpGestureState( void )
 	m_bVRShotgunPumpStrokeOut = false;
 	m_bVRShotgunPumpStrokeIn = false;
 	m_flVRShotgunPumpStrokeDist = 0.0f;
+	m_bVRShotgunPumpStartedDuringReload = false;
+}
+
+void CTFShotgun::StopVRShotgunReloadSounds( void )
+{
+	StopWeaponSound( RELOAD );
+
+#ifdef CLIENT_DLL
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsLocalPlayer() )
+		return;
+
+	CUtlVectorFixedGrowable< int, 3 > soundSources;
+	soundSources.AddToTail( pOwner->GetSoundSourceIndex() );
+
+	CBaseEntity *pViewModel = pOwner->GetViewModel( 0 );
+	if ( pViewModel )
+		soundSources.AddToTail( pViewModel->GetSoundSourceIndex() );
+
+	const char *pszReloadSound = GetShootSound( RELOAD );
+	if ( pszReloadSound && pszReloadSound[0] )
+	{
+		for ( int i = 0; i < soundSources.Count(); ++i )
+		{
+			CBaseEntity::StopSound( soundSources[i], pszReloadSound );
+		}
+	}
+
+	// Viewmodel animation events play on the owner sound source, not the
+	// weapon entity. Stop the common shotgun reload/cock waves there without
+	// touching the VR pump sounds emitted from this weapon entity.
+	static const char *const s_pszShotgunReloadWaves[] =
+	{
+		"weapons/shotgun_reload.wav",
+		"weapons/shotgun_cock_back.wav",
+		"weapons/shotgun_cock_forward.wav",
+	};
+
+	static const int s_iStopChannels[] =
+	{
+		CHAN_AUTO,
+		CHAN_WEAPON,
+		CHAN_STATIC,
+	};
+
+	for ( int i = 0; i < soundSources.Count(); ++i )
+	{
+		for ( int iWave = 0; iWave < ARRAYSIZE( s_pszShotgunReloadWaves ); ++iWave )
+		{
+			for ( int iChannel = 0; iChannel < ARRAYSIZE( s_iStopChannels ); ++iChannel )
+			{
+				CBaseEntity::StopSound( soundSources[i], s_iStopChannels[iChannel], s_pszShotgunReloadWaves[iWave] );
+			}
+		}
+	}
+#endif
 }
 
 float CTFShotgun::GetVRShotgunPumpStrokeProgress() const
@@ -309,10 +513,47 @@ void CTFShotgun::VRCommitShotgunPumpAction( void )
 		return;
 
 	const CUserCmd *pCmdCommit = pOwner->GetCurrentUserCommand();
-	if ( !pCmdCommit || !pCmdCommit->vrWeaponArmed )
+	if ( !pCmdCommit )
 		return;
 
+	const bool bPumpSatisfiesPendingShot = m_bVRShotgunPumpNeedsPump;
+	const bool bHadSuppressNextPumpEject = m_bVRShotgunSuppressNextPumpEject;
+	const bool bSuppressEjectAfterFutureReload = bPumpSatisfiesPendingShot && !bHadSuppressNextPumpEject && Clip1() < GetMaxClip1();
+	const bool bCanCancelReload = ( IsReloading() && bPumpSatisfiesPendingShot )
+		|| ( CanVRShotgunPumpCancelReload() && !bPumpSatisfiesPendingShot )
+		|| m_bVRShotgunPumpStartedDuringReload;
+	if ( !pCmdCommit->vrWeaponArmed && !bCanCancelReload && !bPumpSatisfiesPendingShot )
+		return;
+
+	const bool bPumpEndedReload = bCanCancelReload;
+	if ( IsReloading() )
+	{
+		if ( !bCanCancelReload )
+			return;
+
+		AbortReload();
+		SendWeaponAnim( ACT_VM_IDLE );
+		m_flVRShotgunSuppressReloadSoundUntil = gpGlobals->curtime + 1.5f;
+		StopVRShotgunReloadSounds();
+		pOwner->m_flNextAttack = gpGlobals->curtime;
+		m_flNextPrimaryAttack = Max<float>( gpGlobals->curtime, m_flReloadPriorNextFire );
+		SetWeaponIdleTime( gpGlobals->curtime + m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeIdle );
+		m_bVRShotgunSuppressAutoReload = true;
+		m_flVRShotgunResumeAutoReloadTime = gpGlobals->curtime + Max<float>( tfvr_shotgun_pump_reload_restart_delay.GetFloat(), 0.0f );
+	}
+	else if ( bPumpEndedReload )
+	{
+		SendWeaponAnim( ACT_VM_IDLE );
+		m_flVRShotgunSuppressReloadSoundUntil = gpGlobals->curtime + 1.5f;
+		StopVRShotgunReloadSounds();
+	}
+
 	m_bVRShotgunPumpNeedsPump = false;
+	if ( bPumpSatisfiesPendingShot )
+	{
+		m_bVRShotgunSuppressNextPumpEject = bSuppressEjectAfterFutureReload;
+	}
+	m_bVRShotgunPumpStartedDuringReload = false;
 }
 
 //-----------------------------------------------------------------------------
@@ -329,7 +570,16 @@ void CTFShotgun::VRShotgunPumpActionPostFrame( void )
 		return;
 #endif
 
-	if ( !m_bVRShotgunPumpNeedsPump )
+	const bool bCanPumpToEndReload = ( !m_bVRShotgunPumpNeedsPump && CanVRShotgunPumpCancelReload() ) || m_bVRShotgunPumpStartedDuringReload;
+	if ( IsReloading() && !m_bVRShotgunPumpNeedsPump && !bCanPumpToEndReload )
+	{
+		if ( tfvr_shotgun_pump_debug.GetBool() && m_vecVRShotgunPumpLastHandPos != vec3_origin )
+			DevMsg( "[VR ShotgunPump] Reset: reload has not inserted a shell yet\n" );
+		ResetVRShotgunPumpGestureState();
+		return;
+	}
+
+	if ( !m_bVRShotgunPumpNeedsPump && !bCanPumpToEndReload )
 	{
 		ResetVRShotgunPumpGestureState();
 		return;
@@ -356,7 +606,7 @@ void CTFShotgun::VRShotgunPumpActionPostFrame( void )
 
 	Vector vecHandRelative = vecPumpHandRaw - vecWeaponHandRaw;
 
-	if ( !pCmd->vrWeaponArmed )
+	if ( !pCmd->vrWeaponArmed && !bCanPumpToEndReload )
 	{
 		const bool bMidStroke = m_bVRShotgunPumpStrokeOut || m_bVRShotgunPumpStrokeIn;
 		if ( !bMidStroke )
@@ -432,6 +682,8 @@ void CTFShotgun::VRShotgunPumpActionPostFrame( void )
 		if ( m_flVRShotgunPumpStrokeDist >= 0.5f )
 		{
 			m_bVRShotgunPumpStrokeOut = true;
+			if ( !m_bVRShotgunPumpNeedsPump && CanVRShotgunPumpCancelReload() )
+				m_bVRShotgunPumpStartedDuringReload = true;
 			m_vecVRShotgunPumpLastHandPos = vecHandRelative;
 			m_flVRShotgunPumpStrokeDist = MIN( m_flVRShotgunPumpStrokeDist - 0.5f, flPumpDist );
 			if ( bDebug )
@@ -477,7 +729,7 @@ void CTFShotgun::VRShotgunPumpActionPostFrame( void )
 				{
 					EmitSound( "VR.ShotgunCockBack" );
 
-					if ( ShouldEjectBrass() )
+					if ( !bCanPumpToEndReload && !m_bVRShotgunSuppressNextPumpEject && ShouldEjectBrass() )
 					{
 						CEffectData data;
 						bool bGotAttachment = false;

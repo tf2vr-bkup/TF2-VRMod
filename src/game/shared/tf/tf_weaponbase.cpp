@@ -4875,6 +4875,39 @@ void CTFWeaponBase::WeaponSound( WeaponSound_t sound_type, float soundtime /* = 
 	BaseClass::WeaponSound( sound_type, soundtime );
 }
 
+// -----------------------------------------------------------------------------
+// Purpose: Match the VR WeaponSound override so looping/long sounds can be
+//          stopped from the same entity/channel/sample they were emitted on.
+// -----------------------------------------------------------------------------
+void CTFWeaponBase::StopWeaponSound( WeaponSound_t sound_type )
+{
+#ifdef CLIENT_DLL
+	if ( m_bHeldByVRHand )
+	{
+		const char *shootsound = GetShootSound( sound_type );
+		if ( shootsound && shootsound[0] )
+		{
+			CSoundParameters params;
+			if ( GetParametersForSound( shootsound, params, NULL ) )
+			{
+				enginesound->StopSound( entindex(), params.channel, params.soundname );
+				CBaseEntity::StopSound( entindex(), shootsound );
+
+				CTFPlayer *pOwner = GetTFPlayerOwner();
+				if ( pOwner )
+				{
+					const int iOwnerSoundSource = pOwner->GetSoundSourceIndex();
+					enginesound->StopSound( iOwnerSoundSource, params.channel, params.soundname );
+					CBaseEntity::StopSound( iOwnerSoundSource, shootsound );
+				}
+			}
+		}
+	}
+#endif
+
+	BaseClass::StopWeaponSound( sound_type );
+}
+
 #ifdef GAME_DLL
 // -----------------------------------------------------------------------------
 // Purpose: Override sound emission origin to use correct position in VR (server)

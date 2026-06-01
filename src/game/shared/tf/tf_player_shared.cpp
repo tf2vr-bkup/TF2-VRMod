@@ -121,9 +121,9 @@ ConVar tf_spy_invis_time( "tf_spy_invis_time", "1.0", FCVAR_DEVELOPMENTONLY | FC
 ConVar tf_spy_invis_unstealth_time( "tf_spy_invis_unstealth_time", "2.0", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED, "Transition time in and out of spy invisibility", true, 0.1, true, 5.0 );
 
 // VR tracer offset ConVars
-ConVar tfvr_tracer_offset_forward( "tfvr_tracer_offset_forward", "0", FCVAR_ARCHIVE, "VR tracer offset along forward axis" );
-ConVar tfvr_tracer_offset_right( "tfvr_tracer_offset_right", "0", FCVAR_ARCHIVE, "VR tracer offset along right axis" );
-ConVar tfvr_tracer_offset_up( "tfvr_tracer_offset_up", "15", FCVAR_ARCHIVE, "VR tracer offset along up axis" );
+ConVar tfvr_tracer_offset_forward( "tfvr_tracer_offset_forward", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along forward axis" );
+ConVar tfvr_tracer_offset_right( "tfvr_tracer_offset_right", "0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along right axis" );
+ConVar tfvr_tracer_offset_up( "tfvr_tracer_offset_up", "-5", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR tracer offset along up axis" );
 ConVar tfvr_tracer_velocity_compensation( "tfvr_tracer_velocity_compensation", ".001", FCVAR_ARCHIVE, "VR tracer velocity compensation factor (seconds)" );
 ConVar tfvr_self_headshot( "tfvr_self_headshot", "1", FCVAR_REPLICATED, "Allow VR players to damage themselves by shooting their own head" );
 ConVar tfvr_self_headshot_radius( "tfvr_self_headshot_radius", "10", FCVAR_REPLICATED, "Radius of the head sphere for VR self-headshot detection" );
@@ -10600,10 +10600,11 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 
 				bool bInToolRecordingMode = clienttools->IsInRecordingMode();
 
-	// VR: Check for VR weapon FIRST before other logic
-	// Use the VR hand's cached muzzle position (set during PositionWeaponFromBones)
+	// VR: Check for VR weapon FIRST before other logic.
+	// Use the owning VR hand's cached muzzle position (set during PositionWeaponFromBones).
+	bool bUsedVRTracerStart = false;
 	CTFWeaponBase *pTFWpn = dynamic_cast<CTFWeaponBase*>( pWpn );
-	if ( pTFWpn && pTFWpn->IsHeldByVRHand() && pLocalPlayer )
+	if ( pTFWpn && pLocalPlayer )
 	{
 		C_TFPlayer *pTFPlayer = ToTFPlayer( pLocalPlayer );
 		if ( pTFPlayer && pTFPlayer->IsInVRMode() )
@@ -10611,26 +10612,35 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 			Vector muzzlePos;
 			QAngle muzzleAngles;
 
-			// Use VR hand's muzzle position (cached during bone setup)
+			C_TFVRHand *pWeaponHand = NULL;
 			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 			if ( pRightHand && pRightHand->GetHeldWeapon() == pTFWpn )
 			{
-				if ( pRightHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
-				{
-						// Apply manual offset from ConVars for fine-tuning
-						Vector forward, right, up;
-						AngleVectors( muzzleAngles, &forward, &right, &up );
-						muzzlePos += forward * tfvr_tracer_offset_forward.GetFloat();
-						muzzlePos += right * tfvr_tracer_offset_right.GetFloat();
-						muzzlePos += up * tfvr_tracer_offset_up.GetFloat();
+				pWeaponHand = pRightHand;
+			}
+			else
+			{
+				C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+				if ( pLeftHand && pLeftHand->GetHeldWeapon() == pTFWpn )
+					pWeaponHand = pLeftHand;
+			}
 
-					vecStart = muzzlePos;
-				}
+			if ( pWeaponHand && pWeaponHand->GetWeaponMuzzlePositionAndAngles( muzzlePos, muzzleAngles ) )
+			{
+				// Apply manual offset from ConVars for fine-tuning.
+				Vector forward, right, up;
+				AngleVectors( muzzleAngles, &forward, &right, &up );
+				muzzlePos += forward * tfvr_tracer_offset_forward.GetFloat();
+				muzzlePos += right * tfvr_tracer_offset_right.GetFloat();
+				muzzlePos += up * tfvr_tracer_offset_up.GetFloat();
+
+				vecStart = muzzlePos;
+				bUsedVRTracerStart = true;
 			}
 		}
 	}
 	// If we're using a viewmodel, override vecStart with the muzzle of that - just for the visual effect, not gameplay.
-	else if ( ( pLocalPlayer != NULL ) && !pLocalPlayer->ShouldDrawThisPlayer() && !bInToolRecordingMode && pWpn )
+	if ( !bUsedVRTracerStart && ( pLocalPlayer != NULL ) && !pLocalPlayer->ShouldDrawThisPlayer() && !bInToolRecordingMode && pWpn )
 	{
 		// Standard weapon - use viewmodel
 		C_BaseAnimating *pAttachEnt = pWpn->GetAppropriateWorldOrViewModel();
@@ -10639,7 +10649,7 @@ void CTFPlayer::FireBullet( CTFWeaponBase *pWpn, const FireBulletsInfo_t &info, 
 			pAttachEnt->GetAttachment( iAttachment, vecStart );
 		}
 	}
-				else if ( !IsDormant() )
+				else if ( !bUsedVRTracerStart && !IsDormant() )
 				{
 					// fill in with third person weapon model index
 					C_BaseCombatWeapon *pWeapon = GetActiveWeapon();

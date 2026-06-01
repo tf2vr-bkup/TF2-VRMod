@@ -12804,7 +12804,7 @@ void C_TFVRHand::UpdateShotgunPumpActionAnimation()
 		return;
 
 	CTFShotgun *pShotgun = static_cast<CTFShotgun *>(pWeapon);
-	bool bNeedsPump = pShotgun->NeedsVRShotgunPump();
+	bool bNeedsPump = pShotgun->NeedsVRShotgunPump() || pShotgun->IsReloading();
 	bool bArmed = pShotgun->IsVRShotgunPumpArmed();
 
 	extern ConVar tfvr_shotgun_pump_debug;

@@ -51,8 +51,11 @@ public:
 	virtual int		GetWeaponID( void ) const			{ return TF_WEAPON_SHOTGUN_PRIMARY; }
 	virtual void	PrimaryAttack();
 	virtual void	ItemPostFrame( void ) OVERRIDE;
+	virtual void	ItemBusyFrame( void ) OVERRIDE;
 	virtual bool	SendWeaponAnim( int iActivity ) OVERRIDE;
 	virtual void	PlayWeaponShootSound( void );
+	virtual void	WeaponSound( WeaponSound_t sound_type, float soundtime = 0.0f ) OVERRIDE;
+	virtual bool	ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
 
 	bool  IsVRShotgunPumpArmed() const       { return m_bVRShotgunPumpIsArmed; }
 	bool  IsVRShotgunPumpPullingBack() const { return m_bVRShotgunPumpStrokeOut; }
@@ -75,6 +78,8 @@ private:
 	void		VRShotgunPumpActionPostFrame( void );
 	void		VRCommitShotgunPumpAction( void );
 	void		ResetVRShotgunPumpGestureState( void );
+	void		StopVRShotgunReloadSounds( void );
+	bool		CanVRShotgunPumpCancelReload( void );
 
 	// Pump action state.  The "needs pump" bit gates firing; the rest only
 	// tracks the current physical stroke for predicted client animation.
@@ -84,6 +89,11 @@ private:
 	CNetworkVar( bool, m_bVRShotgunPumpStrokeOut );
 	CNetworkVar( bool, m_bVRShotgunPumpStrokeIn );
 	CNetworkVar( float, m_flVRShotgunPumpStrokeDist );
+	CNetworkVar( bool, m_bVRShotgunSuppressAutoReload );
+	CNetworkVar( bool, m_bVRShotgunPumpStartedDuringReload );
+	CNetworkVar( bool, m_bVRShotgunSuppressNextPumpEject );
+	CNetworkVar( float, m_flVRShotgunResumeAutoReloadTime );
+	CNetworkVar( float, m_flVRShotgunSuppressReloadSoundUntil );
 
 	CTFShotgun( const CTFShotgun & ) {}
 

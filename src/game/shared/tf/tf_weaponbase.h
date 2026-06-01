@@ -360,6 +360,7 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	
 	// VR: Override to emit sounds from weapon muzzle position instead of player center
 	virtual void WeaponSound( WeaponSound_t sound_type, float soundtime = 0.0f ) OVERRIDE;
+	virtual void StopWeaponSound( WeaponSound_t sound_type ) OVERRIDE;
 	virtual void SecondaryAttack();
 	void CalcIsAttackCritical( void );
 	virtual bool CalcIsAttackCriticalHelper();
