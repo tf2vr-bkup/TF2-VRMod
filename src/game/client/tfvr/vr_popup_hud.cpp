@@ -81,9 +81,9 @@ ConVar tfvr_popup_hud_matchstatus_content_y("tfvr_popup_hud_matchstatus_content_
 // Bottom-center notification area ConVars
 ConVar tfvr_popup_hud_notifications_enabled("tfvr_popup_hud_notifications_enabled", "1", FCVAR_ARCHIVE,
     "Enable VR rendering of bottom-center notifications (notification panel, spectator target, building status)");
-ConVar tfvr_popup_hud_notifications_offset_x("tfvr_popup_hud_notifications_offset_x", "22.8", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_notifications_offset_x("tfvr_popup_hud_notifications_offset_x", "16.5", FCVAR_ARCHIVE,
     "Horizontal offset of notification area (positive = right)");
-ConVar tfvr_popup_hud_notifications_offset_y("tfvr_popup_hud_notifications_offset_y", "-40", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_notifications_offset_y("tfvr_popup_hud_notifications_offset_y", "-12", FCVAR_ARCHIVE,
     "Vertical offset of notification area below timer (negative = down)");
 ConVar tfvr_popup_hud_notifications_offset_z("tfvr_popup_hud_notifications_offset_z", "0", FCVAR_ARCHIVE,
     "Depth offset of notification area (positive = closer)");
@@ -109,21 +109,21 @@ ConVar tfvr_popup_hud_building_offset_y("tfvr_popup_hud_building_offset_y", "0",
 // Voice status UI ConVars
 ConVar tfvr_popup_hud_voice_enabled("tfvr_popup_hud_voice_enabled", "1", FCVAR_ARCHIVE,
     "Enable VR rendering of voice status panels (self-icon and other players speaking)");
-ConVar tfvr_popup_hud_voice_distance("tfvr_popup_hud_voice_distance", "100", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_voice_distance("tfvr_popup_hud_voice_distance", "80", FCVAR_ARCHIVE,
     "Distance of voice UI from head (independent of popup panels)");
 ConVar tfvr_popup_hud_voice_scale("tfvr_popup_hud_voice_scale", ".25", FCVAR_ARCHIVE,
     "Scale multiplier for voice status panels");
 
 // Self-status (local player speaking icon) positioning
-ConVar tfvr_popup_hud_voice_self_offset_x("tfvr_popup_hud_voice_self_offset_x", "-80", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_voice_self_offset_x("tfvr_popup_hud_voice_self_offset_x", "-140", FCVAR_ARCHIVE,
     "Horizontal offset for self speaking icon (positive = right)");
-ConVar tfvr_popup_hud_voice_self_offset_y("tfvr_popup_hud_voice_self_offset_y", "20", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_voice_self_offset_y("tfvr_popup_hud_voice_self_offset_y", "50", FCVAR_ARCHIVE,
     "Vertical offset for self speaking icon (positive = up)");
 
 // Other players speaking list positioning
-ConVar tfvr_popup_hud_voice_others_offset_x("tfvr_popup_hud_voice_others_offset_x", "-70", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_voice_others_offset_x("tfvr_popup_hud_voice_others_offset_x", "-120", FCVAR_ARCHIVE,
     "Horizontal offset for other players speaking list (positive = right)");
-ConVar tfvr_popup_hud_voice_others_offset_y("tfvr_popup_hud_voice_others_offset_y", "0", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_voice_others_offset_y("tfvr_popup_hud_voice_others_offset_y", "20", FCVAR_ARCHIVE,
     "Vertical offset for other players speaking list (positive = up)");
 
 ConVar tfvr_popup_hud_voice_debug("tfvr_popup_hud_voice_debug", "0", FCVAR_ARCHIVE,
@@ -134,9 +134,9 @@ ConVar tfvr_popup_hud_voice_test("tfvr_popup_hud_voice_test", "0", FCVAR_CHEAT,
 // Chat panel ConVars
 ConVar tfvr_popup_hud_chat_enabled("tfvr_popup_hud_chat_enabled", "1", FCVAR_ARCHIVE,
     "Enable VR rendering of the text chat window on the popup HUD");
-ConVar tfvr_popup_hud_chat_offset_x("tfvr_popup_hud_chat_offset_x", "-14", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_chat_offset_x("tfvr_popup_hud_chat_offset_x", "-10", FCVAR_ARCHIVE,
     "Horizontal offset for chat panel (positive = right)");
-ConVar tfvr_popup_hud_chat_offset_y("tfvr_popup_hud_chat_offset_y", "14", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_chat_offset_y("tfvr_popup_hud_chat_offset_y", "40", FCVAR_ARCHIVE,
     "Vertical offset for chat panel (positive = up)");
 ConVar tfvr_popup_hud_chat_scale("tfvr_popup_hud_chat_scale", ".2", FCVAR_ARCHIVE,
     "Scale multiplier for chat panel (relative to main popup scale)");

@@ -540,8 +540,21 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 			if (tfvr_crosshair_follow_controller_roll.GetBool())
 			{
 				// Use weapon roll instead of controller roll
-				// Add 90 degree offset to account for weapon model orientation
-				m_flCrosshairRollAngle = weaponAngles.z - 90.0f;
+				// Most crosshair textures need a 90 degree compensation, but
+				// Demoman projectile crosshairs are authored in the corrected orientation.
+				float flCrosshairRollOffset = -90.0f;
+				C_TFWeaponBase *pWeapon = pTFPlayer->GetActiveTFWeapon();
+				if ( pWeapon )
+				{
+					const int iWeaponID = pWeapon->GetWeaponID();
+					if ( iWeaponID == TF_WEAPON_GRENADELAUNCHER
+						|| iWeaponID == TF_WEAPON_CANNON
+						|| iWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER )
+					{
+						flCrosshairRollOffset = 0.0f;
+					}
+				}
+				m_flCrosshairRollAngle = weaponAngles.z + flCrosshairRollOffset;
 				m_bCrosshairRollValid = true;
 			}
 			else

@@ -220,28 +220,6 @@ void CHudTFCrosshair::Paint()
 
 	if ( m_szPreviousCrosshair[0] == '\0' )
 	{
-		// Handle VR controller roll for default crosshair (when cl_crosshair_file is empty)
-		if ( UseVR() && g_pOpenXRManager && g_pOpenXRManager->IsActive() )
-		{
-			extern ConVar tfvr_crosshair_follow_controller_roll;
-			if ( tfvr_crosshair_follow_controller_roll.GetBool() )
-			{
-				// Set up VR crosshair roll angle before calling base class
-				VMatrix rightControllerPose;
-				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
-				{
-					QAngle controllerAngles;
-					MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
-					g_ClientVirtualReality.m_flCrosshairRollAngle = controllerAngles.z;
-					g_ClientVirtualReality.m_bCrosshairRollValid = true;
-				}
-				else
-				{
-					g_ClientVirtualReality.m_bCrosshairRollValid = false;
-				}
-			}
-		}
-		
 		return BaseClass::Paint();
 	}
 
