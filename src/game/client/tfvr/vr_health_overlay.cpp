@@ -26,10 +26,10 @@
 #include <vgui/IScheme.h>
 
 // ConVars for configuration
-ConVar tfvr_health_overlay_enabled("tfvr_health_overlay_enabled", "1", FCVAR_ARCHIVE, "Enable VR health overlay on hand");
+ConVar tfvr_health_overlay_enabled("tfvr_health_overlay_enabled", "0", FCVAR_ARCHIVE, "Enable VR health overlay on hand");
 ConVar tfvr_health_overlay_hand("tfvr_health_overlay_hand", "0", FCVAR_ARCHIVE, "Hand to attach health overlay to: 0=left, 1=right");
 ConVar tfvr_health_overlay_use_hand_tracking("tfvr_health_overlay_use_hand_tracking", "1", FCVAR_ARCHIVE, "Use hand tracking instead of controller pose: 0=controller, 1=hand tracking");
-ConVar tfvr_health_overlay_offset_x("tfvr_health_overlay_offset_x", "-18.5", FCVAR_ARCHIVE, "X offset from hand position");
+ConVar tfvr_health_overlay_offset_x("tfvr_health_overlay_offset_x", "0", FCVAR_ARCHIVE, "X offset from hand position");
 ConVar tfvr_health_overlay_offset_y("tfvr_health_overlay_offset_y", "0", FCVAR_ARCHIVE, "Y offset from hand position (up)");
 ConVar tfvr_health_overlay_offset_z("tfvr_health_overlay_offset_z", "0", FCVAR_ARCHIVE, "Z offset from hand position (forward)");
 ConVar tfvr_health_overlay_scale("tfvr_health_overlay_scale", "20", FCVAR_ARCHIVE, "Scale of health overlay");
@@ -55,11 +55,11 @@ CVRHealthOverlay::CVRHealthOverlay()
     m_nAttachedHand = 0; // Default to left hand
     m_flLastUpdateTime = 0.0f;
     m_pMainPlayerStatusPanel = nullptr;
-    
+
     // Set default offsets
     m_vQuadOffset.Init(
         tfvr_health_overlay_offset_x.GetFloat(),
-        tfvr_health_overlay_offset_y.GetFloat(), 
+        tfvr_health_overlay_offset_y.GetFloat(),
         tfvr_health_overlay_offset_z.GetFloat()
     );
     m_angQuadRotation.Init(0, 0, 0);
@@ -82,7 +82,7 @@ bool CVRHealthOverlay::Initialize()
         return true;
 
     // NEW APPROACH: No need to create any panels! Just get reference to main HUD panel
-    
+
     // Get reference to main player status panel (includes health + class icon)
     m_pMainPlayerStatusPanel = GET_HUDELEMENT(CTFHudPlayerStatus);
     if (!m_pMainPlayerStatusPanel)
@@ -90,10 +90,10 @@ bool CVRHealthOverlay::Initialize()
         Warning(_T("VR Health Overlay: Could not find main CTFHudPlayerStatus\n"));
         return false;
     }
-    
+
     m_bEnabled = tfvr_health_overlay_enabled.GetBool();
     m_nAttachedHand = tfvr_health_overlay_hand.GetInt();
-    
+
     m_bInitialized = true;
     return true;
 }
@@ -105,10 +105,10 @@ void CVRHealthOverlay::Shutdown()
 {
     if (!m_bInitialized)
         return;
-    
+
     // No panels to clean up - we just reference the main HUD panel!
     m_pMainPlayerStatusPanel = nullptr;
-    
+
     m_bInitialized = false;
 }
 
@@ -119,18 +119,18 @@ void CVRHealthOverlay::Update()
 {
     if (!m_bInitialized)
         return;
-        
+
     // Update settings from ConVars
     m_bEnabled = tfvr_health_overlay_enabled.GetBool();
     m_nAttachedHand = tfvr_health_overlay_hand.GetInt();
-    
+
     // Update offsets from ConVars
     m_vQuadOffset.Init(
         tfvr_health_overlay_offset_x.GetFloat(),
-        tfvr_health_overlay_offset_y.GetFloat(), 
+        tfvr_health_overlay_offset_y.GetFloat(),
         tfvr_health_overlay_offset_z.GetFloat()
     );
-    
+
     // The main health panel updates automatically via the HUD system
 }
 
@@ -140,32 +140,32 @@ void CVRHealthOverlay::Update()
 void CVRHealthOverlay::RenderHealthQuad()
 {
     VPROF("VR_HealthOverlay_Render");
-    
+
     if (!m_bInitialized || !m_bEnabled || !m_pMainPlayerStatusPanel)
         return;
-        
+
     // Quick disable for testing
     if (!tfvr_health_overlay_enabled.GetBool())
         return;
-        
+
     // Safety check: Don't render if there's no valid player or we're in spectator mode
     C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
     if (!pPlayer || pPlayer->IsObserver() || !pPlayer->IsAlive())
     {
         return;
     }
-    
+
     // SIMPLE APPROACH: Just render the main panel directly with minimal changes
     // This avoids all the custom panel creation complexity
-    
+
     if (!m_pMainPlayerStatusPanel->IsVisible())
     {
         return;
     }
-    
+
     // Calculate panel-to-world transform based on hand position
     VMatrix panelToWorld;
-    
+
     if (tfvr_health_overlay_simple_transform.GetBool())
     {
         // Simple identity transform for debugging - just put it in front of player
@@ -182,27 +182,27 @@ void CVRHealthOverlay::RenderHealthQuad()
     {
         return;
     }
-    
+
     // Get panel dimensions for world size calculation
     int panelWidth, panelHeight;
     m_pMainPlayerStatusPanel->GetSize(panelWidth, panelHeight);
-    
+
     // Use reasonable defaults if panel size is weird
     if (panelWidth <= 0 || panelWidth > 2000) panelWidth = 200;
     if (panelHeight <= 0 || panelHeight > 2000) panelHeight = 200;
-    
+
     // Calculate world size based on scale ConVar
     float scale = tfvr_health_overlay_scale.GetFloat();
     float aspectRatio = (float)panelWidth / (float)panelHeight;
     float worldWidth = scale * aspectRatio;
     float worldHeight = scale;
-    
+
     // Allow override of world width
     if (tfvr_health_overlay_world_width.GetFloat() > 0.0f)
     {
         worldWidth = tfvr_health_overlay_world_width.GetFloat();
     }
-    
+
     // Use DrawPanelIn3DSpace directly - simple and reliable!
     g_pMatSystemSurface->DrawPanelIn3DSpace(
         m_pMainPlayerStatusPanel->GetVPanel(),  // The main player status panel
@@ -232,16 +232,16 @@ bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
     {
         return CalculateHandTrackingTransform(quadTransform);
     }
-    
+
     // Use controller grip pose (legacy mode)
     if (!g_pOpenXRManager)
     {
         return false;
     }
-        
+
     VMatrix handPose;
     bool handValid = false;
-    
+
     // Get the appropriate hand grip pose (more natural for overlays)
     if (m_nAttachedHand == 0) // Left hand
     {
@@ -257,29 +257,29 @@ bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
             handValid = g_pOpenXRManager->GetRightControllerGripPose(handPose);
         }
     }
-    
+
     if (!handValid)
     {
         return false;
     }
-    
+
     // Get hand position and orientation
     Vector handPos = handPose.GetTranslation();
     Vector forward, right, up;
     handPose.GetBasisVectors(forward, right, up);
-    
+
     // Apply offset to position the quad relative to the hand
-    Vector quadPos = handPos + 
-                     right * m_vQuadOffset.x + 
-                     up * m_vQuadOffset.y + 
+    Vector quadPos = handPos +
+                     right * m_vQuadOffset.x +
+                     up * m_vQuadOffset.y +
                      forward * m_vQuadOffset.z;
-    
+
     // Use the exact controller pose matrix directly - no auto-rotation
     quadTransform = handPose;
-    
+
     // Just update the position to the offset position we calculated
     quadTransform.SetTranslation(quadPos);
-    
+
     // Apply any additional rotation from ConVars if needed
     if (m_angQuadRotation.x != 0 || m_angQuadRotation.y != 0 || m_angQuadRotation.z != 0)
     {
@@ -288,11 +288,11 @@ bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
         totalRotation.x += -90;  // Pitch to stand up from flat
         totalRotation.y += -90;  // Yaw to face backward instead of forward
         totalRotation.z += 90;   // Roll to align widget top with controller top (blue axis)
-        
+
         matrix3x4_t rotMatrix;
         AngleMatrix(totalRotation, Vector(0,0,0), rotMatrix);
         rotationMatrix.CopyFrom3x4(rotMatrix);
-        
+
         // Apply rotation on top of hand pose
         quadTransform = quadTransform * rotationMatrix;
     }
@@ -303,10 +303,10 @@ bool CVRHealthOverlay::CalculateQuadTransform(VMatrix& quadTransform)
         matrix3x4_t adjustMatrix3x4;
         AngleMatrix(QAngle(-90, -90, 90), Vector(0,0,0), adjustMatrix3x4);  // Pitch -90 to stand up, Yaw -90 to face backward, Roll 90 to align top
         adjustMatrix.CopyFrom3x4(adjustMatrix3x4);
-        
+
         quadTransform = quadTransform * adjustMatrix;
     }
-    
+
     return true;
 }
 
@@ -358,22 +358,22 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     // Wrist from hand tracking (optional, for improved forward direction)
     Vector wristPosition;
     QAngle wristAngles;
-    bool wristValid = handTracker && 
+    bool wristValid = handTracker &&
         handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPosition, wristAngles);
-    
+
     // Calculate position above the back of the hand
     Vector quadPosition = palmPosition;
-    
+
     // Use wrist-to-palm vector to determine hand orientation if available
     Vector handForward, handRight, handUp;
     if (wristValid)
     {
         // Vector from wrist to palm gives us the hand forward direction (towards fingers)
         handForward = (palmPosition - wristPosition).Normalized();
-        
+
         // Use palm angles to get the proper hand coordinate frame
         AngleVectors(palmAngles, nullptr, &handRight, &handUp);
-        
+
         // Ensure right-handed coordinate system
         if (!leftHand)
         {
@@ -389,46 +389,46 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
             handRight = -handRight; // Right hand uses inverted right vector
         }
     }
-    
+
     // Position the overlay above the back of the hand
     // The "back" of the hand is opposite to the palm direction
     Vector backOfHandOffset = -handForward * 2.0f + handUp * 1.0f;  // 2 units back, 1 unit up
     quadPosition += backOfHandOffset;
-    
+
     // Apply ConVar offsets in hand coordinate space
     Vector userOffset(
         tfvr_health_overlay_offset_x.GetFloat(),
-        tfvr_health_overlay_offset_y.GetFloat(), 
+        tfvr_health_overlay_offset_y.GetFloat(),
         tfvr_health_overlay_offset_z.GetFloat()
     );
-    
+
     // Transform user offset to hand coordinate space
     Vector worldOffset = handRight * userOffset.x + handUp * userOffset.y + handForward * userOffset.z;
     quadPosition += worldOffset;
-    
+
     // Create the quad transform matrix
     quadTransform.Identity();
     quadTransform.SetTranslation(quadPosition);
-    
+
     // Set orientation to face upward from the back of the hand
     // Keep it simple - use the palm orientation directly
-    
+
     // Create a matrix from the palm angles (this was working before)
     matrix3x4_t handMatrix;
     AngleMatrix(palmAngles, Vector(0,0,0), handMatrix);
-    
+
     VMatrix handVMatrix;
     handVMatrix.CopyFrom3x4(handMatrix);
-    
+
     // Apply the hand orientation
     quadTransform = quadTransform * handVMatrix;
-    
+
     // Apply additional rotation to make the widget face upward from the back of the hand
     if (m_angQuadRotation.x != 0 || m_angQuadRotation.y != 0 || m_angQuadRotation.z != 0)
     {
         VMatrix rotationMatrix;
         QAngle totalRotation = m_angQuadRotation;
-        
+
         matrix3x4_t rotMatrix;
         AngleMatrix(totalRotation, Vector(0,0,0), rotMatrix);
         rotationMatrix.CopyFrom3x4(rotMatrix);
@@ -443,7 +443,7 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
         flipMatrix.CopyFrom3x4(flipMatrix3x4);
         quadTransform = quadTransform * flipMatrix;
     }
-     
+
     return true;
 }
 
@@ -453,10 +453,10 @@ bool CVRHealthOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
 void CVRHealthOverlay::ResetOverlayState()
 {
     Msg(_T("VR Health Overlay: Resetting overlay state due to map change\n"));
-    
+
     // Reset update time to force refresh
     m_flLastUpdateTime = 0.0f;
-    
+
     // Get a fresh reference to the main player status panel
     // (the main player status panel is managed by the HUD system and should reset automatically)
     m_pMainPlayerStatusPanel = GET_HUDELEMENT(CTFHudPlayerStatus);

@@ -4,15 +4,15 @@
 #include "vr_hand_render.h"
 #include "iclientrenderable.h"
 
-static ConVar tfvr_hand_layer("tfvr_hand_layer", "1", FCVAR_ARCHIVE,
+static ConVar tfvr_hand_layer("tfvr_hand_layer", "100", FCVAR_ARCHIVE,
 	"Render VR hands on a separate layer from the world (enables close inspection and future sniper scope)");
 
-static ConVar tfvr_hand_layer_znear("tfvr_hand_layer_znear", "0", FCVAR_ARCHIVE,
+static ConVar tfvr_hand_layer_znear("tfvr_hand_layer_znear", ".5", FCVAR_ARCHIVE,
 	"Z-near override for VR hand layer (0 = use world zNear). "
 	"Uses DepthRange to linearly remap depth for exact occlusion. "
 	"Requires d3d9.useD32forD24 = True in dxvk.conf for close-range precision.");
 
-static ConVar tfvr_hand_layer_zfar("tfvr_hand_layer_zfar", "0", FCVAR_ARCHIVE,
+static ConVar tfvr_hand_layer_zfar("tfvr_hand_layer_zfar", "500", FCVAR_ARCHIVE,
 	"Z-far override for VR hand layer (0 = use world zFar). "
 	"A tighter zFar (e.g. 500-2000) concentrates depth precision "
 	"around arm's reach for cleaner close-up inspection.");

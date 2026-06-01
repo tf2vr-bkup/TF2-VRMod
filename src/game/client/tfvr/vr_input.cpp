@@ -27,7 +27,7 @@ extern IVEngineClient *engine;
 
 // ConVars for input sensitivity and deadzone
 ConVar tfvr_move_sensitivity("tfvr_move_sensitivity", "1.0", FCVAR_ARCHIVE, "Sensitivity multiplier for VR movement");
-ConVar tfvr_thumbstick_deadzone("tfvr_thumbstick_deadzone", "0.1", FCVAR_ARCHIVE, "Deadzone for thumbstick movement");
+ConVar tfvr_thumbstick_deadzone("tfvr_thumbstick_deadzone", "0.290000", FCVAR_ARCHIVE, "Deadzone for thumbstick movement");
 ConVar tfvr_locomotion_source( "tfvr_locomotion_source", "0", FCVAR_ARCHIVE, "VR locomotion direction source: 0=head, 1=primary hand, 2=offhand, 3=left hand, 4=right hand" );
 ConVar tfvr_use_hmd_angles("tfvr_use_hmd_angles", "0", FCVAR_ARCHIVE, "Use HMD angles for view");
 
@@ -63,9 +63,9 @@ ConVar tfvr_sticky_pump_twohand_min_blend( "tfvr_sticky_pump_twohand_min_blend",
 
 // VR Turning ConVars
 ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap" );
-ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "120", FCVAR_ARCHIVE, "Smooth turning rate in degrees per second" );
+ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "80", FCVAR_ARCHIVE, "Smooth turning rate in degrees per second" );
 ConVar tfvr_snap_turn_angle( "tfvr_snap_turn_angle", "45", FCVAR_ARCHIVE, "Snap turning angle in degrees" );
-ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.3", FCVAR_ARCHIVE, "Deadzone for turning input (0.0-1.0)" );
+ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.200000", FCVAR_ARCHIVE, "Deadzone for turning input (0.0-1.0)" );
 ConVar tfvr_snap_turn_delay( "tfvr_snap_turn_delay", "0.25", FCVAR_ARCHIVE, "Delay between snap turns in seconds" );
 
 // Weapon switching ConVars
@@ -75,24 +75,24 @@ ConVar tfvr_weapon_switch_debug( "tfvr_weapon_switch_debug", "0", FCVAR_ARCHIVE,
 
 // Voice chat gesture ConVars (walkie-talkie style activation)
 ConVar tfvr_voice_gesture_enabled( "tfvr_voice_gesture_enabled", "1", FCVAR_ARCHIVE, "Enable walkie-talkie style voice chat (hold offhand near ear and press trigger)" );
-ConVar tfvr_voice_ear_radius( "tfvr_voice_ear_radius", "15.0", FCVAR_ARCHIVE, "Radius around left ear for voice chat activation (in game units)" );
-ConVar tfvr_voice_ear_offset( "tfvr_voice_ear_offset", "8.0", FCVAR_ARCHIVE, "Lateral offset from head center to left ear (in game units)" );
+ConVar tfvr_voice_ear_radius( "tfvr_voice_ear_radius", "8", FCVAR_ARCHIVE, "Radius around left ear for voice chat activation (in game units)" );
+ConVar tfvr_voice_ear_offset( "tfvr_voice_ear_offset", "3.5", FCVAR_ARCHIVE, "Lateral offset from head center to left ear (in game units)" );
 ConVar tfvr_voice_gesture_debug( "tfvr_voice_gesture_debug", "0", FCVAR_ARCHIVE, "Show debug output for voice chat gesture detection" );
 
 // Physical throw ConVars
 ConVar tfvr_physical_throw( "tfvr_physical_throw", "1", FCVAR_ARCHIVE, "Enable physical throwing for throwable weapons (0=classic aim-based throw, 1=gesture-based throw)" );
 ConVar tfvr_physical_ball( "tfvr_physical_ball", "1", FCVAR_ARCHIVE, "Enable physical ball launch for Sandman/Wrap Assassin (0=trigger launches ball, 1=offhand aim + swing)" );
 ConVar tfvr_physical_throw_debug( "tfvr_physical_throw_debug", "0", FCVAR_ARCHIVE, "Show debug output for physical throw gesture detection" );
-ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", "0.4", FCVAR_ARCHIVE, "Grip force threshold to start throw hold (0.0-1.0, release uses grip value)" );
+ConVar tfvr_throw_grip_threshold( "tfvr_throw_grip_threshold", ".9", FCVAR_ARCHIVE, "Grip force threshold to start throw hold (0.0-1.0, release uses grip value)" );
 
 // Mouth proximity activation for lunchbox/buff items
 ConVar tfvr_mouth_activate_enabled( "tfvr_mouth_activate_enabled", "1", FCVAR_ARCHIVE, "Require holding lunchbox/horn items near mouth to activate" );
-ConVar tfvr_mouth_radius( "tfvr_mouth_radius", "14.0", FCVAR_ARCHIVE, "Radius around mouth for item activation (game units)" );
+ConVar tfvr_mouth_radius( "tfvr_mouth_radius", "7", FCVAR_ARCHIVE, "Radius around mouth for item activation (game units)" );
 ConVar tfvr_mouth_forward_offset( "tfvr_mouth_forward_offset", "6.0", FCVAR_ARCHIVE, "Forward offset from head center to mouth (game units)" );
 
 // Physical crouching ConVars
-ConVar tfvr_physical_crouch( "tfvr_physical_crouch", "1", FCVAR_ARCHIVE, "Enable physical crouching by lowering your head in VR" );
-ConVar tfvr_physical_crouch_threshold( "tfvr_physical_crouch_threshold", "0.75", FCVAR_ARCHIVE, "Fraction of standing height below which physical crouch triggers (0.0-1.0)" );
+ConVar tfvr_physical_crouch( "tfvr_physical_crouch", "0", FCVAR_ARCHIVE, "Enable physical crouching by lowering your head in VR" );
+ConVar tfvr_physical_crouch_threshold( "tfvr_physical_crouch_threshold", ".8", FCVAR_ARCHIVE, "Fraction of standing height below which physical crouch triggers (0.0-1.0)" );
 ConVar tfvr_physical_crouch_hysteresis( "tfvr_physical_crouch_hysteresis", "0.04", FCVAR_ARCHIVE, "Height ratio band above threshold to exit physical crouch (prevents flickering)" );
 ConVar tfvr_physical_crouch_debug( "tfvr_physical_crouch_debug", "0", FCVAR_ARCHIVE, "Show debug output for physical crouch detection" );
 ConVar tfvr_mouth_down_offset( "tfvr_mouth_down_offset", "4.0", FCVAR_ARCHIVE, "Downward offset from head center to mouth (game units)" );
@@ -145,10 +145,10 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
     // Get the command for this sequence
     CUserCmd* cmd = &m_pCommands[sequence_number % MULTIPLAYER_BACKUP];
     CVerifiedUserCmd* pVerified = &m_pVerifiedCommands[sequence_number % MULTIPLAYER_BACKUP];
-    
+
     // Let base input system handle everything first
     CInput::CreateMove(sequence_number, input_sample_frametime, active);
-    
+
     // Only process VR input if active
     if (active && g_pOpenXRManager && g_pOpenXRManager->IsActive())
     {
@@ -157,18 +157,18 @@ void CVRInput::CreateMove(int sequence_number, float input_sample_frametime, boo
 
         // Process VR-specific input
         ProcessVRControllerInput(cmd);
-        
+
         // Process VR controller tracking
         ProcessVRControllerTracking(cmd);
-        
+
         // Process VR view angles to use controller angles for aiming
         ProcessVRViewAngles(cmd);
-        
+
         // Process VR movement
         ProcessVRMovement(cmd, input_sample_frametime);
 
         m_bInCreateMove = false;
-        
+
         // VR turning is now handled in the main input system
     }
 
@@ -206,19 +206,19 @@ void CVRInput::ExtraMouseSample(float frametime, bool active)
    {
        // Process VR-specific input
        ProcessVRControllerInput(cmd);
-        
+
        // Process VR controller tracking
        ProcessVRControllerTracking(cmd);
-        
+
        // Only process VR view angles if explicitly enabled
        if (tfvr_use_hmd_angles.GetBool())
        {
            // ProcessVRViewAngles(cmd);
        }
-       
+
        // Process VR movement
        ProcessVRMovement(cmd, frametime);
-       
+
        // VR turning is now handled in the main input system
    }
 
@@ -248,25 +248,25 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
 {
     // Store original button state
     int oldButtons = cmd->buttons;
-    
+
     // Get current menu button state first
     bool bMenu = g_pOpenXRManager->IsButtonPressed("menu");
-    
+
     // Track button press events
     static bool bLastMenuButtonState = false;
     bool bMenuButtonPressed = bMenu && !bLastMenuButtonState;
-    
+
     // Get left thumbstick/trackpad state (medic call on quick press, scoreboard on hold)
     static bool bLastScoreboardButtonState = false;
     static float flButtonPressTime = 0.0f;
     static bool bScoreboardShowing = false;
-    
+
     bool bScoreboard = g_pOpenXRManager->IsButtonPressed("scoreboard");
     bool bScoreboardButtonPressed = bScoreboard && !bLastScoreboardButtonState;
     bool bScoreboardButtonReleased = !bScoreboard && bLastScoreboardButtonState;
-    
+
     float flHoldThreshold = tfvr_medic_hold_threshold.GetFloat();
-    
+
     // Handle left thumbstick/trackpad: quick press = medic, long hold = scoreboard
     if (bScoreboardButtonPressed)
     {
@@ -291,7 +291,7 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     else if (bScoreboardButtonReleased)
     {
         float flHoldTime = gpGlobals->curtime - flButtonPressTime;
-        
+
         if (bScoreboardShowing)
         {
             // Hide scoreboard when button is released after long hold
@@ -305,21 +305,21 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
             // Quick press - call for medic
             engine->ClientCmd_Unrestricted("voicemenu 0 0");
         }
-        
+
         bScoreboardShowing = false;
     }
     bLastScoreboardButtonState = bScoreboard;
-    
+
     // Check if menu is visible
     bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
-    
+
     // Track menu state changes
     static bool lastMenuState = false;
     if (bMenuVisible != lastMenuState)
     {
         lastMenuState = bMenuVisible;
     }
-    
+
     // Handle menu button press to toggle menu state
     // Note: We check if the Game UI is ACTUALLY visible, not just IsMenuVisible().
     // IsMenuVisible() returns true when dead to block VR input, but the game UI
@@ -336,13 +336,13 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
             engine->ClientCmd_Unrestricted("gameui_activate\n");
         }
     }
-    
+
     // =========================================================================
     // Voice chat activation
     // MUST be processed BEFORE the menu-visible early return so voice works
     // while dead, and BEFORE attack inputs so we can suppress the offhand trigger.
     // Uses the "voice" action which is bound to the left trigger by default.
-    // 
+    //
     // When gesture mode is ENABLED (tfvr_voice_gesture_enabled 1):
     //   - Press trigger while controller is near left ear to activate voice
     //   - Voice stays active until trigger is released (even if moving out of range)
@@ -358,38 +358,38 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     {
         // Persistent state for voice action edge detection
         static bool bLastVoiceActionPressed = false;
-        
+
         // Get the voice action value (bound to left trigger by default)
         float voiceActionValue = g_pOpenXRManager->GetAnalogValue("voice");
         bool bVoiceActionPressed = (voiceActionValue > 0.5f);
         bool bVoiceActionJustPressed = bVoiceActionPressed && !bLastVoiceActionPressed;
         bool bVoiceActionJustReleased = !bVoiceActionPressed && bLastVoiceActionPressed;
-        
+
         if (tfvr_voice_gesture_enabled.GetBool())
         {
             // GESTURE MODE: Require proximity to left ear
-            
+
             // Determine which hand is the offhand (opposite of primary hand)
             // tfvr_primary_hand: 0 = left primary (right is offhand), 1 = right primary (left is offhand)
             bool bLeftIsOffhand = (tfvr_primary_hand.GetInt() == 1);
-            
+
             // Get HMD pose in playspace/chaperone coordinates
             Vector hmdOrigin;
             QAngle hmdAngles;
             g_pOpenXRManager->GetHMDInChaperone(hmdOrigin, hmdAngles);
-            
+
             // Calculate left ear position (offset to the left of the head center)
             Vector hmdForward, hmdRight, hmdUp;
             AngleVectors(hmdAngles, &hmdForward, &hmdRight, &hmdUp);
-            
+
             float earOffset = tfvr_voice_ear_offset.GetFloat();
             Vector leftEarPos = hmdOrigin - hmdRight * earOffset; // Negative right = left
-            
+
             // Get offhand controller position in RAW playspace coordinates (same as HMD)
             Vector offhandPos;
             bool bOffhandValid = false;
             VMatrix offhandPose;
-            
+
             if (bLeftIsOffhand)
             {
                 if (g_pOpenXRManager->GetLeftControllerPoseRaw(offhandPose))
@@ -406,23 +406,23 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
                     bOffhandValid = true;
                 }
             }
-            
+
             // Check proximity to left ear
             float earRadius = tfvr_voice_ear_radius.GetFloat();
             bool bNearEar = false;
             float distanceToEar = 0.0f;
-            
+
             if (bOffhandValid)
             {
                 distanceToEar = (offhandPos - leftEarPos).Length();
                 bNearEar = (distanceToEar <= earRadius);
             }
-            
+
             // Gesture activation logic:
             // - Activate ONLY when voice action is pressed (rising edge) while inside ear radius
             // - Stay active until voice action is released, regardless of position
             // - Moving into range while already holding doesn't activate
-            
+
             if (bVoiceActionJustPressed && bNearEar && !s_bVoiceGestureActive)
             {
                 s_bVoiceGestureActive = true;
@@ -441,13 +441,13 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
                     DevMsg("VR Voice: Deactivated (gesture mode)\n");
                 }
             }
-            
+
             // Debug output
             if (tfvr_voice_gesture_debug.GetBool())
             {
                 static float lastVoiceDebugTime = 0.0f;
                 float currentTime = gpGlobals->curtime;
-                
+
                 if (currentTime - lastVoiceDebugTime > 0.5f)
                 {
                     DevMsg("VR Voice: Mode=Gesture, Offhand=%s, Valid=%d, Distance=%.1f (radius=%.1f), Action=%.2f, NearEar=%d, Active=%d\n",
@@ -465,7 +465,7 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
         else
         {
             // DIRECT MODE: Voice action directly activates voice (no proximity check)
-            
+
             if (bVoiceActionJustPressed && !s_bVoiceGestureActive)
             {
                 s_bVoiceGestureActive = true;
@@ -484,13 +484,13 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
                     DevMsg("VR Voice: Deactivated (direct mode)\n");
                 }
             }
-            
+
             // Debug output
             if (tfvr_voice_gesture_debug.GetBool())
             {
                 static float lastVoiceDebugTime = 0.0f;
                 float currentTime = gpGlobals->curtime;
-                
+
                 if (currentTime - lastVoiceDebugTime > 0.5f)
                 {
                     DevMsg("VR Voice: Mode=Direct, Action=%.2f, Active=%d\n",
@@ -500,11 +500,11 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
                 }
             }
         }
-        
+
         // Update action state for next frame
         bLastVoiceActionPressed = bVoiceActionPressed;
     }
-    
+
     // If menu is visible, block all gameplay actions except menu controls
     // (voice chat above is intentionally allowed through so it works while dead)
     if (bMenuVisible)
@@ -512,13 +512,13 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
         bLastMenuButtonState = bMenu;
         return;
     }
-    
+
     // Normal gameplay input processing (only when menu is not visible)
-    
+
     // Determine which hand is offhand for voice gesture suppression
     // tfvr_primary_hand: 0 = left primary (right is offhand), 1 = right primary (left is offhand)
     bool bLeftIsOffhand = (tfvr_primary_hand.GetInt() == 1);
-    
+
     // Primary attack - suppress if voice gesture is active AND right hand is offhand
     bool bPrimaryAttack = g_pOpenXRManager->GetAnalogValue("primary_attack") > 0.5f;
     bool bSuppressPrimary = s_bVoiceGestureActive && !bLeftIsOffhand; // Right is offhand, uses primary_attack
@@ -726,14 +726,14 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
 
     // Weapon switching
     float weaponSwitchValue = g_pOpenXRManager->GetAnalogValue("weapon_switch");
-    
+
     // Validate that we got valid values
     if (weaponSwitchValue == 0.0f)
     {
         // This could indicate the actions aren't properly bound or working
         static float lastWarningTime = 0.0f;
         float currentTime = gpGlobals->curtime;
-        
+
         if (currentTime - lastWarningTime > 5.0f) // Only warn every 5 seconds
         {
             if (tfvr_weapon_switch_debug.GetBool())
@@ -743,29 +743,29 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
             lastWarningTime = currentTime;
         }
     }
-    
+
     // Track weapon switching button press events to avoid continuous execution
     static bool bLastNextWeaponState = false;
     static bool bLastPrevWeaponState = false;
-    
+
     // Threshold for detecting tilt (0.7 = 70% tilt)
     const float TILT_THRESHOLD = tfvr_weapon_switch_tilt_threshold.GetFloat();
-    
+
     // Detect forward tilt (positive Y) for next weapon
     bool bNextWeaponActive = weaponSwitchValue > TILT_THRESHOLD;
     // Detect backward tilt (negative Y) for previous weapon
     bool bPrevWeaponActive = weaponSwitchValue < -TILT_THRESHOLD;
-    
+
     bool bNextWeaponPressed = bNextWeaponActive && !bLastNextWeaponState;
     bool bPrevWeaponPressed = bPrevWeaponActive && !bLastPrevWeaponState;
-    
+
     // Check if stick weapon switching is enabled (disabled by default, use radial menu instead)
     if (tfvr_weapon_switch_stick_enabled.GetBool())
     {
         // Check if weapon switching is allowed before executing commands
         C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
         bool bCanSwitchWeapons = pLocalPlayer && pLocalPlayer->IsAllowedToSwitchWeapons();
-        
+
         if (bNextWeaponPressed && bCanSwitchWeapons)
         {
             engine->ExecuteClientCmd("invnext");
@@ -781,7 +781,7 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
                 DevMsg("VR: Next weapon blocked - weapon switching not allowed\n");
             }
         }
-        
+
         if (bPrevWeaponPressed && bCanSwitchWeapons)
         {
             engine->ExecuteClientCmd("invprev");
@@ -798,17 +798,17 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
             }
         }
     }
-    
+
     // Update weapon switching button state tracking
     bLastNextWeaponState = bNextWeaponActive;
     bLastPrevWeaponState = bPrevWeaponActive;
-    
+
     // Debug output for weapon switching values
     if (tfvr_weapon_switch_debug.GetBool())
     {
         static float lastDebugTime = 0.0f;
         float currentTime = gpGlobals->curtime;
-        
+
         // Only output debug info every 0.5 seconds to avoid spam
         if (currentTime - lastDebugTime > 0.5f)
         {
@@ -817,8 +817,8 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
                 direction = "forward (next)";
             else if (weaponSwitchValue < -TILT_THRESHOLD)
                 direction = "backward (prev)";
-            
-            DevMsg("VR: Weapon switch - Y-axis: %.2f, Direction: %s, Threshold: %.2f\n", 
+
+            DevMsg("VR: Weapon switch - Y-axis: %.2f, Direction: %s, Threshold: %.2f\n",
                    weaponSwitchValue, direction, TILT_THRESHOLD);
             lastDebugTime = currentTime;
         }
@@ -849,7 +849,7 @@ void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
         // Extract angles from the controller pose matrix
         QAngle controllerAngles;
         MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
-        
+
         // We DON'T change cmd->viewangles here because:
         // - cmd->viewangles affects locomotion (should use headset)
         // - Weapon_ShootAngles() handles shooting direction (uses controller)
@@ -858,7 +858,7 @@ void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
         // Debug output for controller angles
         if (tfvr_controller_tracking_debug.GetBool())
         {
-            DevMsg("VR Aim: Using controller angles - pitch=%.1f yaw=%.1f roll=%.1f\n", 
+            DevMsg("VR Aim: Using controller angles - pitch=%.1f yaw=%.1f roll=%.1f\n",
                    controllerAngles.x, controllerAngles.y, controllerAngles.z);
         }
     }
@@ -893,7 +893,7 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
         if ( pLocalPlayer->m_Shared.IsControlStunned() || pLocalPlayer->m_Shared.IsLoserStateStunned() )
             return;
     }
-    
+
     // Get movement values
     float moveX = g_pOpenXRManager->GetAnalogValue("move_x");
     float moveY = g_pOpenXRManager->GetAnalogValue("move_y");
@@ -968,7 +968,7 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
     // Map to movement values - use cl_forwardspeed and cl_sidespeed for proper scaling
     float forwardSpeed = cl_forwardspeed.GetFloat();
     float sideSpeed = cl_sidespeed.GetFloat();
-    
+
     // DevMsg("VR Movement: Speed values - forward=%.2f side=%.2f\n", forwardSpeed, sideSpeed);
 
     // Add VR movement to existing values
@@ -981,7 +981,7 @@ void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
     cmd->sidemove = clamp(cmd->sidemove, -maxSpeed, maxSpeed);
 
     // Debug output for movement values
-    //DevMsg("VR Movement: Final values - forward=%.2f->%.2f side=%.2f->%.2f\n", 
+    //DevMsg("VR Movement: Final values - forward=%.2f->%.2f side=%.2f->%.2f\n",
     //       oldForward, cmd->forwardmove, oldSide, cmd->sidemove);
 }
 
@@ -1365,7 +1365,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
     // Check if controller tracking is enabled
     if (!tfvr_enable_controller_tracking.GetBool())
         return;
-    
+
     // Check if menu is visible - if so, disable tracking
     bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
     if (bMenuVisible)
@@ -1390,9 +1390,9 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
     VMatrix leftControllerPose, rightControllerPose;
     bool leftValid = g_pOpenXRManager->GetLeftControllerPose(leftControllerPose);
     bool rightValid = g_pOpenXRManager->GetRightControllerPose(rightControllerPose);
-    
-    
-    
+
+
+
     // Store controller poses in the command for use by other systems
     if (leftValid)
     {
@@ -1449,10 +1449,10 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
                 // Send weapon muzzle position AND angles for server-side hit detection
                 cmd->leftControllerOrigin = muzzlePos;
                 cmd->leftControllerAngles = muzzleAngles;
-                
+
                 if (tfvr_controller_tracking_debug.GetBool())
                 {
-                    DevMsg("Left Hand: Weapon muzzle pos(%.2f, %.2f, %.2f), angles(%.1f, %.1f, %.1f)\n", 
+                    DevMsg("Left Hand: Weapon muzzle pos(%.2f, %.2f, %.2f), angles(%.1f, %.1f, %.1f)\n",
                            muzzlePos.x, muzzlePos.y, muzzlePos.z,
                            muzzleAngles.x, muzzleAngles.y, muzzleAngles.z);
                 }
@@ -1469,16 +1469,16 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             // No weapon held, use controller position/angles
             cmd->leftControllerOrigin = leftPos;
             cmd->leftControllerAngles = leftAngles;
-            
+
             // Debug output
             if (tfvr_controller_tracking_debug.GetBool())
             {
-                DevMsg("Left Controller: pos(%.2f, %.2f, %.2f) angles(%.1f, %.1f, %.1f)\n", 
+                DevMsg("Left Controller: pos(%.2f, %.2f, %.2f) angles(%.1f, %.1f, %.1f)\n",
                        leftPos.x, leftPos.y, leftPos.z, leftAngles.x, leftAngles.y, leftAngles.z);
             }
         }
     }
-    
+
     if (rightValid)
     {
         // Extract position and orientation from the pose matrix
@@ -1555,10 +1555,10 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
             {
                 cmd->rightControllerOrigin = muzzlePos;
                 cmd->rightControllerAngles = muzzleAngles;
-                
+
                 if (tfvr_controller_tracking_debug.GetBool())
                 {
-                    DevMsg("Right Hand: Weapon muzzle pos(%.2f, %.2f, %.2f), angles(%.1f, %.1f, %.1f)\n", 
+                    DevMsg("Right Hand: Weapon muzzle pos(%.2f, %.2f, %.2f), angles(%.1f, %.1f, %.1f)\n",
                            muzzlePos.x, muzzlePos.y, muzzlePos.z,
                            muzzleAngles.x, muzzleAngles.y, muzzleAngles.z);
                 }
@@ -1627,18 +1627,18 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 
             return; // Early return, we've set controller values
         }
-        
+
         // Fallback: No weapon held, use controller position/angles
         cmd->rightControllerOrigin = rightPos;
         cmd->rightControllerAngles = rightAngles;
-        
+
         if (tfvr_controller_tracking_debug.GetBool())
         {
-            DevMsg("Right Controller: pos(%.2f, %.2f, %.1f) angles(%.1f, %.1f, %.1f)\n", 
+            DevMsg("Right Controller: pos(%.2f, %.2f, %.1f) angles(%.1f, %.1f, %.1f)\n",
                    rightPos.x, rightPos.y, rightPos.z, rightAngles.x, rightAngles.y, rightAngles.z);
         }
     }
-    
+
     // Laser pointer functionality is now handled by CVRLaserPointer class
 }
 

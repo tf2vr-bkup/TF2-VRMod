@@ -1,6 +1,6 @@
 //========= Copyright Valve Corporation, All rights reserved. ============//
 //
-// Purpose: 
+// Purpose:
 //
 //=============================================================================
 
@@ -31,7 +31,7 @@
 
 ConVar tfvr_throw_angvel_deadzone( "tfvr_throw_angvel_deadzone", "100", FCVAR_ARCHIVE,
 	"VR physical throw: angular velocity below this (deg/sec) is zeroed so straight throws don't spin from jitter." );
-ConVar tfvr_throw_angvel_scale( "tfvr_throw_angvel_scale", "0.3", FCVAR_ARCHIVE,
+ConVar tfvr_throw_angvel_scale( "tfvr_throw_angvel_scale", "0.02", FCVAR_ARCHIVE,
 	"VR physical throw: scale hand angular velocity (0.3 = subtle spin, 1.0 = 1:1 with hand)." );
 #endif
 
@@ -102,7 +102,7 @@ PRECACHE_WEAPON_REGISTER( tf_projectile_cleaver );
 //
 // Weapon Jar functions.
 //
-	
+
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
@@ -134,7 +134,7 @@ VRThrowParams CTFJar::GetVRThrowParams( void )
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CTFJar::PrimaryAttack( void )
 {
@@ -222,7 +222,7 @@ CBaseEntity *CTFJar::FireJar( CTFPlayer *pPlayer )
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-CTFProjectile_Jar *CTFJar::CreateJarProjectile( const Vector &position, const QAngle &angles, const Vector &velocity, 
+CTFProjectile_Jar *CTFJar::CreateJarProjectile( const Vector &position, const QAngle &angles, const Vector &velocity,
 												   const AngularImpulse &angVelocity, CBaseCombatCharacter *pOwner, const CTFWeaponInfo &weaponInfo )
 {
 	return CTFProjectile_Jar::Create( position, angles, velocity, angVelocity, pOwner, weaponInfo );
@@ -232,7 +232,7 @@ CTFProjectile_Jar *CTFJar::CreateJarProjectile( const Vector &position, const QA
 #ifdef GAME_DLL
 Vector CTFJar::GetVelocityVector( const Vector &vecForward, const Vector &vecRight, const Vector &vecUp )
 {
-	return ( ( vecForward * GetProjectileSpeed() ) + ( vecUp * 200.0f ) + ( random->RandomFloat( -10.0f, 10.0f ) * vecRight ) +		
+	return ( ( vecForward * GetProjectileSpeed() ) + ( vecUp * 200.0f ) + ( random->RandomFloat( -10.0f, 10.0f ) * vecRight ) +
 		( random->RandomFloat( -10.0f, 10.0f ) * vecUp ) );
 }
 #endif
@@ -272,7 +272,7 @@ void CTFJar::TossJarThink( void )
 		vecSrc = pPlayer->Weapon_ShootPosition();
 	}
 
-	trace_t trace;	
+	trace_t trace;
 	Vector vecEye = pPlayer->EyePosition();
 	CTraceFilterSimple traceFilter( this, COLLISION_GROUP_NONE );
 	UTIL_TraceHull( vecEye, vecSrc, -Vector(8,8,8), Vector(8,8,8), MASK_SOLID_BRUSHONLY, &traceFilter, &trace );
@@ -359,7 +359,7 @@ void CTFJar::TossJarThink( void )
 	// we set it once below with SetVelocity for exact 1:1 hand match.
 	AngularImpulse angForCreate = bVRThrow ? AngularImpulse( 0, 0, 0 ) : angImpulse;
 
-	CTFProjectile_Jar *pProjectile = CreateJarProjectile( trace.endpos, angSpawn, vecVelocity, 
+	CTFProjectile_Jar *pProjectile = CreateJarProjectile( trace.endpos, angSpawn, vecVelocity,
 		angForCreate, pPlayer, GetTFWpnData() );
 
 	if ( pProjectile )
@@ -453,15 +453,15 @@ void CTFProjectile_Jar::SetCustomPipebombModel()
 			return;
 		}
 	}
-	
+
 	SetModel( TF_WEAPON_PEEJAR_MODEL );
 }
 
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-CTFProjectile_Jar* CTFProjectile_Jar::Create( const Vector &position, const QAngle &angles, 
-												const Vector &velocity, const AngularImpulse &angVelocity, 
+CTFProjectile_Jar* CTFProjectile_Jar::Create( const Vector &position, const QAngle &angles,
+												const Vector &velocity, const AngularImpulse &angVelocity,
 												CBaseCombatCharacter *pOwner, const CTFWeaponInfo &weaponInfo )
 {
 	CTFProjectile_Jar *pGrenade = static_cast<CTFProjectile_Jar*>( CBaseEntity::CreateNoSpawn( "tf_projectile_jar", position, angles, pOwner ) );
@@ -473,7 +473,7 @@ CTFProjectile_Jar* CTFProjectile_Jar::Create( const Vector &position, const QAng
 
 		pGrenade->InitGrenade( velocity, angVelocity, pOwner, weaponInfo );
 
-#ifdef _X360 
+#ifdef _X360
 		if ( pGrenade->m_iType != TF_GL_MODE_REMOTE_DETONATE )
 		{
 			pGrenade->SetDamage( TF_WEAPON_GRENADE_XBOX_DAMAGE );
@@ -597,7 +597,7 @@ void JarExplode( int iEntIndex, CTFPlayer *pAttacker, CBaseEntity *pOriginalWeap
 
 					if ( pszEvent && pszEvent[0] )
 					{
-						UTIL_LogPrintf( "\"%s<%i><%s><%s>\" triggered \"%s\" against \"%s<%i><%s><%s>\" with \"%s\" (attacker_position \"%d %d %d\") (victim_position \"%d %d %d\")\n",    
+						UTIL_LogPrintf( "\"%s<%i><%s><%s>\" triggered \"%s\" against \"%s<%i><%s><%s>\" with \"%s\" (attacker_position \"%d %d %d\") (victim_position \"%d %d %d\")\n",
 							pAttacker->GetPlayerName(),
 							pAttacker->GetUserID(),
 							pAttacker->GetNetworkIDString(),
@@ -608,10 +608,10 @@ void JarExplode( int iEntIndex, CTFPlayer *pAttacker, CBaseEntity *pOriginalWeap
 							pPlayer->GetNetworkIDString(),
 							pPlayer->GetTeam()->GetName(),
 							"tf_weapon_jar",
-							(int)pAttacker->GetAbsOrigin().x, 
+							(int)pAttacker->GetAbsOrigin().x,
 							(int)pAttacker->GetAbsOrigin().y,
 							(int)pAttacker->GetAbsOrigin().z,
-							(int)pPlayer->GetAbsOrigin().x, 
+							(int)pPlayer->GetAbsOrigin().x,
 							(int)pPlayer->GetAbsOrigin().y,
 							(int)pPlayer->GetAbsOrigin().z );
 					}
@@ -674,7 +674,7 @@ void CTFProjectile_Jar::Explode( trace_t *pTrace, int bitsDamageType )
 
 	AddEffects( EF_NODRAW );
 	SetAbsVelocity( vec3_origin );
-}	
+}
 
 //-----------------------------------------------------------------------------
 void CTFProjectile_Jar::PipebombTouch( CBaseEntity *pOther )
@@ -754,14 +754,14 @@ void CTFProjectile_Jar::OnBreadMonsterHit( CBaseEntity *pOther, trace_t *pTrace 
 		return;
 
 	// This is a player on the other team, attach a breadmonster
-	
+
 	CTFPlayer *pOwner = ToTFPlayer( GetThrower() );
 
 	// Attach Breadmonster to Victim
 	CreateStickyAttachmentToTarget( pOwner, pVictim, pTrace );
 }
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CTFProjectile_Jar::VPhysicsCollision( int index, gamevcollisionevent_t *pEvent )
 {
@@ -935,7 +935,7 @@ void CTFProjectile_Jar::CreateStickyAttachmentToTarget( CTFPlayer *pOwner, CTFPl
 #ifdef CLIENT_DLL
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 const char *CTFProjectile_Jar::GetTrailParticleName( void )
 {
@@ -955,7 +955,7 @@ const char *CTFProjectile_Jar::GetTrailParticleName( void )
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-CTFProjectile_Jar *CTFJarMilk::CreateJarProjectile( const Vector &position, const QAngle &angles, const Vector &velocity, 
+CTFProjectile_Jar *CTFJarMilk::CreateJarProjectile( const Vector &position, const QAngle &angles, const Vector &velocity,
 												 const AngularImpulse &angVelocity, CBaseCombatCharacter *pOwner, const CTFWeaponInfo &weaponInfo )
 {
 	return CTFProjectile_JarMilk::Create( position, angles, velocity, angVelocity, pOwner, weaponInfo );
@@ -976,8 +976,8 @@ void CTFProjectile_JarMilk::Precache()
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-CTFProjectile_JarMilk* CTFProjectile_JarMilk::Create( const Vector &position, const QAngle &angles, 
-											 const Vector &velocity, const AngularImpulse &angVelocity, 
+CTFProjectile_JarMilk* CTFProjectile_JarMilk::Create( const Vector &position, const QAngle &angles,
+											 const Vector &velocity, const AngularImpulse &angVelocity,
 											 CBaseCombatCharacter *pOwner, const CTFWeaponInfo &weaponInfo )
 {
 	CTFProjectile_JarMilk *pGrenade = static_cast<CTFProjectile_JarMilk*>( CBaseEntity::CreateNoSpawn( "tf_projectile_jar_milk", position, angles, pOwner ) );
@@ -989,7 +989,7 @@ CTFProjectile_JarMilk* CTFProjectile_JarMilk::Create( const Vector &position, co
 
 		pGrenade->InitGrenade( velocity, angVelocity, pOwner, weaponInfo );
 
-#ifdef _X360 
+#ifdef _X360
 		if ( pGrenade->m_iType != TF_GL_MODE_REMOTE_DETONATE )
 		{
 			pGrenade->SetDamage( TF_WEAPON_GRENADE_XBOX_DAMAGE );
@@ -1092,7 +1092,7 @@ Vector CTFCleaver::GetVelocityVector( const Vector &vecForward, const Vector &ve
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-CTFProjectile_Jar *CTFCleaver::CreateJarProjectile( const Vector &position, const QAngle &angles, const Vector &velocity, 
+CTFProjectile_Jar *CTFCleaver::CreateJarProjectile( const Vector &position, const QAngle &angles, const Vector &velocity,
 	const AngularImpulse &angVelocity, CBaseCombatCharacter *pOwner, const CTFWeaponInfo &weaponInfo )
 {
 	return CTFProjectile_Cleaver::Create( position, angles, velocity, angVelocity, pOwner, weaponInfo, GetSkin() );
@@ -1226,7 +1226,7 @@ void CTFProjectile_Cleaver::OnHit( CBaseEntity *pOther )
 
 	CTakeDamageInfo info;
 	info.SetAttacker( pOwner );
-	info.SetInflictor( pInflictor ); 
+	info.SetInflictor( pInflictor );
 	info.SetWeapon( pInflictor );
 	info.SetDamage( GetDamage() );
 	info.SetDamageCustom( TF_DMG_CUSTOM_CLEAVER );
@@ -1281,7 +1281,7 @@ void CTFProjectile_Cleaver::Explode( trace_t *pTrace, int bitsDamageType )
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 void CTFProjectile_Cleaver::Detonate( void )
 {
@@ -1299,8 +1299,8 @@ void CTFProjectile_Cleaver::Detonate( void )
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-CTFProjectile_Cleaver* CTFProjectile_Cleaver::Create( const Vector &position, const QAngle &angles, 
-	const Vector &velocity, const AngularImpulse &angVelocity, 
+CTFProjectile_Cleaver* CTFProjectile_Cleaver::Create( const Vector &position, const QAngle &angles,
+	const Vector &velocity, const AngularImpulse &angVelocity,
 	CBaseCombatCharacter *pOwner, const CTFWeaponInfo &weaponInfo, int nSkin )
 {
 	CTFProjectile_Cleaver *pGrenade = static_cast<CTFProjectile_Cleaver*>( CBaseEntity::CreateNoSpawn( "tf_projectile_cleaver", position, angles, pOwner ) );
@@ -1335,7 +1335,7 @@ void CTFProjectile_Cleaver::RemoveCleaver( void )
 
 #else
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 const char *CTFProjectile_Cleaver::GetTrailParticleName( void )
 {

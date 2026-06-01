@@ -10,7 +10,7 @@
 
 //-----------------------------------------------------------------------------
 // NEW APPROACH: Sample directly from the _rt_vgui render target!
-// This avoids ALL the reparenting/state modification issues by just reading 
+// This avoids ALL the reparenting/state modification issues by just reading
 // the already-rendered content from where it exists on the main HUD.
 //-----------------------------------------------------------------------------
 
@@ -52,7 +52,7 @@
 // We'll go back to the hijacking approach but make it cleaner
 
 // ConVars for configuration
-ConVar tfvr_objective_overlay_enabled("tfvr_objective_overlay_enabled", "1", FCVAR_ARCHIVE, "Enable VR objective overlay on hand");
+ConVar tfvr_objective_overlay_enabled("tfvr_objective_overlay_enabled", "0", FCVAR_ARCHIVE, "Enable VR objective overlay on hand");
 ConVar tfvr_objective_overlay_hand("tfvr_objective_overlay_hand", "0", FCVAR_ARCHIVE, "Hand to attach objective overlay to: 0=left, 1=right (should match health overlay)");
 ConVar tfvr_objective_overlay_use_hand_tracking("tfvr_objective_overlay_use_hand_tracking", "1", FCVAR_ARCHIVE, "Use hand tracking instead of controller pose: 0=controller, 1=hand tracking");
 ConVar tfvr_objective_overlay_offset_x("tfvr_objective_overlay_offset_x", "-3.2", FCVAR_ARCHIVE, "X offset from hand position");
@@ -97,11 +97,11 @@ CVRObjectiveOverlay::CVRObjectiveOverlay()
     m_nAttachedHand = 0; // Default to left hand (same as health overlay typically)
     m_flLastUpdateTime = 0.0f;
     m_pMainObjectivePanel = nullptr;
-    
+
     // Set default offsets (positioned below health overlay)
     m_vQuadOffset.Init(
         tfvr_objective_overlay_offset_x.GetFloat(),
-        tfvr_objective_overlay_offset_y.GetFloat(), 
+        tfvr_objective_overlay_offset_y.GetFloat(),
         tfvr_objective_overlay_offset_z.GetFloat()
     );
     m_angQuadRotation.Init(0, 0, 0);
@@ -124,15 +124,15 @@ bool CVRObjectiveOverlay::Initialize()
         return true;
 
     // NEW APPROACH: No need to create any panels! We'll sample from _rt_vgui instead.
-    
-    // Get reference to main objective panel 
+
+    // Get reference to main objective panel
     m_pMainObjectivePanel = GET_HUDELEMENT(CTFHudObjectiveStatus);
     if (!m_pMainObjectivePanel)
     {
         Warning(_T("VR Objective Overlay: Could not find main CTFHudObjectiveStatus\n"));
         return false;
     }
-    
+
     // DevMsg("CVRObjectiveOverlay: Initialized successfully with render target sampling\n");
 
     m_bEnabled = tfvr_objective_overlay_enabled.GetBool();
@@ -149,10 +149,10 @@ void CVRObjectiveOverlay::Shutdown()
 {
     if (!m_bInitialized)
         return;
-    
+
     // No panels to clean up - we just sampled from the render target!
     m_pMainObjectivePanel = nullptr;
-    
+
     m_bInitialized = false;
 }
 
@@ -174,7 +174,7 @@ void CVRObjectiveOverlay::Update()
         tfvr_objective_overlay_offset_y.GetFloat(),
         tfvr_objective_overlay_offset_z.GetFloat()
     );
-    
+
     // Update additional rotation from ConVars (like health overlay does)
     m_angQuadRotation.Init(
         tfvr_objective_overlay_rotation_x.GetFloat(),
@@ -191,32 +191,32 @@ void CVRObjectiveOverlay::Update()
 void CVRObjectiveOverlay::RenderObjectiveQuad()
 {
     VPROF("VR_ObjectiveOverlay_Render");
-    
+
     if (!m_bInitialized || !m_bEnabled || !m_pMainObjectivePanel)
         return;
-        
+
     // Quick disable for testing
     if (!tfvr_objective_overlay_enabled.GetBool())
         return;
-        
+
     // Safety check: Don't render if there's no valid player or we're in spectator mode
     C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
     if (!pPlayer || pPlayer->IsObserver() || !pPlayer->IsAlive())
     {
         return;
     }
-    
+
     // SIMPLE APPROACH: Just render the main panel directly with minimal changes
     // This avoids all the render target sampling complexity
-    
+
     if (!m_pMainObjectivePanel->IsVisible())
     {
         return;
     }
-    
+
     // Calculate panel-to-world transform based on hand position
     VMatrix panelToWorld;
-    
+
     if (tfvr_objective_overlay_simple_transform.GetBool())
     {
         // Simple identity transform for debugging - just put it in front of player
@@ -233,27 +233,27 @@ void CVRObjectiveOverlay::RenderObjectiveQuad()
     {
         return;
     }
-    
+
     // Get panel dimensions for world size calculation
     int panelWidth, panelHeight;
     m_pMainObjectivePanel->GetSize(panelWidth, panelHeight);
-    
+
     // Use reasonable defaults if panel size is weird
     if (panelWidth <= 0 || panelWidth > 2000) panelWidth = 400;
     if (panelHeight <= 0 || panelHeight > 2000) panelHeight = 200;
-    
+
     // Calculate world size based on scale ConVar
     float scale = tfvr_objective_overlay_scale.GetFloat();
     float aspectRatio = (float)panelWidth / (float)panelHeight;
     float worldWidth = scale * aspectRatio;
     float worldHeight = scale;
-    
+
     // Allow override of world width
     if (tfvr_objective_overlay_world_width.GetFloat() > 0.0f)
     {
         worldWidth = tfvr_objective_overlay_world_width.GetFloat();
     }
-    
+
     // Use DrawPanelIn3DSpace directly - simple and reliable!
     g_pMatSystemSurface->DrawPanelIn3DSpace(
         m_pMainObjectivePanel->GetVPanel(),  // The main objective panel
@@ -290,16 +290,16 @@ bool CVRObjectiveOverlay::ShouldDisplayObjectives()
     // Don't show if TF2 game rules aren't available
     if (!TFGameRules())
         return false;
-        
+
     // Don't show during match summary
     if (TFGameRules()->ShowMatchSummary())
         return false;
-        
+
     // Don't show in certain game states
     if (TFGameRules()->State_Get() == GR_STATE_PREGAME ||
         TFGameRules()->State_Get() == GR_STATE_BETWEEN_RNDS)
         return false;
-        
+
     return true;
 }
 
@@ -313,16 +313,16 @@ bool CVRObjectiveOverlay::CalculateQuadTransform(VMatrix& quadTransform)
     {
         return CalculateHandTrackingTransform(quadTransform);
     }
-    
+
     // Use controller grip pose (legacy mode)
     if (!g_pOpenXRManager)
     {
         return false;
     }
-        
+
     VMatrix handPose;
     bool handValid = false;
-    
+
     // Get the appropriate hand grip pose
     if (m_nAttachedHand == 0) // Left hand
     {
@@ -338,29 +338,29 @@ bool CVRObjectiveOverlay::CalculateQuadTransform(VMatrix& quadTransform)
             handValid = g_pOpenXRManager->GetRightControllerGripPose(handPose);
         }
     }
-    
+
     if (!handValid)
     {
         return false;
     }
-    
+
     // Get hand position and orientation
     Vector handPos = handPose.GetTranslation();
     Vector forward, right, up;
     handPose.GetBasisVectors(forward, right, up);
-    
+
     // Apply offset to position the quad relative to the hand (below health overlay)
-    Vector quadPos = handPos + 
-                     right * m_vQuadOffset.x + 
-                     up * m_vQuadOffset.y + 
+    Vector quadPos = handPos +
+                     right * m_vQuadOffset.x +
+                     up * m_vQuadOffset.y +
                      forward * m_vQuadOffset.z;
-    
+
     // Use the exact controller pose matrix directly - no auto-rotation
     quadTransform = handPose;
-    
+
     // Just update the position to the offset position we calculated
     quadTransform.SetTranslation(quadPos);
-    
+
     // Apply any additional rotation from ConVars if needed
     if (m_angQuadRotation.x != 0 || m_angQuadRotation.y != 0 || m_angQuadRotation.z != 0)
     {
@@ -369,11 +369,11 @@ bool CVRObjectiveOverlay::CalculateQuadTransform(VMatrix& quadTransform)
         totalRotation.x += -90;  // Pitch to stand up from flat
         totalRotation.y += -90;  // Yaw to face backward instead of forward
         totalRotation.z += 90;   // Roll to align widget top with controller top (blue axis)
-        
+
         matrix3x4_t rotMatrix;
         AngleMatrix(totalRotation, Vector(0,0,0), rotMatrix);
         rotationMatrix.CopyFrom3x4(rotMatrix);
-        
+
         // Apply rotation on top of hand pose
         quadTransform = quadTransform * rotationMatrix;
     }
@@ -384,10 +384,10 @@ bool CVRObjectiveOverlay::CalculateQuadTransform(VMatrix& quadTransform)
         matrix3x4_t adjustMatrix3x4;
         AngleMatrix(QAngle(-90, -90, 90), Vector(0,0,0), adjustMatrix3x4);  // Pitch -90 to stand up, Yaw -90 to face backward, Roll 90 to align top
         adjustMatrix.CopyFrom3x4(adjustMatrix3x4);
-        
+
         quadTransform = quadTransform * adjustMatrix;
     }
-    
+
     return true;
 }
 
@@ -438,22 +438,22 @@ bool CVRObjectiveOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
     // Wrist from hand tracking (optional, for improved forward direction)
     Vector wristPosition;
     QAngle wristAngles;
-    bool wristValid = handTracker && 
+    bool wristValid = handTracker &&
         handTracker->GetHandJoint(leftHand, XR_HAND_JOINT_WRIST_EXT, wristPosition, wristAngles);
-    
+
     // Calculate position below the health overlay
     Vector quadPosition = palmPosition;
-    
+
     // Use wrist-to-palm vector to determine hand orientation if available
     Vector handForward, handRight, handUp;
     if (wristValid)
     {
         // Vector from wrist to palm gives us the hand forward direction (towards fingers)
         handForward = (palmPosition - wristPosition).Normalized();
-        
+
         // Use palm angles to get the proper hand coordinate frame
         AngleVectors(palmAngles, nullptr, &handRight, &handUp);
-        
+
         // Ensure right-handed coordinate system
         if (!leftHand)
         {
@@ -469,13 +469,13 @@ bool CVRObjectiveOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
             handRight = -handRight; // Right hand uses inverted right vector
         }
     }
-    
+
     // For objective overlay, position below health overlay at wrist
     if (wristValid)
     {
         // Use actual wrist position as base
         quadPosition = wristPosition;
-        
+
         // Position below the health overlay
         Vector wristOffset = -handForward * tfvr_objective_overlay_wrist_back.GetFloat() +    // Behind wrist (toward forearm)
                             handUp * tfvr_objective_overlay_wrist_up.GetFloat() +              // Below wrist bone (negative value)
@@ -488,32 +488,32 @@ bool CVRObjectiveOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
         Vector belowHandOffset = -handForward * 2.0f + handUp * -3.0f; // Position below palm
         quadPosition += belowHandOffset;
     }
-    
+
     // Apply ConVar offsets in hand coordinate space
     Vector userOffset(
         tfvr_objective_overlay_offset_x.GetFloat(),
-        tfvr_objective_overlay_offset_y.GetFloat(), 
+        tfvr_objective_overlay_offset_y.GetFloat(),
         tfvr_objective_overlay_offset_z.GetFloat()
     );
-    
+
     // Transform user offset to hand coordinate space
     Vector worldOffset = handRight * userOffset.x + handUp * userOffset.y + handForward * userOffset.z;
     quadPosition += worldOffset;
-    
+
     // Create the quad transform matrix
     quadTransform.Identity();
     quadTransform.SetTranslation(quadPosition);
-    
+
     // Create a matrix from the palm angles
     matrix3x4_t handMatrix;
     AngleMatrix(palmAngles, Vector(0,0,0), handMatrix);
-    
+
     VMatrix handVMatrix;
     handVMatrix.CopyFrom3x4(handMatrix);
-    
+
     // Apply the hand orientation
     quadTransform = quadTransform * handVMatrix;
-    
+
     // Apply rotation for proper orientation
     if (m_angQuadRotation.x != 0 || m_angQuadRotation.y != 0 || m_angQuadRotation.z != 0)
     {
@@ -523,7 +523,7 @@ bool CVRObjectiveOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
         totalRotation.x += tfvr_objective_overlay_pitch.GetFloat();  // Pitch up/down
         totalRotation.y += tfvr_objective_overlay_yaw.GetFloat();    // Yaw left/right
         totalRotation.z += tfvr_objective_overlay_roll.GetFloat();   // Roll twist
-        
+
         matrix3x4_t rotMatrix;
         AngleMatrix(totalRotation, Vector(0,0,0), rotMatrix);
         rotationMatrix.CopyFrom3x4(rotMatrix);
@@ -538,7 +538,7 @@ bool CVRObjectiveOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
         flipMatrix.CopyFrom3x4(flipMatrix3x4);
         quadTransform = quadTransform * flipMatrix;
     }
-     
+
     return true;
 }
 
@@ -548,10 +548,10 @@ bool CVRObjectiveOverlay::CalculateHandTrackingTransform(VMatrix& quadTransform)
 void CVRObjectiveOverlay::ResetOverlayState()
 {
     Msg(_T("VR Objective Overlay: Resetting overlay state due to map change\n"));
-    
+
     // Reset update time to force refresh
     m_flLastUpdateTime = 0.0f;
-    
+
     // Get a fresh reference to the main objective panel
     // (the main objective panel is managed by the HUD system and should reset automatically)
     m_pMainObjectivePanel = GET_HUDELEMENT(CTFHudObjectiveStatus);
