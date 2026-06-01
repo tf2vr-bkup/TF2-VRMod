@@ -130,7 +130,7 @@ ConVar tfvr_scattergun_lever_debug( "tfvr_scattergun_lever_debug", "0", FCVAR_RE
 ConVar tfvr_shotgun_pump_action( "tfvr_shotgun_pump_action", "1", FCVAR_ARCHIVE, "VR shotguns: require a physical pump between shots; toggled by the TF2VR auto-reload option" );
 ConVar tfvr_shotgun_pump_distance( "tfvr_shotgun_pump_distance", "10.0", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: hammer units of off-hand motion per shotgun pump stroke" );
 ConVar tfvr_shotgun_pump_sign( "tfvr_shotgun_pump_sign", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR: multiply shotgun pump-axis motion (+1 or -1) if pump direction feels inverted" );
-ConVar tfvr_shotgun_pump_axis( "tfvr_shotgun_pump_axis", "0", FCVAR_REPLICATED, "VR: controller matrix column for shotgun pump axis (0=fwd, 1=right, 2=up)" );
+ConVar tfvr_shotgun_pump_axis( "tfvr_shotgun_pump_axis", "0", FCVAR_REPLICATED, "VR: shotgun pump axis source (0=two-hand grip direction, 1=raw weapon hand right, 2=raw weapon hand up)" );
 ConVar tfvr_shotgun_pump_debug( "tfvr_shotgun_pump_debug", "0", FCVAR_REPLICATED, "VR: 1 = print shotgun pump state to console" );
 
 //=============================================================================
@@ -381,16 +381,29 @@ void CTFShotgun::VRShotgunPumpActionPostFrame( void )
 	const float flSign = tfvr_shotgun_pump_sign.GetFloat();
 	const float flPumpInterval = MAX( m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeFireDelay * 0.5f, 0.05f );
 
+	matrix3x4_t controllerMatrix;
 	QAngle angWeaponHand = pCmd->vrWeaponHandIsRight
 		? pCmd->vrRawControllerAngR
 		: pCmd->vrRawControllerAngL;
-
-	matrix3x4_t controllerMatrix;
 	AngleMatrix( angWeaponHand, controllerMatrix );
 
 	int iAxisCol = clamp( tfvr_shotgun_pump_axis.GetInt(), 0, 2 );
 	Vector vecPumpAxis;
-	MatrixGetColumn( controllerMatrix, iAxisCol, vecPumpAxis );
+	if ( iAxisCol == 0 )
+	{
+		// The shotgun's effective two-hand-corrected forward is the line from
+		// the weapon hand to the pump hand. Both points are raw playspace values,
+		// matching the displacement space below without extending CUserCmd.
+		vecPumpAxis = vecHandRelative;
+	}
+	else
+	{
+		MatrixGetColumn( controllerMatrix, iAxisCol, vecPumpAxis );
+	}
+	if ( vecPumpAxis.IsZero() )
+	{
+		MatrixGetColumn( controllerMatrix, 0, vecPumpAxis );
+	}
 	VectorNormalize( vecPumpAxis );
 
 	if ( m_vecVRShotgunPumpLastHandPos == vec3_origin )
