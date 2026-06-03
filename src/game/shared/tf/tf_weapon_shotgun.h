@@ -52,6 +52,7 @@ public:
 	virtual void	PrimaryAttack();
 	virtual void	ItemPostFrame( void ) OVERRIDE;
 	virtual void	ItemBusyFrame( void ) OVERRIDE;
+	virtual bool	Reload( void ) OVERRIDE;
 	virtual bool	SendWeaponAnim( int iActivity ) OVERRIDE;
 	virtual void	PlayWeaponShootSound( void );
 	virtual void	WeaponSound( WeaponSound_t sound_type, float soundtime = 0.0f ) OVERRIDE;
@@ -62,6 +63,10 @@ public:
 	bool  IsVRShotgunPumpPushingFwd() const  { return m_bVRShotgunPumpStrokeIn; }
 	bool  NeedsVRShotgunPump() const         { return m_bVRShotgunPumpNeedsPump; }
 	float GetVRShotgunPumpStrokeProgress() const;
+	bool  HasVRShotgunShellInHand() const    { return m_bVRShotgunShellHeld; }
+	bool  IsVRShotgunShellInserting() const  { return m_bVRShotgunShellInsertActive; }
+	bool  IsVRShotgunManualReloadActive() const { return m_bVRShotgunShellHeld || m_bVRShotgunShellInsertActive; }
+	float GetVRShotgunShellInsertProgress() const;
 
 #ifdef GAME_DLL
 	virtual CDmgAccumulator	*GetDmgAccumulator( void ) { return &m_Accumulator; }
@@ -78,6 +83,12 @@ private:
 	void		VRShotgunPumpActionPostFrame( void );
 	void		VRCommitShotgunPumpAction( void );
 	void		ResetVRShotgunPumpGestureState( void );
+	void		VRShotgunManualReloadPostFrame( void );
+	void		ResetVRShotgunManualReloadState( void );
+	void		VRStartShotgunShellInsert( void );
+	void		VRCommitShotgunShell( void );
+	float		GetVRShotgunShellInsertDuration() const;
+	bool		CanStartVRShotgunManualReload();
 	void		StopVRShotgunReloadSounds( void );
 	bool		CanVRShotgunPumpCancelReload( void );
 
@@ -94,6 +105,11 @@ private:
 	CNetworkVar( bool, m_bVRShotgunSuppressNextPumpEject );
 	CNetworkVar( float, m_flVRShotgunResumeAutoReloadTime );
 	CNetworkVar( float, m_flVRShotgunSuppressReloadSoundUntil );
+	CNetworkVar( bool, m_bVRShotgunShellHeld );
+	CNetworkVar( bool, m_bVRShotgunShellInsertActive );
+	CNetworkVar( float, m_flVRShotgunShellInsertStartTime );
+	CNetworkVar( float, m_flNextVRShotgunShellStartTime );
+	int m_iVRShotgunLastClipForManualReload;
 
 	CTFShotgun( const CTFShotgun & ) {}
 

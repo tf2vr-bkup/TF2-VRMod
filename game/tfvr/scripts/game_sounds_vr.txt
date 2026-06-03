@@ -32,6 +32,22 @@
 	"wave"		"weapons/shotgun_cock_forward.wav"
 }
 
+"VR.ShotgunReload1"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_shotgun_reload_1.wav"
+}
+
+"VR.ShotgunReload2"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/vr/vr_shotgun_reload_2.wav"
+}
+
 "VR.BisonPumpOut"
 {
 	"channel"	"CHAN_STATIC"

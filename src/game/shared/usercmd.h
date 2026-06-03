@@ -68,6 +68,9 @@ public:
 		vrBallAimActive = false;
 		vrPhysicalCrouch = false;
 		vrManualPumpReload = false;
+		vrShotgunShellPull = false;
+		vrShotgunShellInsert = false;
+		vrShotgunShellHold = false;
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.0f;
@@ -123,6 +126,9 @@ public:
 		vrBallAimActive		= src.vrBallAimActive;
 		vrPhysicalCrouch	= src.vrPhysicalCrouch;
 		vrManualPumpReload	= src.vrManualPumpReload;
+		vrShotgunShellPull	= src.vrShotgunShellPull;
+		vrShotgunShellInsert = src.vrShotgunShellInsert;
+		vrShotgunShellHold = src.vrShotgunShellHold;
 		vrWeaponArmed = src.vrWeaponArmed;
 		vrWeaponHandIsRight = src.vrWeaponHandIsRight;
 		forwardmove			= src.forwardmove;
@@ -185,6 +191,9 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrBallAimActive, sizeof( vrBallAimActive ) );
 		CRC32_ProcessBuffer( &crc, &vrPhysicalCrouch, sizeof( vrPhysicalCrouch ) );
 		CRC32_ProcessBuffer( &crc, &vrManualPumpReload, sizeof( vrManualPumpReload ) );
+		CRC32_ProcessBuffer( &crc, &vrShotgunShellPull, sizeof( vrShotgunShellPull ) );
+		CRC32_ProcessBuffer( &crc, &vrShotgunShellInsert, sizeof( vrShotgunShellInsert ) );
+		CRC32_ProcessBuffer( &crc, &vrShotgunShellHold, sizeof( vrShotgunShellHold ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponArmed, sizeof( vrWeaponArmed ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponHandIsRight, sizeof( vrWeaponHandIsRight ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
@@ -229,6 +238,9 @@ public:
 		vrBallAimActive = false;
 		vrPhysicalCrouch = false;
 		vrManualPumpReload = false;
+		vrShotgunShellPull = false;
+		vrShotgunShellInsert = false;
+		vrShotgunShellHold = false;
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.f;
@@ -289,6 +301,11 @@ public:
 
 	// VR pump/lever reload preference: true when active weapon should suppress normal reload.
 	bool	vrManualPumpReload;
+
+	// VR pump-shotgun manual shell reload intents.
+	bool	vrShotgunShellPull;
+	bool	vrShotgunShellInsert;
+	bool	vrShotgunShellHold;
 
 	// VR weapon lever/pump: grip held in position to operate the active weapon's physical mechanic
 	bool	vrWeaponArmed;

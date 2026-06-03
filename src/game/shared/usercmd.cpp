@@ -247,6 +247,9 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	buf->WriteOneBit( to->vrBallAimActive ? 1 : 0 );
 	buf->WriteOneBit( to->vrPhysicalCrouch ? 1 : 0 );
 	buf->WriteOneBit( to->vrManualPumpReload ? 1 : 0 );
+	buf->WriteOneBit( to->vrShotgunShellPull ? 1 : 0 );
+	buf->WriteOneBit( to->vrShotgunShellInsert ? 1 : 0 );
+	buf->WriteOneBit( to->vrShotgunShellHold ? 1 : 0 );
 	buf->WriteOneBit( to->vrWeaponArmed ? 1 : 0 );
 	buf->WriteOneBit( to->vrWeaponHandIsRight ? 1 : 0 );
 
@@ -420,6 +423,9 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	move->vrBallAimActive = buf->ReadOneBit() ? true : false;
 	move->vrPhysicalCrouch = buf->ReadOneBit() ? true : false;
 	move->vrManualPumpReload = buf->ReadOneBit() ? true : false;
+	move->vrShotgunShellPull = buf->ReadOneBit() ? true : false;
+	move->vrShotgunShellInsert = buf->ReadOneBit() ? true : false;
+	move->vrShotgunShellHold = buf->ReadOneBit() ? true : false;
 	move->vrWeaponArmed = buf->ReadOneBit() ? true : false;
 	move->vrWeaponHandIsRight = buf->ReadOneBit() ? true : false;
 

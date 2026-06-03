@@ -50,6 +50,10 @@ BEGIN_NETWORK_TABLE( CTFShotgun, DT_TFShotgun )
 	RecvPropBool( RECVINFO( m_bVRShotgunSuppressNextPumpEject ) ),
 	RecvPropFloat( RECVINFO( m_flVRShotgunResumeAutoReloadTime ) ),
 	RecvPropFloat( RECVINFO( m_flVRShotgunSuppressReloadSoundUntil ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunShellHeld ) ),
+	RecvPropBool( RECVINFO( m_bVRShotgunShellInsertActive ) ),
+	RecvPropFloat( RECVINFO( m_flVRShotgunShellInsertStartTime ) ),
+	RecvPropFloat( RECVINFO( m_flNextVRShotgunShellStartTime ) ),
 #else
 	SendPropBool( SENDINFO( m_bVRShotgunPumpNeedsPump ) ),
 	SendPropBool( SENDINFO( m_bVRShotgunPumpIsArmed ) ),
@@ -62,6 +66,10 @@ BEGIN_NETWORK_TABLE( CTFShotgun, DT_TFShotgun )
 	SendPropBool( SENDINFO( m_bVRShotgunSuppressNextPumpEject ) ),
 	SendPropFloat( SENDINFO( m_flVRShotgunResumeAutoReloadTime ), 0, SPROP_NOSCALE ),
 	SendPropFloat( SENDINFO( m_flVRShotgunSuppressReloadSoundUntil ), 0, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bVRShotgunShellHeld ) ),
+	SendPropBool( SENDINFO( m_bVRShotgunShellInsertActive ) ),
+	SendPropFloat( SENDINFO( m_flVRShotgunShellInsertStartTime ), 0, SPROP_NOSCALE ),
+	SendPropFloat( SENDINFO( m_flNextVRShotgunShellStartTime ), 0, SPROP_NOSCALE ),
 #endif
 END_NETWORK_TABLE()
 
@@ -78,6 +86,10 @@ BEGIN_PREDICTION_DATA( CTFShotgun )
 	DEFINE_PRED_FIELD( m_bVRShotgunSuppressNextPumpEject, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_flVRShotgunResumeAutoReloadTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_flVRShotgunSuppressReloadSoundUntil, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunShellHeld, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRShotgunShellInsertActive, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRShotgunShellInsertStartTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flNextVRShotgunShellStartTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 #endif
 END_PREDICTION_DATA()
 
@@ -187,9 +199,16 @@ CTFShotgun::CTFShotgun()
 	m_bVRShotgunSuppressNextPumpEject = false;
 	m_flVRShotgunResumeAutoReloadTime = 0.0f;
 	m_flVRShotgunSuppressReloadSoundUntil = 0.0f;
+	m_bVRShotgunShellHeld = false;
+	m_bVRShotgunShellInsertActive = false;
+	m_flVRShotgunShellInsertStartTime = 0.0f;
+	m_flNextVRShotgunShellStartTime = 0.0f;
+	m_iVRShotgunLastClipForManualReload = -1;
 
 	PrecacheScriptSound( "VR.ShotgunCockBack" );
 	PrecacheScriptSound( "VR.ShotgunCockForward" );
+	PrecacheScriptSound( "VR.ShotgunReload1" );
+	PrecacheScriptSound( "VR.ShotgunReload2" );
 }
 
 //-----------------------------------------------------------------------------
@@ -219,6 +238,7 @@ void CTFShotgun::PrimaryAttack()
 
 	if ( Clip1() < iClipBefore )
 	{
+		ResetVRShotgunManualReloadState();
 		m_bVRShotgunSuppressAutoReload = false;
 		m_bVRShotgunSuppressNextPumpEject = false;
 		m_flVRShotgunResumeAutoReloadTime = 0.0f;
@@ -241,11 +261,18 @@ void CTFShotgun::ItemPostFrame( void )
 		StopVRShotgunReloadSounds();
 	}
 
+	if ( ShouldUseVRShotgunPumpAction() )
+	{
+		VRShotgunManualReloadPostFrame();
+	}
+	else
+	{
+		ResetVRShotgunManualReloadState();
+	}
+
 	if ( m_bVRShotgunSuppressAutoReload )
 	{
 		if ( !pOwner
-			|| Clip1() >= GetMaxClip1()
-			|| pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0
 			|| ( pOwner->m_nButtons & IN_RELOAD )
 			|| gpGlobals->curtime >= m_flVRShotgunResumeAutoReloadTime )
 		{
@@ -310,6 +337,15 @@ void CTFShotgun::ItemBusyFrame( void )
 		StopVRShotgunReloadSounds();
 	}
 
+	if ( ShouldUseVRShotgunPumpAction() )
+	{
+		VRShotgunManualReloadPostFrame();
+	}
+	else
+	{
+		ResetVRShotgunManualReloadState();
+	}
+
 	if ( m_bVRShotgunSuppressAutoReload && gpGlobals->curtime >= m_flVRShotgunResumeAutoReloadTime )
 	{
 		m_bVRShotgunSuppressAutoReload = false;
@@ -330,6 +366,17 @@ void CTFShotgun::ItemBusyFrame( void )
 	{
 		VRShotgunPumpActionPostFrame();
 	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+bool CTFShotgun::Reload( void )
+{
+	if ( ShouldUseVRShotgunPumpAction() )
+		return false;
+
+	return BaseClass::Reload();
 }
 
 //-----------------------------------------------------------------------------
@@ -421,6 +468,9 @@ bool CTFShotgun::ShouldUseVRShotgunPumpAction() const
 //-----------------------------------------------------------------------------
 bool CTFShotgun::ShouldSuppressAutoAndSinglyReloadForVR() const
 {
+	if ( ShouldUseVRShotgunPumpAction() )
+		return true;
+
 	return m_bVRShotgunSuppressAutoReload && gpGlobals->curtime < m_flVRShotgunResumeAutoReloadTime;
 }
 
@@ -501,6 +551,171 @@ float CTFShotgun::GetVRShotgunPumpStrokeProgress() const
 {
 	float dist = tfvr_shotgun_pump_distance.GetFloat();
 	return ( dist > 0.0f ) ? clamp( (float)m_flVRShotgunPumpStrokeDist / dist, 0.0f, 1.0f ) : 0.0f;
+}
+
+float CTFShotgun::GetVRShotgunShellInsertDuration() const
+{
+	CTFShotgun *pMutableThis = const_cast< CTFShotgun * >( this );
+	return pMutableThis->GetVRSinglyReloadShellThrottleInterval() * TFVR_ReloadThrottleScale() * ( 4.0f / 7.0f );
+}
+
+float CTFShotgun::GetVRShotgunShellInsertProgress() const
+{
+	if ( !m_bVRShotgunShellInsertActive )
+		return 0.0f;
+
+	float flDuration = GetVRShotgunShellInsertDuration();
+	if ( flDuration <= 0.0f )
+		return 1.0f;
+
+	return clamp( ( gpGlobals->curtime - m_flVRShotgunShellInsertStartTime ) / flDuration, 0.0f, 1.0f );
+}
+
+bool CTFShotgun::CanStartVRShotgunManualReload()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return false;
+
+	if ( Clip1() >= GetMaxClip1() )
+		return false;
+
+	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+		return false;
+
+	return true;
+}
+
+void CTFShotgun::ResetVRShotgunManualReloadState( void )
+{
+	m_bVRShotgunShellHeld = false;
+	m_bVRShotgunShellInsertActive = false;
+	m_flVRShotgunShellInsertStartTime = 0.0f;
+}
+
+void CTFShotgun::VRStartShotgunShellInsert( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !m_bVRShotgunShellHeld || m_bVRShotgunShellInsertActive )
+		return;
+
+	if ( !CanStartVRShotgunManualReload() )
+	{
+		ResetVRShotgunManualReloadState();
+		return;
+	}
+
+	if ( gpGlobals->curtime < m_flNextVRShotgunShellStartTime )
+		return;
+
+	float flAnimDuration = GetVRShotgunShellInsertDuration();
+	float flThrottleDuration = GetVRSinglyReloadShellThrottleInterval() * TFVR_ReloadThrottleScale();
+	float flAnimFinishTime = gpGlobals->curtime + flAnimDuration;
+	float flThrottleReadyTime = gpGlobals->curtime + flThrottleDuration;
+
+	m_bVRShotgunShellInsertActive = true;
+	m_flVRShotgunShellInsertStartTime = gpGlobals->curtime;
+	m_flNextVRShotgunShellStartTime = flThrottleReadyTime;
+
+#ifdef CLIENT_DLL
+	if ( prediction->IsFirstTimePredicted() )
+		EmitSound( "VR.ShotgunReload2" );
+#endif
+
+	pOwner->m_flNextAttack = Max<float>( pOwner->m_flNextAttack, flThrottleReadyTime );
+	m_flNextPrimaryAttack = Max<float>( m_flNextPrimaryAttack, flThrottleReadyTime );
+	SetWeaponIdleTime( flAnimFinishTime );
+}
+
+void CTFShotgun::VRCommitShotgunShell( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !m_bVRShotgunShellInsertActive )
+		return;
+
+	if ( Clip1() >= GetMaxClip1() || pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 || CheckReloadMisfire() )
+	{
+		ResetVRShotgunManualReloadState();
+		return;
+	}
+
+	m_iClip1++;
+	pOwner->RemoveAmmo( 1, m_iPrimaryAmmoType );
+	m_flNextVRShotgunShellStartTime = Max<float>( m_flNextVRShotgunShellStartTime, gpGlobals->curtime );
+	m_bVRShotgunSuppressAutoReload = true;
+	m_flVRShotgunResumeAutoReloadTime = Max<float>( m_flNextVRShotgunShellStartTime, gpGlobals->curtime + 0.1f );
+	ResetVRShotgunPumpGestureState();
+	m_bVRShotgunPumpNeedsPump = true;
+	m_bVRShotgunSuppressNextPumpEject = true;
+
+	ResetVRShotgunManualReloadState();
+}
+
+void CTFShotgun::VRShotgunManualReloadPostFrame( void )
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+	{
+		ResetVRShotgunManualReloadState();
+		return;
+	}
+
+	const int nMaxClip = GetMaxClip1();
+	const int nClip = Clip1();
+
+	if ( m_bVRShotgunShellInsertActive )
+	{
+		if ( gpGlobals->curtime - m_flVRShotgunShellInsertStartTime >= GetVRShotgunShellInsertDuration() )
+		{
+			VRCommitShotgunShell();
+		}
+		return;
+	}
+
+	if ( nClip >= nMaxClip || pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+	{
+		ResetVRShotgunManualReloadState();
+		m_flNextVRShotgunShellStartTime = 0.0f;
+		m_iVRShotgunLastClipForManualReload = nClip;
+		return;
+	}
+
+	if ( m_iVRShotgunLastClipForManualReload >= 0 )
+	{
+		if ( ( nClip == 0 && m_iVRShotgunLastClipForManualReload > 0 ) ||
+			( nMaxClip > 1 && m_iVRShotgunLastClipForManualReload == nMaxClip && nClip == nMaxClip - 1 ) )
+		{
+			float flDelay = GetVRSinglyReloadStartThrottleInterval() * TFVR_ReloadThrottleScale();
+			m_flNextVRShotgunShellStartTime = MAX( m_flNextVRShotgunShellStartTime, gpGlobals->curtime + flDelay );
+		}
+	}
+	m_iVRShotgunLastClipForManualReload = nClip;
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+		return;
+
+	if ( m_bVRShotgunShellHeld && !pCmd->vrShotgunShellHold )
+	{
+		ResetVRShotgunManualReloadState();
+		return;
+	}
+
+	if ( m_bVRShotgunShellHeld )
+	{
+		if ( pCmd->vrShotgunShellInsert )
+			VRStartShotgunShellInsert();
+		return;
+	}
+
+	if ( pCmd->vrShotgunShellPull && CanStartVRShotgunManualReload() )
+	{
+		m_bVRShotgunShellHeld = true;
+#ifdef CLIENT_DLL
+		if ( prediction->IsFirstTimePredicted() )
+			EmitSound( "VR.ShotgunReload1" );
+#endif
+	}
 }
 
 //-----------------------------------------------------------------------------

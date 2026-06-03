@@ -336,6 +336,14 @@ private:
 	float m_flReloadLoopBottomCycle;   // cycle value at frame 5 of sg_reload_loop
 	float m_flShotgunPumpStartCycle;   // cycle value at frame 8 of fire
 	float m_flShotgunPumpEndCycle;     // cycle value at frame 16 of fire
+	int m_iShotgunManualReloadSequence; // reload_loop used for shell-in-hand/insertion
+	float m_flShotgunManualReloadHoldCycle;   // frame 5
+	float m_flShotgunManualReloadCommitCycle; // frame 8
+	bool m_bShotgunManualReloadPoseActive;
+	bool m_bShotgunManualReloadBlendOutActive;
+	float m_flShotgunManualReloadBlendOutStartTime;
+	int m_nShotgunManualReloadBlendOutBones;
+	matrix3x4_t m_matShotgunManualReloadBlendOutStart[MAXSTUDIOBONES];
 	bool m_bPlayingReloadAnim;
 	int m_iLeverReloadSequence;        // reload sequence sampled for lever bone only
 	float m_flLeverReloadCycle;        // cycle within that lever sequence
@@ -356,6 +364,7 @@ public:
 	bool GetIdleWeaponBoneTransform( Vector &outPos, QAngle &outAng ) const;
 	bool GetPomsonDetachedWeaponBoneWorld( matrix3x4_t &outWeaponBoneWorld );
 	bool GetPomsonDetachedRightHandTarget( Vector &outPos, QAngle &outAngles, bool bUseCurrentAnimation = false );
+	bool GetShotgunManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose (model space)

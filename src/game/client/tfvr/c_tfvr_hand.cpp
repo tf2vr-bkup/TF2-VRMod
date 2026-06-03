@@ -892,6 +892,13 @@ public:
 		m_iReloadEndSequence   = LookupSequence( szBuf );
 	}
 
+	void SetupReloadLoopAnimation( const char *pszLoopSequence )
+	{
+		m_iReloadStartSequence = -1;
+		m_iReloadLoopSequence = pszLoopSequence ? LookupSequence( pszLoopSequence ) : -1;
+		m_iReloadEndSequence = -1;
+	}
+
 	int GetReloadSequence(VRReloadAnimState state) const
 	{
 		switch (state)
@@ -1054,6 +1061,8 @@ ConVar tfvr_twohand_snap_distance("tfvr_twohand_snap_distance", "8", FCVAR_ARCHI
 ConVar tfvr_twohand_blend_distance("tfvr_twohand_blend_distance", "1", FCVAR_ARCHIVE, "Distance (inches) at which off-hand starts blending towards weapon grip");
 ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-handed grip debug info");
 ConVar tfvr_pomson_grip_debug("tfvr_pomson_grip_debug", "0", FCVAR_CHEAT, "Show Pomson right-hand grip target/easing debug overlays");
+ConVar tfvr_shotgun_manual_reload_pose_blend_fraction("tfvr_shotgun_manual_reload_pose_blend_fraction", "0.35", FCVAR_ARCHIVE, "Fraction of pump-shotgun shell insert animation spent easing the offhand into the authored reload pose");
+ConVar tfvr_shotgun_manual_reload_pose_blend_out_time("tfvr_shotgun_manual_reload_pose_blend_out_time", "0.12", FCVAR_ARCHIVE, "Seconds spent easing the offhand out of the pump-shotgun shell reload pose");
 
 // Offhand grip convars - grip button must be held to activate
 ConVar tfvr_offhand_grip_enabled("tfvr_offhand_grip_enabled", "1", FCVAR_ARCHIVE, "Enable offhand grip for two-handed weapon aiming");
@@ -1583,6 +1592,20 @@ static void SafeQuaternionSlerp(const Quaternion &from, const Quaternion &to, fl
 	QuaternionNormalize(result);
 }
 
+static void TFVR_BlendTransforms( const matrix3x4_t &from, const matrix3x4_t &to, float t, matrix3x4_t &out )
+{
+	t = clamp( t, 0.0f, 1.0f );
+
+	Vector fromPos, toPos, blendedPos;
+	Quaternion fromQuat, toQuat, blendedQuat;
+	MatrixAngles( from, fromQuat, fromPos );
+	MatrixAngles( to, toQuat, toPos );
+
+	VectorLerp( fromPos, toPos, t, blendedPos );
+	SafeQuaternionSlerp( fromQuat, toQuat, t, blendedQuat );
+	QuaternionMatrix( blendedQuat, blendedPos, out );
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Check if a weapon is a medigun (any variant)
 //-----------------------------------------------------------------------------
@@ -1964,6 +1987,13 @@ C_TFVRHand::C_TFVRHand()
 	m_flReloadLoopBottomCycle = 0.0f;
 	m_flShotgunPumpStartCycle = 0.0f;
 	m_flShotgunPumpEndCycle = 1.0f;
+	m_iShotgunManualReloadSequence = -1;
+	m_flShotgunManualReloadHoldCycle = 0.0f;
+	m_flShotgunManualReloadCommitCycle = 1.0f;
+	m_bShotgunManualReloadPoseActive = false;
+	m_bShotgunManualReloadBlendOutActive = false;
+	m_flShotgunManualReloadBlendOutStartTime = 0.0f;
+	m_nShotgunManualReloadBlendOutBones = 0;
 	m_bPlayingReloadAnim = false;
 	m_iLeverReloadSequence = -1;
 	m_flLeverReloadCycle = 0.0f;
@@ -2847,7 +2877,15 @@ void C_TFVRHand::Update()
 			bool bPomsonHeldSlide = pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON
 				&& m_eReloadAnimState != VR_RELOAD_ANIM_NONE
 				&& m_iLeverReloadSequence >= 0;
-			if ((m_bPlayingReloadAnim || bPomsonHeldSlide) && m_iLeverReloadSequence >= 0)
+			bool bPumpShotgun = pWeapon && IsPumpActionShotgunWeaponID(pWeapon->GetWeaponID());
+			bool bShotgunManualShell = false;
+			if (bPumpShotgun)
+			{
+				CTFShotgun *pShotgun = static_cast<CTFShotgun *>(pWeapon);
+				bShotgunManualShell = pShotgun->IsVRShotgunManualReloadActive();
+			}
+			if ((m_bPlayingReloadAnim || bPomsonHeldSlide) && m_iLeverReloadSequence >= 0
+				&& (!bPumpShotgun || bShotgunManualShell))
 			{
 				Vector vmWeaponBoneDelta;
 				Vector *pVmWeaponBoneDelta = NULL;
@@ -5561,6 +5599,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		}
 
 		// Apply finger tracking or weapon pose to this hand
+		bool bShotgunManualReloadPoseApplied = false;
 		if (m_hHeldWeapon.Get())
 		{
 			if (!bBackstabPose)
@@ -6443,11 +6482,225 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
 			}
 		}
+		else if (IsRightHand())
+		{
+			C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+			C_TFWeaponBase *pLeftWeapon = pLeftHand ? pLeftHand->GetHeldWeapon() : NULL;
+			CTFShotgun *pShotgun = (pLeftWeapon && IsPumpActionShotgunWeaponID(pLeftWeapon->GetWeaponID()))
+				? static_cast<CTFShotgun *>(pLeftWeapon) : NULL;
+			if (pLeftHand && pShotgun && pShotgun->IsVRShotgunManualReloadActive()
+				&& pLeftHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
+			{
+				const char *pszSeqName = pLeftHand->GetSequenceName(pLeftHand->m_iShotgunManualReloadSequence);
+				int iShellSeq = pszSeqName ? LookupSequence(pszSeqName) : -1;
+				if (iShellSeq >= 0)
+				{
+					float flProgress = pShotgun->IsVRShotgunShellInserting()
+						? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+					float flCycle = Lerp(flProgress,
+						pLeftHand->m_flShotgunManualReloadHoldCycle,
+						pLeftHand->m_flShotgunManualReloadCommitCycle);
+
+					float poseParams[MAXSTUDIOPOSEPARAM];
+					memset(poseParams, 0, sizeof(poseParams));
+					IBoneSetup shellSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParams);
+
+					Vector shellPos[MAXSTUDIOBONES];
+					Quaternion shellQ[MAXSTUDIOBONES];
+					for (int i = 0; i < MAXSTUDIOBONES; i++)
+					{
+						shellPos[i].Init();
+						shellQ[i].Init(0, 0, 0, 1);
+					}
+
+					shellSetup.InitPose(shellPos, shellQ);
+					shellSetup.AccumulatePose(shellPos, shellQ, iShellSeq, flCycle, 1.0f, gpGlobals->curtime, NULL);
+
+					matrix3x4_t shellBones[MAXSTUDIOBONES];
+					for (int i = 0; i < numBones; i++)
+					{
+						matrix3x4_t local;
+						QuaternionMatrix(shellQ[i], shellPos[i], local);
+						const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+						if (!pBone)
+						{
+							SetIdentityMatrix(shellBones[i]);
+							continue;
+						}
+
+						if (pBone->parent == -1)
+							MatrixCopy(local, shellBones[i]);
+						else if (pBone->parent >= 0 && pBone->parent < numBones)
+							ConcatTransforms(shellBones[pBone->parent], local, shellBones[i]);
+						else
+							SetIdentityMatrix(shellBones[i]);
+					}
+
+					matrix3x4_t invShellHand;
+					MatrixInvert(shellBones[m_iHandBone], invShellHand);
+					matrix3x4_t shellAnchorWorld;
+					if (pShotgun->IsVRShotgunShellInserting())
+					{
+						Vector targetPos;
+						QAngle targetAngles;
+						if (pLeftHand->GetShotgunManualReloadTarget(targetPos, targetAngles))
+						{
+							matrix3x4_t targetWorld;
+							AngleMatrix(targetAngles, targetPos, targetWorld);
+
+							float flBlendFraction = MAX(tfvr_shotgun_manual_reload_pose_blend_fraction.GetFloat(), 0.0f);
+							if (flBlendFraction > 0.0f && flProgress < flBlendFraction)
+							{
+								float flBlend = SimpleSpline(clamp(flProgress / flBlendFraction, 0.0f, 1.0f));
+								TFVR_BlendTransforms(controllerTransform, targetWorld, flBlend, shellAnchorWorld);
+							}
+							else
+							{
+								MatrixCopy(targetWorld, shellAnchorWorld);
+							}
+						}
+						else
+							MatrixCopy(controllerTransform, shellAnchorWorld);
+					}
+					else
+					{
+						MatrixCopy(controllerTransform, shellAnchorWorld);
+					}
+
+					matrix3x4_t shellAnchorDelta;
+					ConcatTransforms(shellAnchorWorld, invShellHand, shellAnchorDelta);
+
+					for (int i = 0; i < numBones && i < nMaxBones; i++)
+					{
+						ConcatTransforms(shellAnchorDelta, shellBones[i], pBoneToWorldOut[i]);
+					}
+
+					bShotgunManualReloadPoseApplied = true;
+					m_bShotgunManualReloadPoseActive = true;
+					m_bShotgunManualReloadBlendOutActive = false;
+					m_nShotgunManualReloadBlendOutBones = MIN(numBones, nMaxBones);
+					matrix3x4_t invControllerTransform;
+					MatrixInvert(controllerTransform, invControllerTransform);
+					for (int i = 0; i < m_nShotgunManualReloadBlendOutBones; i++)
+						ConcatTransforms(invControllerTransform, pBoneToWorldOut[i], m_matShotgunManualReloadBlendOutStart[i]);
+				}
+				else
+				{
+					ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+				}
+			}
+			else
+			{
+				ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+			}
+		}
 		else if (IsLeftHand())
 		{
 			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
 			C_TFWeaponBase *pRightWeapon = pRightHand ? pRightHand->GetHeldWeapon() : NULL;
-			if (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_FISTS
+			CTFShotgun *pShotgun = (pRightWeapon && IsPumpActionShotgunWeaponID(pRightWeapon->GetWeaponID()))
+				? static_cast<CTFShotgun *>(pRightWeapon) : NULL;
+			if (pRightHand && pShotgun && pShotgun->IsVRShotgunManualReloadActive()
+				&& pRightHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
+			{
+				const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iShotgunManualReloadSequence);
+				int iShellSeq = pszSeqName ? LookupSequence(pszSeqName) : -1;
+				if (iShellSeq >= 0)
+				{
+					float flProgress = pShotgun->IsVRShotgunShellInserting()
+						? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+					float flCycle = Lerp(flProgress,
+						pRightHand->m_flShotgunManualReloadHoldCycle,
+						pRightHand->m_flShotgunManualReloadCommitCycle);
+
+					float poseParams[MAXSTUDIOPOSEPARAM];
+					memset(poseParams, 0, sizeof(poseParams));
+					IBoneSetup shellSetup(pStudioHdr, BONE_USED_BY_ANYTHING, poseParams);
+
+					Vector shellPos[MAXSTUDIOBONES];
+					Quaternion shellQ[MAXSTUDIOBONES];
+					for (int i = 0; i < MAXSTUDIOBONES; i++)
+					{
+						shellPos[i].Init();
+						shellQ[i].Init(0, 0, 0, 1);
+					}
+
+					shellSetup.InitPose(shellPos, shellQ);
+					shellSetup.AccumulatePose(shellPos, shellQ, iShellSeq, flCycle, 1.0f, gpGlobals->curtime, NULL);
+
+					matrix3x4_t shellBones[MAXSTUDIOBONES];
+					for (int i = 0; i < numBones; i++)
+					{
+						matrix3x4_t local;
+						QuaternionMatrix(shellQ[i], shellPos[i], local);
+						const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+						if (!pBone)
+						{
+							SetIdentityMatrix(shellBones[i]);
+							continue;
+						}
+
+						if (pBone->parent == -1)
+							MatrixCopy(local, shellBones[i]);
+						else if (pBone->parent >= 0 && pBone->parent < numBones)
+							ConcatTransforms(shellBones[pBone->parent], local, shellBones[i]);
+						else
+							SetIdentityMatrix(shellBones[i]);
+					}
+
+					matrix3x4_t invShellHand;
+					MatrixInvert(shellBones[m_iHandBone], invShellHand);
+					matrix3x4_t shellAnchorDelta;
+					matrix3x4_t shellAnchorWorld;
+					if (pShotgun->IsVRShotgunShellInserting())
+					{
+						Vector targetPos;
+						QAngle targetAngles;
+						if (pRightHand->GetShotgunManualReloadTarget(targetPos, targetAngles))
+						{
+							matrix3x4_t targetWorld;
+							AngleMatrix(targetAngles, targetPos, targetWorld);
+
+							float flBlendFraction = MAX(tfvr_shotgun_manual_reload_pose_blend_fraction.GetFloat(), 0.0f);
+							if (flBlendFraction > 0.0f && flProgress < flBlendFraction)
+							{
+								float flBlend = SimpleSpline(clamp(flProgress / flBlendFraction, 0.0f, 1.0f));
+								TFVR_BlendTransforms(controllerTransform, targetWorld, flBlend, shellAnchorWorld);
+							}
+							else
+							{
+								MatrixCopy(targetWorld, shellAnchorWorld);
+							}
+						}
+						else
+							MatrixCopy(controllerTransform, shellAnchorWorld);
+					}
+					else
+					{
+						MatrixCopy(controllerTransform, shellAnchorWorld);
+					}
+					ConcatTransforms(shellAnchorWorld, invShellHand, shellAnchorDelta);
+
+					for (int i = 0; i < numBones && i < nMaxBones; i++)
+					{
+						ConcatTransforms(shellAnchorDelta, shellBones[i], pBoneToWorldOut[i]);
+					}
+
+					bShotgunManualReloadPoseApplied = true;
+					m_bShotgunManualReloadPoseActive = true;
+					m_bShotgunManualReloadBlendOutActive = false;
+					m_nShotgunManualReloadBlendOutBones = MIN(numBones, nMaxBones);
+					matrix3x4_t invControllerTransform;
+					MatrixInvert(controllerTransform, invControllerTransform);
+					for (int i = 0; i < m_nShotgunManualReloadBlendOutBones; i++)
+						ConcatTransforms(invControllerTransform, pBoneToWorldOut[i], m_matShotgunManualReloadBlendOutStart[i]);
+				}
+				else
+				{
+					ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+				}
+			}
+			else if (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_FISTS
 				&& !IsBareFists(pRightWeapon))
 			{
 				// Gloved fists: use the weapon pose so fingers match the glove model
@@ -6462,6 +6715,48 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		else
 		{
 			ApplyFingerTracking(pBoneToWorldOut, nMaxBones);
+		}
+
+		if (!bShotgunManualReloadPoseApplied)
+		{
+			if (m_bShotgunManualReloadPoseActive && m_nShotgunManualReloadBlendOutBones > 0)
+			{
+				m_bShotgunManualReloadPoseActive = false;
+				m_bShotgunManualReloadBlendOutActive = true;
+				m_flShotgunManualReloadBlendOutStartTime = gpGlobals->curtime;
+			}
+
+			if (m_bShotgunManualReloadBlendOutActive)
+			{
+				float flBlendOutTime = tfvr_shotgun_manual_reload_pose_blend_out_time.GetFloat();
+				if (flBlendOutTime <= 0.0f)
+				{
+					m_bShotgunManualReloadBlendOutActive = false;
+					m_nShotgunManualReloadBlendOutBones = 0;
+				}
+				else
+				{
+					float flBlend = (gpGlobals->curtime - m_flShotgunManualReloadBlendOutStartTime) / flBlendOutTime;
+					if (flBlend >= 1.0f)
+					{
+						m_bShotgunManualReloadBlendOutActive = false;
+						m_nShotgunManualReloadBlendOutBones = 0;
+					}
+					else
+					{
+						flBlend = SimpleSpline(clamp(flBlend, 0.0f, 1.0f));
+						int nBlendBones = MIN(m_nShotgunManualReloadBlendOutBones, MIN(numBones, nMaxBones));
+						for (int i = 0; i < nBlendBones; i++)
+						{
+							matrix3x4_t trackedBone;
+							matrix3x4_t startBoneWorld;
+							MatrixCopy(pBoneToWorldOut[i], trackedBone);
+							ConcatTransforms(controllerTransform, m_matShotgunManualReloadBlendOutStart[i], startBoneWorld);
+							TFVR_BlendTransforms(startBoneWorld, trackedBone, flBlend, pBoneToWorldOut[i]);
+						}
+					}
+				}
+			}
 		}
 
 		// Position offset was already applied to controllerTransform at the beginning,
@@ -7647,6 +7942,98 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	return true;
 }
 
+bool C_TFVRHand::GetShotgunManualReloadTarget( Vector &outPos, QAngle &outAngles )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !pWeapon || !IsPumpActionShotgunWeaponID( pWeapon->GetWeaponID() ) || m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	CTFShotgun *pShotgun = static_cast< CTFShotgun * >( pWeapon );
+	if ( !pShotgun->IsVRShotgunManualReloadActive() )
+		return false;
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr )
+		return false;
+
+	const int numBones = pStudioHdr->numbones();
+	int iOffHandBone = IsRightHand() ? LookupBone( "bip_hand_L" ) : LookupBone( "bip_hand_R" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "ValveBiped.Bip01_L_Hand" ) : LookupBone( "ValveBiped.Bip01_R_Hand" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "bip_hand_l" ) : LookupBone( "bip_hand_r" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "weapon_bone_L" ) : LookupBone( "weapon_bone_R" );
+
+	int iWeaponBone = LookupBone( "weapon_bone" );
+	if ( iWeaponBone < 0 )
+		iWeaponBone = LookupBone( "vm_weapon_bone" );
+
+	if ( iOffHandBone < 0 || iOffHandBone >= numBones || iOffHandBone >= MAXSTUDIOBONES ||
+		iWeaponBone < 0 || iWeaponBone >= numBones || iWeaponBone >= MAXSTUDIOBONES )
+		return false;
+
+	float flProgress = pShotgun->IsVRShotgunShellInserting()
+		? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+	float flCycle = Lerp( flProgress, m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle );
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, m_iShotgunManualReloadSequence, flCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones && i < MAXSTUDIOBONES; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( qAnim[i], posAnim[i], local );
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones && pBone->parent < MAXSTUDIOBONES )
+			ConcatTransforms( sampledBones[pBone->parent], local, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	matrix3x4_t liveWeaponBone;
+	if ( !GetCachedWeaponBoneTransform( liveWeaponBone ) )
+	{
+		if ( m_bHasIdleWeaponBone )
+			MatrixCopy( m_matIdleWeaponBoneWorld, liveWeaponBone );
+		else
+			return false;
+	}
+
+	matrix3x4_t invSampledWeaponBone;
+	MatrixInvert( sampledBones[iWeaponBone], invSampledWeaponBone );
+
+	matrix3x4_t offhandRelativeToWeapon;
+	ConcatTransforms( invSampledWeaponBone, sampledBones[iOffHandBone], offhandRelativeToWeapon );
+
+	matrix3x4_t offhandWorld;
+	ConcatTransforms( liveWeaponBone, offhandRelativeToWeapon, offhandWorld );
+
+	MatrixAngles( offhandWorld, outAngles, outPos );
+	return true;
+}
+
 bool C_TFVRHand::GetSampledBoneLocalTransform( const char *pszBoneName, int iSequence, float flCycle, matrix3x4_t &outLocalTransform )
 {
 	CStudioHdr *pStudioHdr = GetModelPtr();
@@ -8549,6 +8936,12 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	// the VR hand model would distort the glove mesh.
 	C_TFWeaponBase *pMergeWeapon = m_hHeldWeapon.Get();
 	bool bSkipBoneMerge = pMergeWeapon && pMergeWeapon->GetWeaponID() == TF_WEAPON_FISTS;
+	bool bShotgunManualShell = false;
+	if (pMergeWeapon && IsPumpActionShotgunWeaponID(pMergeWeapon->GetWeaponID()))
+	{
+		CTFShotgun *pShotgun = static_cast<CTFShotgun *>(pMergeWeapon);
+		bShotgunManualShell = pShotgun->IsVRShotgunManualReloadActive();
+	}
 
 	// For pistol/shotgun-type weapons, keep vm_weapon bones in the weapon
 	// model's own idle pose so ammo/shells don't float visibly without a
@@ -8566,7 +8959,6 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			bKeepAmmoRefPose = true;
 		}
 	}
-
 	CStudioHdr *pWeaponHdr = pRenderWeapon->GetModelPtr();
 	if (pWeaponHdr && pBoneToWorldOut && !bSkipBoneMerge)
 	{
@@ -8582,7 +8974,18 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		// Identify which bones will be overwritten and save their original transforms
 		bool bCopiedBone[MAXSTUDIOBONES];
 		memset(bCopiedBone, 0, sizeof(bCopiedBone));
+		bool bCopyFromShellHand[MAXSTUDIOBONES];
+		memset(bCopyFromShellHand, 0, sizeof(bCopyFromShellHand));
 		matrix3x4_t originalWeaponBones[MAXSTUDIOBONES];
+		matrix3x4_t shellHandBones[MAXSTUDIOBONES];
+		C_TFVRHand *pShellHand = NULL;
+		bool bShellHandValid = false;
+		if (bShotgunManualShell)
+		{
+			pShellHand = IsRightHand() ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
+			if (pShellHand)
+				bShellHandValid = pShellHand->SetupBones(shellHandBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime);
+		}
 
 		for (int i = 0; i < weaponBoneCount && i < MAXSTUDIOBONES; i++)
 		{
@@ -8610,6 +9013,18 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			// so the hand drives both visual and audio for the deploy.
 			if (Q_strncmp(szBoneName, "vm_weapon", 9) == 0)
 			{
+				if (bShotgunManualShell && bShellHandValid && pShellHand
+					&& Q_strcmp(szBoneName, "vm_weapon_bone") == 0)
+				{
+					int shellHandBone = pShellHand->LookupBone(szBoneName);
+					if (shellHandBone >= 0 && shellHandBone < MAXSTUDIOBONES)
+					{
+						MatrixCopy(pRenderWeapon->GetBoneForWrite(i), originalWeaponBones[i]);
+						bCopiedBone[i] = true;
+						bCopyFromShellHand[i] = true;
+						continue;
+					}
+				}
 				if ((m_bAnimateIdle && !m_bLoopIdleOnHand) || bKeepAmmoRefPose)
 					continue;
 				if (m_bLoopIdleOnHand)
@@ -8658,7 +9073,16 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 			int handBoneIndex = LookupBone(szBoneName);
 
 			matrix3x4_t &weaponBone = pRenderWeapon->GetBoneForWrite(i);
-			MatrixCopy(pBoneToWorldOut[handBoneIndex], weaponBone);
+			if (bCopyFromShellHand[i] && pShellHand)
+			{
+				int shellHandBone = pShellHand->LookupBone(szBoneName);
+				if (shellHandBone >= 0 && shellHandBone < MAXSTUDIOBONES)
+					MatrixCopy(shellHandBones[shellHandBone], weaponBone);
+			}
+			else
+			{
+				MatrixCopy(pBoneToWorldOut[handBoneIndex], weaponBone);
+			}
 			copiedCount++;
 		}
 
@@ -8674,6 +9098,10 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 
 			const mstudiobone_t *pWpnBone = pWeaponHdr->pBone(i);
 			if (!pWpnBone || pWpnBone->parent < 0)
+				continue;
+
+			const char *szChildBoneName = pWpnBone->pszName();
+			if (bShotgunManualShell && Q_strncmp(szChildBoneName, "vm_weapon", 9) == 0)
 				continue;
 
 			if (!bCopiedBone[pWpnBone->parent])
@@ -11055,6 +11483,13 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		m_flReloadLoopBottomCycle = 0.0f;
 		m_flShotgunPumpStartCycle = 0.0f;
 		m_flShotgunPumpEndCycle = 1.0f;
+		m_iShotgunManualReloadSequence = -1;
+		m_flShotgunManualReloadHoldCycle = 0.0f;
+		m_flShotgunManualReloadCommitCycle = 1.0f;
+		m_bShotgunManualReloadPoseActive = false;
+		m_bShotgunManualReloadBlendOutActive = false;
+		m_flShotgunManualReloadBlendOutStartTime = 0.0f;
+		m_nShotgunManualReloadBlendOutBones = 0;
 		m_bPlayingReloadAnim = false;
 		m_iLeverReloadSequence = -1;
 		m_flLeverReloadCycle = 0.0f;
@@ -11084,6 +11519,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		{
 			const char *shotgunPumpAnimName = (fireAnimName && fireAnimName[0]) ? fireAnimName : "fire";
 			m_iReloadLoopSequence = LookupSequence(shotgunPumpAnimName);
+			m_iShotgunManualReloadSequence = LookupSequence("reload_loop");
 
 			if (m_iReloadLoopSequence >= 0)
 			{
@@ -11101,9 +11537,25 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				}
 			}
 
-			DevMsg("VR: Shotgun pump sequence '%s': seq=%d start=%.3f mid=%.3f end=%.3f on '%s'\n",
+			if (m_iShotgunManualReloadSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iShotgunManualReloadSequence, poseParams);
+					if (maxFrame > 0)
+					{
+						m_flShotgunManualReloadHoldCycle = clamp( 5.0f / (float)maxFrame, 0.0f, 1.0f );
+						m_flShotgunManualReloadCommitCycle = clamp( 8.0f / (float)maxFrame, m_flShotgunManualReloadHoldCycle, 1.0f );
+					}
+				}
+			}
+
+			DevMsg("VR: Shotgun pump sequence '%s': seq=%d start=%.3f mid=%.3f end=%.3f manualReload=%d hold=%.3f commit=%.3f on '%s'\n",
 				shotgunPumpAnimName, m_iReloadLoopSequence, m_flShotgunPumpStartCycle,
-				m_flReloadLoopBottomCycle, m_flShotgunPumpEndCycle, GetModelName());
+				m_flReloadLoopBottomCycle, m_flShotgunPumpEndCycle, m_iShotgunManualReloadSequence,
+				m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle, GetModelName());
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 		{
@@ -11375,6 +11827,8 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		pRenderWeapon->SetupReloadAnimations( "mangler" );
 	else if (pWeapon->GetWeaponID() == TF_WEAPON_DRG_POMSON)
 		pRenderWeapon->SetupReloadAnimations( "pomson" );
+	else if (IsPumpActionShotgunWeaponID(pWeapon->GetWeaponID()))
+		pRenderWeapon->SetupReloadLoopAnimation( "reload_loop" );
 
 	// For fist/glove weapons, override with the correct idle pose so the
 	// vm_weapon_bone chain positions the mesh correctly.
@@ -11726,6 +12180,13 @@ void C_TFVRHand::UnequipWeapon()
 	m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
 	m_flReloadAnimStartTime = 0.0f;
 	m_flReloadLoopBottomCycle = 0.0f;
+	m_iShotgunManualReloadSequence = -1;
+	m_flShotgunManualReloadHoldCycle = 0.0f;
+	m_flShotgunManualReloadCommitCycle = 1.0f;
+	m_bShotgunManualReloadPoseActive = false;
+	m_bShotgunManualReloadBlendOutActive = false;
+	m_flShotgunManualReloadBlendOutStartTime = 0.0f;
+	m_nShotgunManualReloadBlendOutBones = 0;
 	m_bPlayingReloadAnim = false;
 	m_iLeverReloadSequence = -1;
 	m_flLeverReloadCycle = 0.0f;
@@ -12809,6 +13270,20 @@ void C_TFVRHand::UpdateShotgunPumpActionAnimation()
 
 	extern ConVar tfvr_shotgun_pump_debug;
 	bool bDebug = tfvr_shotgun_pump_debug.GetBool();
+
+	if (pShotgun->IsVRShotgunManualReloadActive() && m_iShotgunManualReloadSequence >= 0)
+	{
+		float flProgress = pShotgun->IsVRShotgunShellInserting()
+			? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+		m_eReloadAnimState = pShotgun->IsVRShotgunShellInserting()
+			? VR_RELOAD_ANIM_PUMPING : VR_RELOAD_ANIM_HOLD;
+		m_bPlayingReloadAnim = true;
+		m_bPlayingDrawAnim = false;
+		m_bPlayingChargeAnim = false;
+		m_iLeverReloadSequence = m_iShotgunManualReloadSequence;
+		m_flLeverReloadCycle = Lerp( flProgress, m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle );
+		return;
+	}
 
 	if (!bNeedsPump)
 	{

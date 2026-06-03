@@ -41,6 +41,7 @@ extern ConVar tfvr_medigun_lever;
 extern ConVar tfvr_sticky_pump_reload;
 extern ConVar tfvr_bison_pump_reload;
 extern ConVar tfvr_shotgun_pump_action;
+extern ConVar tfvr_shotgun_pump_debug;
 
 ConVar tfvr_bison_pump_weapon_grip_threshold( "tfvr_bison_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR bison pump: off-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_bison_pump_twohand_min_blend( "tfvr_bison_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR bison pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -57,6 +58,15 @@ ConVar tfvr_scattergun_lever_weapon_grip_threshold( "tfvr_scattergun_lever_weapo
 ConVar tfvr_scattergun_lever_twohand_min_blend( "tfvr_scattergun_lever_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR scattergun lever: minimum two-hand blend on the weapon hand before lever motion counts (0-1)" );
 ConVar tfvr_shotgun_pump_weapon_grip_threshold( "tfvr_shotgun_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR shotgun pump: off-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_shotgun_pump_twohand_min_blend( "tfvr_shotgun_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR shotgun pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
+ConVar tfvr_shotgun_manual_reload_grip_threshold( "tfvr_shotgun_manual_reload_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR shotgun manual reload: off-hand grip analog threshold for pulling a shell from the backpack" );
+ConVar tfvr_shotgun_manual_reload_back_start( "tfvr_shotgun_manual_reload_back_start", "4.0", FCVAR_ARCHIVE, "VR shotgun manual reload: minimum distance behind the HMD for the backpack shell zone" );
+ConVar tfvr_shotgun_manual_reload_back_depth( "tfvr_shotgun_manual_reload_back_depth", "38.0", FCVAR_ARCHIVE, "VR shotgun manual reload: depth behind the HMD for the backpack shell zone" );
+ConVar tfvr_shotgun_manual_reload_back_width( "tfvr_shotgun_manual_reload_back_width", "28.0", FCVAR_ARCHIVE, "VR shotgun manual reload: half-width of the backpack shell zone" );
+ConVar tfvr_shotgun_manual_reload_back_top( "tfvr_shotgun_manual_reload_back_top", "10.0", FCVAR_ARCHIVE, "VR shotgun manual reload: height above the HMD accepted by the backpack shell zone" );
+ConVar tfvr_shotgun_manual_reload_chest_radius( "tfvr_shotgun_manual_reload_chest_radius", "12.0", FCVAR_ARCHIVE, "VR shotgun manual reload: radius around the chest ammo zone" );
+ConVar tfvr_shotgun_manual_reload_chest_down( "tfvr_shotgun_manual_reload_chest_down", "18.0", FCVAR_ARCHIVE, "VR shotgun manual reload: distance below the HMD for the chest ammo zone center" );
+ConVar tfvr_shotgun_manual_reload_chest_forward( "tfvr_shotgun_manual_reload_chest_forward", "5.0", FCVAR_ARCHIVE, "VR shotgun manual reload: distance in front of the HMD for the chest ammo zone center" );
+ConVar tfvr_shotgun_manual_reload_insert_radius( "tfvr_shotgun_manual_reload_insert_radius", "5.0", FCVAR_ARCHIVE, "VR shotgun manual reload: off-hand distance to authored reload pose required to insert a shell" );
 ConVar tfvr_medigun_lever_grip_threshold( "tfvr_medigun_lever_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR medigun lever: right grip analog must reach this (0-1) to arm the lever" );
 ConVar tfvr_sticky_pump_weapon_grip_threshold( "tfvr_sticky_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR sticky pump: weapon-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_sticky_pump_twohand_min_blend( "tfvr_sticky_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR sticky pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -1086,6 +1096,158 @@ static void TFVR_UpdateShotgunPumpArmedInCmd( CUserCmd *cmd )
 	}
 }
 
+static void TFVR_DrawDebugSphere( const Vector &vecCenter, float flRadius, int r, int g, int b, int a, float flDuration )
+{
+	if ( flRadius <= 0.0f || !debugoverlay )
+		return;
+
+	const int nSegments = 32;
+	const float flStep = M_PI_F * 2.0f / (float)nSegments;
+
+	Vector vecPrevXY = vecCenter + Vector( flRadius, 0.0f, 0.0f );
+	Vector vecPrevXZ = vecCenter + Vector( flRadius, 0.0f, 0.0f );
+	Vector vecPrevYZ = vecCenter + Vector( 0.0f, flRadius, 0.0f );
+
+	for ( int i = 1; i <= nSegments; ++i )
+	{
+		const float flAngle = flStep * (float)i;
+		const float flSin = sinf( flAngle );
+		const float flCos = cosf( flAngle );
+
+		Vector vecXY = vecCenter + Vector( flCos * flRadius, flSin * flRadius, 0.0f );
+		Vector vecXZ = vecCenter + Vector( flCos * flRadius, 0.0f, flSin * flRadius );
+		Vector vecYZ = vecCenter + Vector( 0.0f, flCos * flRadius, flSin * flRadius );
+
+		debugoverlay->AddLineOverlay( vecPrevXY, vecXY, r, g, b, true, flDuration );
+		debugoverlay->AddLineOverlay( vecPrevXZ, vecXZ, r, g, b, true, flDuration );
+		debugoverlay->AddLineOverlay( vecPrevYZ, vecYZ, r, g, b, true, flDuration );
+
+		vecPrevXY = vecXY;
+		vecPrevXZ = vecXZ;
+		vecPrevYZ = vecYZ;
+	}
+
+	debugoverlay->AddBoxOverlay( vecCenter, Vector( -1.0f, -1.0f, -1.0f ), Vector( 1.0f, 1.0f, 1.0f ),
+		vec3_angle, r, g, b, a, flDuration );
+}
+
+static void TFVR_UpdateShotgunManualReloadInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_shotgun_pump_action.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || !IsPumpActionShotgunWeaponID( pWpn->GetWeaponID() ) || !pWpn->IsHeldByVRHand() )
+		return;
+
+	CTFShotgun *pShotgun = static_cast< CTFShotgun * >( pWpn );
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+
+	if ( !pWeaponHand || !pOffHand )
+		return;
+
+	const float flGrip = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "right_grip" )
+		: g_pOpenXRManager->GetAnalogValue( "left_grip" );
+	const float flOffhandTrigger = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "primary_attack" )
+		: g_pOpenXRManager->GetAnalogValue( "secondary_attack" );
+	const bool bHoldInput = flGrip >= tfvr_shotgun_manual_reload_grip_threshold.GetFloat()
+		|| flOffhandTrigger >= 0.5f;
+	cmd->vrShotgunShellHold = bHoldInput;
+
+	if ( !pShotgun->IsVRShotgunShellInserting() || tfvr_shotgun_pump_debug.GetBool() )
+	{
+		Vector hmdOrigin;
+		QAngle hmdAngles;
+		g_pOpenXRManager->GetHMDInChaperone( hmdOrigin, hmdAngles );
+
+		Vector hmdForward, hmdRight, hmdUp;
+		AngleVectors( hmdAngles, &hmdForward, &hmdRight, &hmdUp );
+
+		hmdForward.z = 0.0f;
+		hmdRight.z = 0.0f;
+		if ( hmdForward.IsZero() )
+			hmdForward.Init( 1.0f, 0.0f, 0.0f );
+		if ( hmdRight.IsZero() )
+			hmdRight.Init( 0.0f, -1.0f, 0.0f );
+		VectorNormalize( hmdForward );
+		VectorNormalize( hmdRight );
+
+		VMatrix offhandPose;
+		bool bGotOffhandPose = ( pOffHand == pRight )
+			? g_pOpenXRManager->GetRightControllerPoseRaw( offhandPose )
+			: g_pOpenXRManager->GetLeftControllerPoseRaw( offhandPose );
+
+		if ( bGotOffhandPose )
+		{
+			Vector offhandPos = offhandPose.GetTranslation();
+			Vector relToHead = offhandPos - hmdOrigin;
+			float flBehind = DotProduct( relToHead, -hmdForward );
+			float flLateral = fabsf( DotProduct( relToHead, hmdRight ) );
+
+			bool bInBackpack = flBehind >= tfvr_shotgun_manual_reload_back_start.GetFloat()
+				&& flBehind <= tfvr_shotgun_manual_reload_back_depth.GetFloat()
+				&& flLateral <= tfvr_shotgun_manual_reload_back_width.GetFloat()
+				&& offhandPos.z <= hmdOrigin.z + tfvr_shotgun_manual_reload_back_top.GetFloat()
+				&& offhandPos.z >= -4.0f;
+
+			Vector chestCenter = hmdOrigin
+				+ hmdForward * tfvr_shotgun_manual_reload_chest_forward.GetFloat()
+				- Vector( 0.0f, 0.0f, tfvr_shotgun_manual_reload_chest_down.GetFloat() );
+			float flChestRadius = tfvr_shotgun_manual_reload_chest_radius.GetFloat();
+			bool bInChestZone = flChestRadius > 0.0f
+				&& ( offhandPos - chestCenter ).LengthSqr() <= Square( flChestRadius );
+
+			if ( tfvr_shotgun_pump_debug.GetBool() )
+			{
+				TFVR_DrawDebugSphere( chestCenter, flChestRadius,
+					0,
+					bInChestZone ? 255 : 192,
+					bInChestZone ? 0 : 255,
+					96, 0.05f );
+			}
+
+			if ( !pShotgun->HasVRShotgunShellInHand() && !pShotgun->IsVRShotgunShellInserting()
+				&& bHoldInput && ( bInBackpack || bInChestZone ) )
+				cmd->vrShotgunShellPull = true;
+		}
+	}
+
+	if ( pShotgun->HasVRShotgunShellInHand() && !pShotgun->IsVRShotgunShellInserting() )
+	{
+		Vector targetPos;
+		QAngle targetAngles;
+		if ( pWeaponHand->GetShotgunManualReloadTarget( targetPos, targetAngles ) )
+		{
+			float flDist = ( pOffHand->GetAbsOrigin() - targetPos ).Length();
+			if ( flDist <= tfvr_shotgun_manual_reload_insert_radius.GetFloat() )
+				cmd->vrShotgunShellInsert = true;
+		}
+	}
+}
+
 static void TFVR_UpdateMedigunLeverArmedInCmd( CUserCmd *cmd )
 {
 	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
@@ -1361,6 +1523,9 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	if ( cmd )
 	{
 		cmd->vrManualPumpReload = false;
+		cmd->vrShotgunShellPull = false;
+		cmd->vrShotgunShellInsert = false;
+		cmd->vrShotgunShellHold = false;
 		cmd->vrWeaponArmed = false;
 		cmd->vrWeaponHandIsRight = true;
 	}
@@ -1379,6 +1544,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 
 	TFVR_UpdateScattergunLeverArmedInCmd( cmd );
 	TFVR_UpdateShotgunPumpArmedInCmd( cmd );
+	TFVR_UpdateShotgunManualReloadInCmd( cmd );
 	TFVR_UpdateMedigunLeverArmedInCmd( cmd );
 	TFVR_UpdateStickyPumpArmedInCmd( cmd );
 	TFVR_UpdateBisonPumpArmedInCmd( cmd );
