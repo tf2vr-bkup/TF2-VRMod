@@ -1237,11 +1237,15 @@ static void TFVR_UpdateShotgunManualReloadInCmd( CUserCmd *cmd )
 
 	if ( pShotgun->HasVRShotgunShellInHand() && !pShotgun->IsVRShotgunShellInserting() )
 	{
-		Vector targetPos;
-		QAngle targetAngles;
-		if ( pWeaponHand->GetShotgunManualReloadTarget( targetPos, targetAngles ) )
+		Vector insertProbePos;
+		Vector insertTargetPos;
+		bool bUseHeavyShellBone = pWpn->GetWeaponID() == TF_WEAPON_SHOTGUN_HWG;
+		bool bGotInsertProbe = pOffHand->GetShotgunManualReloadShellPosition( insertProbePos, bUseHeavyShellBone );
+		bool bGotInsertTarget = pWeaponHand->GetShotgunManualReloadShellTarget( insertTargetPos );
+
+		if ( bGotInsertProbe && bGotInsertTarget )
 		{
-			float flDist = ( pOffHand->GetAbsOrigin() - targetPos ).Length();
+			float flDist = ( insertProbePos - insertTargetPos ).Length();
 			if ( flDist <= tfvr_shotgun_manual_reload_insert_radius.GetFloat() )
 				cmd->vrShotgunShellInsert = true;
 		}
