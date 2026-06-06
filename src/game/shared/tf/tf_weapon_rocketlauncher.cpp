@@ -17,6 +17,8 @@
 #include <vgui/ISurface.h>
 #include "soundenvelope.h"
 #include "particle_property.h"
+#include "prediction.h"
+#include "tfvr/c_tfvr_hand.h"
 // Server specific.
 #else
 #include "tf_player.h"
@@ -25,7 +27,16 @@
 
 #endif
 
+#include "usercmd.h"
+
 #define BOMBARDMENT_ROCKET_MODEL "models/buildables/sentry3_rockets.mdl"
+
+extern ConVar tfvr_reload_throttle_scale;
+
+static inline float TFVR_RocketReloadThrottleScale()
+{
+	return MAX( 1.0f, tfvr_reload_throttle_scale.GetFloat() );
+}
 
 //=============================================================================
 //
@@ -34,14 +45,26 @@
 IMPLEMENT_NETWORKCLASS_ALIASED( TFRocketLauncher, DT_WeaponRocketLauncher )
 
 BEGIN_NETWORK_TABLE( CTFRocketLauncher, DT_WeaponRocketLauncher )
-#ifndef CLIENT_DLL
-//	SendPropInt( SENDINFO( m_iSecondaryShotsFired ) ),
+#ifdef CLIENT_DLL
+	RecvPropBool( RECVINFO( m_bVRRocketHeld ) ),
+	RecvPropBool( RECVINFO( m_bVRRocketInsertActive ) ),
+	RecvPropFloat( RECVINFO( m_flVRRocketInsertStartTime ) ),
+	RecvPropFloat( RECVINFO( m_flNextVRRocketStartTime ) ),
 #else
-//	RecvPropInt( RECVINFO( m_iSecondaryShotsFired ) ),
+	SendPropBool( SENDINFO( m_bVRRocketHeld ) ),
+	SendPropBool( SENDINFO( m_bVRRocketInsertActive ) ),
+	SendPropFloat( SENDINFO( m_flVRRocketInsertStartTime ), 0, SPROP_NOSCALE ),
+	SendPropFloat( SENDINFO( m_flNextVRRocketStartTime ), 0, SPROP_NOSCALE ),
 #endif
 END_NETWORK_TABLE()
 
 BEGIN_PREDICTION_DATA( CTFRocketLauncher )
+#ifdef CLIENT_DLL
+	DEFINE_PRED_FIELD( m_bVRRocketHeld, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRRocketInsertActive, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRRocketInsertStartTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flNextVRRocketStartTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+#endif
 END_PREDICTION_DATA()
 
 LINK_ENTITY_TO_CLASS( tf_weapon_rocketlauncher, CTFRocketLauncher );
@@ -158,6 +181,11 @@ CTFRocketLauncher::CTFRocketLauncher()
 {
 	m_bReloadsSingly = true;
 	m_nReloadPitchStep = 0;
+	m_bVRRocketHeld = false;
+	m_bVRRocketInsertActive = false;
+	m_flVRRocketInsertStartTime = 0.0f;
+	m_flNextVRRocketStartTime = 0.0f;
+	m_iVRRocketLastClipForManualReload = -1;
 
 #ifdef GAME_DLL
 	m_bIsOverloading = false;
@@ -302,6 +330,7 @@ bool CTFRocketLauncher::CanInspect() const
 CBaseEntity *CTFRocketLauncher::FireProjectile( CTFPlayer *pPlayer )
 {
 	m_flShowReloadHintAt = gpGlobals->curtime + 30;
+	ResetVRRocketManualReloadState();
 	CBaseEntity *pRocket = BaseClass::FireProjectile( pPlayer );
 
 	m_nReloadPitchStep = MAX( 0, m_nReloadPitchStep - 1 );
@@ -347,6 +376,15 @@ void CTFRocketLauncher::ItemPostFrame( void )
 	if ( !pOwner )
 		return;
 
+	if ( ShouldUseVRManualRocketReload() )
+	{
+		VRRocketManualReloadPostFrame();
+	}
+	else
+	{
+		ResetVRRocketManualReloadState();
+	}
+
 	BaseClass::ItemPostFrame();
 
 #ifdef GAME_DLL
@@ -360,6 +398,271 @@ void CTFRocketLauncher::ItemPostFrame( void )
 		m_flShowReloadHintAt = 0;
 	}
 #endif
+}
+
+void CTFRocketLauncher::ItemBusyFrame( void )
+{
+	if ( ShouldUseVRManualRocketReload() )
+	{
+		VRRocketManualReloadPostFrame();
+	}
+	else
+	{
+		ResetVRRocketManualReloadState();
+	}
+
+	BaseClass::ItemBusyFrame();
+}
+
+bool CTFRocketLauncher::Reload( void )
+{
+	if ( ShouldUseVRManualRocketReload() )
+		return false;
+
+	return BaseClass::Reload();
+}
+
+bool CTFRocketLauncher::ShouldSuppressAutoAndSinglyReloadForVR() const
+{
+	return ShouldUseVRManualRocketReload();
+}
+
+bool CTFRocketLauncher::ShouldUseVRManualRocketReload() const
+{
+	if ( GetWeaponID() != TF_WEAPON_ROCKETLAUNCHER && GetWeaponID() != TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	if ( IsHeldByVRHand() )
+		return true;
+
+	if ( pOwner->IsLocalPlayer() )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+			return true;
+
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		if ( pLeftHand && pLeftHand->GetHeldWeapon() == this )
+			return true;
+	}
+
+	return false;
+#else
+	return true;
+#endif
+}
+
+float CTFRocketLauncher::GetVRRocketInsertDuration() const
+{
+	CTFRocketLauncher *pMutableThis = const_cast< CTFRocketLauncher * >( this );
+	return pMutableThis->GetVRSinglyReloadShellThrottleInterval() * TFVR_RocketReloadThrottleScale();
+}
+
+float CTFRocketLauncher::GetVRRocketVisualInsertDuration() const
+{
+	return 5.0f / 30.0f;
+}
+
+float CTFRocketLauncher::GetVRRocketInsertProgress() const
+{
+	if ( !m_bVRRocketInsertActive )
+		return 0.0f;
+
+	float flDuration = GetVRRocketInsertDuration();
+	if ( flDuration <= 0.0f )
+		return 1.0f;
+
+	return clamp( ( gpGlobals->curtime - m_flVRRocketInsertStartTime ) / flDuration, 0.0f, 1.0f );
+}
+
+float CTFRocketLauncher::GetVRRocketVisualInsertProgress() const
+{
+	if ( !m_bVRRocketInsertActive )
+		return 0.0f;
+
+	const float flVisualDuration = GetVRRocketVisualInsertDuration();
+	return clamp( ( gpGlobals->curtime - m_flVRRocketInsertStartTime ) / flVisualDuration, 0.0f, 1.0f );
+}
+
+bool CTFRocketLauncher::CanStartVRRocketManualReload()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return false;
+
+	if ( Clip1() >= GetMaxClip1() )
+		return false;
+
+	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+		return false;
+
+	return true;
+}
+
+void CTFRocketLauncher::ResetVRRocketManualReloadState()
+{
+	m_bVRRocketHeld = false;
+	m_bVRRocketInsertActive = false;
+	m_flVRRocketInsertStartTime = 0.0f;
+}
+
+void CTFRocketLauncher::VRStartRocketInsert()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !m_bVRRocketHeld || m_bVRRocketInsertActive )
+		return;
+
+	if ( !CanStartVRRocketManualReload() )
+	{
+		ResetVRRocketManualReloadState();
+		return;
+	}
+
+	if ( gpGlobals->curtime < m_flNextVRRocketStartTime )
+		return;
+
+	float flThrottleDuration = GetVRRocketInsertDuration();
+	float flVisualDuration = GetVRRocketVisualInsertDuration();
+	float flThrottleFinishTime = gpGlobals->curtime + flThrottleDuration;
+	float flVisualFinishTime = gpGlobals->curtime + flVisualDuration;
+
+	m_bVRRocketInsertActive = true;
+	m_flVRRocketInsertStartTime = gpGlobals->curtime;
+	m_flNextVRRocketStartTime = flThrottleFinishTime;
+
+	PlayVRRocketReloadSound();
+
+	pOwner->m_flNextAttack = Max<float>( pOwner->m_flNextAttack, flVisualFinishTime );
+	m_flNextPrimaryAttack = Max<float>( m_flNextPrimaryAttack, flVisualFinishTime );
+	SetWeaponIdleTime( flVisualFinishTime );
+}
+
+void CTFRocketLauncher::PlayVRRocketReloadSound()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+#ifdef CLIENT_DLL
+	if ( !prediction->IsFirstTimePredicted() )
+		return;
+#endif
+
+	const char *pszReloadSound = GetShootSound( RELOAD );
+	if ( !pszReloadSound || !pszReloadSound[0] )
+		pszReloadSound = "Weapon_RPG.Reload";
+
+	bool bBaseReloadSound = V_strcmp( pszReloadSound, "Weapon_RPG.Reload" ) == 0;
+	if ( AutoFiresFullClip() && ( bBaseReloadSound || V_strcmp( pszReloadSound, "Weapon_DumpsterRocket.Reload" ) == 0 ) )
+	{
+		pszReloadSound = bBaseReloadSound ? "Weapon_DumpsterRocket.Reload_FP" : "Weapon_DumpsterRocket.Reload";
+	}
+	else if ( UsesCenterFireProjectile() && ( bBaseReloadSound || V_strcmp( pszReloadSound, "Weapon_QuakeRPG.Reload" ) == 0 ) )
+	{
+		pszReloadSound = "Weapon_QuakeRPG.Reload";
+	}
+
+#ifdef CLIENT_DLL
+	pOwner->EmitSound( pszReloadSound );
+#else
+	CPASAttenuationFilter filter( pOwner );
+	filter.RemoveRecipient( pOwner );
+	pOwner->EmitSound( filter, pOwner->entindex(), pszReloadSound );
+#endif
+}
+
+void CTFRocketLauncher::VRCommitRocket()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !m_bVRRocketInsertActive )
+		return;
+
+	if ( Clip1() >= GetMaxClip1() || pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 || CheckReloadMisfire() )
+	{
+		ResetVRRocketManualReloadState();
+		return;
+	}
+
+	m_iClip1++;
+	pOwner->RemoveAmmo( 1, m_iPrimaryAmmoType );
+	m_flNextVRRocketStartTime = Max<float>( m_flNextVRRocketStartTime, gpGlobals->curtime );
+
+	ResetVRRocketManualReloadState();
+}
+
+void CTFRocketLauncher::VRRocketManualReloadPostFrame()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+	{
+		ResetVRRocketManualReloadState();
+		return;
+	}
+
+	const int nMaxClip = GetMaxClip1();
+	const int nClip = Clip1();
+
+	if ( m_bVRRocketInsertActive )
+	{
+		if ( gpGlobals->curtime - m_flVRRocketInsertStartTime >= GetVRRocketVisualInsertDuration() )
+		{
+			VRCommitRocket();
+		}
+		return;
+	}
+
+	if ( nClip >= nMaxClip || pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+	{
+		ResetVRRocketManualReloadState();
+		m_flNextVRRocketStartTime = 0.0f;
+		m_iVRRocketLastClipForManualReload = nClip;
+		return;
+	}
+
+	if ( m_iVRRocketLastClipForManualReload >= 0 )
+	{
+		if ( ( nClip == 0 && m_iVRRocketLastClipForManualReload > 0 ) ||
+			( nMaxClip > 1 && m_iVRRocketLastClipForManualReload == nMaxClip && nClip == nMaxClip - 1 ) )
+		{
+			float flDelay = GetVRSinglyReloadStartThrottleInterval() * TFVR_RocketReloadThrottleScale();
+			m_flNextVRRocketStartTime = MAX( m_flNextVRRocketStartTime, gpGlobals->curtime + flDelay );
+		}
+	}
+	m_iVRRocketLastClipForManualReload = nClip;
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+		return;
+
+	if ( m_bVRRocketHeld && !pCmd->vrRocketHold )
+	{
+		ResetVRRocketManualReloadState();
+		return;
+	}
+
+	if ( m_bVRRocketHeld )
+	{
+		if ( pCmd->vrRocketInsert )
+			VRStartRocketInsert();
+		return;
+	}
+
+	if ( pCmd->vrRocketPull && CanStartVRRocketManualReload() )
+	{
+		if ( IsReloading() )
+		{
+			AbortReload();
+			SendWeaponAnim( ACT_VM_IDLE );
+			pOwner->m_flNextAttack = gpGlobals->curtime;
+			m_flNextPrimaryAttack = gpGlobals->curtime;
+		}
+		m_bVRRocketHeld = true;
+	}
 }
 
 //-----------------------------------------------------------------------------

@@ -367,6 +367,9 @@ public:
 	bool GetShotgunManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetShotgunManualReloadShellTarget( Vector &outPos );
 	bool GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseHeavyShellBone = false );
+	bool GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles );
+	bool GetRocketManualReloadRocketTarget( Vector &outPos );
+	bool GetRocketManualReloadRocketPosition( Vector &outPos );
 	
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose (model space)
@@ -454,6 +457,11 @@ public:
 	CHandle<C_BaseAnimating> m_hLeftHandShield;
 	matrix3x4_t m_matShieldOffset;  // weapon_targe relative to bip_hand_L from c_demo_arms cm_idle
 	bool m_bShieldOffsetValid;
+
+	// Standalone manual-reload rocket mesh, positioned from the hand model's rocket bone.
+	CHandle<C_BaseAnimating> m_hManualReloadRocket;
+	matrix3x4_t m_matManualReloadRocketBoneInverse;
+	bool m_bManualReloadRocketBoneInverseValid;
 	
 	// NOTE: attach_to_hands weapons (boxing gloves, etc.) contain BOTH hands
 	// in a single model mesh, so they don't need special left-hand handling.
@@ -469,6 +477,9 @@ public:
 	void AttachShieldToLeftHand(const char *pszShieldModel, int nSkin);
 	void RemoveLeftHandShield();
 	void UpdateLeftHandShield();  // Called each frame to check shield state
+	bool EnsureManualReloadRocketModel();
+	void RemoveManualReloadRocketModel();
+	void UpdateManualReloadRocketFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bVisible);
 };
 
 // Global functions

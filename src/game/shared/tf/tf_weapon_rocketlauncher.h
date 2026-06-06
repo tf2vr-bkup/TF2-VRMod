@@ -58,7 +58,10 @@ public:
 	virtual void	Misfire( void );
 	virtual CBaseEntity *FireProjectile( CTFPlayer *pPlayer );
 	virtual void	ItemPostFrame( void );
+	virtual void	ItemBusyFrame( void ) OVERRIDE;
+	virtual bool	Reload( void ) OVERRIDE;
 	virtual bool	DefaultReload( int iClipSize1, int iClipSize2, int iActivity );
+	virtual bool	ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
 
 	virtual int		GetWeaponProjectileType( void ) const OVERRIDE;
 
@@ -67,6 +70,12 @@ public:
 	virtual bool	CheckReloadMisfire( void ) OVERRIDE;
 
 	virtual bool	ShouldBlockPrimaryFire() OVERRIDE;
+
+	bool  HasVRRocketInHand() const { return m_bVRRocketHeld; }
+	bool  IsVRRocketInserting() const { return m_bVRRocketInsertActive; }
+	bool  IsVRRocketManualReloadActive() const { return m_bVRRocketHeld || m_bVRRocketInsertActive; }
+	float GetVRRocketInsertProgress() const;
+	float GetVRRocketVisualInsertProgress() const;
 
 #ifdef CLIENT_DLL
 	virtual void CreateMuzzleFlashEffects( C_BaseEntity *pAttachEnt, int nIndex );
@@ -80,6 +89,21 @@ private:
 	// Since the ammo in the clip can be predicted/networked out of order from when the reload sound happens
 	// We need to keep track of this invividually on client and server to modify the pitch
 	int		m_nReloadPitchStep;
+	bool	ShouldUseVRManualRocketReload() const;
+	void	VRRocketManualReloadPostFrame();
+	void	ResetVRRocketManualReloadState();
+	void	VRStartRocketInsert();
+	void	VRCommitRocket();
+	void	PlayVRRocketReloadSound();
+	float	GetVRRocketInsertDuration() const;
+	float	GetVRRocketVisualInsertDuration() const;
+	bool	CanStartVRRocketManualReload();
+
+	CNetworkVar( bool, m_bVRRocketHeld );
+	CNetworkVar( bool, m_bVRRocketInsertActive );
+	CNetworkVar( float, m_flVRRocketInsertStartTime );
+	CNetworkVar( float, m_flNextVRRocketStartTime );
+	int		m_iVRRocketLastClipForManualReload;
 
 #ifdef GAME_DLL
 	int		m_iConsecutiveCrits;

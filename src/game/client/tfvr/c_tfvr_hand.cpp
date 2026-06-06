@@ -13,6 +13,7 @@
 #include "tf/tf_weapon_bat.h"
 #include "tf/tf_weapon_knife.h"
 #include "tf/tf_weapon_shotgun.h"
+#include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_raygun.h"
 #include "tf/tf_weapon_particle_cannon.h"
@@ -49,6 +50,74 @@ static int GetBreadBiteIdleVariant();
 static int GetBreadBiteDrawVariant();
 static const char *TFVR_GetRenderableModelName(C_BaseAnimating *pRenderable);
 static bool TFVR_ValidateHandRenderable(C_BaseAnimating *pRenderable, const char *pszLabel);
+
+static bool TFVR_IsManualRocketLauncherWeaponID(int iWeaponID)
+{
+	return iWeaponID == TF_WEAPON_ROCKETLAUNCHER || iWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT;
+}
+
+static bool TFVR_IsManualRocketReloadActive(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || !TFVR_IsManualRocketLauncherWeaponID(pWeapon->GetWeaponID()))
+		return false;
+
+	CTFRocketLauncher *pRocketLauncher = static_cast<CTFRocketLauncher *>(pWeapon);
+	return pRocketLauncher->IsVRRocketManualReloadActive();
+}
+
+static bool TFVR_HasManualReloadRocketVisual(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || !TFVR_IsManualRocketLauncherWeaponID(pWeapon->GetWeaponID()))
+		return false;
+
+	CTFRocketLauncher *pRocketLauncher = static_cast<CTFRocketLauncher *>(pWeapon);
+	return pRocketLauncher->HasVRRocketInHand() || pRocketLauncher->IsVRRocketInserting();
+}
+
+static void TFVR_SetReloadBodygroup(C_BaseAnimating *pAnimating, bool bVisible)
+{
+	if (!pAnimating)
+		return;
+
+	int iReloadBodygroup = pAnimating->FindBodygroupByName("reload");
+	if (iReloadBodygroup >= 0)
+		pAnimating->SetBodygroup(iReloadBodygroup, bVisible ? 1 : 0);
+}
+
+static bool TFVR_CalculateModelRocketBoneInverse(C_BaseAnimating *pRocket, matrix3x4_t &outInverse)
+{
+	if (!pRocket)
+		return false;
+
+	Vector vecOldOrigin = pRocket->GetAbsOrigin();
+	QAngle angOldAngles = pRocket->GetAbsAngles();
+	const bool bWasNoDraw = (pRocket->GetEffects() & EF_NODRAW) != 0;
+
+	pRocket->RemoveEffects(EF_NODRAW);
+	pRocket->SetAbsOrigin(vec3_origin);
+	pRocket->SetAbsAngles(vec3_angle);
+	pRocket->InvalidateBoneCache();
+
+	bool bGotInverse = false;
+	matrix3x4_t rocketBones[MAXSTUDIOBONES];
+	if (pRocket->SetupBones(rocketBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+	{
+		int iRocketBone = pRocket->LookupBone("rocket");
+		if (iRocketBone >= 0 && iRocketBone < MAXSTUDIOBONES)
+		{
+			MatrixInvert(rocketBones[iRocketBone], outInverse);
+			bGotInverse = true;
+		}
+	}
+
+	pRocket->SetAbsOrigin(vecOldOrigin);
+	pRocket->SetAbsAngles(angOldAngles);
+	pRocket->InvalidateBoneCache();
+	if (bWasNoDraw)
+		pRocket->AddEffects(EF_NODRAW);
+
+	return bGotInverse;
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: Custom render weapon class that implements IHasOwner for material proxies
@@ -1063,6 +1132,7 @@ ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-hand
 ConVar tfvr_pomson_grip_debug("tfvr_pomson_grip_debug", "0", FCVAR_CHEAT, "Show Pomson right-hand grip target/easing debug overlays");
 ConVar tfvr_shotgun_manual_reload_pose_blend_fraction("tfvr_shotgun_manual_reload_pose_blend_fraction", "0.35", FCVAR_ARCHIVE, "Fraction of pump-shotgun shell insert animation spent easing the offhand into the authored reload pose");
 ConVar tfvr_shotgun_manual_reload_pose_blend_out_time("tfvr_shotgun_manual_reload_pose_blend_out_time", "0.12", FCVAR_ARCHIVE, "Seconds spent easing the offhand out of the pump-shotgun shell reload pose");
+ConVar tfvr_rocket_manual_reload_radius("tfvr_rocket_manual_reload_radius", "14", FCVAR_ARCHIVE, "Distance in inches from offhand to rocket launcher muzzle required to start manual rocket load");
 
 // Offhand grip convars - grip button must be held to activate
 ConVar tfvr_offhand_grip_enabled("tfvr_offhand_grip_enabled", "1", FCVAR_ARCHIVE, "Enable offhand grip for two-handed weapon aiming");
@@ -2010,6 +2080,9 @@ C_TFVRHand::C_TFVRHand()
 	m_hLeftHandShield = NULL;
 	m_bShieldOffsetValid = false;
 	SetIdentityMatrix(m_matShieldOffset);
+	m_hManualReloadRocket = NULL;
+	m_bManualReloadRocketBoneInverseValid = false;
+	SetIdentityMatrix(m_matManualReloadRocketBoneInverse);
 
 	// Initialize bone mapping to invalid
 	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
@@ -2147,6 +2220,9 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_hLeftHandShield = NULL;
 	m_bShieldOffsetValid = false;
 	SetIdentityMatrix(m_matShieldOffset);
+	m_hManualReloadRocket = NULL;
+	m_bManualReloadRocketBoneInverseValid = false;
+	SetIdentityMatrix(m_matManualReloadRocketBoneInverse);
 
 	m_hOwnerPlayer = pOwner;
 	m_handSide = handSide;
@@ -2333,6 +2409,7 @@ void C_TFVRHand::Shutdown()
 		RemoveLeftHandBall();
 		RemoveLeftHandShield();
 	}
+	RemoveManualReloadRocketModel();
 
 	// Reset bone mapping so it gets recalculated on reinit
 	m_bBoneMappingSetup = false;
@@ -4886,6 +4963,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 	if (!pStudioHdr)
 		return true;
 
+	C_TFVRHand *pOtherHandForRocket = IsRightHand() ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
+	bool bShowRocketReloadBodygroup = TFVR_IsManualRocketReloadActive(m_hHeldWeapon.Get())
+		|| (pOtherHandForRocket && TFVR_IsManualRocketReloadActive(pOtherHandForRocket->GetHeldWeapon()));
+	TFVR_SetReloadBodygroup(this, bShowRocketReloadBodygroup);
+
 	// Safety check: if bone mapping isn't set up yet, try to set it up now
 	if (!m_bBoneMappingSetup)
 	{
@@ -6514,15 +6596,29 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			C_TFWeaponBase *pLeftWeapon = pLeftHand ? pLeftHand->GetHeldWeapon() : NULL;
 			CTFShotgun *pShotgun = (pLeftWeapon && IsPumpActionShotgunWeaponID(pLeftWeapon->GetWeaponID()))
 				? static_cast<CTFShotgun *>(pLeftWeapon) : NULL;
-			if (pLeftHand && pShotgun && pShotgun->IsVRShotgunManualReloadActive()
+			CTFRocketLauncher *pRocketLauncher = (pLeftWeapon
+				&& (pLeftWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER || pLeftWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT))
+				? static_cast<CTFRocketLauncher *>(pLeftWeapon) : NULL;
+			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
+				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive());
+			if (pLeftHand && bManualReloadActive
 				&& pLeftHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
 				const char *pszSeqName = pLeftHand->GetSequenceName(pLeftHand->m_iShotgunManualReloadSequence);
 				int iShellSeq = pszSeqName ? LookupSequence(pszSeqName) : -1;
 				if (iShellSeq >= 0)
 				{
-					float flProgress = pShotgun->IsVRShotgunShellInserting()
-						? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+					float flProgress = 0.0f;
+					if (pShotgun)
+					{
+						flProgress = pShotgun->IsVRShotgunShellInserting()
+							? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+					}
+					else if (pRocketLauncher)
+					{
+						flProgress = pRocketLauncher->IsVRRocketInserting()
+							? pRocketLauncher->GetVRRocketVisualInsertProgress() : 0.0f;
+					}
 					float flCycle = Lerp(flProgress,
 						pLeftHand->m_flShotgunManualReloadHoldCycle,
 						pLeftHand->m_flShotgunManualReloadCommitCycle);
@@ -6565,11 +6661,16 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					matrix3x4_t invShellHand;
 					MatrixInvert(shellBones[m_iHandBone], invShellHand);
 					matrix3x4_t shellAnchorWorld;
-					if (pShotgun->IsVRShotgunShellInserting())
+					const bool bInserting = (pShotgun && pShotgun->IsVRShotgunShellInserting())
+						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting());
+					if (bInserting)
 					{
 						Vector targetPos;
 						QAngle targetAngles;
-						if (pLeftHand->GetShotgunManualReloadTarget(targetPos, targetAngles))
+						bool bGotTarget = pShotgun
+							? pLeftHand->GetShotgunManualReloadTarget(targetPos, targetAngles)
+							: pLeftHand->GetRocketManualReloadTarget(targetPos, targetAngles);
+						if (bGotTarget)
 						{
 							matrix3x4_t targetWorld;
 							AngleMatrix(targetAngles, targetPos, targetWorld);
@@ -6601,6 +6702,25 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 						ConcatTransforms(shellAnchorDelta, shellBones[i], pBoneToWorldOut[i]);
 					}
 
+					extern ConVar tfvr_shotgun_pump_debug;
+					if (pRocketLauncher && tfvr_shotgun_pump_debug.GetBool())
+					{
+						static float s_flLastRocketPoseDebugTime = 0.0f;
+						if (gpGlobals->curtime - s_flLastRocketPoseDebugTime > 0.25f)
+						{
+							int iRocketBone = LookupBone("rocket");
+							Vector rocketPos(0.0f, 0.0f, 0.0f);
+							if (iRocketBone >= 0 && iRocketBone < numBones && iRocketBone < nMaxBones)
+								MatrixGetColumn(pBoneToWorldOut[iRocketBone], 3, rocketPos);
+
+							DevMsg("VR Rocket Reload: applied offhand pose model='%s' seq='%s' seqIndex=%d cycle=%.3f progress=%.3f inserting=%d rocketBone=%d rocketPos=(%.1f %.1f %.1f)\n",
+								GetModelName(), pszSeqName ? pszSeqName : "<null>", iShellSeq, flCycle, flProgress,
+								pRocketLauncher->IsVRRocketInserting() ? 1 : 0, iRocketBone,
+								rocketPos.x, rocketPos.y, rocketPos.z);
+							s_flLastRocketPoseDebugTime = gpGlobals->curtime;
+						}
+					}
+
 					bShotgunManualReloadPoseApplied = true;
 					m_bShotgunManualReloadPoseActive = true;
 					m_bShotgunManualReloadBlendOutActive = false;
@@ -6626,15 +6746,29 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			C_TFWeaponBase *pRightWeapon = pRightHand ? pRightHand->GetHeldWeapon() : NULL;
 			CTFShotgun *pShotgun = (pRightWeapon && IsPumpActionShotgunWeaponID(pRightWeapon->GetWeaponID()))
 				? static_cast<CTFShotgun *>(pRightWeapon) : NULL;
-			if (pRightHand && pShotgun && pShotgun->IsVRShotgunManualReloadActive()
+			CTFRocketLauncher *pRocketLauncher = (pRightWeapon
+				&& (pRightWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER || pRightWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT))
+				? static_cast<CTFRocketLauncher *>(pRightWeapon) : NULL;
+			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
+				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive());
+			if (pRightHand && bManualReloadActive
 				&& pRightHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
 				const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iShotgunManualReloadSequence);
 				int iShellSeq = pszSeqName ? LookupSequence(pszSeqName) : -1;
 				if (iShellSeq >= 0)
 				{
-					float flProgress = pShotgun->IsVRShotgunShellInserting()
-						? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+					float flProgress = 0.0f;
+					if (pShotgun)
+					{
+						flProgress = pShotgun->IsVRShotgunShellInserting()
+							? pShotgun->GetVRShotgunShellInsertProgress() : 0.0f;
+					}
+					else if (pRocketLauncher)
+					{
+						flProgress = pRocketLauncher->IsVRRocketInserting()
+							? pRocketLauncher->GetVRRocketVisualInsertProgress() : 0.0f;
+					}
 					float flCycle = Lerp(flProgress,
 						pRightHand->m_flShotgunManualReloadHoldCycle,
 						pRightHand->m_flShotgunManualReloadCommitCycle);
@@ -6678,11 +6812,16 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					MatrixInvert(shellBones[m_iHandBone], invShellHand);
 					matrix3x4_t shellAnchorDelta;
 					matrix3x4_t shellAnchorWorld;
-					if (pShotgun->IsVRShotgunShellInserting())
+					const bool bInserting = (pShotgun && pShotgun->IsVRShotgunShellInserting())
+						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting());
+					if (bInserting)
 					{
 						Vector targetPos;
 						QAngle targetAngles;
-						if (pRightHand->GetShotgunManualReloadTarget(targetPos, targetAngles))
+						bool bGotTarget = pShotgun
+							? pRightHand->GetShotgunManualReloadTarget(targetPos, targetAngles)
+							: pRightHand->GetRocketManualReloadTarget(targetPos, targetAngles);
+						if (bGotTarget)
 						{
 							matrix3x4_t targetWorld;
 							AngleMatrix(targetAngles, targetPos, targetWorld);
@@ -6710,6 +6849,25 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					for (int i = 0; i < numBones && i < nMaxBones; i++)
 					{
 						ConcatTransforms(shellAnchorDelta, shellBones[i], pBoneToWorldOut[i]);
+					}
+
+					extern ConVar tfvr_shotgun_pump_debug;
+					if (pRocketLauncher && tfvr_shotgun_pump_debug.GetBool())
+					{
+						static float s_flLastRocketPoseDebugTime = 0.0f;
+						if (gpGlobals->curtime - s_flLastRocketPoseDebugTime > 0.25f)
+						{
+							int iRocketBone = LookupBone("rocket");
+							Vector rocketPos(0.0f, 0.0f, 0.0f);
+							if (iRocketBone >= 0 && iRocketBone < numBones && iRocketBone < nMaxBones)
+								MatrixGetColumn(pBoneToWorldOut[iRocketBone], 3, rocketPos);
+
+							DevMsg("VR Rocket Reload: applied offhand pose model='%s' seq='%s' seqIndex=%d cycle=%.3f progress=%.3f inserting=%d rocketBone=%d rocketPos=(%.1f %.1f %.1f)\n",
+								GetModelName(), pszSeqName ? pszSeqName : "<null>", iShellSeq, flCycle, flProgress,
+								pRocketLauncher->IsVRRocketInserting() ? 1 : 0, iRocketBone,
+								rocketPos.x, rocketPos.y, rocketPos.z);
+							s_flLastRocketPoseDebugTime = gpGlobals->curtime;
+						}
 					}
 
 					bShotgunManualReloadPoseApplied = true;
@@ -6787,6 +6945,22 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 
 		// Position offset was already applied to controllerTransform at the beginning,
 		// so all bones and weapon are naturally at the offset position.
+
+		bool bShowManualReloadRocket = false;
+		C_TFVRHand *pOtherHandForRocket = GetOppositeVRHand(this);
+		C_TFWeaponBase *pOtherWeaponForRocket = pOtherHandForRocket ? pOtherHandForRocket->GetHeldWeapon() : NULL;
+		bShowManualReloadRocket = bShotgunManualReloadPoseApplied && TFVR_HasManualReloadRocketVisual(pOtherWeaponForRocket);
+		if (bShowManualReloadRocket && pOtherWeaponForRocket && TFVR_IsManualRocketLauncherWeaponID(pOtherWeaponForRocket->GetWeaponID()))
+		{
+			CTFRocketLauncher *pRocketLauncher = static_cast<CTFRocketLauncher *>(pOtherWeaponForRocket);
+			if (pRocketLauncher->IsVRRocketInserting())
+			{
+				// Rocket insert samples frames 4-14; hide the loose rocket after frame 8.
+				const float flHideAfterFrameProgress = (8.0f - 4.0f) / (14.0f - 4.0f);
+				bShowManualReloadRocket = pRocketLauncher->GetVRRocketVisualInsertProgress() <= flHideAfterFrameProgress;
+			}
+		}
+		UpdateManualReloadRocketFromBones(pBoneToWorldOut, nMaxBones, bShowManualReloadRocket);
 
 		// Position shield from the precomputed c_demo_arms offset, applied to
 		// bip_hand_L which is already at the controller transform after anchoring.
@@ -8160,6 +8334,205 @@ bool C_TFVRHand::GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseH
 	return true;
 }
 
+bool C_TFVRHand::GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !pWeapon || m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	if ( pWeapon->GetWeaponID() != TF_WEAPON_ROCKETLAUNCHER && pWeapon->GetWeaponID() != TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT )
+		return false;
+
+	CTFRocketLauncher *pRocketLauncher = static_cast< CTFRocketLauncher * >( pWeapon );
+	if ( !pRocketLauncher->IsVRRocketManualReloadActive() )
+		return false;
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr )
+		return false;
+
+	const int numBones = pStudioHdr->numbones();
+	int iOffHandBone = IsRightHand() ? LookupBone( "bip_hand_L" ) : LookupBone( "bip_hand_R" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "ValveBiped.Bip01_L_Hand" ) : LookupBone( "ValveBiped.Bip01_R_Hand" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "bip_hand_l" ) : LookupBone( "bip_hand_r" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "weapon_bone_L" ) : LookupBone( "weapon_bone_R" );
+
+	int iWeaponBone = LookupBone( "weapon_bone" );
+	if ( iWeaponBone < 0 )
+		iWeaponBone = LookupBone( "vm_weapon_bone" );
+
+	if ( iOffHandBone < 0 || iOffHandBone >= numBones || iOffHandBone >= MAXSTUDIOBONES ||
+		iWeaponBone < 0 || iWeaponBone >= numBones || iWeaponBone >= MAXSTUDIOBONES )
+		return false;
+
+	float flProgress = pRocketLauncher->IsVRRocketInserting()
+		? pRocketLauncher->GetVRRocketVisualInsertProgress() : 0.0f;
+	float flCycle = Lerp( flProgress, m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle );
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, m_iShotgunManualReloadSequence, flCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones && i < MAXSTUDIOBONES; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( qAnim[i], posAnim[i], local );
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones && pBone->parent < MAXSTUDIOBONES )
+			ConcatTransforms( sampledBones[pBone->parent], local, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	matrix3x4_t liveWeaponBone;
+	if ( !GetCachedWeaponBoneTransform( liveWeaponBone ) )
+	{
+		if ( m_bHasIdleWeaponBone )
+			MatrixCopy( m_matIdleWeaponBoneWorld, liveWeaponBone );
+		else
+			return false;
+	}
+
+	matrix3x4_t invSampledWeaponBone;
+	MatrixInvert( sampledBones[iWeaponBone], invSampledWeaponBone );
+
+	matrix3x4_t offhandRelativeToWeapon;
+	ConcatTransforms( invSampledWeaponBone, sampledBones[iOffHandBone], offhandRelativeToWeapon );
+
+	matrix3x4_t offhandWorld;
+	ConcatTransforms( liveWeaponBone, offhandRelativeToWeapon, offhandWorld );
+
+	MatrixAngles( offhandWorld, outAngles, outPos );
+	return true;
+}
+
+bool C_TFVRHand::GetRocketManualReloadRocketTarget( Vector &outPos )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !pWeapon || m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	if ( pWeapon->GetWeaponID() != TF_WEAPON_ROCKETLAUNCHER && pWeapon->GetWeaponID() != TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT )
+		return false;
+
+	CTFRocketLauncher *pRocketLauncher = static_cast< CTFRocketLauncher * >( pWeapon );
+	if ( !pRocketLauncher->IsVRRocketManualReloadActive() )
+		return false;
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr )
+		return false;
+
+	const int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	int iRocketBone = LookupBone( "rocket" );
+	int iWeaponBone = LookupBone( "weapon_bone" );
+	if ( iWeaponBone < 0 )
+		iWeaponBone = LookupBone( "vm_weapon_bone" );
+
+	if ( iRocketBone < 0 || iRocketBone >= numBones )
+	{
+		QAngle targetAngles;
+		return GetRocketManualReloadTarget( outPos, targetAngles );
+	}
+
+	if ( iWeaponBone < 0 || iWeaponBone >= numBones )
+		return false;
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, m_iShotgunManualReloadSequence,
+		m_flShotgunManualReloadHoldCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( qAnim[i], posAnim[i], local );
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones )
+			ConcatTransforms( sampledBones[pBone->parent], local, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	matrix3x4_t liveWeaponBone;
+	if ( !GetCachedWeaponBoneTransform( liveWeaponBone ) )
+	{
+		if ( m_bHasIdleWeaponBone )
+			MatrixCopy( m_matIdleWeaponBoneWorld, liveWeaponBone );
+		else
+			return false;
+	}
+
+	matrix3x4_t invSampledWeaponBone;
+	MatrixInvert( sampledBones[iWeaponBone], invSampledWeaponBone );
+
+	matrix3x4_t rocketRelativeToWeapon;
+	ConcatTransforms( invSampledWeaponBone, sampledBones[iRocketBone], rocketRelativeToWeapon );
+
+	matrix3x4_t rocketWorld;
+	ConcatTransforms( liveWeaponBone, rocketRelativeToWeapon, rocketWorld );
+	MatrixGetColumn( rocketWorld, 3, outPos );
+	return true;
+}
+
+bool C_TFVRHand::GetRocketManualReloadRocketPosition( Vector &outPos )
+{
+	int iRocketBone = LookupBone( "rocket" );
+	int iProbeBone = iRocketBone;
+	if ( iProbeBone < 0 || iProbeBone >= MAXSTUDIOBONES )
+		return false;
+
+	matrix3x4_t bones[MAXSTUDIOBONES];
+	if ( !SetupBones( bones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime ) )
+		return false;
+
+	MatrixGetColumn( bones[iProbeBone], 3, outPos );
+	return true;
+}
+
 bool C_TFVRHand::GetSampledBoneLocalTransform( const char *pszBoneName, int iSequence, float flCycle, matrix3x4_t &outLocalTransform )
 {
 	CStudioHdr *pStudioHdr = GetModelPtr();
@@ -9061,6 +9434,7 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	// vm_weapon_bone alignment. Merging vm_weapon_bone chain transforms from
 	// the VR hand model would distort the glove mesh.
 	C_TFWeaponBase *pMergeWeapon = m_hHeldWeapon.Get();
+	TFVR_SetReloadBodygroup(pRenderWeapon, TFVR_IsManualRocketReloadActive(pMergeWeapon));
 	bool bSkipBoneMerge = pMergeWeapon && pMergeWeapon->GetWeaponID() == TF_WEAPON_FISTS;
 	bool bShotgunManualShell = false;
 	if (pMergeWeapon && IsPumpActionShotgunWeaponID(pMergeWeapon->GetWeaponID()))
@@ -11225,6 +11599,17 @@ int C_TFVRHand::DrawModel(int flags)
 		}
 	}
 
+	if (m_hManualReloadRocket.Get())
+	{
+		C_BaseAnimating *pRocket = m_hManualReloadRocket.Get();
+		if (TFVR_ValidateHandRenderable(pRocket, "manual reload rocket"))
+		{
+			pRocket->RemoveEffects(EF_NODRAW);
+			pRocket->DrawModel(flags);
+			pRocket->AddEffects(EF_NODRAW);
+		}
+	}
+
 	if (m_hLeftHandShield.Get())
 	{
 		C_BaseAnimating *pShield = m_hLeftHandShield.Get();
@@ -11713,6 +12098,32 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				shotgunPumpAnimName, m_iReloadLoopSequence, m_flShotgunPumpStartCycle,
 				m_flReloadLoopBottomCycle, m_flShotgunPumpEndCycle, shotgunManualReloadAnimName, m_iShotgunManualReloadSequence,
 				flManualReloadStartFrame, flManualReloadEndFrame,
+				m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle, GetModelName());
+		}
+		else if ((pWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER
+			|| pWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT))
+		{
+			const float flManualReloadStartFrame = 4.0f;
+			const float flManualReloadEndFrame = 14.0f;
+			m_iShotgunManualReloadSequence = LookupSequence("dh_reload_loop");
+
+			if (m_iShotgunManualReloadSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iShotgunManualReloadSequence, poseParams);
+					if (maxFrame > 0)
+					{
+						m_flShotgunManualReloadHoldCycle = clamp( flManualReloadStartFrame / (float)maxFrame, 0.0f, 1.0f );
+						m_flShotgunManualReloadCommitCycle = clamp( flManualReloadEndFrame / (float)maxFrame, m_flShotgunManualReloadHoldCycle, 1.0f );
+					}
+				}
+			}
+
+			DevMsg("VR: Rocket manual reload sequence 'dh_reload_loop': seq=%d frames=%.1f-%.1f hold=%.3f commit=%.3f on '%s'\n",
+				m_iShotgunManualReloadSequence, flManualReloadStartFrame, flManualReloadEndFrame,
 				m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle, GetModelName());
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
@@ -14943,6 +15354,234 @@ void C_TFVRHand::RemoveLeftHandBall()
 		m_hLeftHandBall = NULL;
 	}
 	m_iLastBallAmmo = -1;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Create the standalone rocket mesh used by manual rocket reload
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::EnsureManualReloadRocketModel()
+{
+	if (m_hManualReloadRocket.Get())
+		return true;
+
+	static const char *pszRocketModel = "models/weapons/vr_models/vr_rocket.mdl";
+	CBaseEntity::PrecacheModel(pszRocketModel);
+
+	C_BaseAnimating *pRocket = new C_BaseAnimating();
+	if (!pRocket)
+		return false;
+
+	if (!pRocket->InitializeAsClientEntity(pszRocketModel, RENDER_GROUP_OPAQUE_ENTITY))
+	{
+		Warning("VR Rocket Reload: failed to initialize standalone rocket model '%s'\n", pszRocketModel);
+		pRocket->Release();
+		return false;
+	}
+
+	int iModelIndex = modelinfo ? modelinfo->GetModelIndex(pszRocketModel) : -1;
+	if (iModelIndex >= 0)
+		pRocket->SetModelIndex(iModelIndex);
+
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (pOwner)
+		pRocket->SetOwnerEntity(pOwner);
+
+	pRocket->AddEffects(EF_NODRAW);
+	pRocket->AddEffects(EF_NOINTERP);
+	pRocket->SetMoveType(MOVETYPE_NONE);
+	pRocket->AddSolidFlags(FSOLID_NOT_SOLID);
+	pRocket->SetRenderMode(kRenderNormal);
+
+	int iIdleSeq = pRocket->LookupSequence("vr_rocket_idle");
+	if (iIdleSeq < 0)
+		iIdleSeq = pRocket->LookupSequence("idle");
+	if (iIdleSeq >= 0)
+	{
+		pRocket->SetSequence(iIdleSeq);
+		pRocket->SetCycle(0.0f);
+		pRocket->SetPlaybackRate(0.0f);
+	}
+
+	m_bManualReloadRocketBoneInverseValid = false;
+	SetIdentityMatrix(m_matManualReloadRocketBoneInverse);
+	m_bManualReloadRocketBoneInverseValid =
+		TFVR_CalculateModelRocketBoneInverse(pRocket, m_matManualReloadRocketBoneInverse);
+
+	m_hManualReloadRocket = pRocket;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Remove the standalone rocket mesh used by manual rocket reload
+//-----------------------------------------------------------------------------
+void C_TFVRHand::RemoveManualReloadRocketModel()
+{
+	if (m_hManualReloadRocket.Get())
+	{
+		m_hManualReloadRocket->Release();
+		m_hManualReloadRocket = NULL;
+	}
+	m_bManualReloadRocketBoneInverseValid = false;
+	SetIdentityMatrix(m_matManualReloadRocketBoneInverse);
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Position the standalone rocket from this hand's sampled rocket bone
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateManualReloadRocketFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bVisible)
+{
+	if (!bVisible)
+	{
+		RemoveManualReloadRocketModel();
+		return;
+	}
+
+	if (!pBoneToWorldOut || !EnsureManualReloadRocketModel())
+		return;
+
+	C_BaseAnimating *pRocket = m_hManualReloadRocket.Get();
+	if (!pRocket)
+		return;
+
+	int iRocketBone = LookupBone("rocket");
+	int iAttachBone = iRocketBone;
+	if (iAttachBone < 0 || iAttachBone >= nMaxBones)
+	{
+		pRocket->AddEffects(EF_NODRAW);
+		return;
+	}
+
+	if (!m_bManualReloadRocketBoneInverseValid)
+	{
+		m_bManualReloadRocketBoneInverseValid =
+			TFVR_CalculateModelRocketBoneInverse(pRocket, m_matManualReloadRocketBoneInverse);
+	}
+
+	matrix3x4_t rocketWorld;
+	if (m_bManualReloadRocketBoneInverseValid)
+		ConcatTransforms(pBoneToWorldOut[iAttachBone], m_matManualReloadRocketBoneInverse, rocketWorld);
+	else
+		MatrixCopy(pBoneToWorldOut[iAttachBone], rocketWorld);
+
+	Vector rocketPos;
+	QAngle rocketAng;
+	MatrixAngles(rocketWorld, rocketAng, rocketPos);
+
+	pRocket->SetAbsOrigin(rocketPos);
+	pRocket->SetAbsAngles(rocketAng);
+	pRocket->SetNetworkOrigin(rocketPos);
+	pRocket->ResetLatched();
+	pRocket->InvalidateBoneCache();
+
+	extern ConVar tfvr_shotgun_pump_debug;
+	if (tfvr_shotgun_pump_debug.GetBool() && debugoverlay)
+	{
+		Vector handRocketPos;
+		MatrixGetColumn(pBoneToWorldOut[iAttachBone], 3, handRocketPos);
+
+		// Cyan = animated rocket bone on the hand model.
+		debugoverlay->AddBoxOverlay(handRocketPos,
+			Vector(-2.0f, -2.0f, -2.0f), Vector(2.0f, 2.0f, 2.0f),
+			vec3_angle, 0, 255, 255, 220, 0.05f);
+		debugoverlay->AddTextOverlay(handRocketPos, 0.05f, "hand rocket");
+
+		// Yellow = standalone rocket entity/root origin. If the visible mesh
+		// follows this instead of the red/cyan bone markers, the mesh is root-bound.
+		debugoverlay->AddBoxOverlay(rocketPos,
+			Vector(-1.5f, -1.5f, -1.5f), Vector(1.5f, 1.5f, 1.5f),
+			vec3_angle, 255, 255, 0, 220, 0.05f);
+		debugoverlay->AddTextOverlay(rocketPos, 0.05f, "rocket root");
+
+		Vector handModelRootPos = vec3_origin;
+		if (nMaxBones > 0)
+		{
+			MatrixGetColumn(pBoneToWorldOut[0], 3, handModelRootPos);
+			// Blue = solved root of the offhand model skeleton.
+			debugoverlay->AddBoxOverlay(handModelRootPos,
+				Vector(-2.5f, -2.5f, -2.5f), Vector(2.5f, 2.5f, 2.5f),
+				vec3_angle, 0, 64, 255, 220, 0.05f);
+			debugoverlay->AddTextOverlay(handModelRootPos, 0.05f, "hand root");
+			debugoverlay->AddLineOverlay(handModelRootPos, handRocketPos, 0, 128, 255, false, 0.05f);
+		}
+
+		int iModelRocketBone = pRocket->LookupBone("rocket");
+		if (iModelRocketBone >= 0)
+		{
+			matrix3x4_t rocketBones[MAXSTUDIOBONES];
+			if (pRocket->SetupBones(rocketBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+			{
+				Vector modelRocketPos;
+				MatrixGetColumn(rocketBones[iModelRocketBone], 3, modelRocketPos);
+
+				// Red = rocket bone inside the standalone rocket model.
+				debugoverlay->AddBoxOverlay(modelRocketPos,
+					Vector(-1.0f, -1.0f, -1.0f), Vector(1.0f, 1.0f, 1.0f),
+					vec3_angle, 255, 0, 0, 255, 0.05f);
+				debugoverlay->AddTextOverlay(modelRocketPos + Vector(0.0f, 0.0f, 2.0f), 0.05f, "model rocket");
+				debugoverlay->AddLineOverlay(handRocketPos, modelRocketPos, 255, 255, 255, false, 0.05f);
+				debugoverlay->AddLineOverlay(rocketPos, modelRocketPos, 255, 255, 0, false, 0.05f);
+
+				static float s_flLastRocketAlignDebugTime = 0.0f;
+				if (gpGlobals->curtime - s_flLastRocketAlignDebugTime > 0.25f)
+				{
+					Vector delta = modelRocketPos - handRocketPos;
+					Vector handBonePos = handRocketPos;
+					float flHandBoneDistance = 0.0f;
+					if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+					{
+						MatrixGetColumn(pBoneToWorldOut[m_iHandBone], 3, handBonePos);
+						flHandBoneDistance = (handRocketPos - handBonePos).Length();
+					}
+
+					const char *pszClosestBone = "<none>";
+					float flClosestBoneDistance = FLT_MAX;
+					const char *pszSuffix = IsLeftHand() ? "_L" : "_R";
+					const char *pszBoneBases[] = {
+						"bip_hand",
+						"bip_thumb_0", "bip_thumb_1", "bip_thumb_2",
+						"bip_index_0", "bip_index_1", "bip_index_2",
+						"bip_middle_0", "bip_middle_1", "bip_middle_2",
+						"bip_ring_0", "bip_ring_1", "bip_ring_2",
+						"bip_pinky_0", "bip_pinky_1", "bip_pinky_2",
+					};
+					char szClosestBone[64];
+					szClosestBone[0] = '\0';
+					for (int i = 0; i < ARRAYSIZE(pszBoneBases); i++)
+					{
+						char szBoneName[64];
+						Q_snprintf(szBoneName, sizeof(szBoneName), "%s%s", pszBoneBases[i], pszSuffix);
+						int iBone = LookupBone(szBoneName);
+						if (iBone < 0 || iBone >= nMaxBones)
+							continue;
+
+						Vector bonePos;
+						MatrixGetColumn(pBoneToWorldOut[iBone], 3, bonePos);
+						float flDistance = (handRocketPos - bonePos).Length();
+						if (flDistance < flClosestBoneDistance)
+						{
+							flClosestBoneDistance = flDistance;
+							Q_strncpy(szClosestBone, szBoneName, sizeof(szClosestBone));
+							pszClosestBone = szClosestBone;
+						}
+					}
+
+					float flRootToHand = (handBonePos - handModelRootPos).Length();
+					float flRootToRocket = (handRocketPos - handModelRootPos).Length();
+					DevMsg("VR Rocket Reload: model align inverse=%d handRoot=(%.1f %.1f %.1f) rootToHand=%.2f rootToRocket=%.2f rocketBone=(%.1f %.1f %.1f) model=(%.1f %.1f %.1f) delta=%.2f handBone=(%.1f %.1f %.1f) rocketToHandBone=%.2f closest='%s' closestDist=%.2f entity=(%.1f %.1f %.1f)\n",
+						m_bManualReloadRocketBoneInverseValid ? 1 : 0,
+						handModelRootPos.x, handModelRootPos.y, handModelRootPos.z,
+						flRootToHand, flRootToRocket,
+						handRocketPos.x, handRocketPos.y, handRocketPos.z,
+						modelRocketPos.x, modelRocketPos.y, modelRocketPos.z,
+						delta.Length(),
+						handBonePos.x, handBonePos.y, handBonePos.z, flHandBoneDistance,
+						pszClosestBone, flClosestBoneDistance,
+						rocketPos.x, rocketPos.y, rocketPos.z);
+					s_flLastRocketAlignDebugTime = gpGlobals->curtime;
+				}
+			}
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------

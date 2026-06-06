@@ -71,6 +71,9 @@ public:
 		vrShotgunShellPull = false;
 		vrShotgunShellInsert = false;
 		vrShotgunShellHold = false;
+		vrRocketPull = false;
+		vrRocketInsert = false;
+		vrRocketHold = false;
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.0f;
@@ -129,6 +132,9 @@ public:
 		vrShotgunShellPull	= src.vrShotgunShellPull;
 		vrShotgunShellInsert = src.vrShotgunShellInsert;
 		vrShotgunShellHold = src.vrShotgunShellHold;
+		vrRocketPull = src.vrRocketPull;
+		vrRocketInsert = src.vrRocketInsert;
+		vrRocketHold = src.vrRocketHold;
 		vrWeaponArmed = src.vrWeaponArmed;
 		vrWeaponHandIsRight = src.vrWeaponHandIsRight;
 		forwardmove			= src.forwardmove;
@@ -194,6 +200,9 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrShotgunShellPull, sizeof( vrShotgunShellPull ) );
 		CRC32_ProcessBuffer( &crc, &vrShotgunShellInsert, sizeof( vrShotgunShellInsert ) );
 		CRC32_ProcessBuffer( &crc, &vrShotgunShellHold, sizeof( vrShotgunShellHold ) );
+		CRC32_ProcessBuffer( &crc, &vrRocketPull, sizeof( vrRocketPull ) );
+		CRC32_ProcessBuffer( &crc, &vrRocketInsert, sizeof( vrRocketInsert ) );
+		CRC32_ProcessBuffer( &crc, &vrRocketHold, sizeof( vrRocketHold ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponArmed, sizeof( vrWeaponArmed ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponHandIsRight, sizeof( vrWeaponHandIsRight ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
@@ -241,6 +250,9 @@ public:
 		vrShotgunShellPull = false;
 		vrShotgunShellInsert = false;
 		vrShotgunShellHold = false;
+		vrRocketPull = false;
+		vrRocketInsert = false;
+		vrRocketHold = false;
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.f;
@@ -306,6 +318,11 @@ public:
 	bool	vrShotgunShellPull;
 	bool	vrShotgunShellInsert;
 	bool	vrShotgunShellHold;
+
+	// VR rocket launcher manual rocket reload intents.
+	bool	vrRocketPull;
+	bool	vrRocketInsert;
+	bool	vrRocketHold;
 
 	// VR weapon lever/pump: grip held in position to operate the active weapon's physical mechanic
 	bool	vrWeaponArmed;

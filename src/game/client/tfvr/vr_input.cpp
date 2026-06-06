@@ -13,6 +13,7 @@
 #include "tf/tf_weaponbase.h"
 #include "tf/tf_shareddefs.h"
 #include "tf/tf_weapon_shotgun.h"
+#include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_raygun.h"
 #include "tf/tf_weapon_particle_cannon.h"
@@ -42,6 +43,7 @@ extern ConVar tfvr_sticky_pump_reload;
 extern ConVar tfvr_bison_pump_reload;
 extern ConVar tfvr_shotgun_pump_action;
 extern ConVar tfvr_shotgun_pump_debug;
+extern ConVar tfvr_rocket_manual_reload_radius;
 
 ConVar tfvr_bison_pump_weapon_grip_threshold( "tfvr_bison_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR bison pump: off-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_bison_pump_twohand_min_blend( "tfvr_bison_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR bison pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -1252,6 +1254,148 @@ static void TFVR_UpdateShotgunManualReloadInCmd( CUserCmd *cmd )
 	}
 }
 
+static bool TFVR_IsManualRocketLauncherWeapon( CTFWeaponBase *pWpn )
+{
+	if ( !pWpn )
+		return false;
+
+	return pWpn->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER
+		|| pWpn->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT;
+}
+
+static void TFVR_UpdateRocketManualReloadInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !TFVR_IsManualRocketLauncherWeapon( pWpn ) )
+		return;
+
+	CTFRocketLauncher *pRocketLauncher = static_cast< CTFRocketLauncher * >( pWpn );
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+	else if ( pRight->GetHeldWeapon()
+		&& TFVR_IsManualRocketLauncherWeapon( pRight->GetHeldWeapon() )
+		&& pRight->GetHeldWeapon()->GetWeaponID() == pWpn->GetWeaponID() )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon()
+		&& TFVR_IsManualRocketLauncherWeapon( pLeft->GetHeldWeapon() )
+		&& pLeft->GetHeldWeapon()->GetWeaponID() == pWpn->GetWeaponID() )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+
+	if ( !pWeaponHand || !pOffHand )
+		return;
+
+	const float flGrip = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "right_grip" )
+		: g_pOpenXRManager->GetAnalogValue( "left_grip" );
+	const float flOffhandTrigger = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "primary_attack" )
+		: g_pOpenXRManager->GetAnalogValue( "secondary_attack" );
+	const bool bHoldInput = flGrip >= tfvr_shotgun_manual_reload_grip_threshold.GetFloat()
+		|| flOffhandTrigger >= 0.5f;
+	cmd->vrRocketHold = bHoldInput;
+
+	if ( !pRocketLauncher->IsVRRocketInserting() || tfvr_shotgun_pump_debug.GetBool() )
+	{
+		Vector hmdOrigin;
+		QAngle hmdAngles;
+		g_pOpenXRManager->GetHMDInChaperone( hmdOrigin, hmdAngles );
+
+		Vector hmdForward, hmdRight, hmdUp;
+		AngleVectors( hmdAngles, &hmdForward, &hmdRight, &hmdUp );
+
+		hmdForward.z = 0.0f;
+		hmdRight.z = 0.0f;
+		if ( hmdForward.IsZero() )
+			hmdForward.Init( 1.0f, 0.0f, 0.0f );
+		if ( hmdRight.IsZero() )
+			hmdRight.Init( 0.0f, -1.0f, 0.0f );
+		VectorNormalize( hmdForward );
+		VectorNormalize( hmdRight );
+
+		VMatrix offhandPose;
+		bool bGotOffhandPose = ( pOffHand == pRight )
+			? g_pOpenXRManager->GetRightControllerPoseRaw( offhandPose )
+			: g_pOpenXRManager->GetLeftControllerPoseRaw( offhandPose );
+
+		if ( bGotOffhandPose )
+		{
+			Vector offhandPos = offhandPose.GetTranslation();
+			Vector relToHead = offhandPos - hmdOrigin;
+			float flBehind = DotProduct( relToHead, -hmdForward );
+			float flLateral = fabsf( DotProduct( relToHead, hmdRight ) );
+
+			bool bInBackpack = flBehind >= tfvr_shotgun_manual_reload_back_start.GetFloat()
+				&& flBehind <= tfvr_shotgun_manual_reload_back_depth.GetFloat()
+				&& flLateral <= tfvr_shotgun_manual_reload_back_width.GetFloat()
+				&& offhandPos.z <= hmdOrigin.z + tfvr_shotgun_manual_reload_back_top.GetFloat()
+				&& offhandPos.z >= -4.0f;
+
+			if ( !pRocketLauncher->HasVRRocketInHand() && !pRocketLauncher->IsVRRocketInserting()
+				&& bHoldInput && bInBackpack )
+				cmd->vrRocketPull = true;
+		}
+	}
+
+	if ( pRocketLauncher->HasVRRocketInHand() && !pRocketLauncher->IsVRRocketInserting() )
+	{
+		matrix3x4_t weaponHandBones[MAXSTUDIOBONES];
+		pWeaponHand->SetupBones( weaponHandBones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime );
+
+		Vector insertProbePos;
+		Vector insertTargetPos;
+		QAngle insertTargetAngles;
+		bool bGotInsertProbe = pOffHand->GetRocketManualReloadRocketPosition( insertProbePos );
+
+		bool bGotInsertTarget = pWeaponHand->GetWeaponMuzzlePositionAndAngles( insertTargetPos, insertTargetAngles );
+		if ( !bGotInsertTarget && pWeaponHand->GetRenderWeapon() )
+		{
+			insertTargetPos = pWeaponHand->GetRenderWeapon()->GetAbsOrigin();
+			insertTargetAngles = pWeaponHand->GetRenderWeapon()->GetAbsAngles();
+			bGotInsertTarget = true;
+		}
+
+		if ( bGotInsertProbe && bGotInsertTarget )
+		{
+			float flDist = ( insertProbePos - insertTargetPos ).Length();
+			float flRadius = tfvr_rocket_manual_reload_radius.GetFloat();
+			if ( tfvr_shotgun_pump_debug.GetBool() && debugoverlay )
+			{
+				debugoverlay->AddBoxOverlay( insertProbePos, Vector( -1.5f, -1.5f, -1.5f ), Vector( 1.5f, 1.5f, 1.5f ), vec3_angle, 0, 255, 0, 160, 0.05f );
+				debugoverlay->AddBoxOverlay( insertTargetPos, Vector( -flRadius, -flRadius, -flRadius ), Vector( flRadius, flRadius, flRadius ), vec3_angle, 255, 128, 0, 80, 0.05f );
+				debugoverlay->AddLineOverlay( insertProbePos, insertTargetPos, 255, 255, 0, false, 0.05f );
+			}
+			if ( flDist <= flRadius )
+				cmd->vrRocketInsert = true;
+		}
+	}
+}
+
 static void TFVR_UpdateMedigunLeverArmedInCmd( CUserCmd *cmd )
 {
 	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
@@ -1530,6 +1674,9 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 		cmd->vrShotgunShellPull = false;
 		cmd->vrShotgunShellInsert = false;
 		cmd->vrShotgunShellHold = false;
+		cmd->vrRocketPull = false;
+		cmd->vrRocketInsert = false;
+		cmd->vrRocketHold = false;
 		cmd->vrWeaponArmed = false;
 		cmd->vrWeaponHandIsRight = true;
 	}
@@ -1549,6 +1696,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	TFVR_UpdateScattergunLeverArmedInCmd( cmd );
 	TFVR_UpdateShotgunPumpArmedInCmd( cmd );
 	TFVR_UpdateShotgunManualReloadInCmd( cmd );
+	TFVR_UpdateRocketManualReloadInCmd( cmd );
 	TFVR_UpdateMedigunLeverArmedInCmd( cmd );
 	TFVR_UpdateStickyPumpArmedInCmd( cmd );
 	TFVR_UpdateBisonPumpArmedInCmd( cmd );

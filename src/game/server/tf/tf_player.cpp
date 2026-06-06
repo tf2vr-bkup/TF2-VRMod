@@ -3003,6 +3003,7 @@ void CTFPlayer::PrecacheTFPlayer()
 	PrecacheModel("models/weapons/vr_models/vr_sniper_hand_r.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_spy_hand_l.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_spy_hand_r.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_rocket.mdl");
 	
 	// Precache spy watch models for VR
 	PrecacheModel("models/weapons/c_models/c_spy_watch.mdl");
