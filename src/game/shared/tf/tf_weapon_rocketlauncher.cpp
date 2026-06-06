@@ -330,8 +330,19 @@ bool CTFRocketLauncher::CanInspect() const
 CBaseEntity *CTFRocketLauncher::FireProjectile( CTFPlayer *pPlayer )
 {
 	m_flShowReloadHintAt = gpGlobals->curtime + 30;
+	const bool bKeepHeldVRRocket = m_bVRRocketHeld && !m_bVRRocketInsertActive;
 	ResetVRRocketManualReloadState();
 	CBaseEntity *pRocket = BaseClass::FireProjectile( pPlayer );
+	m_bVRRocketHeld = bKeepHeldVRRocket;
+
+	if ( ShouldUseVRManualRocketReload() )
+	{
+		const float flReloadStartDelay = GetVRSinglyReloadStartThrottleInterval() * TFVR_RocketReloadThrottleScale();
+		const float flFireAnimFinishTime = Max<float>( m_flNextPrimaryAttack, m_flTimeWeaponIdle );
+		const float flReloadStartReadyTime = Max<float>( flFireAnimFinishTime, gpGlobals->curtime ) + flReloadStartDelay;
+		m_flNextVRRocketStartTime = Max<float>( m_flNextVRRocketStartTime, flReloadStartReadyTime );
+		m_iVRRocketLastClipForManualReload = Clip1();
+	}
 
 	m_nReloadPitchStep = MAX( 0, m_nReloadPitchStep - 1 );
 
@@ -517,6 +528,9 @@ void CTFRocketLauncher::VRStartRocketInsert()
 	if ( !pOwner || !m_bVRRocketHeld || m_bVRRocketInsertActive )
 		return;
 
+	if ( gpGlobals->curtime < m_flNextPrimaryAttack )
+		return;
+
 	if ( !CanStartVRRocketManualReload() )
 	{
 		ResetVRRocketManualReloadState();
@@ -630,7 +644,9 @@ void CTFRocketLauncher::VRRocketManualReloadPostFrame()
 			( nMaxClip > 1 && m_iVRRocketLastClipForManualReload == nMaxClip && nClip == nMaxClip - 1 ) )
 		{
 			float flDelay = GetVRSinglyReloadStartThrottleInterval() * TFVR_RocketReloadThrottleScale();
-			m_flNextVRRocketStartTime = MAX( m_flNextVRRocketStartTime, gpGlobals->curtime + flDelay );
+			const float flFireAnimFinishTime = Max<float>( m_flNextPrimaryAttack, m_flTimeWeaponIdle );
+			const float flReloadStartReadyTime = Max<float>( flFireAnimFinishTime, gpGlobals->curtime ) + flDelay;
+			m_flNextVRRocketStartTime = MAX( m_flNextVRRocketStartTime, flReloadStartReadyTime );
 		}
 	}
 	m_iVRRocketLastClipForManualReload = nClip;
@@ -656,10 +672,13 @@ void CTFRocketLauncher::VRRocketManualReloadPostFrame()
 	{
 		if ( IsReloading() )
 		{
+			const float flPriorNextFire = Max<float>( m_flNextPrimaryAttack, m_flReloadPriorNextFire );
+			const float flReloadReadyTime = Max<float>( flPriorNextFire, m_flTimeWeaponIdle );
 			AbortReload();
 			SendWeaponAnim( ACT_VM_IDLE );
-			pOwner->m_flNextAttack = gpGlobals->curtime;
-			m_flNextPrimaryAttack = gpGlobals->curtime;
+			pOwner->m_flNextAttack = Max<float>( pOwner->m_flNextAttack, flPriorNextFire );
+			m_flNextPrimaryAttack = Max<float>( m_flNextPrimaryAttack, flPriorNextFire );
+			m_flNextVRRocketStartTime = Max<float>( m_flNextVRRocketStartTime, flReloadReadyTime );
 		}
 		m_bVRRocketHeld = true;
 	}

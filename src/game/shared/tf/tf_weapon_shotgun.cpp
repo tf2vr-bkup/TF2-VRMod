@@ -234,11 +234,13 @@ void CTFShotgun::PrimaryAttack()
 	m_iWeaponMode = TF_WEAPON_PRIMARY_MODE;
 
 	const int iClipBefore = Clip1();
+	const bool bKeepHeldVRShell = m_bVRShotgunShellHeld && !m_bVRShotgunShellInsertActive;
 	BaseClass::PrimaryAttack();
 
 	if ( Clip1() < iClipBefore )
 	{
 		ResetVRShotgunManualReloadState();
+		m_bVRShotgunShellHeld = bKeepHeldVRShell;
 		m_bVRShotgunSuppressAutoReload = false;
 		m_bVRShotgunSuppressNextPumpEject = false;
 		m_flVRShotgunResumeAutoReloadTime = 0.0f;

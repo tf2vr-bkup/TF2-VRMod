@@ -56,6 +56,19 @@ static bool TFVR_IsManualRocketLauncherWeaponID(int iWeaponID)
 	return iWeaponID == TF_WEAPON_ROCKETLAUNCHER || iWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT;
 }
 
+static bool TFVR_ShouldUseBlackBoxReloadLoop(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || !pWeapon->GetAttributeContainer())
+		return false;
+
+	CEconItemView *pItem = pWeapon->GetAttributeContainer()->GetItem();
+	if (!pItem)
+		return false;
+
+	const item_definition_index_t iItemDef = pItem->GetItemDefIndex();
+	return iItemDef == 228 || iItemDef == 1085;
+}
+
 static bool TFVR_IsManualRocketReloadActive(C_TFWeaponBase *pWeapon)
 {
 	if (!pWeapon || !TFVR_IsManualRocketLauncherWeaponID(pWeapon->GetWeaponID()))
@@ -1139,7 +1152,7 @@ ConVar tfvr_offhand_grip_enabled("tfvr_offhand_grip_enabled", "1", FCVAR_ARCHIVE
 ConVar tfvr_offhand_grip_range("tfvr_offhand_grip_range", "25", FCVAR_ARCHIVE, "Distance (cm) at which offhand grip can activate");
 ConVar tfvr_offhand_grip_shotgun_range("tfvr_offhand_grip_shotgun_range", "20", FCVAR_ARCHIVE, "Distance (cm) at which offhand grip can activate for pump-action shotguns");
 ConVar tfvr_offhand_grip_release_mult("tfvr_offhand_grip_release_mult", "6", FCVAR_ARCHIVE, "Multiplier for release distance (hysteresis to prevent accidental ungrip)");
-ConVar tfvr_offhand_grip_shotgun_release_mult("tfvr_offhand_grip_shotgun_release_mult", "4", FCVAR_ARCHIVE, "Multiplier for pump-action shotgun offhand grip release distance");
+ConVar tfvr_offhand_grip_shotgun_release_mult("tfvr_offhand_grip_shotgun_release_mult", "6", FCVAR_ARCHIVE, "Multiplier for pump-action shotgun offhand grip release distance");
 ConVar tfvr_offhand_grip_threshold("tfvr_offhand_grip_threshold", "0.5", FCVAR_ARCHIVE, "Grip button threshold (0-1) to activate offhand grip");
 ConVar tfvr_offhand_grip_blend_speed("tfvr_offhand_grip_blend_speed", "15", FCVAR_ARCHIVE, "Speed of hand position grip/ungrip transition (higher = faster)");
 ConVar tfvr_offhand_grip_rotation_blend_speed("tfvr_offhand_grip_rotation_blend_speed", "8", FCVAR_ARCHIVE, "Speed of weapon rotation grip/ungrip transition (higher = faster)");
@@ -12105,7 +12118,9 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		{
 			const float flManualReloadStartFrame = 4.0f;
 			const float flManualReloadEndFrame = 14.0f;
-			m_iShotgunManualReloadSequence = LookupSequence("dh_reload_loop");
+			const char *pszRocketReloadSequence = TFVR_ShouldUseBlackBoxReloadLoop(pWeapon)
+				? "dh_reload_loop_alt" : "dh_reload_loop";
+			m_iShotgunManualReloadSequence = LookupSequence(pszRocketReloadSequence);
 
 			if (m_iShotgunManualReloadSequence >= 0)
 			{
@@ -12122,8 +12137,8 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				}
 			}
 
-			DevMsg("VR: Rocket manual reload sequence 'dh_reload_loop': seq=%d frames=%.1f-%.1f hold=%.3f commit=%.3f on '%s'\n",
-				m_iShotgunManualReloadSequence, flManualReloadStartFrame, flManualReloadEndFrame,
+			DevMsg("VR: Rocket manual reload sequence '%s': seq=%d frames=%.1f-%.1f hold=%.3f commit=%.3f on '%s'\n",
+				pszRocketReloadSequence, m_iShotgunManualReloadSequence, flManualReloadStartFrame, flManualReloadEndFrame,
 				m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle, GetModelName());
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)

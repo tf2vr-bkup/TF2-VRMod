@@ -95,9 +95,9 @@ ConVar tfvr_popup_hud_notifications_debug("tfvr_popup_hud_notifications_debug", 
     "Debug output for notification panel rendering");
 
 // Healer panel specific offsets
-ConVar tfvr_popup_hud_healer_offset_x("tfvr_popup_hud_healer_offset_x", "12.5", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_healer_offset_x("tfvr_popup_hud_healer_offset_x", "19.25", FCVAR_ARCHIVE,
     "Horizontal offset for healer notification panel (positive = right)");
-ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "-25", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "-50", FCVAR_ARCHIVE,
     "Vertical offset for healer notification panel (positive = up)");
 
 // Building status specific offsets
@@ -134,7 +134,7 @@ ConVar tfvr_popup_hud_voice_test("tfvr_popup_hud_voice_test", "0", FCVAR_CHEAT,
 // Chat panel ConVars
 ConVar tfvr_popup_hud_chat_enabled("tfvr_popup_hud_chat_enabled", "1", FCVAR_ARCHIVE,
     "Enable VR rendering of the text chat window on the popup HUD");
-ConVar tfvr_popup_hud_chat_offset_x("tfvr_popup_hud_chat_offset_x", "-10", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_chat_offset_x("tfvr_popup_hud_chat_offset_x", "-20", FCVAR_ARCHIVE,
     "Horizontal offset for chat panel (positive = right)");
 ConVar tfvr_popup_hud_chat_offset_y("tfvr_popup_hud_chat_offset_y", "40", FCVAR_ARCHIVE,
     "Vertical offset for chat panel (positive = up)");
