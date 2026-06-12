@@ -351,6 +351,67 @@ void CVRWeaponSelectPanel::DrawQuadrant(int slot, bool selected, int centerX, in
 	vgui::surface()->DrawTexturedPolygon(4, verts);
 }
 
+// Word-wraps text so each line fits within maxWidth pixels.
+// Returns the number of lines written into the lines array.
+static int WrapTextToLines(const wchar_t *wszText, vgui::HFont font, int maxWidth,
+	wchar_t lines[][128], int maxLines)
+{
+	int numLines = 0;
+	const wchar_t *pCur = wszText;
+
+	while (*pCur && numLines < maxLines)
+	{
+		// Skip leading spaces
+		while (*pCur == L' ')
+			pCur++;
+		if (!*pCur)
+			break;
+
+		const wchar_t *pLineStart = pCur;
+		const wchar_t *pLastFit = nullptr; // End of the last word that fit
+
+		while (*pCur)
+		{
+			// Advance to the end of the current word
+			const wchar_t *pWordEnd = pCur;
+			while (*pWordEnd && *pWordEnd != L' ')
+				pWordEnd++;
+
+			// Measure line from start through this word
+			wchar_t wszCandidate[128];
+			int len = MIN((int)(pWordEnd - pLineStart), 127);
+			wcsncpy(wszCandidate, pLineStart, len);
+			wszCandidate[len] = L'\0';
+
+			int textW, textH;
+			vgui::surface()->GetTextSize(font, wszCandidate, textW, textH);
+
+			if (textW > maxWidth && pLastFit)
+			{
+				// This word doesn't fit; break the line at the previous word
+				break;
+			}
+
+			// Word fits (or is the first word on the line - keep it even if too wide)
+			pLastFit = pWordEnd;
+			pCur = pWordEnd;
+			while (*pCur == L' ')
+				pCur++;
+			if (!*pCur)
+				break;
+		}
+
+		int len = MIN((int)(pLastFit - pLineStart), 127);
+		wcsncpy(lines[numLines], pLineStart, len);
+		lines[numLines][len] = L'\0';
+		numLines++;
+
+		pCur = pLastFit;
+	}
+
+	return numLines;
+}
+
 void CVRWeaponSelectPanel::DrawWeaponInQuadrant(C_TFWeaponBase *pWeapon, int slot, bool selected, int centerX, int centerY)
 {
 	if (!pWeapon)
@@ -496,26 +557,38 @@ void CVRWeaponSelectPanel::DrawWeaponInQuadrant(C_TFWeaponBase *pWeapon, int slo
 			if (font == vgui::INVALID_FONT)
 				font = m_hWeaponNameFont;
 
-			int textW, textH;
-			vgui::surface()->GetTextSize(font, wszName, textW, textH);
+			// Word-wrap long names (e.g. tagged/renamed items) so they don't
+			// extend past the quadrant into neighboring ones
+			const int MAX_NAME_LINES = 4;
+			wchar_t lines[MAX_NAME_LINES][128];
+			int maxTextWidth = m_nQuadrantSize;
+			int numLines = WrapTextToLines(wszName, font, maxTextWidth, lines, MAX_NAME_LINES);
 
 			// Get text offset from ConVar
 			int textOffset = tfvr_weapon_select_text_offset.GetInt();
+			int lineHeight = vgui::surface()->GetFontTall(font);
 
-			int textX = qx - textW / 2;
-			int textY = qy + textOffset;
-
-			// Draw drop shadow first (offset for visibility at higher resolution)
 			vgui::surface()->DrawSetTextFont(font);
-			vgui::surface()->DrawSetTextColor(Color(0, 0, 0, selected ? 255 : 180));
-			vgui::surface()->DrawSetTextPos(textX + 3, textY + 3);
-			vgui::surface()->DrawPrintText(wszName, wcslen(wszName));
 
-			// Draw main text
-			Color textCol = selected ? Color(255, 255, 255, 255) : Color(180, 180, 180, 200);
-			vgui::surface()->DrawSetTextColor(textCol);
-			vgui::surface()->DrawSetTextPos(textX, textY);
-			vgui::surface()->DrawPrintText(wszName, wcslen(wszName));
+			for (int i = 0; i < numLines; i++)
+			{
+				int textW, textH;
+				vgui::surface()->GetTextSize(font, lines[i], textW, textH);
+
+				int textX = qx - textW / 2;
+				int textY = qy + textOffset + i * lineHeight;
+
+				// Draw drop shadow first (offset for visibility at higher resolution)
+				vgui::surface()->DrawSetTextColor(Color(0, 0, 0, selected ? 255 : 180));
+				vgui::surface()->DrawSetTextPos(textX + 3, textY + 3);
+				vgui::surface()->DrawPrintText(lines[i], wcslen(lines[i]));
+
+				// Draw main text
+				Color textCol = selected ? Color(255, 255, 255, 255) : Color(180, 180, 180, 200);
+				vgui::surface()->DrawSetTextColor(textCol);
+				vgui::surface()->DrawSetTextPos(textX, textY);
+				vgui::surface()->DrawPrintText(lines[i], wcslen(lines[i]));
+			}
 		}
 	}
 }
@@ -535,15 +608,19 @@ void CVRWeaponSelectPanel::Paint()
 	int centerX = GetWide() / 2;
 	int centerY = GetTall() / 2;
 
-	// Draw quadrants
+	// Draw all quadrant backgrounds first so icons/text from one quadrant
+	// (e.g. the top quadrant's name extending downward) are never overdrawn
+	// by a neighboring quadrant's background
 	for (int slot = 0; slot < m_nNumQuadrants && slot < 4; slot++)
 	{
 		bool selected = (slot == m_nSelectedSlot);
-
-		// Draw quadrant background
 		DrawQuadrant(slot, selected, centerX, centerY);
+	}
 
-		// Draw weapon in quadrant
+	// Then draw weapon icons and names on top
+	for (int slot = 0; slot < m_nNumQuadrants && slot < 4; slot++)
+	{
+		bool selected = (slot == m_nSelectedSlot);
 		C_TFWeaponBase *pWeapon = GetWeaponInSlot(slot);
 		DrawWeaponInQuadrant(pWeapon, slot, selected, centerX, centerY);
 	}
