@@ -26,6 +26,7 @@ C_TFVRWeaponMagazine::C_TFVRWeaponMagazine()
 {
 	m_iWeaponType = TF_WEAPON_NONE;
 	m_iAmmoCount = 0;
+	m_flClientSpawnTime = gpGlobals->curtime;
 }
 
 //-----------------------------------------------------------------------------

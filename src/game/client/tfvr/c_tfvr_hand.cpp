@@ -13,6 +13,7 @@
 #include "tf/tf_weapon_bat.h"
 #include "tf/tf_weapon_knife.h"
 #include "tf/tf_weapon_shotgun.h"
+#include "tf/tf_weapon_pistol.h"
 #include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_raygun.h"
@@ -28,6 +29,8 @@
 #include "tfvr/openxr_manager.h"
 #include "tfvr/openxr_hand_tracking.h"
 #include "tfvr/tfvr_weapon_base.h"
+#include "tfvr/c_tfvr_weapon_magazine.h"
+#include "cliententitylist.h"
 #include "bone_setup.h"
 #include "engine/ivdebugoverlay.h"
 #include "filesystem.h"
@@ -87,6 +90,34 @@ static bool TFVR_HasManualReloadRocketVisual(C_TFWeaponBase *pWeapon)
 	return pRocketLauncher->HasVRRocketInHand() || pRocketLauncher->IsVRRocketInserting();
 }
 
+// Returns the pistol when it is a VR manual-magazine-reload pistol, else NULL.
+static CTFPistol *TFVR_GetManualReloadPistol(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || (pWeapon->GetWeaponID() != TF_WEAPON_PISTOL_SCOUT
+		&& pWeapon->GetWeaponID() != TF_WEAPON_PISTOL))
+		return NULL;
+
+	CTFPistol *pPistol = static_cast<CTFPistol *>(pWeapon);
+	if (!pPistol->ShouldUseVRPistolManualReload())
+		return NULL;
+
+	return pPistol;
+}
+
+static int TFVR_GetPistolVisualWeaponID(C_TFWeaponBase *pWeapon, C_TFPlayer *pOwner)
+{
+	if (pOwner)
+	{
+		const int iClass = pOwner->GetPlayerClass()->GetClassIndex();
+		if (iClass == TF_CLASS_ENGINEER)
+			return TF_WEAPON_PISTOL;
+		if (iClass == TF_CLASS_SCOUT)
+			return TF_WEAPON_PISTOL_SCOUT;
+	}
+
+	return pWeapon ? pWeapon->GetWeaponID() : TF_WEAPON_PISTOL_SCOUT;
+}
+
 static void TFVR_SetReloadBodygroup(C_BaseAnimating *pAnimating, bool bVisible)
 {
 	if (!pAnimating)
@@ -128,6 +159,44 @@ static bool TFVR_CalculateModelRocketBoneInverse(C_BaseAnimating *pRocket, matri
 	pRocket->InvalidateBoneCache();
 	if (bWasNoDraw)
 		pRocket->AddEffects(EF_NODRAW);
+
+	return bGotInverse;
+}
+
+// Compute the inverse of a named bone's transform in the model's own
+// origin-pose, so the entity can be placed such that the bone lands on a
+// target world transform: entityWorld = targetBoneWorld * inverse.
+static bool TFVR_CalculateModelBoneInverse(C_BaseAnimating *pEntity, const char *pszBoneName, matrix3x4_t &outInverse)
+{
+	if (!pEntity || !pszBoneName)
+		return false;
+
+	Vector vecOldOrigin = pEntity->GetAbsOrigin();
+	QAngle angOldAngles = pEntity->GetAbsAngles();
+	const bool bWasNoDraw = (pEntity->GetEffects() & EF_NODRAW) != 0;
+
+	pEntity->RemoveEffects(EF_NODRAW);
+	pEntity->SetAbsOrigin(vec3_origin);
+	pEntity->SetAbsAngles(vec3_angle);
+	pEntity->InvalidateBoneCache();
+
+	bool bGotInverse = false;
+	matrix3x4_t bones[MAXSTUDIOBONES];
+	if (pEntity->SetupBones(bones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime))
+	{
+		int iBone = pEntity->LookupBone(pszBoneName);
+		if (iBone >= 0 && iBone < MAXSTUDIOBONES)
+		{
+			MatrixInvert(bones[iBone], outInverse);
+			bGotInverse = true;
+		}
+	}
+
+	pEntity->SetAbsOrigin(vecOldOrigin);
+	pEntity->SetAbsAngles(angOldAngles);
+	pEntity->InvalidateBoneCache();
+	if (bWasNoDraw)
+		pEntity->AddEffects(EF_NODRAW);
 
 	return bGotInverse;
 }
@@ -1074,6 +1143,10 @@ static bool IsBareFists(C_TFWeaponBase *pWeapon);
 
 // ConVars for debugging and control
 ConVar tfvr_hands_enabled("tfvr_hands_enabled", "1", FCVAR_ARCHIVE, "Enable VR hand rendering");
+ConVar tfvr_pistol_reload_wrist_motion("tfvr_pistol_reload_wrist_motion", "0.35", FCVAR_ARCHIVE,
+	"VR pistol manual reload: fraction (0-1) of the authored wrist motion applied to the weapon hand during the reload animation. 0 = hand fully pinned to the controller.");
+ConVar tfvr_pistol_reload_blend_out("tfvr_pistol_reload_blend_out", "0.5", FCVAR_ARCHIVE,
+	"VR pistol manual reload: seconds to blend the weapon hand back to the idle pose after the reload finish motion ends");
 ConVar tfvr_hands_debug("tfvr_hands_debug", "0", FCVAR_NONE, "Show debug info for VR hands");
 ConVar tfvr_hands_debug_bones("tfvr_hands_debug_bones", "0", FCVAR_NONE, "Draw bone positions on VR hands/weapons (1=hand, 2=weapon, 3=both)");
 ConVar tfvr_hands_alpha("tfvr_hands_alpha", "1", FCVAR_ARCHIVE, "Alpha transparency for VR hands (0-1)");
@@ -2024,6 +2097,8 @@ C_TFVRHand::C_TFVRHand()
 	// Cached weapon bone world transform
 	SetIdentityMatrix(m_matWeaponBoneWorld);
 	m_bWeaponBoneWorldValid = false;
+	SetIdentityMatrix(m_matLiveWeaponBoneWorld);
+	m_bLiveWeaponBoneWorldValid = false;
 
 	// Cached muzzle position
 	m_vecCachedMuzzlePos = vec3_origin;
@@ -2075,6 +2150,14 @@ C_TFVRHand::C_TFVRHand()
 	m_iShotgunManualReloadSequence = -1;
 	m_flShotgunManualReloadHoldCycle = 0.0f;
 	m_flShotgunManualReloadCommitCycle = 1.0f;
+	m_flPistolOneFrameCycle = 0.0f;
+	m_flPistolMagFreeCycle = 0.0f;
+	m_flPistolPauseCycle = 1.0f;
+	m_flPistolInsertTargetCycle = 0.0f;
+	m_flPistolFinishEndCycle = 1.0f;
+	m_bPistolReloadBlendOut = false;
+	m_flPistolReloadBlendOutStartTime = 0.0f;
+	m_flPistolReloadAnimWeight = 1.0f;
 	m_bShotgunManualReloadPoseActive = false;
 	m_bShotgunManualReloadBlendOutActive = false;
 	m_flShotgunManualReloadBlendOutStartTime = 0.0f;
@@ -2096,6 +2179,17 @@ C_TFVRHand::C_TFVRHand()
 	m_hManualReloadRocket = NULL;
 	m_bManualReloadRocketBoneInverseValid = false;
 	SetIdentityMatrix(m_matManualReloadRocketBoneInverse);
+	m_hPistolMagazine = NULL;
+	m_bPistolMagBoneInverseValid = false;
+	SetIdentityMatrix(m_matPistolMagBoneInverse);
+	m_vecPistolMagLastWorldPos = vec3_origin;
+	m_angPistolMagLastWorldAng = vec3_angle;
+	m_vecPistolMagEjectVel = vec3_origin;
+	m_bPistolMagLastWorldValid = false;
+	m_bPistolMagFalling = false;
+	m_flPistolMagFallStartTime = 0.0f;
+	m_vecPistolMagFallStartPos = vec3_origin;
+	m_vecPistolMagFallVel = vec3_origin;
 
 	// Initialize bone mapping to invalid
 	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
@@ -2205,6 +2299,8 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bCritBoostActive = false;
 	SetIdentityMatrix(m_matWeaponBoneWorld);
 	m_bWeaponBoneWorldValid = false;
+	SetIdentityMatrix(m_matLiveWeaponBoneWorld);
+	m_bLiveWeaponBoneWorldValid = false;
 	m_vecCachedMuzzlePos = vec3_origin;
 	m_angCachedMuzzleAngles = vec3_angle;
 	m_bCachedMuzzleValid = false;
@@ -2423,6 +2519,7 @@ void C_TFVRHand::Shutdown()
 		RemoveLeftHandShield();
 	}
 	RemoveManualReloadRocketModel();
+	RemovePistolMagazineModel();
 
 	// Reset bone mapping so it gets recalculated on reinit
 	m_bBoneMappingSetup = false;
@@ -2475,6 +2572,13 @@ void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 		{
 			g_pLocalPlayerLeftHand->Spawn();
 			g_pLocalPlayerRightHand->Spawn();
+			CTFWeaponBase *pActiveWeapon = pPlayer->GetActiveTFWeapon();
+			if (pActiveWeapon)
+			{
+				C_TFVRHand *pWeaponHand = IsWeaponMedigun(pActiveWeapon) ? g_pLocalPlayerLeftHand : g_pLocalPlayerRightHand;
+				if (pWeaponHand)
+					pWeaponHand->EquipWeapon(pActiveWeapon);
+			}
 			Msg("VR SpawnVRHands: Reinit successful\n");
 			return;
 		}
@@ -2507,6 +2611,17 @@ void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 		Warning("VR Hands: Failed to create right hand!\n");
 		if (pRightHand)
 			delete pRightHand;
+	}
+
+	if (g_pLocalPlayerLeftHand && g_pLocalPlayerRightHand)
+	{
+		CTFWeaponBase *pActiveWeapon = pPlayer->GetActiveTFWeapon();
+		if (pActiveWeapon)
+		{
+			C_TFVRHand *pWeaponHand = IsWeaponMedigun(pActiveWeapon) ? g_pLocalPlayerLeftHand : g_pLocalPlayerRightHand;
+			if (pWeaponHand)
+				pWeaponHand->EquipWeapon(pActiveWeapon);
+		}
 	}
 }
 
@@ -2959,6 +3074,9 @@ void C_TFVRHand::Update()
 	UpdateManglerPumpReloadAnimation();
 	UpdatePomsonPumpReloadAnimation();
 	UpdateShotgunPumpActionAnimation();
+	// Must run after the functions above: they clear the shared reload anim
+	// state for weapons they don't recognize (including the pistol).
+	UpdatePistolReloadAnimation();
 
 	// Forward pump reload state to render weapon so weapon_bone_1 animates
 	{
@@ -3041,15 +3159,19 @@ void C_TFVRHand::Update()
 			m_bBackstabReady = true;
 	}
 
-	// Check if player class has changed - if so, hide hands temporarily to avoid crash
+	// Rebuild both hands together if the local player class changed but the
+	// player-level class-change hook has not rebuilt us yet. Direct Scout <->
+	// Engineer switches are especially sensitive because the pistol reload
+	// sequence name is class-specific (p_reload vs pstl_reload).
 	int currentClass = pOwner->GetPlayerClass()->GetClassIndex();
 	if (m_iLastPlayerClass != TF_CLASS_UNDEFINED && currentClass != m_iLastPlayerClass)
 	{
-		Msg("VR Update: %s hand detected class change %d -> %d, shutting down\n",
+		Msg("VR Update: %s hand detected class change %d -> %d, rebuilding hands\n",
 			IsLeftHand() ? "LEFT" : "RIGHT", m_iLastPlayerClass, currentClass);
-		AddEffects(EF_NODRAW);
-		m_bShuttingDown = true; // Prevent rendering until reinitialized
-		m_iLastPlayerClass = currentClass;
+		if (IsRightHand())
+			C_TFVRHand::SpawnVRHands(pOwner);
+		else
+			m_iLastPlayerClass = currentClass;
 		return;
 	}
 	m_iLastPlayerClass = currentClass;
@@ -3145,6 +3267,18 @@ void C_TFVRHand::Update()
 				         iWeaponID == TF_WEAPON_HANDGUN_SCOUT_SECONDARY)  // Pretty Boy's, Winger
 				{
 					bPassiveGripOnly = true;
+
+					// No passive grip while a manual mag reload is in
+					// progress (or a spare mag is in this hand): the off
+					// hand must stay free to fetch and insert the mag.
+					CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(pWeapon);
+					if (pManualPistol && (pManualPistol->IsVRPistolManualReloadBusy()
+						|| pManualPistol->IsVRMagOut()
+						|| pManualPistol->HasVRMagazineInHand()))
+					{
+						bPassiveGripOnly = false;
+						bSkipTwoHand = true;
+					}
 				}
 			}
 		}
@@ -4464,7 +4598,16 @@ void C_TFVRHand::Update()
 				// Detect weapon change: either different weapon, or current held weapon is now invalid
 				bool bNeedsWeaponUpdate = false;
 
-				if (pActiveWeapon != pCurrentHeld)
+				if (pCurrentHeld && m_iLastEquippedWeaponID >= 0
+					&& pCurrentHeld->GetWeaponID() != m_iLastEquippedWeaponID)
+				{
+					// Class/loadout changes can mutate or reuse the same client
+					// weapon entity with a different weapon ID. Pointer equality
+					// would otherwise skip EquipWeapon(), leaving class-specific
+					// pistol reload sequences/cycles from the previous class.
+					bNeedsWeaponUpdate = true;
+				}
+				else if (pActiveWeapon != pCurrentHeld)
 				{
 					// TF2 recreates weapon entities during prediction/networking,
 					// which changes the pointer even though it's the same weapon.
@@ -4475,6 +4618,7 @@ void C_TFVRHand::Update()
 						(m_hRenderWeapon.Get() || (m_bHasGunslinger && V_stristr(pActiveWeapon->GetClassname(), "robot_arm"))))
 					{
 						m_hHeldWeapon = pActiveWeapon;
+						pActiveWeapon->SetHeldByVRHand( true );
 						C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
 						if (pRenderWeapon)
 							pRenderWeapon->SetSourceWeapon(pActiveWeapon);
@@ -6612,8 +6756,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			CTFRocketLauncher *pRocketLauncher = (pLeftWeapon
 				&& (pLeftWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER || pLeftWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT))
 				? static_cast<CTFRocketLauncher *>(pLeftWeapon) : NULL;
+			CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(pLeftWeapon);
 			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
-				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive());
+				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive())
+				|| (pManualPistol && pManualPistol->IsVRPistolMagPoseActive());
 			if (pLeftHand && bManualReloadActive
 				&& pLeftHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
@@ -6631,6 +6777,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					{
 						flProgress = pRocketLauncher->IsVRRocketInserting()
 							? pRocketLauncher->GetVRRocketVisualInsertProgress() : 0.0f;
+					}
+					else if (pManualPistol)
+					{
+						flProgress = pManualPistol->IsVRMagInserting()
+							? pManualPistol->GetVRMagPhaseProgress() : 0.0f;
 					}
 					float flCycle = Lerp(flProgress,
 						pLeftHand->m_flShotgunManualReloadHoldCycle,
@@ -6675,14 +6826,19 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					MatrixInvert(shellBones[m_iHandBone], invShellHand);
 					matrix3x4_t shellAnchorWorld;
 					const bool bInserting = (pShotgun && pShotgun->IsVRShotgunShellInserting())
-						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting());
+						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting())
+						|| (pManualPistol && pManualPistol->IsVRMagInserting());
 					if (bInserting)
 					{
 						Vector targetPos;
 						QAngle targetAngles;
-						bool bGotTarget = pShotgun
-							? pLeftHand->GetShotgunManualReloadTarget(targetPos, targetAngles)
-							: pLeftHand->GetRocketManualReloadTarget(targetPos, targetAngles);
+						bool bGotTarget = false;
+						if (pShotgun)
+							bGotTarget = pLeftHand->GetShotgunManualReloadTarget(targetPos, targetAngles);
+						else if (pManualPistol)
+							bGotTarget = pLeftHand->GetPistolManualReloadTarget(targetPos, targetAngles);
+						else
+							bGotTarget = pLeftHand->GetRocketManualReloadTarget(targetPos, targetAngles);
 						if (bGotTarget)
 						{
 							matrix3x4_t targetWorld;
@@ -6762,8 +6918,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			CTFRocketLauncher *pRocketLauncher = (pRightWeapon
 				&& (pRightWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER || pRightWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT))
 				? static_cast<CTFRocketLauncher *>(pRightWeapon) : NULL;
+			CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(pRightWeapon);
 			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
-				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive());
+				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive())
+				|| (pManualPistol && pManualPistol->IsVRPistolMagPoseActive());
 			if (pRightHand && bManualReloadActive
 				&& pRightHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
@@ -6781,6 +6939,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					{
 						flProgress = pRocketLauncher->IsVRRocketInserting()
 							? pRocketLauncher->GetVRRocketVisualInsertProgress() : 0.0f;
+					}
+					else if (pManualPistol)
+					{
+						flProgress = pManualPistol->IsVRMagInserting()
+							? pManualPistol->GetVRMagPhaseProgress() : 0.0f;
 					}
 					float flCycle = Lerp(flProgress,
 						pRightHand->m_flShotgunManualReloadHoldCycle,
@@ -6826,14 +6989,19 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					matrix3x4_t shellAnchorDelta;
 					matrix3x4_t shellAnchorWorld;
 					const bool bInserting = (pShotgun && pShotgun->IsVRShotgunShellInserting())
-						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting());
+						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting())
+						|| (pManualPistol && pManualPistol->IsVRMagInserting());
 					if (bInserting)
 					{
 						Vector targetPos;
 						QAngle targetAngles;
-						bool bGotTarget = pShotgun
-							? pRightHand->GetShotgunManualReloadTarget(targetPos, targetAngles)
-							: pRightHand->GetRocketManualReloadTarget(targetPos, targetAngles);
+						bool bGotTarget = false;
+						if (pShotgun)
+							bGotTarget = pRightHand->GetShotgunManualReloadTarget(targetPos, targetAngles);
+						else if (pManualPistol)
+							bGotTarget = pRightHand->GetPistolManualReloadTarget(targetPos, targetAngles);
+						else
+							bGotTarget = pRightHand->GetRocketManualReloadTarget(targetPos, targetAngles);
 						if (bGotTarget)
 						{
 							matrix3x4_t targetWorld;
@@ -6974,6 +7142,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			}
 		}
 		UpdateManualReloadRocketFromBones(pBoneToWorldOut, nMaxBones, bShowManualReloadRocket);
+
+		// Pistol manual reload magazines: gun mag on the weapon hand,
+		// held spare mag on the off hand.
+		UpdatePistolMagazineFromBones(pBoneToWorldOut, nMaxBones, bShotgunManualReloadPoseApplied);
 
 		// Position shield from the precomputed c_demo_arms offset, applied to
 		// bip_hand_L which is already at the controller transform after anchoring.
@@ -8347,6 +8519,197 @@ bool C_TFVRHand::GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseH
 	return true;
 }
 
+//-----------------------------------------------------------------------------
+// Purpose: Sample p_reload at flCycle and return vm_weapon_bone relative to
+//          weapon_bone (model space). Used to ride the mag on the live gun.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetPistolReloadMagRelativeToWeapon( float flCycle, matrix3x4_t &outMagRelWeaponBone )
+{
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr || m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	const int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	int iMagBone = LookupBone( "vm_weapon_bone" );
+	int iWeaponBone = LookupBone( "weapon_bone" );
+	if ( iMagBone < 0 || iMagBone >= numBones || iWeaponBone < 0 || iWeaponBone >= numBones )
+		return false;
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, m_iShotgunManualReloadSequence,
+		clamp( flCycle, 0.0f, 1.0f ), 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( qAnim[i], posAnim[i], local );
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones )
+			ConcatTransforms( sampledBones[pBone->parent], local, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	matrix3x4_t invSampledWeaponBone;
+	MatrixInvert( sampledBones[iWeaponBone], invSampledWeaponBone );
+	ConcatTransforms( invSampledWeaponBone, sampledBones[iMagBone], outMagRelWeaponBone );
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: World-space magwell point on the live gun: vm_weapon_bone sampled
+//          at the insert target frame, mapped through the live weapon bone.
+//          Proximity target for inserting the held magazine.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetPistolMagazineInsertTarget( Vector &outPos )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol( pWeapon );
+	if ( !pPistol || m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	matrix3x4_t magRelWeapon;
+	if ( !GetPistolReloadMagRelativeToWeapon( m_flPistolInsertTargetCycle, magRelWeapon ) )
+		return false;
+
+	// Use the live (animation-following) weapon bone so the magwell tracks
+	// the gun as the reload animation moves it.
+	matrix3x4_t liveWeaponBone;
+	if ( !GetLiveWeaponBoneTransform( liveWeaponBone )
+		&& !GetCachedWeaponBoneTransform( liveWeaponBone ) )
+	{
+		if ( m_bHasIdleWeaponBone )
+			MatrixCopy( m_matIdleWeaponBoneWorld, liveWeaponBone );
+		else
+			return false;
+	}
+
+	matrix3x4_t magWorld;
+	ConcatTransforms( liveWeaponBone, magRelWeapon, magWorld );
+	MatrixGetColumn( magWorld, 3, outPos );
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: World-space target for the off hand during the pistol mag insert:
+//          the off-hand bone from p_reload (frames 17-19) mapped through the
+//          live weapon bone. Mirrors GetShotgunManualReloadTarget.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetPistolManualReloadTarget( Vector &outPos, QAngle &outAngles )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol( pWeapon );
+	if ( !pPistol || m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	if ( !pPistol->IsVRPistolMagPoseActive() )
+		return false;
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr )
+		return false;
+
+	const int numBones = pStudioHdr->numbones();
+	int iOffHandBone = IsRightHand() ? LookupBone( "bip_hand_L" ) : LookupBone( "bip_hand_R" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "ValveBiped.Bip01_L_Hand" ) : LookupBone( "ValveBiped.Bip01_R_Hand" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "bip_hand_l" ) : LookupBone( "bip_hand_r" );
+	if ( iOffHandBone < 0 )
+		iOffHandBone = IsRightHand() ? LookupBone( "weapon_bone_L" ) : LookupBone( "weapon_bone_R" );
+
+	int iWeaponBone = LookupBone( "weapon_bone" );
+	if ( iWeaponBone < 0 )
+		iWeaponBone = LookupBone( "vm_weapon_bone" );
+
+	if ( iOffHandBone < 0 || iOffHandBone >= numBones || iOffHandBone >= MAXSTUDIOBONES ||
+		iWeaponBone < 0 || iWeaponBone >= numBones || iWeaponBone >= MAXSTUDIOBONES )
+		return false;
+
+	float flProgress = pPistol->IsVRMagInserting() ? pPistol->GetVRMagPhaseProgress() : 0.0f;
+	float flCycle = Lerp( flProgress, m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle );
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, m_iShotgunManualReloadSequence, flCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones && i < MAXSTUDIOBONES; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( qAnim[i], posAnim[i], local );
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones && pBone->parent < MAXSTUDIOBONES )
+			ConcatTransforms( sampledBones[pBone->parent], local, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	// Use the live (animation-following) weapon bone so the off-hand target
+	// tracks the gun as the reload animation moves it.
+	matrix3x4_t liveWeaponBone;
+	if ( !GetLiveWeaponBoneTransform( liveWeaponBone )
+		&& !GetCachedWeaponBoneTransform( liveWeaponBone ) )
+	{
+		if ( m_bHasIdleWeaponBone )
+			MatrixCopy( m_matIdleWeaponBoneWorld, liveWeaponBone );
+		else
+			return false;
+	}
+
+	matrix3x4_t invSampledWeaponBone;
+	MatrixInvert( sampledBones[iWeaponBone], invSampledWeaponBone );
+
+	matrix3x4_t offhandRelativeToWeapon;
+	ConcatTransforms( invSampledWeaponBone, sampledBones[iOffHandBone], offhandRelativeToWeapon );
+
+	matrix3x4_t offhandWorld;
+	ConcatTransforms( liveWeaponBone, offhandRelativeToWeapon, offhandWorld );
+
+	MatrixAngles( offhandWorld, outAngles, outPos );
+	return true;
+}
+
 bool C_TFVRHand::GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles )
 {
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
@@ -9013,11 +9376,18 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 
 	if (handAlignBone >= 0 && handAlignBone < nMaxBones)
 	{
+		// Idle-stabilized cache: HUD overlays and aim helpers read this, so
+		// it must NOT follow reload/fire animation motion.
 		if (m_bHasIdleWeaponBone && !m_bIsBreadBite)
 			MatrixCopy(m_matIdleWeaponBoneWorld, m_matWeaponBoneWorld);
 		else
 			MatrixCopy(pBoneToWorldOut[handAlignBone], m_matWeaponBoneWorld);
 		m_bWeaponBoneWorldValid = true;
+
+		// Live (animated) weapon bone: pistol manual reload targets read
+		// this so the magwell follows the gun as the reload anim moves it.
+		MatrixCopy(pBoneToWorldOut[handAlignBone], m_matLiveWeaponBoneWorld);
+		m_bLiveWeaponBoneWorldValid = true;
 	}
 
 	// Pomson right-hand detach: position weapon at left hand instead of right hand
@@ -9677,6 +10047,18 @@ bool C_TFVRHand::GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const
 		return false;
 
 	MatrixCopy(m_matWeaponBoneWorld, outTransform);
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Live weapon bone transform that follows reload animation motion
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetLiveWeaponBoneTransform(matrix3x4_t &outTransform) const
+{
+	if (!m_bLiveWeaponBoneWorldValid)
+		return false;
+
+	MatrixCopy(m_matLiveWeaponBoneWorld, outTransform);
 	return true;
 }
 
@@ -11154,7 +11536,8 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 	// bone override is needed there — skip bip_hand and finger overrides
 	// so the right hand keeps its VR controller position and finger tracking.
 	bool bAllowReloadAnimDuringFire = false;
-	if (m_hHeldWeapon.Get() && IsPumpActionShotgunWeaponID(m_hHeldWeapon->GetWeaponID()))
+	if (m_hHeldWeapon.Get() && (IsPumpActionShotgunWeaponID(m_hHeldWeapon->GetWeaponID())
+		|| TFVR_GetManualReloadPistol(m_hHeldWeapon.Get()) != NULL))
 	{
 		bAllowReloadAnimDuringFire = true;
 	}
@@ -11191,11 +11574,135 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 
 			if (bThisHandPumps)
 			{
+				CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(m_hHeldWeapon.Get());
+				const bool bIsManualPistol = pManualPistol != NULL;
+				if (bIsManualPistol)
+				{
+					// Pistol: the hand stays anchored to the controller; the
+					// WEAPON moves around the hand per the animation, and the
+					// wrist optionally inherits a scaled fraction of the
+					// authored hand motion for immersion. Everything is a
+					// delta from frame 0 so there is no pop at start/finish.
+					const mstudiobone_t *pWpnBone = pStudioHdr->pBone(weaponBoneIdx);
+					if (pWpnBone && pWpnBone->parent >= 0 && pWpnBone->parent < nMaxBones)
+					{
+						Vector basePos[MAXSTUDIOBONES];
+						Quaternion baseQ[MAXSTUDIOBONES];
+						IBoneSetup baseSetup(pStudioHdr, BONE_USED_BY_ANYTHING, reloadPoseParams);
+						baseSetup.InitPose(basePos, baseQ);
+						baseSetup.AccumulatePose(basePos, baseQ, m_iLeverReloadSequence,
+							0.0f, 1.0f, gpGlobals->curtime, NULL);
+
+						// Scaled wrist-only motion: take the hand bone's
+						// model-space delta between frame 0 and the current
+						// cycle (so arm/parent posing in the anim is ignored
+						// in the output), shrink it, and apply it on top of
+						// the controller anchor. The gun follows rigidly so
+						// the mag and off-hand targets stay in sync.
+						extern ConVar tfvr_pistol_reload_wrist_motion;
+						float flWristScale = clamp(tfvr_pistol_reload_wrist_motion.GetFloat(), 0.0f, 1.0f)
+							* m_flPistolReloadAnimWeight;
+
+						// Engineer: keep the hand fully pinned for now; Scout
+						// keeps the small authored wrist bump.
+						if (VRPistol_IsEngineer(TFVR_GetPistolVisualWeaponID(pManualPistol, GetOwnerPlayer())))
+							flWristScale = 0.0f;
+
+						if (flWristScale > 0.0f && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+						{
+							const int numBonesLocal = MIN(pStudioHdr->numbones(), MAXSTUDIOBONES);
+							matrix3x4_t baseModel[MAXSTUDIOBONES];
+							matrix3x4_t curModel[MAXSTUDIOBONES];
+							for (int i = 0; i < numBonesLocal; i++)
+							{
+								matrix3x4_t baseLocalBone, curLocalBone;
+								QuaternionMatrix(baseQ[i], basePos[i], baseLocalBone);
+								QuaternionMatrix(reloadQ[i], reloadPos[i], curLocalBone);
+
+								const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+								if (!pBone || pBone->parent < 0)
+								{
+									MatrixCopy(baseLocalBone, baseModel[i]);
+									MatrixCopy(curLocalBone, curModel[i]);
+								}
+								else if (pBone->parent < i)
+								{
+									ConcatTransforms(baseModel[pBone->parent], baseLocalBone, baseModel[i]);
+									ConcatTransforms(curModel[pBone->parent], curLocalBone, curModel[i]);
+								}
+								else
+								{
+									SetIdentityMatrix(baseModel[i]);
+									SetIdentityMatrix(curModel[i]);
+								}
+							}
+
+							// Hand delta in the hand's own frame
+							matrix3x4_t invHandBase, handDelta;
+							MatrixInvert(baseModel[m_iHandBone], invHandBase);
+							ConcatTransforms(invHandBase, curModel[m_iHandBone], handDelta);
+
+							Quaternion qDelta;
+							Vector posDelta;
+							MatrixAngles(handDelta, qDelta, posDelta);
+
+							Quaternion qScaled;
+							QuaternionScale(qDelta, flWristScale, qScaled);
+							matrix3x4_t scaledDelta;
+							QuaternionMatrix(qScaled, posDelta * flWristScale, scaledDelta);
+
+							matrix3x4_t handLive;
+							MatrixCopy(pBoneToWorldOut[m_iHandBone], handLive);
+							matrix3x4_t handNew;
+							ConcatTransforms(handLive, scaledDelta, handNew);
+							MatrixCopy(handNew, pBoneToWorldOut[m_iHandBone]);
+
+							// Gun rides the wrist rigidly; its own animation
+							// delta is layered on below.
+							matrix3x4_t invHandLive, weaponRelHand;
+							MatrixInvert(handLive, invHandLive);
+							ConcatTransforms(invHandLive, pBoneToWorldOut[weaponBoneIdx], weaponRelHand);
+							ConcatTransforms(handNew, weaponRelHand, pBoneToWorldOut[weaponBoneIdx]);
+						}
+
+						matrix3x4_t baseLocal, curLocal;
+						QuaternionMatrix(baseQ[weaponBoneIdx], basePos[weaponBoneIdx], baseLocal);
+						QuaternionMatrix(reloadQ[weaponBoneIdx], reloadPos[weaponBoneIdx], curLocal);
+
+						// Both expressed under the same parent, which cancels
+						// in the delta, so this works whether or not the
+						// wrist offset moved the hand above.
+						matrix3x4_t baseWorld, curWorld;
+						ConcatTransforms(pBoneToWorldOut[pWpnBone->parent], baseLocal, baseWorld);
+						ConcatTransforms(pBoneToWorldOut[pWpnBone->parent], curLocal, curWorld);
+
+						matrix3x4_t invBaseWorld, animDelta;
+						MatrixInvert(baseWorld, invBaseWorld);
+						ConcatTransforms(invBaseWorld, curWorld, animDelta);
+
+						// Blend-out: shrink the gun's animation delta toward
+						// identity as the hand returns to idle.
+						if (m_flPistolReloadAnimWeight < 1.0f)
+						{
+							Quaternion qAnimDelta;
+							Vector posAnimDelta;
+							MatrixAngles(animDelta, qAnimDelta, posAnimDelta);
+
+							Quaternion qWeighted;
+							QuaternionScale(qAnimDelta, m_flPistolReloadAnimWeight, qWeighted);
+							QuaternionMatrix(qWeighted, posAnimDelta * m_flPistolReloadAnimWeight, animDelta);
+						}
+
+						matrix3x4_t newWeaponWorld;
+						ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], animDelta, newWeaponWorld);
+						MatrixCopy(newWeaponWorld, pBoneToWorldOut[weaponBoneIdx]);
+					}
+				}
 				// Position bip_hand so the reload animation's hand pose is
 				// applied relative to weapon_bone (which stays at idle).
 				// weapon_bone is a child of bip_hand, so:
 				//   bip_hand = weapon_bone_world * inverse(weapon_bone_local_in_reload)
-				if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
+				else if (m_iHandBone >= 0 && m_iHandBone < nMaxBones)
 				{
 					matrix3x4_t reloadWeaponBoneLocal;
 					QuaternionMatrix(reloadQ[weaponBoneIdx], reloadPos[weaponBoneIdx], reloadWeaponBoneLocal);
@@ -11239,7 +11746,15 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 
 					matrix3x4_t localBoneMatrix;
 					QuaternionMatrix(reloadQ[boneIndex], reloadPos[boneIndex], localBoneMatrix);
-					ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, pBoneToWorldOut[boneIndex]);
+
+					matrix3x4_t reloadFingerWorld;
+					ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, reloadFingerWorld);
+
+					// Pistol blend-out: ease fingers back to their tracked pose
+					if (bIsManualPistol && m_flPistolReloadAnimWeight < 1.0f)
+						TFVR_BlendTransforms(pBoneToWorldOut[boneIndex], reloadFingerWorld, m_flPistolReloadAnimWeight, pBoneToWorldOut[boneIndex]);
+					else
+						MatrixCopy(reloadFingerWorld, pBoneToWorldOut[boneIndex]);
 				}
 			}
 
@@ -11623,6 +12138,23 @@ int C_TFVRHand::DrawModel(int flags)
 		}
 	}
 
+	if (m_hPistolMagazine.Get())
+	{
+		C_BaseAnimating *pMag = m_hPistolMagazine.Get();
+		if (TFVR_ValidateHandRenderable(pMag, "pistol magazine"))
+		{
+			if (bInvuln && (flags & STUDIO_RENDER))
+				modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+
+			pMag->RemoveEffects(EF_NODRAW);
+			pMag->DrawModel(flags);
+			pMag->AddEffects(EF_NODRAW);
+
+			if (bInvuln && (flags & STUDIO_RENDER))
+				modelrender->ForcedMaterialOverride(NULL);
+		}
+	}
+
 	if (m_hLeftHandShield.Get())
 	{
 		C_BaseAnimating *pShield = m_hLeftHandShield.Get();
@@ -11805,6 +12337,12 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 
 	// Use world model for VR (c_models in TF2 are the world models)
 	const char *worldModel = pWeapon->GetWorldModel();
+
+	// Manual-reload pistol uses a dedicated model with the magazine split
+	// into its own mesh (vr_pistol_ammo.mdl) so the mag can leave the gun.
+	if (TFVR_GetManualReloadPistol(pWeapon))
+		worldModel = "models/weapons/vr_models/vr_pistol/vr_pistol.mdl";
+
 	if (!worldModel || !worldModel[0])
 		return;
 
@@ -12018,6 +12556,14 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		m_iShotgunManualReloadSequence = -1;
 		m_flShotgunManualReloadHoldCycle = 0.0f;
 		m_flShotgunManualReloadCommitCycle = 1.0f;
+		m_flPistolOneFrameCycle = 0.0f;
+		m_flPistolMagFreeCycle = 0.0f;
+		m_flPistolPauseCycle = 1.0f;
+		m_flPistolInsertTargetCycle = 0.0f;
+		m_flPistolFinishEndCycle = 1.0f;
+		m_bPistolReloadBlendOut = false;
+		m_flPistolReloadBlendOutStartTime = 0.0f;
+		m_flPistolReloadAnimWeight = 1.0f;
 		m_bShotgunManualReloadPoseActive = false;
 		m_bShotgunManualReloadBlendOutActive = false;
 		m_flShotgunManualReloadBlendOutStartTime = 0.0f;
@@ -12140,6 +12686,44 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 			DevMsg("VR: Rocket manual reload sequence '%s': seq=%d frames=%.1f-%.1f hold=%.3f commit=%.3f on '%s'\n",
 				pszRocketReloadSequence, m_iShotgunManualReloadSequence, flManualReloadStartFrame, flManualReloadEndFrame,
 				m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle, GetModelName());
+		}
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_PISTOL_SCOUT
+			|| pWeapon->GetWeaponID() == TF_WEAPON_PISTOL)
+		{
+			// Manual magazine reload: hold/commit map to the off-hand insert
+			// frames; the eject/pause/finish markers are per-class
+			// (scout p_reload vs engineer pstl_reload).
+			const int iPistolID = TFVR_GetPistolVisualWeaponID(pWeapon, pOwner);
+			const char *pszPistolReloadSeq = VRPistol_ReloadSequenceName(iPistolID);
+			m_iShotgunManualReloadSequence = LookupSequence(pszPistolReloadSeq);
+
+			if (m_iShotgunManualReloadSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iShotgunManualReloadSequence, poseParams);
+					if (maxFrame > 0)
+					{
+						m_flPistolOneFrameCycle = 1.0f / (float)maxFrame;
+						m_flPistolMagFreeCycle = clamp( VRPistol_FrameMagFree(iPistolID) / (float)maxFrame, 0.0f, 1.0f );
+						m_flPistolPauseCycle = clamp( VRPistol_FramePause(iPistolID) / (float)maxFrame, m_flPistolMagFreeCycle, 1.0f );
+						m_flShotgunManualReloadHoldCycle = clamp( VRPistol_FrameInsertStart(iPistolID) / (float)maxFrame, 0.0f, 1.0f );
+						m_flPistolInsertTargetCycle = clamp( VRPistol_FrameInsertTarget(iPistolID) / (float)maxFrame, 0.0f, 1.0f );
+						m_flShotgunManualReloadCommitCycle = clamp( VRPistol_FrameInsertEnd(iPistolID) / (float)maxFrame, m_flShotgunManualReloadHoldCycle, 1.0f );
+
+						const float flFinishFrame = VRPistol_FrameFinishEnd(iPistolID);
+						m_flPistolFinishEndCycle = flFinishFrame < 0.0f
+							? 1.0f
+							: clamp( flFinishFrame / (float)maxFrame, m_flShotgunManualReloadCommitCycle, 1.0f );
+					}
+				}
+			}
+
+			DevMsg("VR: Pistol manual reload sequence '%s': seq=%d magFree=%.3f pause=%.3f hold=%.3f target=%.3f commit=%.3f finish=%.3f on '%s'\n",
+				pszPistolReloadSeq, m_iShotgunManualReloadSequence, m_flPistolMagFreeCycle, m_flPistolPauseCycle,
+				m_flShotgunManualReloadHoldCycle, m_flPistolInsertTargetCycle, m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle, GetModelName());
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 		{
@@ -12767,6 +13351,14 @@ void C_TFVRHand::UnequipWeapon()
 	m_iShotgunManualReloadSequence = -1;
 	m_flShotgunManualReloadHoldCycle = 0.0f;
 	m_flShotgunManualReloadCommitCycle = 1.0f;
+	m_flPistolOneFrameCycle = 0.0f;
+	m_flPistolMagFreeCycle = 0.0f;
+	m_flPistolPauseCycle = 1.0f;
+	m_flPistolInsertTargetCycle = 0.0f;
+	m_flPistolFinishEndCycle = 1.0f;
+	m_bPistolReloadBlendOut = false;
+	m_flPistolReloadBlendOutStartTime = 0.0f;
+	m_flPistolReloadAnimWeight = 1.0f;
 	m_bShotgunManualReloadPoseActive = false;
 	m_bShotgunManualReloadBlendOutActive = false;
 	m_flShotgunManualReloadBlendOutStartTime = 0.0f;
@@ -12774,6 +13366,15 @@ void C_TFVRHand::UnequipWeapon()
 	m_bPlayingReloadAnim = false;
 	m_iLeverReloadSequence = -1;
 	m_flLeverReloadCycle = 0.0f;
+
+	// Clean up the pistol manual reload magazines (gun mag on this hand,
+	// held mag on the opposite hand).
+	RemovePistolMagazineModel();
+	{
+		C_TFVRHand *pOtherHand = GetOppositeVRHand(this);
+		if (pOtherHand)
+			pOtherHand->RemovePistolMagazineModel();
+	}
 
 	// Reset two-hand grip state
 	m_flTwoHandBlend = 0.0f;
@@ -13952,6 +14553,98 @@ void C_TFVRHand::UpdateShotgunPumpActionAnimation()
 
 	default:
 		break;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Pistol manual magazine reload animation. The weapon hand samples
+//          p_reload at a cycle driven by the weapon's reload phase:
+//            EJECTING  : frames 0-16 over the eject duration
+//            (mag out) : paused at frame 16
+//            INSERTING : frames 16-19 in sync with the off-hand insert
+//            FINISHING : frame 19 -> end
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdatePistolReloadAnimation()
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (!pPistol)
+		return;
+
+	if (m_iShotgunManualReloadSequence < 0)
+		return;
+
+	const int iPhase = pPistol->GetVRMagPhase();
+	const float flProgress = pPistol->GetVRMagPhaseProgress();
+
+	float flCycle = -1.0f;
+	switch (iPhase)
+	{
+	case VR_PISTOL_MAG_PHASE_EJECTING:
+		flCycle = flProgress * m_flPistolPauseCycle;
+		break;
+	case VR_PISTOL_MAG_PHASE_INSERTING:
+		flCycle = Lerp(flProgress, m_flPistolPauseCycle, m_flShotgunManualReloadCommitCycle);
+		break;
+	case VR_PISTOL_MAG_PHASE_FINISHING:
+		flCycle = Lerp(flProgress, m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle);
+		break;
+	default:
+		if (pPistol->IsVRMagOut())
+			flCycle = m_flPistolPauseCycle; // paused, waiting for a fresh mag
+		break;
+	}
+
+	if (flCycle >= 0.0f)
+	{
+		m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+		m_bPlayingReloadAnim = true;
+		m_bPlayingDrawAnim = false;
+		m_bPlayingChargeAnim = false;
+		m_iLeverReloadSequence = m_iShotgunManualReloadSequence;
+		m_flLeverReloadCycle = clamp(flCycle, 0.0f, 1.0f);
+		m_bPistolReloadBlendOut = false;
+		m_flPistolReloadAnimWeight = 1.0f;
+	}
+	else if (m_bPlayingReloadAnim || m_eReloadAnimState != VR_RELOAD_ANIM_NONE)
+	{
+		// Reload finished: blend the weapon hand back to the idle pose
+		// instead of snapping (the finish motion can stop mid-sequence,
+		// e.g. engineer stops at frame 20).
+		const float flBlendTime = MAX(tfvr_pistol_reload_blend_out.GetFloat(), 0.0f);
+		if (!m_bPistolReloadBlendOut)
+		{
+			if (flBlendTime > 0.0f)
+			{
+				m_bPistolReloadBlendOut = true;
+				m_flPistolReloadBlendOutStartTime = gpGlobals->curtime;
+				// Freeze the pose at the end of the finish motion while it fades.
+				m_flLeverReloadCycle = m_flPistolFinishEndCycle;
+			}
+		}
+
+		float flWeight = 0.0f;
+		if (m_bPistolReloadBlendOut && flBlendTime > 0.0f)
+		{
+			flWeight = 1.0f - clamp((gpGlobals->curtime - m_flPistolReloadBlendOutStartTime) / flBlendTime, 0.0f, 1.0f);
+		}
+
+		if (flWeight > 0.0f)
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_HOLD;
+			m_bPlayingReloadAnim = true;
+			m_iLeverReloadSequence = m_iShotgunManualReloadSequence;
+			m_flPistolReloadAnimWeight = flWeight;
+		}
+		else
+		{
+			m_eReloadAnimState = VR_RELOAD_ANIM_NONE;
+			m_bPlayingReloadAnim = false;
+			m_iLeverReloadSequence = -1;
+			m_flLeverReloadCycle = 0.0f;
+			m_bPistolReloadBlendOut = false;
+			m_flPistolReloadAnimWeight = 1.0f;
+		}
 	}
 }
 
@@ -15597,6 +16290,347 @@ void C_TFVRHand::UpdateManualReloadRocketFromBones(matrix3x4_t *pBoneToWorldOut,
 			}
 		}
 	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Create the standalone magazine mesh used by pistol manual reload
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::EnsurePistolMagazineModel()
+{
+	if (m_hPistolMagazine.Get())
+		return true;
+
+	static const char *pszMagModel = "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+	CBaseEntity::PrecacheModel(pszMagModel);
+
+	C_BaseAnimating *pMag = new C_BaseAnimating();
+	if (!pMag)
+		return false;
+
+	if (!pMag->InitializeAsClientEntity(pszMagModel, RENDER_GROUP_OPAQUE_ENTITY))
+	{
+		Warning("VR Pistol Reload: failed to initialize magazine model '%s'\n", pszMagModel);
+		pMag->Release();
+		return false;
+	}
+
+	int iModelIndex = modelinfo ? modelinfo->GetModelIndex(pszMagModel) : -1;
+	if (iModelIndex >= 0)
+		pMag->SetModelIndex(iModelIndex);
+
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (pOwner)
+		pMag->SetOwnerEntity(pOwner);
+
+	pMag->AddEffects(EF_NODRAW);
+	pMag->AddEffects(EF_NOINTERP);
+	pMag->SetMoveType(MOVETYPE_NONE);
+	pMag->AddSolidFlags(FSOLID_NOT_SOLID);
+	pMag->SetRenderMode(kRenderNormal);
+
+	int iIdleSeq = pMag->LookupSequence("idle");
+	if (iIdleSeq >= 0)
+	{
+		pMag->SetSequence(iIdleSeq);
+		pMag->SetCycle(0.0f);
+		pMag->SetPlaybackRate(0.0f);
+	}
+
+	m_bPistolMagBoneInverseValid = false;
+	SetIdentityMatrix(m_matPistolMagBoneInverse);
+	m_bPistolMagBoneInverseValid =
+		TFVR_CalculateModelBoneInverse(pMag, "vm_weapon_bone", m_matPistolMagBoneInverse);
+
+	m_hPistolMagazine = pMag;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Remove the standalone pistol magazine mesh
+//-----------------------------------------------------------------------------
+void C_TFVRHand::RemovePistolMagazineModel()
+{
+	if (m_hPistolMagazine.Get())
+	{
+		m_hPistolMagazine->Release();
+		m_hPistolMagazine = NULL;
+	}
+	m_bPistolMagBoneInverseValid = false;
+	SetIdentityMatrix(m_matPistolMagBoneInverse);
+	m_bPistolMagLastWorldValid = false;
+	m_bPistolMagFalling = false;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Begin the client-side ballistic bridge: the cosmetic mag detaches
+//          from the gun with the launch state the server prop will use.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::StartPistolMagFall()
+{
+	m_bPistolMagFalling = true;
+	m_flPistolMagFallStartTime = gpGlobals->curtime;
+	m_vecPistolMagFallStartPos = m_vecPistolMagLastWorldPos;
+
+	Vector vecPlayerVel = vec3_origin;
+	C_TFPlayer *pOwner = GetOwnerPlayer();
+	if (pOwner)
+		vecPlayerVel = pOwner->GetAbsVelocity();
+
+	// Launch with the animation's own velocity (one-frame delta at the
+	// authored 30fps), matching what the server prop will receive.
+	m_vecPistolMagFallVel = m_vecPistolMagEjectVel + vecPlayerVel;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Advance the local falling mag and hand off to the server's
+//          physics prop once it shows up (or on timeout).
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdatePistolMagFall()
+{
+	C_BaseAnimating *pMag = m_hPistolMagazine.Get();
+	if (!pMag)
+	{
+		m_bPistolMagFalling = false;
+		return;
+	}
+
+	const float flAge = gpGlobals->curtime - m_flPistolMagFallStartTime;
+	const float flMaxAge = 0.6f;
+
+	// Hand off once the networked prop exists near our simulated mag, or
+	// give up after the timeout (dropped packets etc).
+	bool bHandOff = flAge > flMaxAge;
+	if (!bHandOff)
+	{
+		Vector vecMagPos = pMag->GetAbsOrigin();
+		for (C_BaseEntity *pEnt = ClientEntityList().FirstBaseEntity(); pEnt; pEnt = ClientEntityList().NextBaseEntity(pEnt))
+		{
+			C_TFVRWeaponMagazine *pProp = dynamic_cast<C_TFVRWeaponMagazine *>(pEnt);
+			if (!pProp)
+				continue;
+
+			// Only a freshly arrived prop counts - ignore older dropped mags
+			// that may be lying nearby from a previous reload.
+			if (pProp->GetClientSpawnTime() < m_flPistolMagFallStartTime - 0.25f)
+				continue;
+
+			if ((pProp->GetAbsOrigin() - vecMagPos).LengthSqr() <= Square(50.0f))
+			{
+				bHandOff = true;
+				break;
+			}
+		}
+	}
+
+	if (bHandOff)
+	{
+		m_bPistolMagFalling = false;
+		RemovePistolMagazineModel();
+		return;
+	}
+
+	// Deterministic ballistic position (safe under multiple SetupBones
+	// calls per frame - no per-call integration).
+	float flGravity = 800.0f;
+	static ConVarRef sv_gravity("sv_gravity");
+	if (sv_gravity.IsValid())
+		flGravity = sv_gravity.GetFloat();
+
+	Vector vecPos = m_vecPistolMagFallStartPos
+		+ m_vecPistolMagFallVel * flAge
+		- Vector(0.0f, 0.0f, 0.5f * flGravity * flAge * flAge);
+
+	pMag->SetAbsOrigin(vecPos);
+	pMag->SetAbsAngles(m_angPistolMagLastWorldAng);
+	pMag->SetNetworkOrigin(vecPos);
+	pMag->ResetLatched();
+	pMag->InvalidateBoneCache();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Last world transform of the gun's magazine mesh (weapon hand),
+//          plus the animation-derived eject direction (zero when unknown).
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetPistolGunMagazineWorld( Vector &outPos, QAngle &outAngles, Vector &outEjectVel ) const
+{
+	if (!m_bPistolMagLastWorldValid)
+		return false;
+
+	outPos = m_vecPistolMagLastWorldPos;
+	outAngles = m_angPistolMagLastWorldAng;
+	outEjectVel = m_vecPistolMagEjectVel;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Position the pistol magazine mesh for this hand:
+//          - weapon hand: mag seated in / sliding out of the gun, riding the
+//            p_reload vm_weapon_bone mapped through the live weapon bone
+//          - off hand: spare mag riding this hand's posed vm_weapon_bone
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bManualReloadPoseApplied)
+{
+	// Client-side ballistic bridge active: the mag is mid-air between the
+	// authored eject motion and the server's physics prop.
+	if (m_bPistolMagFalling)
+	{
+		UpdatePistolMagFall();
+		return;
+	}
+
+	matrix3x4_t magBoneWorld;
+	matrix3x4_t magBoneWorldAhead;
+	bool bVisible = false;
+	bool bIsGunMag = false;
+	bool bHaveAhead = false;
+
+	if (pBoneToWorldOut)
+	{
+		C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+		CTFPistol *pOwnPistol = TFVR_GetManualReloadPistol(pWeapon);
+		if (pOwnPistol)
+		{
+			bIsGunMag = true;
+			// Weapon hand: the gun's own magazine.
+			float flCycle = 0.0f;
+			bool bWantMag = false;
+			const int iPhase = pOwnPistol->GetVRMagPhase();
+			if (iPhase == VR_PISTOL_MAG_PHASE_EJECTING)
+			{
+				// Mag rides the eject animation until it clears the gun (frame 6),
+				// then falls ballistically until the server's physics prop arrives.
+				flCycle = pOwnPistol->GetVRMagPhaseProgress() * m_flPistolPauseCycle;
+				bWantMag = !pOwnPistol->IsVRMagOut();
+
+				if (!bWantMag && m_hPistolMagazine.Get() && m_bPistolMagLastWorldValid)
+				{
+					StartPistolMagFall();
+					UpdatePistolMagFall();
+					return;
+				}
+			}
+			else if (iPhase == VR_PISTOL_MAG_PHASE_FINISHING)
+			{
+				flCycle = Lerp(pOwnPistol->GetVRMagPhaseProgress(), m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle);
+				bWantMag = true;
+			}
+			else if (iPhase == VR_PISTOL_MAG_PHASE_IDLE)
+			{
+				flCycle = 0.0f;
+				bWantMag = !pOwnPistol->IsVRMagOut();
+			}
+			// INSERTING: the off hand's held mag is the visible one.
+
+			if (bWantMag && m_iShotgunManualReloadSequence >= 0)
+			{
+				int iWeaponBone = LookupBone("weapon_bone");
+				matrix3x4_t magRelWeapon;
+				if (iWeaponBone >= 0 && iWeaponBone < nMaxBones
+					&& GetPistolReloadMagRelativeToWeapon(flCycle, magRelWeapon))
+				{
+					ConcatTransforms(pBoneToWorldOut[iWeaponBone], magRelWeapon, magBoneWorld);
+					bVisible = true;
+
+					// While ejecting, also sample one animation frame ahead:
+					// the physics prop spawns there (clear of the gun) moving
+					// in the direction the animation carries the mag.
+					if (iPhase == VR_PISTOL_MAG_PHASE_EJECTING && m_flPistolOneFrameCycle > 0.0f)
+					{
+						const float flOneFrame = m_flPistolOneFrameCycle;
+						matrix3x4_t magRelAhead;
+						if (GetPistolReloadMagRelativeToWeapon(flCycle + flOneFrame, magRelAhead))
+						{
+							ConcatTransforms(pBoneToWorldOut[iWeaponBone], magRelAhead, magBoneWorldAhead);
+							bHaveAhead = true;
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			// Off hand: spare mag pulled from the backpack.
+			C_TFVRHand *pOtherHand = GetOppositeVRHand(this);
+			C_TFWeaponBase *pOtherWeapon = pOtherHand ? pOtherHand->GetHeldWeapon() : NULL;
+			CTFPistol *pOtherPistol = TFVR_GetManualReloadPistol(pOtherWeapon);
+			if (pOtherPistol && bManualReloadPoseApplied && pOtherPistol->IsVRPistolMagPoseActive())
+			{
+				int iMagBone = LookupBone("vm_weapon_bone");
+				if (iMagBone >= 0 && iMagBone < nMaxBones)
+				{
+					MatrixCopy(pBoneToWorldOut[iMagBone], magBoneWorld);
+					bVisible = true;
+				}
+			}
+		}
+	}
+
+	if (!bVisible)
+	{
+		RemovePistolMagazineModel();
+		return;
+	}
+
+	if (!EnsurePistolMagazineModel())
+		return;
+
+	C_BaseAnimating *pMag = m_hPistolMagazine.Get();
+	if (!pMag)
+		return;
+
+	matrix3x4_t magWorld;
+	if (m_bPistolMagBoneInverseValid)
+		ConcatTransforms(magBoneWorld, m_matPistolMagBoneInverse, magWorld);
+	else
+		MatrixCopy(magBoneWorld, magWorld);
+
+	Vector magPos;
+	QAngle magAng;
+	MatrixAngles(magWorld, magAng, magPos);
+
+	// Remember the gun mag's exact transform so the input layer can report
+	// it to the server for the dropped-physics-mag spawn. When an ahead
+	// sample exists (ejecting), report THAT transform plus the animation's
+	// motion direction so the prop spawns clear of the gun with momentum.
+	if (bIsGunMag)
+	{
+		if (bHaveAhead)
+		{
+			matrix3x4_t magWorldAhead;
+			if (m_bPistolMagBoneInverseValid)
+				ConcatTransforms(magBoneWorldAhead, m_matPistolMagBoneInverse, magWorldAhead);
+			else
+				MatrixCopy(magBoneWorldAhead, magWorldAhead);
+
+			Vector magPosAhead;
+			QAngle magAngAhead;
+			MatrixAngles(magWorldAhead, magAngAhead, magPosAhead);
+
+			m_vecPistolMagLastWorldPos = magPosAhead;
+			m_angPistolMagLastWorldAng = magAngAhead;
+
+			// One frame of displacement at the authored framerate gives the
+			// animation's instantaneous mag velocity.
+			Vector vecDelta = magPosAhead - magPos;
+			if (vecDelta.LengthSqr() > 1e-8f)
+				m_vecPistolMagEjectVel = vecDelta * VR_PISTOL_RELOAD_ANIM_FPS;
+			else
+				m_vecPistolMagEjectVel = vec3_origin;
+		}
+		else
+		{
+			m_vecPistolMagLastWorldPos = magPos;
+			m_angPistolMagLastWorldAng = magAng;
+			m_vecPistolMagEjectVel = vec3_origin;
+		}
+		m_bPistolMagLastWorldValid = true;
+	}
+
+	pMag->SetAbsOrigin(magPos);
+	pMag->SetAbsAngles(magAng);
+	pMag->SetNetworkOrigin(magPos);
+	pMag->ResetLatched();
+	pMag->InvalidateBoneCache();
 }
 
 //-----------------------------------------------------------------------------

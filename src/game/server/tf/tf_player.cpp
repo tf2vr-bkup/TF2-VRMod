@@ -40,6 +40,7 @@
 #include "fmtstr.h"
 #include "tf_weapon_sniperrifle.h"
 #include "tf_weapon_minigun.h"
+#include "tf_weapon_pistol.h"
 #include "tf_weapon_fists.h"
 #include "tf_weapon_shotgun.h"
 #include "tf_weapon_lunchbox.h"
@@ -3004,6 +3005,8 @@ void CTFPlayer::PrecacheTFPlayer()
 	PrecacheModel("models/weapons/vr_models/vr_spy_hand_l.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_spy_hand_r.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_rocket.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_pistol/vr_pistol.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl");
 	
 	// Precache spy watch models for VR
 	PrecacheModel("models/weapons/c_models/c_spy_watch.mdl");
@@ -7141,6 +7144,16 @@ void CTFPlayer::HandleCommand_JoinClass( const char *pClassName, bool bAllowSpaw
 	if ( iDuelClass >= TF_FIRST_NORMAL_CLASS && iDuelClass < TF_LAST_NORMAL_CLASS )
 	{
 		iClass = iDuelClass;
+	}
+
+	if ( iClass != GetPlayerClass()->GetClassIndex() )
+	{
+		for ( int i = 0; i < WeaponCount(); ++i )
+		{
+			CTFPistol *pPistol = dynamic_cast< CTFPistol * >( GetWeapon( i ) );
+			if ( pPistol )
+				pPistol->ClearVRPistolManualReloadState();
+		}
 	}
 
 	SetDesiredPlayerClassIndex( iClass );

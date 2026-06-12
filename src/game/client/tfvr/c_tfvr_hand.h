@@ -154,6 +154,8 @@ public:
 	
 	// Get cached weapon bone world transform (for overlays to avoid bone cache issues)
 	bool GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const;
+	// Live variant that follows reload animation motion (pistol manual reload)
+	bool GetLiveWeaponBoneTransform(matrix3x4_t &outTransform) const;
 	
 	// Weapon pose override
 	void ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_TFWeaponBase *pWeaponOverride = NULL, int seqOverride = -1, float cycleOverride = 0.0f);
@@ -339,6 +341,17 @@ private:
 	int m_iShotgunManualReloadSequence; // class-specific loop used for shell-in-hand/insertion
 	float m_flShotgunManualReloadHoldCycle;   // class-specific insert start frame
 	float m_flShotgunManualReloadCommitCycle; // class-specific insert end frame
+	// Pistol manual reload: extra frame markers beyond hold/commit
+	// (per-class: scout p_reload vs engineer pstl_reload)
+	float m_flPistolOneFrameCycle;  // cycle advance of a single animation frame
+	float m_flPistolMagFreeCycle;   // mag clears the gun (swap to physics prop)
+	float m_flPistolPauseCycle;     // weapon hand pauses awaiting a fresh mag
+	float m_flPistolInsertTargetCycle; // vm_weapon_bone sample used for insert detection
+	float m_flPistolFinishEndCycle; // finish motion stops here (then blends to idle)
+	// Blend back to the idle pose after the finish motion ends
+	bool m_bPistolReloadBlendOut;
+	float m_flPistolReloadBlendOutStartTime;
+	float m_flPistolReloadAnimWeight; // 1 = full reload pose, 0 = idle
 	bool m_bShotgunManualReloadPoseActive;
 	bool m_bShotgunManualReloadBlendOutActive;
 	float m_flShotgunManualReloadBlendOutStartTime;
@@ -358,6 +371,7 @@ private:
 	void UpdateManglerPumpReloadAnimation();
 	void UpdatePomsonPumpReloadAnimation();
 	void UpdateShotgunPumpActionAnimation();
+	void UpdatePistolReloadAnimation();
 
 public:
 	bool IsBackstabReady() const { return m_bBackstabReady; }
@@ -367,6 +381,8 @@ public:
 	bool GetShotgunManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetShotgunManualReloadShellTarget( Vector &outPos );
 	bool GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseHeavyShellBone = false );
+	bool GetPistolManualReloadTarget( Vector &outPos, QAngle &outAngles );
+	bool GetPistolMagazineInsertTarget( Vector &outPos );
 	bool GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetRocketManualReloadRocketTarget( Vector &outPos );
 	bool GetRocketManualReloadRocketPosition( Vector &outPos );
@@ -427,6 +443,11 @@ public:
 	// This is used by overlays to avoid stale bone cache issues
 	matrix3x4_t m_matWeaponBoneWorld;
 	bool m_bWeaponBoneWorldValid;
+
+	// Live (animation-following) weapon bone world transform. Unlike the
+	// idle-stabilized cache above, this tracks reload animation motion.
+	matrix3x4_t m_matLiveWeaponBoneWorld;
+	bool m_bLiveWeaponBoneWorldValid;
 	
 	// Cached muzzle position - set during PositionWeaponFromBones for effects
 	Vector m_vecCachedMuzzlePos;
@@ -462,6 +483,29 @@ public:
 	CHandle<C_BaseAnimating> m_hManualReloadRocket;
 	matrix3x4_t m_matManualReloadRocketBoneInverse;
 	bool m_bManualReloadRocketBoneInverseValid;
+
+	// Pistol manual reload magazine meshes (vr_pistol_ammo.mdl):
+	// - gun mag: rides the weapon hand's sampled p_reload vm_weapon_bone
+	// - held mag: rides this (off) hand's posed vm_weapon_bone while holding a spare
+	CHandle<C_BaseAnimating> m_hPistolMagazine;
+	matrix3x4_t m_matPistolMagBoneInverse;   // inverse of vr_pistol_ammo's own vm_weapon_bone
+	bool m_bPistolMagBoneInverseValid;
+	// Last world transform applied to the gun's magazine mesh (weapon hand
+	// only); reported via usercmd so the server spawns the dropped physics
+	// mag exactly where the visual one was. While ejecting this holds the
+	// one-frame-ahead transform plus the animation's motion direction.
+	Vector m_vecPistolMagLastWorldPos;
+	QAngle m_angPistolMagLastWorldAng;
+	Vector m_vecPistolMagEjectVel;   // anim-derived world velocity (authored 30fps)
+	bool m_bPistolMagLastWorldValid;
+
+	// Client-side ballistic bridge: when the mag clears the gun, the cosmetic
+	// mag keeps falling locally until the server's physics prop arrives, so
+	// there is no float/hitch during the network round trip.
+	bool m_bPistolMagFalling;
+	float m_flPistolMagFallStartTime;
+	Vector m_vecPistolMagFallStartPos;
+	Vector m_vecPistolMagFallVel;
 	
 	// NOTE: attach_to_hands weapons (boxing gloves, etc.) contain BOTH hands
 	// in a single model mesh, so they don't need special left-hand handling.
@@ -480,6 +524,13 @@ public:
 	bool EnsureManualReloadRocketModel();
 	void RemoveManualReloadRocketModel();
 	void UpdateManualReloadRocketFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bVisible);
+	bool EnsurePistolMagazineModel();
+	void RemovePistolMagazineModel();
+	void UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, bool bManualReloadPoseApplied);
+	bool GetPistolReloadMagRelativeToWeapon( float flCycle, matrix3x4_t &outMagRelWeaponBone );
+	bool GetPistolGunMagazineWorld( Vector &outPos, QAngle &outAngles, Vector &outEjectVel ) const;
+	void StartPistolMagFall();
+	void UpdatePistolMagFall();
 };
 
 // Global functions

@@ -74,6 +74,13 @@ public:
 		vrRocketPull = false;
 		vrRocketInsert = false;
 		vrRocketHold = false;
+		vrMagazineEject = false;
+		vrMagazinePull = false;
+		vrMagazineInsert = false;
+		vrMagazineHold = false;
+		vrMagSpawnOrigin.Init();
+		vrMagSpawnAngles.Init();
+		vrMagEjectVel.Init();
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.0f;
@@ -135,6 +142,13 @@ public:
 		vrRocketPull = src.vrRocketPull;
 		vrRocketInsert = src.vrRocketInsert;
 		vrRocketHold = src.vrRocketHold;
+		vrMagazineEject = src.vrMagazineEject;
+		vrMagazinePull = src.vrMagazinePull;
+		vrMagazineInsert = src.vrMagazineInsert;
+		vrMagazineHold = src.vrMagazineHold;
+		vrMagSpawnOrigin = src.vrMagSpawnOrigin;
+		vrMagSpawnAngles = src.vrMagSpawnAngles;
+		vrMagEjectVel = src.vrMagEjectVel;
 		vrWeaponArmed = src.vrWeaponArmed;
 		vrWeaponHandIsRight = src.vrWeaponHandIsRight;
 		forwardmove			= src.forwardmove;
@@ -203,6 +217,13 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrRocketPull, sizeof( vrRocketPull ) );
 		CRC32_ProcessBuffer( &crc, &vrRocketInsert, sizeof( vrRocketInsert ) );
 		CRC32_ProcessBuffer( &crc, &vrRocketHold, sizeof( vrRocketHold ) );
+		CRC32_ProcessBuffer( &crc, &vrMagazineEject, sizeof( vrMagazineEject ) );
+		CRC32_ProcessBuffer( &crc, &vrMagazinePull, sizeof( vrMagazinePull ) );
+		CRC32_ProcessBuffer( &crc, &vrMagazineInsert, sizeof( vrMagazineInsert ) );
+		CRC32_ProcessBuffer( &crc, &vrMagazineHold, sizeof( vrMagazineHold ) );
+		CRC32_ProcessBuffer( &crc, &vrMagSpawnOrigin, sizeof( vrMagSpawnOrigin ) );
+		CRC32_ProcessBuffer( &crc, &vrMagSpawnAngles, sizeof( vrMagSpawnAngles ) );
+		CRC32_ProcessBuffer( &crc, &vrMagEjectVel, sizeof( vrMagEjectVel ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponArmed, sizeof( vrWeaponArmed ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponHandIsRight, sizeof( vrWeaponHandIsRight ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
@@ -253,6 +274,13 @@ public:
 		vrRocketPull = false;
 		vrRocketInsert = false;
 		vrRocketHold = false;
+		vrMagazineEject = false;
+		vrMagazinePull = false;
+		vrMagazineInsert = false;
+		vrMagazineHold = false;
+		vrMagSpawnOrigin.Init();
+		vrMagSpawnAngles.Init();
+		vrMagEjectVel.Init();
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.f;
@@ -323,6 +351,20 @@ public:
 	bool	vrRocketPull;
 	bool	vrRocketInsert;
 	bool	vrRocketHold;
+
+	// VR pistol manual magazine reload intents.
+	bool	vrMagazineEject;
+	bool	vrMagazinePull;
+	bool	vrMagazineInsert;
+	bool	vrMagazineHold;
+	// World transform of the gun's magazine mesh (bone-derived on the client)
+	// so the server can spawn the dropped physics mag exactly where the
+	// visual one was. Zero when no mag is seated/ejecting.
+	Vector	vrMagSpawnOrigin;
+	QAngle	vrMagSpawnAngles;
+	// World-space velocity of the mag in the eject animation (one-frame
+	// delta at the authored 30fps). Zero when unknown.
+	Vector	vrMagEjectVel;
 
 	// VR weapon lever/pump: grip held in position to operate the active weapon's physical mechanic
 	bool	vrWeaponArmed;

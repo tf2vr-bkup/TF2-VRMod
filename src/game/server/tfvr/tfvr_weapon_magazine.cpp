@@ -56,8 +56,10 @@ CTFVRWeaponMagazine::~CTFVRWeaponMagazine()
 //-----------------------------------------------------------------------------
 void CTFVRWeaponMagazine::Spawn()
 {
+	Precache();
+
 	// Set default model (will be overridden by weapon-specific model)
-	SetModel( "models/weapons/w_models/w_pistol_clip.mdl" );
+	SetModel( "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl" );
 	
 	BaseClass::Spawn();
 	
@@ -80,7 +82,7 @@ void CTFVRWeaponMagazine::Spawn()
 //-----------------------------------------------------------------------------
 void CTFVRWeaponMagazine::Precache()
 {
-	PrecacheModel( "models/weapons/w_models/w_pistol_clip.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl" );
 	BaseClass::Precache();
 }
 

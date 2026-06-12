@@ -52,6 +52,7 @@
 #include "input.h"
 #include "tf_weapon_medigun.h"
 #include "tf_weapon_pipebomblauncher.h"
+#include "tf_weapon_pistol.h"
 #include "tf_weapon_shovel.h"
 #include "tf_hud_mediccallers.h"
 #include "in_main.h"
@@ -5523,11 +5524,19 @@ void C_TFPlayer::OnPlayerClassChange( void )
 	if ( IsLocalPlayer() )
 	{
 		g_ItemEffectMeterManager.SetPlayer( this );
+
+		for ( int i = 0; i < WeaponCount(); ++i )
+		{
+			CTFPistol *pPistol = dynamic_cast< CTFPistol * >( GetWeapon( i ) );
+			if ( pPistol )
+				pPistol->ClearVRPistolManualReloadState();
+		}
 		
 		// Spawn VR hands when class changes (will respawn with new model)
 		extern void SpawnVRHandsForPlayer(C_TFPlayer *pPlayer);
 		SpawnVRHandsForPlayer(this);
 	}
+	m_iOldPlayerClass = m_PlayerClass.GetClassIndex();
 	ShowNemesisIcon( false );
 	ShowDuelingIcon( false );
 

@@ -147,6 +147,22 @@ ConVar tfvr_weapon_hud_offset_y("tfvr_weapon_hud_offset_y", "15", FCVAR_ARCHIVE,
     "Y offset from weapon bone");
 ConVar tfvr_weapon_hud_offset_z("tfvr_weapon_hud_offset_z", "4", FCVAR_ARCHIVE,
     "Z offset from weapon bone");
+// Pistol-specific placement (small weapon; the generic spot sits poorly)
+ConVar tfvr_weapon_hud_pistol_offset_x("tfvr_weapon_hud_pistol_offset_x", "-2", FCVAR_ARCHIVE,
+    "Pistol weapon HUD: side offset in weapon space");
+ConVar tfvr_weapon_hud_pistol_offset_y("tfvr_weapon_hud_pistol_offset_y", "8", FCVAR_ARCHIVE,
+    "Pistol weapon HUD: up offset in weapon space");
+ConVar tfvr_weapon_hud_pistol_offset_z("tfvr_weapon_hud_pistol_offset_z", "0", FCVAR_ARCHIVE,
+    "Pistol weapon HUD: forward offset in weapon space");
+ConVar tfvr_weapon_hud_pistol_pitch("tfvr_weapon_hud_pistol_pitch", "180", FCVAR_ARCHIVE,
+    "Pistol weapon HUD: pitch rotation in degrees");
+ConVar tfvr_weapon_hud_pistol_yaw("tfvr_weapon_hud_pistol_yaw", "0", FCVAR_ARCHIVE,
+    "Pistol weapon HUD: yaw rotation in degrees");
+ConVar tfvr_weapon_hud_pistol_roll("tfvr_weapon_hud_pistol_roll", "0", FCVAR_ARCHIVE,
+    "Pistol weapon HUD: roll rotation in degrees");
+ConVar tfvr_weapon_hud_pistol_scale("tfvr_weapon_hud_pistol_scale", "6", FCVAR_ARCHIVE,
+    "Pistol weapon HUD: world height of the HUD panel");
+
 ConVar tfvr_weapon_hud_pitch("tfvr_weapon_hud_pitch", "180", FCVAR_ARCHIVE,
     "Pitch rotation adjustment");
 ConVar tfvr_weapon_hud_yaw("tfvr_weapon_hud_yaw", "0", FCVAR_ARCHIVE,
@@ -1537,6 +1553,33 @@ void CVRWeaponHUDManager::Update()
             // Medigun is held on left hand; all other weapons on right
             CTFWeaponBase* pTFWeapon = pPlayer->GetActiveTFWeapon();
             m_bWeaponOnLeftHand = (pTFWeapon && pTFWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN);
+        }
+
+        // Pistols use their own placement: the generic offsets are tuned for
+        // larger weapons and sit poorly on the small pistol frame.
+        CTFWeaponBase* pActiveTFWeapon = pPlayer->GetActiveTFWeapon();
+        if (pActiveTFWeapon)
+        {
+            int iWeaponID = pActiveTFWeapon->GetWeaponID();
+            if (iWeaponID == TF_WEAPON_PISTOL ||
+                iWeaponID == TF_WEAPON_PISTOL_SCOUT ||
+                iWeaponID == TF_WEAPON_HANDGUN_SCOUT_PRIMARY ||
+                iWeaponID == TF_WEAPON_HANDGUN_SCOUT_SECONDARY)
+            {
+                m_vOffset.Init(
+                    tfvr_weapon_hud_pistol_offset_x.GetFloat(),
+                    tfvr_weapon_hud_pistol_offset_y.GetFloat(),
+                    tfvr_weapon_hud_pistol_offset_z.GetFloat()
+                );
+
+                m_angRotation.Init(
+                    tfvr_weapon_hud_pistol_pitch.GetFloat(),
+                    tfvr_weapon_hud_pistol_yaw.GetFloat(),
+                    tfvr_weapon_hud_pistol_roll.GetFloat()
+                );
+
+                m_flScale = tfvr_weapon_hud_pistol_scale.GetFloat();
+            }
         }
     }
 }

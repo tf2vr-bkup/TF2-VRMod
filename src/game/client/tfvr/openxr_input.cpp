@@ -151,6 +151,11 @@ bool COpenXRInputManager::CreateActions()
     if (jump.handle == XR_NULL_HANDLE) return false;
     m_actions["jump"] = jump;
 
+    // Magazine eject (manual reload weapons) - synthesized from right stick forward
+    XrInputAction magazineEject = CreateBooleanAction("magazine_eject", "Magazine Eject");
+    if (magazineEject.handle == XR_NULL_HANDLE) return false;
+    m_actions["magazine_eject"] = magazineEject;
+
     XrInputAction menu = CreateBooleanAction("menu", "Menu");
     if (menu.handle == XR_NULL_HANDLE) return false;
     m_actions["menu"] = menu;
@@ -169,10 +174,10 @@ bool COpenXRInputManager::CreateActions()
     if (leftClassMenu.handle == XR_NULL_HANDLE) return false;
     m_actions["left_class_menu"] = leftClassMenu;
 
-    // Add weapon switching actions
-    XrInputAction weaponSwitch = CreateFloatAction("right_weapon_switch", "Right Weapon Switch");
-    if (weaponSwitch.handle == XR_NULL_HANDLE) return false;
-    m_actions["weapon_switch"] = weaponSwitch;
+    // Right thumbstick Y axis (forward = magazine eject; weapon switching is via the radial menu)
+    XrInputAction rightStickY = CreateFloatAction("right_stick_y", "Right Stick Y");
+    if (rightStickY.handle == XR_NULL_HANDLE) return false;
+    m_actions["right_stick_y"] = rightStickY;
 
     // Add left grip button action for two-handed weapon gripping
     XrInputAction leftGrip = CreateFloatAction("left_grip", "Left Grip");
@@ -463,14 +468,14 @@ bool COpenXRInputManager::CreateIndexControllerProfile()
         }
     }
 
-    // Weapon switching bindings (right stick tilt forward/backward)
-    if (m_actions.find("weapon_switch") != m_actions.end())
+    // Right stick Y (tilt forward = magazine eject)
+    if (m_actions.find("right_stick_y") != m_actions.end())
     {
         XrPath bindingPath;
         if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
         {
             XrActionSuggestedBinding binding;
-            binding.action = m_actions["weapon_switch"].handle;
+            binding.action = m_actions["right_stick_y"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
 
@@ -791,14 +796,14 @@ bool COpenXRInputManager::CreateQuestControllerProfile()
         }
     }
 
-    // Weapon switching bindings (right stick tilt forward/backward)
-    if (m_actions.find("weapon_switch") != m_actions.end())
+    // Right stick Y (tilt forward = magazine eject)
+    if (m_actions.find("right_stick_y") != m_actions.end())
     {
         XrPath bindingPath;
         if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
         {
             XrActionSuggestedBinding binding;
-            binding.action = m_actions["weapon_switch"].handle;
+            binding.action = m_actions["right_stick_y"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
 
@@ -1104,8 +1109,9 @@ bool COpenXRInputManager::CreateWMRControllerProfile()
         }
     }
 
-    // Right trackpad click + Y for split-trackpad: top half = jump, bottom half = duck
-    // Actual jump/duck routing is handled in PollInput() based on trackpad Y position
+    // Right trackpad click + X/Y for split-trackpad:
+    // top-left = jump, top-right = magazine eject, bottom half = duck
+    // Actual routing is handled in PollInput() based on trackpad position
     if (m_actions.find("right_trackpad_click") != m_actions.end())
     {
         XrPath bindingPath;
@@ -1125,6 +1131,18 @@ bool COpenXRInputManager::CreateWMRControllerProfile()
         {
             XrActionSuggestedBinding binding;
             binding.action = m_actions["right_trackpad_y"].handle;
+            binding.binding = bindingPath;
+            suggestedBindings.push_back(binding);
+        }
+    }
+
+    if (m_actions.find("right_trackpad_x") != m_actions.end())
+    {
+        XrPath bindingPath;
+        if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/x", &bindingPath)))
+        {
+            XrActionSuggestedBinding binding;
+            binding.action = m_actions["right_trackpad_x"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -1182,14 +1200,14 @@ bool COpenXRInputManager::CreateWMRControllerProfile()
         }
     }
 
-    // Weapon switching (right thumbstick y)
-    if (m_actions.find("weapon_switch") != m_actions.end())
+    // Right stick Y (tilt forward = magazine eject)
+    if (m_actions.find("right_stick_y") != m_actions.end())
     {
         XrPath bindingPath;
         if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
         {
             XrActionSuggestedBinding binding;
-            binding.action = m_actions["weapon_switch"].handle;
+            binding.action = m_actions["right_stick_y"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -1781,14 +1799,14 @@ bool COpenXRInputManager::CreateHPReverbControllerProfile()
         }
     }
 
-    // Weapon switching (right thumbstick y)
-    if (m_actions.find("weapon_switch") != m_actions.end())
+    // Right stick Y (tilt forward = magazine eject)
+    if (m_actions.find("right_stick_y") != m_actions.end())
     {
         XrPath bindingPath;
         if (XR_SUCCEEDED(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &bindingPath)))
         {
             XrActionSuggestedBinding binding;
-            binding.action = m_actions["weapon_switch"].handle;
+            binding.action = m_actions["right_stick_y"].handle;
             binding.binding = bindingPath;
             suggestedBindings.push_back(binding);
         }
@@ -2388,6 +2406,16 @@ void COpenXRInputManager::PollInput()
         }
     }
 
+    // Magazine eject on right thumbstick forward (weapon switching moved to the radial menu).
+    // Suppressed while the radial weapon menu is held open on the same stick.
+    // Runs after the trackpad-force block so Index's weapon_select_hold is current.
+    const float STICK_EJECT_THRESHOLD = 0.7f;
+    if (m_currentAnalogStates["right_stick_y"] > STICK_EJECT_THRESHOLD
+        && !m_currentButtonStates["weapon_select_hold"])
+    {
+        m_currentButtonStates["magazine_eject"] = true;
+    }
+
     // Vive wand trackpad handling
     // left_trackpad_touch is only bound in the Vive profile, so isActive serves as controller detection
     bool isViveController = false;
@@ -2408,8 +2436,8 @@ void COpenXRInputManager::PollInput()
                 m_currentAnalogStates["move_y"] = m_currentAnalogStates["left_trackpad_y"];
             }
 
-            // Right trackpad touch: X axis → turning, Y axis → jump (top) / duck (bottom)
-            // Right trackpad click: weapon select (position-independent)
+            // Right trackpad touch: X axis -> turning, top half -> jump (left) / eject (right),
+            // bottom → duck. Right trackpad click: weapon select (position-independent)
             bool rightTouched = m_currentButtonStates["right_trackpad_touch"];
             bool rightClicked = m_currentButtonStates["right_trackpad_click"];
 
@@ -2419,7 +2447,12 @@ void COpenXRInputManager::PollInput()
                 float padY = m_currentAnalogStates["right_trackpad_y"];
 
                 if (padY > 0.5f)
-                    m_currentButtonStates["jump"] = true;
+                {
+                    if (padX < 0.0f)
+                        m_currentButtonStates["jump"] = true;
+                    else
+                        m_currentButtonStates["magazine_eject"] = true;
+                }
                 else if (padY < -0.5f)
                     m_currentButtonStates["duck"] = true;
                 else
@@ -2433,12 +2466,13 @@ void COpenXRInputManager::PollInput()
         }
     }
 
-    // WMR split-trackpad: top half = jump, bottom half = duck
+    // WMR split-trackpad: top-left = jump, top-right = magazine eject, bottom half = duck
     // Only active when right_trackpad_click has a valid binding (WMR controllers, not Vive)
     if (!isViveController)
     {
         auto trackpadClickIt = m_actions.find("right_trackpad_click");
         auto trackpadYIt = m_actions.find("right_trackpad_y");
+        auto trackpadXIt = m_actions.find("right_trackpad_x");
         if (trackpadClickIt != m_actions.end() && trackpadYIt != m_actions.end())
         {
             XrActionStateGetInfo clickGetInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
@@ -2455,7 +2489,22 @@ void COpenXRInputManager::PollInput()
                 if (clickState.currentState)
                 {
                     if (yState.currentState > 0.0f)
-                        m_currentButtonStates["jump"] = true;
+                    {
+                        float flPadX = 0.0f;
+                        if (trackpadXIt != m_actions.end())
+                        {
+                            XrActionStateGetInfo xGetInfo{ XR_TYPE_ACTION_STATE_GET_INFO };
+                            xGetInfo.action = trackpadXIt->second.handle;
+                            XrActionStateFloat xState{ XR_TYPE_ACTION_STATE_FLOAT };
+                            if (XR_SUCCEEDED(xrGetActionStateFloat(m_session, &xGetInfo, &xState)) && xState.isActive)
+                                flPadX = xState.currentState;
+                        }
+
+                        if (flPadX < 0.0f)
+                            m_currentButtonStates["jump"] = true;
+                        else
+                            m_currentButtonStates["magazine_eject"] = true;
+                    }
                     else
                         m_currentButtonStates["duck"] = true;
                 }

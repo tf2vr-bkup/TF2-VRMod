@@ -48,6 +48,22 @@
 	"wave"		"weapons/vr/vr_shotgun_reload_2.wav"
 }
 
+"VR.PistolReloadScout"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/pistol_reload_scout.wav"
+}
+
+"VR.PistolClipIn"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/pistol_clipin.wav"
+}
+
 "VR.BisonPumpOut"
 {
 	"channel"	"CHAN_STATIC"

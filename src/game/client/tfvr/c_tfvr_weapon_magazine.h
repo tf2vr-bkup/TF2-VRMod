@@ -29,10 +29,12 @@ public:
 	// Accessors
 	int GetWeaponType() const { return m_iWeaponType; }
 	int GetAmmoCount() const { return m_iAmmoCount; }
+	float GetClientSpawnTime() const { return m_flClientSpawnTime; }
 
 private:
 	int m_iWeaponType;
 	int m_iAmmoCount;
+	float m_flClientSpawnTime;  // when this entity appeared on the client
 };
 
 #endif // C_TFVR_WEAPON_MAGAZINE_H

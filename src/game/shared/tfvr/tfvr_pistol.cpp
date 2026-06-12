@@ -72,7 +72,7 @@ void CTFVRPistol::Precache()
 	
 #if !defined( CLIENT_DLL )
 	// Precache magazine model
-	PrecacheModel( "models/weapons/w_models/w_pistol_clip.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl" );
 #endif
 }
 

@@ -13,6 +13,7 @@
 #include "tf/tf_weaponbase.h"
 #include "tf/tf_shareddefs.h"
 #include "tf/tf_weapon_shotgun.h"
+#include "tf/tf_weapon_pistol.h"
 #include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_raygun.h"
@@ -44,6 +45,7 @@ extern ConVar tfvr_bison_pump_reload;
 extern ConVar tfvr_shotgun_pump_action;
 extern ConVar tfvr_shotgun_pump_debug;
 extern ConVar tfvr_rocket_manual_reload_radius;
+extern ConVar tfvr_pistol_manual_reload;
 
 ConVar tfvr_bison_pump_weapon_grip_threshold( "tfvr_bison_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR bison pump: off-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_bison_pump_twohand_min_blend( "tfvr_bison_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR bison pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -80,10 +82,9 @@ ConVar tfvr_snap_turn_angle( "tfvr_snap_turn_angle", "45", FCVAR_ARCHIVE, "Snap 
 ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.200000", FCVAR_ARCHIVE, "Deadzone for turning input (0.0-1.0)" );
 ConVar tfvr_snap_turn_delay( "tfvr_snap_turn_delay", "0.25", FCVAR_ARCHIVE, "Delay between snap turns in seconds" );
 
-// Weapon switching ConVars
-ConVar tfvr_weapon_switch_stick_enabled( "tfvr_weapon_switch_stick_enabled", "0", FCVAR_ARCHIVE, "Enable right stick up/down weapon switching (0=disabled, 1=enabled). Disabled by default since radial weapon select menu is available." );
-ConVar tfvr_weapon_switch_tilt_threshold( "tfvr_weapon_switch_tilt_threshold", "0.7", FCVAR_ARCHIVE, "Tilt threshold for weapon switching (0.0-1.0)" );
-ConVar tfvr_weapon_switch_debug( "tfvr_weapon_switch_debug", "0", FCVAR_ARCHIVE, "Show debug output for weapon switching actions" );
+// Pistol manual magazine reload ConVars (zones shared with the shotgun manual reload)
+ConVar tfvr_pistol_mag_insert_radius( "tfvr_pistol_mag_insert_radius", "4.0", FCVAR_ARCHIVE, "VR pistol: distance (inches) between the held mag and the magwell that counts as inserting" );
+ConVar tfvr_pistol_mag_insert_radius_engineer( "tfvr_pistol_mag_insert_radius_engineer", "5.5", FCVAR_ARCHIVE, "VR engineer pistol: distance (inches) between the held mag and the magwell that counts as inserting" );
 
 // Voice chat gesture ConVars (walkie-talkie style activation)
 ConVar tfvr_voice_gesture_enabled( "tfvr_voice_gesture_enabled", "1", FCVAR_ARCHIVE, "Enable walkie-talkie style voice chat (hold offhand near ear and press trigger)" );
@@ -731,110 +732,11 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
             pPlayer->m_bDuckWasPhysical = false;
     }
 
-    // Jump
+    // Jump (right B was repurposed for magazine eject; the openxr layer now
+    // synthesizes "jump" from right thumbstick forward and trackpad zones)
     bool bJump = g_pOpenXRManager->IsButtonPressed("jump");
     if (bJump)
         cmd->buttons |= IN_JUMP;
-
-    // Weapon switching
-    float weaponSwitchValue = g_pOpenXRManager->GetAnalogValue("weapon_switch");
-
-    // Validate that we got valid values
-    if (weaponSwitchValue == 0.0f)
-    {
-        // This could indicate the actions aren't properly bound or working
-        static float lastWarningTime = 0.0f;
-        float currentTime = gpGlobals->curtime;
-
-        if (currentTime - lastWarningTime > 5.0f) // Only warn every 5 seconds
-        {
-            if (tfvr_weapon_switch_debug.GetBool())
-            {
-                DevMsg("VR: Warning - Weapon switching action returning 0.0 values. Check OpenXR bindings.\n");
-            }
-            lastWarningTime = currentTime;
-        }
-    }
-
-    // Track weapon switching button press events to avoid continuous execution
-    static bool bLastNextWeaponState = false;
-    static bool bLastPrevWeaponState = false;
-
-    // Threshold for detecting tilt (0.7 = 70% tilt)
-    const float TILT_THRESHOLD = tfvr_weapon_switch_tilt_threshold.GetFloat();
-
-    // Detect forward tilt (positive Y) for next weapon
-    bool bNextWeaponActive = weaponSwitchValue > TILT_THRESHOLD;
-    // Detect backward tilt (negative Y) for previous weapon
-    bool bPrevWeaponActive = weaponSwitchValue < -TILT_THRESHOLD;
-
-    bool bNextWeaponPressed = bNextWeaponActive && !bLastNextWeaponState;
-    bool bPrevWeaponPressed = bPrevWeaponActive && !bLastPrevWeaponState;
-
-    // Check if stick weapon switching is enabled (disabled by default, use radial menu instead)
-    if (tfvr_weapon_switch_stick_enabled.GetBool())
-    {
-        // Check if weapon switching is allowed before executing commands
-        C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
-        bool bCanSwitchWeapons = pLocalPlayer && pLocalPlayer->IsAllowedToSwitchWeapons();
-
-        if (bNextWeaponPressed && bCanSwitchWeapons)
-        {
-            engine->ExecuteClientCmd("invnext");
-            if (tfvr_weapon_switch_debug.GetBool())
-            {
-                DevMsg("VR: Next weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
-            }
-        }
-        else if (bNextWeaponPressed && !bCanSwitchWeapons)
-        {
-            if (tfvr_weapon_switch_debug.GetBool())
-            {
-                DevMsg("VR: Next weapon blocked - weapon switching not allowed\n");
-            }
-        }
-
-        if (bPrevWeaponPressed && bCanSwitchWeapons)
-        {
-            engine->ExecuteClientCmd("invprev");
-            if (tfvr_weapon_switch_debug.GetBool())
-            {
-                DevMsg("VR: Previous weapon triggered (tilt: %.2f, threshold: %.2f)\n", weaponSwitchValue, TILT_THRESHOLD);
-            }
-        }
-        else if (bPrevWeaponPressed && !bCanSwitchWeapons)
-        {
-            if (tfvr_weapon_switch_debug.GetBool())
-            {
-                DevMsg("VR: Previous weapon blocked - weapon switching not allowed\n");
-            }
-        }
-    }
-
-    // Update weapon switching button state tracking
-    bLastNextWeaponState = bNextWeaponActive;
-    bLastPrevWeaponState = bPrevWeaponActive;
-
-    // Debug output for weapon switching values
-    if (tfvr_weapon_switch_debug.GetBool())
-    {
-        static float lastDebugTime = 0.0f;
-        float currentTime = gpGlobals->curtime;
-
-        // Only output debug info every 0.5 seconds to avoid spam
-        if (currentTime - lastDebugTime > 0.5f)
-        {
-            const char* direction = "neutral";
-            if (weaponSwitchValue > TILT_THRESHOLD)
-                direction = "forward (next)";
-            else if (weaponSwitchValue < -TILT_THRESHOLD)
-                direction = "backward (prev)";
-
-            DevMsg("VR: Weapon switch - Y-axis: %.2f, Direction: %s, Threshold: %.2f\n",
-                   weaponSwitchValue, direction, TILT_THRESHOLD);
-            lastDebugTime = currentTime;
-        }
-    }
 
     // Update button state tracking
     bLastMenuButtonState = bMenu;
@@ -1250,6 +1152,163 @@ static void TFVR_UpdateShotgunManualReloadInCmd( CUserCmd *cmd )
 			float flDist = ( insertProbePos - insertTargetPos ).Length();
 			if ( flDist <= tfvr_shotgun_manual_reload_insert_radius.GetFloat() )
 				cmd->vrShotgunShellInsert = true;
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Pistol manual magazine reload intents:
+//  - eject button (right B / trackpad top-left)
+//  - pull a fresh mag from the backpack/chest zone (same zones as the shotgun)
+//  - insert when the held mag's vm_weapon_bone reaches the magwell target
+//-----------------------------------------------------------------------------
+static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_pistol_manual_reload.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || ( pWpn->GetWeaponID() != TF_WEAPON_PISTOL_SCOUT && pWpn->GetWeaponID() != TF_WEAPON_PISTOL ) )
+		return;
+
+	CTFPistol *pPistol = static_cast< CTFPistol * >( pWpn );
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+	else
+	{
+		// Class/weapon swaps can briefly leave the active pistol rebound before
+		// the hand EHANDLE catches up. Treat the right hand as the weapon hand
+		// for active pistols so magazine commands and spawn transforms keep
+		// flowing during that transition.
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+		pWpn->SetHeldByVRHand( true );
+	}
+
+	if ( !pWeaponHand || !pOffHand )
+		return;
+
+	cmd->vrWeaponHandIsRight = ( pWeaponHand == pRight );
+	cmd->vrMagazineEject = g_pOpenXRManager->IsButtonPressed( "magazine_eject" );
+
+	// Report the gun mag's exact world transform (bone-derived) so the server
+	// spawns the dropped physics mag right where the visual mag was, plus the
+	// animation-derived velocity for the initial push.
+	Vector vecMagPos;
+	QAngle angMag;
+	Vector vecEjectVel;
+	if ( pWeaponHand->GetPistolGunMagazineWorld( vecMagPos, angMag, vecEjectVel ) )
+	{
+		cmd->vrMagSpawnOrigin = vecMagPos;
+		cmd->vrMagSpawnAngles = angMag;
+		cmd->vrMagEjectVel = vecEjectVel;
+	}
+
+	const float flGrip = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "right_grip" )
+		: g_pOpenXRManager->GetAnalogValue( "left_grip" );
+	const float flOffhandTrigger = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "primary_attack" )
+		: g_pOpenXRManager->GetAnalogValue( "secondary_attack" );
+	const bool bHoldInput = flGrip >= tfvr_shotgun_manual_reload_grip_threshold.GetFloat()
+		|| flOffhandTrigger >= 0.5f;
+	cmd->vrMagazineHold = bHoldInput;
+
+	// Backpack / chest grab zones (shared with the shotgun manual reload)
+	if ( !pPistol->HasVRMagazineInHand() || tfvr_shotgun_pump_debug.GetBool() )
+	{
+		Vector hmdOrigin;
+		QAngle hmdAngles;
+		g_pOpenXRManager->GetHMDInChaperone( hmdOrigin, hmdAngles );
+
+		Vector hmdForward, hmdRight, hmdUp;
+		AngleVectors( hmdAngles, &hmdForward, &hmdRight, &hmdUp );
+
+		hmdForward.z = 0.0f;
+		hmdRight.z = 0.0f;
+		if ( hmdForward.IsZero() )
+			hmdForward.Init( 1.0f, 0.0f, 0.0f );
+		if ( hmdRight.IsZero() )
+			hmdRight.Init( 0.0f, -1.0f, 0.0f );
+		VectorNormalize( hmdForward );
+		VectorNormalize( hmdRight );
+
+		VMatrix offhandPose;
+		bool bGotOffhandPose = ( pOffHand == pRight )
+			? g_pOpenXRManager->GetRightControllerPoseRaw( offhandPose )
+			: g_pOpenXRManager->GetLeftControllerPoseRaw( offhandPose );
+
+		if ( bGotOffhandPose )
+		{
+			Vector offhandPos = offhandPose.GetTranslation();
+			Vector relToHead = offhandPos - hmdOrigin;
+			float flBehind = DotProduct( relToHead, -hmdForward );
+			float flLateral = fabsf( DotProduct( relToHead, hmdRight ) );
+
+			bool bInBackpack = flBehind >= tfvr_shotgun_manual_reload_back_start.GetFloat()
+				&& flBehind <= tfvr_shotgun_manual_reload_back_depth.GetFloat()
+				&& flLateral <= tfvr_shotgun_manual_reload_back_width.GetFloat()
+				&& offhandPos.z <= hmdOrigin.z + tfvr_shotgun_manual_reload_back_top.GetFloat()
+				&& offhandPos.z >= -4.0f;
+
+			Vector chestCenter = hmdOrigin
+				+ hmdForward * tfvr_shotgun_manual_reload_chest_forward.GetFloat()
+				- Vector( 0.0f, 0.0f, tfvr_shotgun_manual_reload_chest_down.GetFloat() );
+			float flChestRadius = tfvr_shotgun_manual_reload_chest_radius.GetFloat();
+			bool bInChestZone = flChestRadius > 0.0f
+				&& ( offhandPos - chestCenter ).LengthSqr() <= Square( flChestRadius );
+
+			if ( !pPistol->HasVRMagazineInHand() && bHoldInput && ( bInBackpack || bInChestZone ) )
+				cmd->vrMagazinePull = true;
+		}
+	}
+
+	// Insert proximity: held mag's vm_weapon_bone against the magwell target
+	// sampled from p_reload on the weapon hand.
+	if ( pPistol->HasVRMagazineInHand() && pPistol->IsVRMagOut() && !pPistol->IsVRMagInserting() )
+	{
+		Vector insertProbePos;
+		Vector insertTargetPos;
+		bool bGotInsertProbe = pOffHand->GetShotgunManualReloadShellPosition( insertProbePos );
+		bool bGotInsertTarget = pWeaponHand->GetPistolMagazineInsertTarget( insertTargetPos );
+
+		if ( bGotInsertProbe && bGotInsertTarget )
+		{
+			float flDist = ( insertProbePos - insertTargetPos ).Length();
+			const bool bEngineerPistolVisual = pLocal->GetPlayerClass()
+				&& pLocal->GetPlayerClass()->GetClassIndex() == TF_CLASS_ENGINEER;
+			float flInsertRadius = bEngineerPistolVisual
+				? tfvr_pistol_mag_insert_radius_engineer.GetFloat()
+				: tfvr_pistol_mag_insert_radius.GetFloat();
+			if ( tfvr_shotgun_pump_debug.GetBool() && debugoverlay )
+			{
+				debugoverlay->AddBoxOverlay( insertProbePos, Vector( -1, -1, -1 ), Vector( 1, 1, 1 ), vec3_angle, 0, 255, 0, 160, 0.05f );
+				float r = flInsertRadius;
+				debugoverlay->AddBoxOverlay( insertTargetPos, Vector( -r, -r, -r ), Vector( r, r, r ), vec3_angle, 255, 128, 0, 80, 0.05f );
+				debugoverlay->AddLineOverlay( insertProbePos, insertTargetPos, 255, 255, 0, false, 0.05f );
+			}
+			if ( flDist <= flInsertRadius )
+				cmd->vrMagazineInsert = true;
 		}
 	}
 }
@@ -1696,6 +1755,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	TFVR_UpdateScattergunLeverArmedInCmd( cmd );
 	TFVR_UpdateShotgunPumpArmedInCmd( cmd );
 	TFVR_UpdateShotgunManualReloadInCmd( cmd );
+	TFVR_UpdatePistolMagazineInCmd( cmd );
 	TFVR_UpdateRocketManualReloadInCmd( cmd );
 	TFVR_UpdateMedigunLeverArmedInCmd( cmd );
 	TFVR_UpdateStickyPumpArmedInCmd( cmd );

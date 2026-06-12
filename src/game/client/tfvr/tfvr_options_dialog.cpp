@@ -107,7 +107,8 @@ namespace
 			&& GetCvarInt( "tfvr_bison_pump_reload", 1 ) == 0
 			&& GetCvarInt( "tfvr_pomson_pump_reload", 1 ) == 0
 			&& GetCvarInt( "tfvr_mangler_pump_reload", 1 ) == 0
-			&& GetCvarInt( "tfvr_shotgun_pump_action", 1 ) == 0;
+			&& GetCvarInt( "tfvr_shotgun_pump_action", 1 ) == 0
+			&& GetCvarInt( "tfvr_pistol_manual_reload", 1 ) == 0;
 	}
 
 	void SetPumpReloadsAutomatic( bool bAutomatic )
@@ -119,6 +120,7 @@ namespace
 		SetCvarInt( "tfvr_pomson_pump_reload", nManualPumpReload );
 		SetCvarInt( "tfvr_mangler_pump_reload", nManualPumpReload );
 		SetCvarInt( "tfvr_shotgun_pump_action", nManualPumpReload );
+		SetCvarInt( "tfvr_pistol_manual_reload", nManualPumpReload );
 	}
 }
 
@@ -241,7 +243,6 @@ public:
 		m_pMoveSensitivity = AddSlider( "MoveSensitivity", "Movement sensitivity", 25, 200 );
 		m_pThumbstickDeadzone = AddSlider( "ThumbstickDeadzone", "Thumbstick deadzone", 0, 50 );
 		m_pTurnDeadzone = AddSlider( "TurnDeadzone", "Turn deadzone", 0, 80 );
-		m_pWeaponSwitchStick = AddCheck( "WeaponSwitchStick", "Right stick up/down quick switch" );
 
 		LoadControlSettings( "resource/TFVROptionsSubControls.res" );
 		m_pSmoothTurnRateLabel = FindChildByName( "SmoothTurnRateLabel" );
@@ -258,7 +259,6 @@ public:
 		m_pMoveSensitivity->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_move_sensitivity", 1.0f ) * 100.0f ) );
 		m_pThumbstickDeadzone->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_thumbstick_deadzone", 0.1f ) * 100.0f ) );
 		m_pTurnDeadzone->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_turn_deadzone", 0.3f ) * 100.0f ) );
-		m_pWeaponSwitchStick->SetSelected( GetCvarInt( "tfvr_weapon_switch_stick_enabled", 0 ) != 0 );
 		UpdateTurnControls();
 	}
 
@@ -272,7 +272,6 @@ public:
 		SetCvarFloat( "tfvr_move_sensitivity", 0.01f * m_pMoveSensitivity->GetValue() );
 		SetCvarFloat( "tfvr_thumbstick_deadzone", 0.01f * m_pThumbstickDeadzone->GetValue() );
 		SetCvarFloat( "tfvr_turn_deadzone", 0.01f * m_pTurnDeadzone->GetValue() );
-		SetCvarInt( "tfvr_weapon_switch_stick_enabled", m_pWeaponSwitchStick->IsSelected() ? 1 : 0 );
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
 	}
 
@@ -320,7 +319,6 @@ private:
 	Slider *m_pMoveSensitivity;
 	Slider *m_pThumbstickDeadzone;
 	Slider *m_pTurnDeadzone;
-	CheckButton *m_pWeaponSwitchStick;
 };
 
 class CTFVROptionsSubComfort : public CTFVROptionsSubPage
