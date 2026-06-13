@@ -37,6 +37,7 @@ public:
 	// Setup
 	void SetWeaponType( int weaponID ) { m_iWeaponType = weaponID; }
 	void SetAmmoCount( int ammo ) { m_iAmmoCount = ammo; }
+	void SetMagazineModel( const char *pszModelName );
 	void SetOwnerWeapon( CTFVRWeaponGun *pWeapon );
 	
 	// Accessors
@@ -62,6 +63,7 @@ private:
 	CNetworkVar( int, m_iWeaponType );  // Which weapon this magazine is for
 	CNetworkVar( int, m_iAmmoCount );   // How much ammo in this magazine
 	CHandle<CTFVRWeaponGun> m_hOwnerWeapon;  // Weapon that ejected this magazine
+	string_t m_iszMagazineModel;
 	
 	float m_flRemoveTime;  // Time to remove this magazine
 	bool m_bFading;        // Is this magazine fading out?

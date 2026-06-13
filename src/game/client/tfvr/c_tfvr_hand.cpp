@@ -93,8 +93,7 @@ static bool TFVR_HasManualReloadRocketVisual(C_TFWeaponBase *pWeapon)
 // Returns the pistol when it is a VR manual-magazine-reload pistol, else NULL.
 static CTFPistol *TFVR_GetManualReloadPistol(C_TFWeaponBase *pWeapon)
 {
-	if (!pWeapon || (pWeapon->GetWeaponID() != TF_WEAPON_PISTOL_SCOUT
-		&& pWeapon->GetWeaponID() != TF_WEAPON_PISTOL))
+	if (!pWeapon || !VRPistol_IsManualReloadWeaponID(pWeapon->GetWeaponID()))
 		return NULL;
 
 	CTFPistol *pPistol = static_cast<CTFPistol *>(pWeapon);
@@ -12338,10 +12337,10 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// Use world model for VR (c_models in TF2 are the world models)
 	const char *worldModel = pWeapon->GetWorldModel();
 
-	// Manual-reload pistol uses a dedicated model with the magazine split
-	// into its own mesh (vr_pistol_ammo.mdl) so the mag can leave the gun.
+	// Manual-reload pistols use dedicated VR models with the magazine split
+	// into its own mesh so the mag can leave the gun.
 	if (TFVR_GetManualReloadPistol(pWeapon))
-		worldModel = "models/weapons/vr_models/vr_pistol/vr_pistol.mdl";
+		worldModel = VRPistol_GunModelForWorldModel(pWeapon->GetWorldModel());
 
 	if (!worldModel || !worldModel[0])
 		return;
@@ -12687,8 +12686,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 				pszRocketReloadSequence, m_iShotgunManualReloadSequence, flManualReloadStartFrame, flManualReloadEndFrame,
 				m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle, GetModelName());
 		}
-		else if (pWeapon->GetWeaponID() == TF_WEAPON_PISTOL_SCOUT
-			|| pWeapon->GetWeaponID() == TF_WEAPON_PISTOL)
+		else if (VRPistol_IsManualReloadWeaponID(pWeapon->GetWeaponID()))
 		{
 			// Manual magazine reload: hold/commit map to the off-hand insert
 			// frames; the eject/pause/finish markers are per-class
@@ -16297,10 +16295,26 @@ void C_TFVRHand::UpdateManualReloadRocketFromBones(matrix3x4_t *pBoneToWorldOut,
 //-----------------------------------------------------------------------------
 bool C_TFVRHand::EnsurePistolMagazineModel()
 {
-	if (m_hPistolMagazine.Get())
-		return true;
+	const char *pszMagModel = "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+	C_TFWeaponBase *pMagWeapon = m_hHeldWeapon.Get();
+	if (!TFVR_GetManualReloadPistol(pMagWeapon))
+	{
+		C_TFVRHand *pOtherHand = GetOppositeVRHand(this);
+		pMagWeapon = pOtherHand ? pOtherHand->GetHeldWeapon() : NULL;
+	}
+	if (TFVR_GetManualReloadPistol(pMagWeapon))
+		pszMagModel = VRPistol_AmmoModelForWorldModel(pMagWeapon->GetWorldModel());
 
-	static const char *pszMagModel = "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+	if (m_hPistolMagazine.Get())
+	{
+		const char *pszCurrentModel = modelinfo && m_hPistolMagazine->GetModel()
+			? modelinfo->GetModelName(m_hPistolMagazine->GetModel()) : NULL;
+		if (pszCurrentModel && !Q_stricmp(pszCurrentModel, pszMagModel))
+			return true;
+
+		RemovePistolMagazineModel();
+	}
+
 	CBaseEntity::PrecacheModel(pszMagModel);
 
 	C_BaseAnimating *pMag = new C_BaseAnimating();

@@ -25,6 +25,7 @@ BEGIN_DATADESC( CTFVRWeaponMagazine )
 	DEFINE_FIELD( m_iWeaponType, FIELD_INTEGER ),
 	DEFINE_FIELD( m_iAmmoCount, FIELD_INTEGER ),
 	DEFINE_FIELD( m_hOwnerWeapon, FIELD_EHANDLE ),
+	DEFINE_FIELD( m_iszMagazineModel, FIELD_STRING ),
 	DEFINE_FIELD( m_flRemoveTime, FIELD_TIME ),
 	DEFINE_FIELD( m_bFading, FIELD_BOOLEAN ),
 	DEFINE_THINKFUNC( FadeThink ),
@@ -40,6 +41,7 @@ CTFVRWeaponMagazine::CTFVRWeaponMagazine()
 	m_iWeaponType = TF_WEAPON_NONE;
 	m_iAmmoCount = 0;
 	m_hOwnerWeapon = NULL;
+	m_iszMagazineModel = NULL_STRING;
 	m_flRemoveTime = 0.0f;
 	m_bFading = false;
 }
@@ -58,8 +60,10 @@ void CTFVRWeaponMagazine::Spawn()
 {
 	Precache();
 
-	// Set default model (will be overridden by weapon-specific model)
-	SetModel( "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl" );
+	const char *pszModel = m_iszMagazineModel != NULL_STRING
+		? STRING( m_iszMagazineModel )
+		: "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+	SetModel( pszModel );
 	
 	BaseClass::Spawn();
 	
@@ -83,7 +87,22 @@ void CTFVRWeaponMagazine::Spawn()
 void CTFVRWeaponMagazine::Precache()
 {
 	PrecacheModel( "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol_ammo.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol_ammo.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol_ammo.mdl" );
+	if ( m_iszMagazineModel != NULL_STRING )
+		PrecacheModel( STRING( m_iszMagazineModel ) );
 	BaseClass::Precache();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Override the physical magazine model before Spawn.
+//-----------------------------------------------------------------------------
+void CTFVRWeaponMagazine::SetMagazineModel( const char *pszModelName )
+{
+	m_iszMagazineModel = pszModelName && pszModelName[0]
+		? AllocPooledString( pszModelName )
+		: NULL_STRING;
 }
 
 //-----------------------------------------------------------------------------

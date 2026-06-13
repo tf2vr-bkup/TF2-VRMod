@@ -1177,7 +1177,7 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 		return;
 
 	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
-	if ( !pWpn || ( pWpn->GetWeaponID() != TF_WEAPON_PISTOL_SCOUT && pWpn->GetWeaponID() != TF_WEAPON_PISTOL ) )
+	if ( !pWpn || !VRPistol_IsManualReloadWeaponID( pWpn->GetWeaponID() ) )
 		return;
 
 	CTFPistol *pPistol = static_cast< CTFPistol * >( pWpn );

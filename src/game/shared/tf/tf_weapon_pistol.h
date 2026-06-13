@@ -45,9 +45,60 @@ inline bool VRPistol_IsEngineer( int iWeaponID )
 	return iWeaponID == TF_WEAPON_PISTOL;
 }
 
+inline bool VRPistol_IsManualReloadWeaponID( int iWeaponID )
+{
+	return iWeaponID == TF_WEAPON_PISTOL
+		|| iWeaponID == TF_WEAPON_PISTOL_SCOUT
+		|| iWeaponID == TF_WEAPON_HANDGUN_SCOUT_SECONDARY;
+}
+
 inline const char *VRPistol_ReloadSequenceName( int iWeaponID )
 {
 	return VRPistol_IsEngineer( iWeaponID ) ? "pstl_reload" : "p_reload";
+}
+
+inline const char *VRPistol_GunModelForWorldModel( const char *pszWorldModel )
+{
+	if ( pszWorldModel )
+	{
+		if ( V_stristr( pszWorldModel, "c_winger_pistol" ) )
+			return "models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol.mdl";
+		if ( V_stristr( pszWorldModel, "c_pep_pistol" ) )
+			return "models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol.mdl";
+		if ( V_stristr( pszWorldModel, "c_invasion_pistol" ) )
+			return "models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol.mdl";
+		if ( V_stristr( pszWorldModel, "c_ttg_max_gun" ) )
+			return "models/weapons/vr_models/vr_ttg_max_gun/vr_ttg_max_gun.mdl";
+	}
+
+	return "models/weapons/vr_models/vr_pistol/vr_pistol.mdl";
+}
+
+inline const char *VRPistol_AmmoModelForWorldModel( const char *pszWorldModel )
+{
+	if ( pszWorldModel )
+	{
+		if ( V_stristr( pszWorldModel, "c_winger_pistol" ) )
+			return "models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol_ammo.mdl";
+		if ( V_stristr( pszWorldModel, "c_pep_pistol" ) )
+			return "models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol_ammo.mdl";
+		if ( V_stristr( pszWorldModel, "c_invasion_pistol" ) )
+			return "models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol_ammo.mdl";
+	}
+
+	// Stock pistol ammo is also the temporary fallback for Max Gun.
+	return "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+}
+
+inline bool VRPistol_HasVRModelForWorldModel( const char *pszWorldModel )
+{
+	return pszWorldModel
+		&& ( V_stristr( pszWorldModel, "c_pistol" )
+			|| V_stristr( pszWorldModel, "w_pistol" )
+			|| V_stristr( pszWorldModel, "c_winger_pistol" )
+			|| V_stristr( pszWorldModel, "c_pep_pistol" )
+			|| V_stristr( pszWorldModel, "c_invasion_pistol" )
+			|| V_stristr( pszWorldModel, "c_ttg_max_gun" ) );
 }
 
 // Frame where the mag visually clears the gun (physics prop spawns one frame ahead)

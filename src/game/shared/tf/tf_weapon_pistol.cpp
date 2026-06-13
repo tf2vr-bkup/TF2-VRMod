@@ -100,6 +100,13 @@ void CTFPistol::Precache()
 
 	PrecacheModel( "models/weapons/vr_models/vr_pistol/vr_pistol.mdl" );
 	PrecacheModel( "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol_ammo.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol_ammo.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol_ammo.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_ttg_max_gun/vr_ttg_max_gun.mdl" );
 	PrecacheScriptSound( "VR.PistolReloadScout" );
 	PrecacheScriptSound( "VR.PistolClipIn" );
 }
@@ -109,17 +116,14 @@ void CTFPistol::Precache()
 //-----------------------------------------------------------------------------
 bool CTFPistol::ShouldUseVRPistolManualReload() const
 {
-	if ( GetWeaponID() != TF_WEAPON_PISTOL_SCOUT && GetWeaponID() != TF_WEAPON_PISTOL )
+	if ( !VRPistol_IsManualReloadWeaponID( GetWeaponID() ) )
 		return false;
 
 	if ( !tfvr_pistol_manual_reload.GetBool() )
 		return false;
 
-	// Stock pistol only for now: reskins (Lugermorph, etc.) keep their own
-	// world model and vanilla reload.
 	const char *pszWorldModel = GetWorldModel();
-	if ( !pszWorldModel
-		|| ( !V_stristr( pszWorldModel, "c_pistol" ) && !V_stristr( pszWorldModel, "w_pistol" ) ) )
+	if ( !VRPistol_HasVRModelForWorldModel( pszWorldModel ) )
 		return false;
 
 	CTFPlayer *pOwner = GetTFPlayerOwner();
@@ -411,6 +415,7 @@ void CTFPistol::VRSpawnEjectedMagazine()
 		return;
 
 	pMag->SetWeaponType( GetVRPistolReloadWeaponID() );
+	pMag->SetMagazineModel( VRPistol_AmmoModelForWorldModel( GetWorldModel() ) );
 	pMag->SetAmmoCount( 0 ); // rounds already returned to reserve
 	pMag->SetAbsOrigin( vecSpawnPos );
 	pMag->SetAbsAngles( angSpawn );

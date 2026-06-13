@@ -3007,6 +3007,13 @@ void CTFPlayer::PrecacheTFPlayer()
 	PrecacheModel("models/weapons/vr_models/vr_rocket.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_pistol/vr_pistol.mdl");
 	PrecacheModel("models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol_ammo.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol_ammo.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol_ammo.mdl");
+	PrecacheModel("models/weapons/vr_models/vr_ttg_max_gun/vr_ttg_max_gun.mdl");
 	
 	// Precache spy watch models for VR
 	PrecacheModel("models/weapons/c_models/c_spy_watch.mdl");
