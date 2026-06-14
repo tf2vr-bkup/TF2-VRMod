@@ -19,6 +19,9 @@
 #include "tf_weapon_wrench.h"
 #include "tf_weapon_builder.h"
 #include "tf_objective_resource.h"
+#include "func_regenerate.h"
+#include "engine/ICollideable.h"
+#include "engine/IStaticPropMgr.h"
 
 
 extern ConVar tf_mvm_skill;
@@ -26,9 +29,16 @@ extern ConVar *sv_cheats;
 
 CHandle<CUpgrades>	g_hUpgradeEntity;
 
+static const float TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS = 384.0f;
+static const float TF_UPGRADE_STATION_MAX_ANCHOR_PLAYER_DIST = 512.0f;
+static const float TF_UPGRADE_STATION_MAX_SIGN_PAIR_DIST = 512.0f;
+static const float TF_UPGRADE_STATION_WALL_TRACE_HEIGHT = 64.0f;
+ConVar tfvr_mvm_shop_anchor_debug( "tfvr_mvm_shop_anchor_debug", "0", FCVAR_CHEAT, "Log the server-selected MvM upgrade shop VR anchor." );
 
 BEGIN_DATADESC( CUpgrades )
 	DEFINE_KEYFIELD( m_nStartDisabled, FIELD_INTEGER, "start_disabled" ),
+	DEFINE_FIELD( m_hAssociatedModel, FIELD_EHANDLE ),
+	DEFINE_KEYFIELD( m_iszAssociatedModel, FIELD_STRING, "associatedmodel" ),
 
 	DEFINE_INPUTFUNC( FIELD_VOID, "Enable", InputEnable ),
 	DEFINE_INPUTFUNC( FIELD_VOID, "Disable", InputDisable ),
@@ -59,6 +69,23 @@ void CUpgrades::Spawn( void )
 	ListenForGameEvent( "teamplay_round_start" );
 
 	m_bIsEnabled = true;
+}
+
+void CUpgrades::Activate( void )
+{
+	BaseClass::Activate();
+
+	if ( m_iszAssociatedModel == NULL_STRING )
+		return;
+
+	CBaseEntity *pEnt = gEntList.FindEntityByName( NULL, STRING( m_iszAssociatedModel ) );
+	if ( !pEnt )
+	{
+		Warning( "%s(%s) unable to find associated model named '%s'.\n", GetClassname(), GetDebugName(), STRING( m_iszAssociatedModel ) );
+		return;
+	}
+
+	m_hAssociatedModel = pEnt;
 }
 
 //-----------------------------------------------------------------------------
@@ -110,6 +137,336 @@ void CUpgrades::FireGameEvent( IGameEvent *gameEvent )
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Find the visual shop prop to use as the VR upgrade menu anchor.
+//-----------------------------------------------------------------------------
+float CUpgrades::GetYawFacingPoint( float flBaseYaw, const Vector &vecAnchorCenter, const Vector &vecPoint ) const
+{
+	Vector vecForward;
+	AngleVectors( QAngle( 0.0f, flBaseYaw, 0.0f ), &vecForward );
+
+	Vector vecToPoint = vecPoint - vecAnchorCenter;
+	vecToPoint.z = 0.0f;
+
+	if ( vecToPoint.LengthSqr() <= 0.01f )
+		return anglemod( flBaseYaw );
+
+	VectorNormalize( vecToPoint );
+	if ( DotProduct( vecForward, vecToPoint ) < 0.0f )
+		return anglemod( flBaseYaw + 180.0f );
+
+	return anglemod( flBaseYaw );
+}
+
+bool CUpgrades::GetSignPairAnchor( const Vector &vecSearchOrigin, const Vector &vecFirstSign, const Vector &vecSecondSign, Vector &vecAnchorCenter, float &flAnchorYaw ) const
+{
+	Vector vecSignLine = vecSecondSign - vecFirstSign;
+	vecSignLine.z = 0.0f;
+
+	if ( vecSignLine.LengthSqr() <= 1.0f )
+		return false;
+
+	vecAnchorCenter = ( vecFirstSign + vecSecondSign ) * 0.5f;
+
+	// The panel's right vector should run along the sign pair, so its forward vector is perpendicular.
+	Vector vecPanelNormal( -vecSignLine.y, vecSignLine.x, 0.0f );
+	VectorNormalize( vecPanelNormal );
+
+	QAngle vecPanelAngles;
+	VectorAngles( vecPanelNormal, vecPanelAngles );
+	flAnchorYaw = GetYawFacingPoint( vecPanelAngles.y, vecAnchorCenter, vecSearchOrigin );
+
+	return true;
+}
+
+bool CUpgrades::FindNearbyUpgradeSignPairAnchor( const Vector &vecSearchOrigin, Vector &vecAnchorCenter, float &flAnchorYaw )
+{
+	CBaseEntity *pClosestSign = NULL;
+	CBaseEntity *pSecondClosestSign = NULL;
+	float flClosestDistSqr = TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS * TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS;
+	float flSecondClosestDistSqr = flClosestDistSqr;
+
+	for ( CEntitySphereQuery sphere( vecSearchOrigin, TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS ); sphere.GetCurrentEntity(); sphere.NextEntity() )
+	{
+		CBaseEntity *pEnt = sphere.GetCurrentEntity();
+		if ( !pEnt )
+			continue;
+
+		if ( !FClassnameIs( pEnt, "prop_dynamic" ) && !FClassnameIs( pEnt, "prop_dynamic_override" ) && !FClassnameIs( pEnt, "dynamic_prop" ) )
+			continue;
+
+		const char *pszModelName = STRING( pEnt->GetModelName() );
+		if ( !pszModelName || !V_stristr( pszModelName, "models/props_mvm/mvm_upgrade_sign.mdl" ) )
+			continue;
+
+		float flDistSqr = ( pEnt->WorldSpaceCenter() - vecSearchOrigin ).LengthSqr();
+		if ( flDistSqr < flClosestDistSqr )
+		{
+			pSecondClosestSign = pClosestSign;
+			flSecondClosestDistSqr = flClosestDistSqr;
+			pClosestSign = pEnt;
+			flClosestDistSqr = flDistSqr;
+		}
+		else if ( flDistSqr < flSecondClosestDistSqr )
+		{
+			pSecondClosestSign = pEnt;
+			flSecondClosestDistSqr = flDistSqr;
+		}
+	}
+
+	if ( !pClosestSign || !pSecondClosestSign )
+		return false;
+
+	float flSignPairDistSqr = ( pClosestSign->WorldSpaceCenter() - pSecondClosestSign->WorldSpaceCenter() ).LengthSqr();
+	if ( flSignPairDistSqr > TF_UPGRADE_STATION_MAX_SIGN_PAIR_DIST * TF_UPGRADE_STATION_MAX_SIGN_PAIR_DIST )
+		return false;
+
+	return GetSignPairAnchor( vecSearchOrigin, pClosestSign->WorldSpaceCenter(), pSecondClosestSign->WorldSpaceCenter(), vecAnchorCenter, flAnchorYaw );
+}
+
+bool CUpgrades::FindNearbyStaticUpgradeSignPairAnchor( const Vector &vecSearchOrigin, Vector &vecAnchorCenter, float &flAnchorYaw )
+{
+	if ( !staticpropmgr || !modelinfo )
+		return false;
+
+	CUtlVector<ICollideable *> vecStaticProps;
+	Vector vecMins = vecSearchOrigin - Vector( TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS, TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS, TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS );
+	Vector vecMaxs = vecSearchOrigin + Vector( TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS, TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS, TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS );
+	staticpropmgr->GetAllStaticPropsInAABB( vecMins, vecMaxs, &vecStaticProps );
+
+	const Vector *pClosestSign = NULL;
+	const Vector *pSecondClosestSign = NULL;
+	float flClosestDistSqr = TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS * TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS;
+	float flSecondClosestDistSqr = flClosestDistSqr;
+
+	FOR_EACH_VEC( vecStaticProps, i )
+	{
+		ICollideable *pCollideable = vecStaticProps[i];
+		if ( !pCollideable )
+			continue;
+
+		const model_t *pModel = pCollideable->GetCollisionModel();
+		const char *pszModelName = pModel ? modelinfo->GetModelName( pModel ) : NULL;
+		if ( !pszModelName || !V_stristr( pszModelName, "models/props_mvm/mvm_upgrade_sign.mdl" ) )
+			continue;
+
+		const Vector &vecSignOrigin = pCollideable->GetCollisionOrigin();
+		float flDistSqr = ( vecSignOrigin - vecSearchOrigin ).LengthSqr();
+		if ( flDistSqr < flClosestDistSqr )
+		{
+			pSecondClosestSign = pClosestSign;
+			flSecondClosestDistSqr = flClosestDistSqr;
+			pClosestSign = &vecSignOrigin;
+			flClosestDistSqr = flDistSqr;
+		}
+		else if ( flDistSqr < flSecondClosestDistSqr )
+		{
+			pSecondClosestSign = &vecSignOrigin;
+			flSecondClosestDistSqr = flDistSqr;
+		}
+	}
+
+	if ( !pClosestSign || !pSecondClosestSign )
+		return false;
+
+	float flSignPairDistSqr = ( *pClosestSign - *pSecondClosestSign ).LengthSqr();
+	if ( flSignPairDistSqr > TF_UPGRADE_STATION_MAX_SIGN_PAIR_DIST * TF_UPGRADE_STATION_MAX_SIGN_PAIR_DIST )
+		return false;
+
+	return GetSignPairAnchor( vecSearchOrigin, *pClosestSign, *pSecondClosestSign, vecAnchorCenter, flAnchorYaw );
+}
+
+CBaseEntity *CUpgrades::FindUpgradeStationAnchorEntity( const Vector &vecSearchOrigin )
+{
+	if ( m_hAssociatedModel )
+		return m_hAssociatedModel.Get();
+
+	CBaseEntity *pAnchor = FindNearbyRegenerateAssociatedModel( vecSearchOrigin );
+	if ( pAnchor )
+		return pAnchor;
+
+	pAnchor = FindNearbyUpgradeStationProp( vecSearchOrigin );
+	if ( pAnchor )
+		return pAnchor;
+
+	return this;
+}
+
+CBaseEntity *CUpgrades::FindNearbyRegenerateAssociatedModel( const Vector &vecSearchOrigin )
+{
+	CBaseEntity *pBestModel = NULL;
+	float flBestDistSqr = TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS * TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS;
+
+	for ( CEntitySphereQuery sphere( vecSearchOrigin, TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS ); sphere.GetCurrentEntity(); sphere.NextEntity() )
+	{
+		CRegenerateZone *pRegenZone = dynamic_cast<CRegenerateZone *>( sphere.GetCurrentEntity() );
+		if ( !pRegenZone )
+			continue;
+
+		CBaseEntity *pModel = pRegenZone->GetAssociatedModel();
+		if ( !pModel )
+			continue;
+
+		float flModelDistSqr = ( pModel->WorldSpaceCenter() - vecSearchOrigin ).LengthSqr();
+		if ( flModelDistSqr > TF_UPGRADE_STATION_MAX_ANCHOR_PLAYER_DIST * TF_UPGRADE_STATION_MAX_ANCHOR_PLAYER_DIST )
+			continue;
+
+		float flDistSqr = ( pRegenZone->WorldSpaceCenter() - vecSearchOrigin ).LengthSqr();
+		if ( flDistSqr < flBestDistSqr )
+		{
+			flBestDistSqr = flDistSqr;
+			pBestModel = pModel;
+		}
+	}
+
+	return pBestModel;
+}
+
+CBaseEntity *CUpgrades::FindNearbyUpgradeStationProp( const Vector &vecSearchOrigin )
+{
+	CBaseEntity *pBestProp = NULL;
+	float flBestDistSqr = TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS * TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS;
+
+	for ( CEntitySphereQuery sphere( vecSearchOrigin, TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS ); sphere.GetCurrentEntity(); sphere.NextEntity() )
+	{
+		CBaseEntity *pEnt = sphere.GetCurrentEntity();
+		if ( !pEnt || pEnt == this )
+			continue;
+
+		if ( !FClassnameIs( pEnt, "prop_dynamic" ) && !FClassnameIs( pEnt, "prop_dynamic_override" ) && !FClassnameIs( pEnt, "dynamic_prop" ) )
+			continue;
+
+		const char *pszModelName = STRING( pEnt->GetModelName() );
+		if ( !pszModelName || !pszModelName[0] )
+			continue;
+
+		bool bLooksLikeUpgradeStation =
+			V_stristr( pszModelName, "upgrade" ) ||
+			V_stristr( pszModelName, "resupply_locker" ) ||
+			( V_stristr( pszModelName, "props_mvm" ) && V_stristr( pszModelName, "station" ) );
+
+		if ( !bLooksLikeUpgradeStation )
+			continue;
+
+		float flDistSqr = ( pEnt->WorldSpaceCenter() - vecSearchOrigin ).LengthSqr();
+		if ( flDistSqr < flBestDistSqr )
+		{
+			flBestDistSqr = flDistSqr;
+			pBestProp = pEnt;
+		}
+	}
+
+	return pBestProp;
+}
+
+bool CUpgrades::FindFallbackWallYaw( const Vector &vecSearchOrigin, const Vector &vecPlacementCenter, float &flAnchorYaw )
+{
+	Vector vecTraceStart = vecSearchOrigin;
+	vecTraceStart.z += TF_UPGRADE_STATION_WALL_TRACE_HEIGHT;
+
+	float flBestDistSqr = TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS * TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS;
+	bool bFoundWall = false;
+	Vector vecBestNormal = vec3_origin;
+
+	const int nTraceCount = 16;
+	for ( int i = 0; i < nTraceCount; ++i )
+	{
+		float flYaw = ( 360.0f / nTraceCount ) * i;
+		Vector vecDirection;
+		AngleVectors( QAngle( 0.0f, flYaw, 0.0f ), &vecDirection );
+
+		trace_t tr;
+		UTIL_TraceLine( vecTraceStart, vecTraceStart + vecDirection * TF_UPGRADE_STATION_ANCHOR_SEARCH_RADIUS,
+			MASK_SOLID_BRUSHONLY, this, COLLISION_GROUP_NONE, &tr );
+
+		if ( !tr.DidHit() || tr.startsolid )
+			continue;
+
+		if ( fabs( tr.plane.normal.z ) > 0.35f )
+			continue;
+
+		float flDistSqr = ( tr.endpos - vecTraceStart ).LengthSqr();
+		if ( flDistSqr < flBestDistSqr )
+		{
+			flBestDistSqr = flDistSqr;
+			vecBestNormal = tr.plane.normal;
+			bFoundWall = true;
+		}
+	}
+
+	if ( !bFoundWall )
+		return false;
+
+	QAngle vecWallAngles;
+	VectorAngles( vecBestNormal, vecWallAngles );
+	flAnchorYaw = GetYawFacingPoint( vecWallAngles.y, vecPlacementCenter, vecSearchOrigin );
+
+	return true;
+}
+
+void CUpgrades::SetPlayerUpgradeStationWorldInfo( CTFPlayer *pTFPlayer )
+{
+	if ( !pTFPlayer )
+		return;
+
+	Vector vecAnchorCenter;
+	float flAnchorYaw = 0.0f;
+	float flAnchorPlayerDist = 0.0f;
+	bool bDynamicAnchor = false;
+	CBaseEntity *pAnchor = NULL;
+	const char *pszAnchorType = "entity";
+
+	if ( !m_hAssociatedModel && FindNearbyUpgradeSignPairAnchor( pTFPlayer->WorldSpaceCenter(), vecAnchorCenter, flAnchorYaw ) )
+	{
+		flAnchorPlayerDist = ( vecAnchorCenter - pTFPlayer->WorldSpaceCenter() ).Length();
+		bDynamicAnchor = true;
+		pszAnchorType = "mvm_upgrade_sign_pair";
+	}
+	else if ( !m_hAssociatedModel && FindNearbyStaticUpgradeSignPairAnchor( pTFPlayer->WorldSpaceCenter(), vecAnchorCenter, flAnchorYaw ) )
+	{
+		flAnchorPlayerDist = ( vecAnchorCenter - pTFPlayer->WorldSpaceCenter() ).Length();
+		bDynamicAnchor = true;
+		pszAnchorType = "mvm_static_upgrade_sign_pair";
+	}
+	else
+	{
+		pAnchor = FindUpgradeStationAnchorEntity( pTFPlayer->WorldSpaceCenter() );
+		if ( !pAnchor )
+			pAnchor = this;
+
+		vecAnchorCenter = pAnchor->WorldSpaceCenter();
+		flAnchorYaw = GetYawFacingPoint( GetAbsAngles().y, vecAnchorCenter, pTFPlayer->WorldSpaceCenter() );
+		flAnchorPlayerDist = ( vecAnchorCenter - pTFPlayer->WorldSpaceCenter() ).Length();
+		bDynamicAnchor = ( pAnchor != this );
+
+		if ( pAnchor == this && flAnchorPlayerDist > TF_UPGRADE_STATION_MAX_ANCHOR_PLAYER_DIST )
+		{
+			vecAnchorCenter = pTFPlayer->WorldSpaceCenter();
+			flAnchorPlayerDist = 0.0f;
+			flAnchorYaw = GetYawFacingPoint( GetAbsAngles().y, vecAnchorCenter, pTFPlayer->WorldSpaceCenter() );
+			bDynamicAnchor = false;
+			pszAnchorType = "player_fallback";
+		}
+
+		if ( pAnchor == this && FindFallbackWallYaw( pTFPlayer->WorldSpaceCenter(), vecAnchorCenter, flAnchorYaw ) )
+		{
+			bDynamicAnchor = false;
+			pszAnchorType = "wall_fallback";
+		}
+	}
+
+	pTFPlayer->m_Shared.SetUpgradeStationWorldInfo( vecAnchorCenter, flAnchorYaw, bDynamicAnchor );
+
+	if ( tfvr_mvm_shop_anchor_debug.GetBool() )
+	{
+		const char *pszClassname = pAnchor ? pAnchor->GetClassname() : pszAnchorType;
+		const char *pszModelName = ( pAnchor && pAnchor->GetModelName() != NULL_STRING ) ? STRING( pAnchor->GetModelName() ) : "";
+		DevMsg( "TF2VR MvM shop anchor: type=%s ent=%s model=%s pos=(%.1f %.1f %.1f) yaw=%.1f player_dist=%.1f dynamic=%d\n",
+			pszAnchorType, pszClassname, pszModelName, vecAnchorCenter.x, vecAnchorCenter.y, vecAnchorCenter.z,
+			flAnchorYaw, flAnchorPlayerDist, bDynamicAnchor ? 1 : 0 );
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
 void CUpgrades::UpgradeTouch( CBaseEntity *pOther )
@@ -121,6 +478,7 @@ void CUpgrades::UpgradeTouch( CBaseEntity *pOther )
 			if ( pOther->IsPlayer() )
 			{
 				CTFPlayer *pTFPlayer = ToTFPlayer( pOther );
+				SetPlayerUpgradeStationWorldInfo( pTFPlayer );
 				pTFPlayer->m_Shared.SetInUpgradeZone( true );
 			}
 		}

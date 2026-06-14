@@ -490,7 +490,25 @@ public:
 
 	int		GetDesiredPlayerClassIndex( void );
 	bool	IsInUpgradeZone( void ) { return m_bInUpgradeZone; }
-	void	SetInUpgradeZone( bool bInZone ) { m_bInUpgradeZone = bInZone; }
+	void	SetInUpgradeZone( bool bInZone )
+	{
+		m_bInUpgradeZone = bInZone;
+		if ( !bInZone )
+		{
+			m_vecUpgradeStationCenter = vec3_origin;
+			m_flUpgradeStationYaw = 0.0f;
+			m_bUpgradeStationDynamicAnchor = false;
+		}
+	}
+	void	SetUpgradeStationWorldInfo( const Vector &vecCenter, float flYaw, bool bDynamicAnchor )
+	{
+		m_vecUpgradeStationCenter = vecCenter;
+		m_flUpgradeStationYaw = flYaw;
+		m_bUpgradeStationDynamicAnchor = bDynamicAnchor;
+	}
+	Vector	GetUpgradeStationCenter( void ) const { return m_vecUpgradeStationCenter; }
+	float	GetUpgradeStationYaw( void ) const { return m_flUpgradeStationYaw; }
+	bool	IsUpgradeStationDynamicAnchor( void ) const { return m_bUpgradeStationDynamicAnchor; }
 
 	// Cloak, rage, phase, team juice...this should really all be done with composition?
 	void	UpdateCloakMeter( void );
@@ -1096,6 +1114,9 @@ private:
 	CNetworkVar( float, m_flCloakMeter );	// [0,100]
 
 	CNetworkVar( bool, m_bInUpgradeZone );
+	CNetworkVector( m_vecUpgradeStationCenter );
+	CNetworkVar( float, m_flUpgradeStationYaw );
+	CNetworkVar( bool, m_bUpgradeStationDynamicAnchor );
 
 	// Scout
 	CNetworkVar( float, m_flEnergyDrinkMeter );	// [0,100]

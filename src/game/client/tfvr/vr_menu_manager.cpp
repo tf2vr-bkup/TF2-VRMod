@@ -13,6 +13,7 @@
 #include "hud.h"
 #include "hudelement.h"
 #include "menu.h"
+#include "tf/clientmode_tf.h"
 #include "tf_viewport.h"
 #include "tf_shareddefs.h"
 #include "tf_playerclass_shared.h"
@@ -58,6 +59,13 @@ ConVar tfvr_cursor_vr_reclaim_cooldown("tfvr_cursor_vr_reclaim_cooldown", "0.5",
 ConVar tfvr_menu_debug("tfvr_menu_debug", "0", FCVAR_ARCHIVE, "Show debug info for VR menu rendering");
 ConVar tfvr_playspace_anchoring("tfvr_playspace_anchoring", "1", FCVAR_ARCHIVE, "Anchor menu to playspace origin instead of player");
 ConVar tfvr_class_menu_hold_threshold("tfvr_class_menu_hold_threshold", "0.25", FCVAR_ARCHIVE, "Hold time in seconds for team menu (quick release = class menu)");
+ConVar tfvr_mvm_shop_menu_world_anchor("tfvr_mvm_shop_menu_world_anchor", "1", FCVAR_ARCHIVE, "Anchor the MvM upgrade shop menu to the upgrade station in VR");
+ConVar tfvr_mvm_shop_menu_forward_offset("tfvr_mvm_shop_menu_forward_offset", "50", FCVAR_ARCHIVE, "Forward offset from the upgrade station center for the VR MvM shop menu");
+ConVar tfvr_mvm_shop_menu_up_offset("tfvr_mvm_shop_menu_up_offset", "0", FCVAR_ARCHIVE, "Vertical offset from the calibrated player view height for the VR MvM shop menu");
+ConVar tfvr_mvm_shop_menu_fallback_forward_offset("tfvr_mvm_shop_menu_fallback_forward_offset", "40", FCVAR_ARCHIVE, "Forward offset for the VR MvM shop menu when no dynamic shop prop anchor was found");
+ConVar tfvr_mvm_shop_menu_fallback_up_offset("tfvr_mvm_shop_menu_fallback_up_offset", "0", FCVAR_ARCHIVE, "Vertical offset from calibrated player view height when no dynamic shop prop anchor was found");
+ConVar tfvr_mvm_shop_menu_yaw_offset("tfvr_mvm_shop_menu_yaw_offset", "180", FCVAR_ARCHIVE, "Yaw offset applied to the upgrade station angle for the VR MvM shop menu");
+ConVar tfvr_mvm_shop_menu_fallback_yaw_offset("tfvr_mvm_shop_menu_fallback_yaw_offset", "180", FCVAR_ARCHIVE, "Yaw offset applied to fallback MvM shop anchors");
 
 // Helper function to get scaled menu dimensions
 static void GetScaledMenuDimensions(float& menuWidth, float& menuHeight)
@@ -90,6 +98,7 @@ CVRMenuManager::CVRMenuManager()
     , m_fixedMenuPosition(0, 0, 0)
     , m_fixedMenuRotation(0, 0, 0)
     , m_bMenuPositionFixed(false)
+    , m_bMVMUpgradeStationAnchorActive(false)
     , m_bUsePlayspaceAnchoring(true)
     , m_pConVarPrimaryHand(nullptr)
     , m_szLastMapName("")
@@ -727,9 +736,140 @@ void CVRMenuManager::SubmitLoadingFrameToCompositor()
     }
 }
 
+bool CVRMenuManager::IsMVMUpgradePanelVisible() const
+{
+    ClientModeTFNormal *pTFClientMode = GetClientModeTFNormal();
+    return pTFClientMode && pTFClientMode->IsUpgradePanelVisible();
+}
+
+bool CVRMenuManager::ShouldBlockVRMovementInput()
+{
+    if (!IsMenuVisible())
+        return false;
+
+    // MvM upgrade shopping is the one menu where locomotion should remain available.
+    // If any other menu-like state is active at the same time, keep the usual block.
+    if (!IsMVMUpgradePanelVisible())
+        return true;
+
+    bool bGameUIVisible = enginevgui && enginevgui->IsGameUIVisible();
+    if (bGameUIVisible)
+        return true;
+
+    if (gViewPortInterface)
+    {
+        IViewPortPanel* pPanel = nullptr;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_RED);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_CLASS_BLUE);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_TEAM);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_INTRO);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_INFO);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_MAPINFO);
+        if (pPanel && pPanel->IsVisible()) return true;
+        pPanel = gViewPortInterface->FindPanelByName(PANEL_ARENA_TEAM);
+        if (pPanel && pPanel->IsVisible()) return true;
+    }
+
+    if (g_pClientMode)
+    {
+        CHudMenu* pHudMenu = GET_HUDELEMENT(CHudMenu);
+        if (pHudMenu && pHudMenu->IsMenuOpen())
+            return true;
+    }
+
+    if (engine && engine->IsInGame())
+    {
+        ConVar* pClassMenuOpen = g_pCVar->FindVar("_cl_classmenuopen");
+        if (pClassMenuOpen && pClassMenuOpen->GetBool())
+            return true;
+
+        ConVar* pTeamUI = g_pCVar->FindVar("team_ui_setup");
+        if (pTeamUI && pTeamUI->GetBool())
+            return true;
+
+        C_TFPlayer* pLocalPlayer = C_TFPlayer::GetLocalTFPlayer();
+        if (pLocalPlayer)
+        {
+            if (pLocalPlayer->IsPlayerDead() && pLocalPlayer->GetTeamNumber() != TEAM_SPECTATOR)
+                return true;
+
+            if (pLocalPlayer->GetTeamNumber() == TEAM_UNASSIGNED)
+                return true;
+
+            if (pLocalPlayer->GetPlayerClass() &&
+                pLocalPlayer->GetPlayerClass()->GetClassIndex() == TF_CLASS_UNDEFINED)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+bool CVRMenuManager::UpdateMVMUpgradeStationMenuBounds()
+{
+    if (!tfvr_mvm_shop_menu_world_anchor.GetBool() || !m_pLocalPlayer || !m_pLocalPlayer->m_Shared.IsInUpgradeZone())
+        return false;
+
+    const bool bWasAnchored = m_bMVMUpgradeStationAnchorActive;
+
+    bool bDynamicAnchor = m_pLocalPlayer->m_Shared.IsUpgradeStationDynamicAnchor();
+    float flYawOffset = bDynamicAnchor
+        ? tfvr_mvm_shop_menu_yaw_offset.GetFloat()
+        : tfvr_mvm_shop_menu_fallback_yaw_offset.GetFloat();
+    QAngle menuAngles(0.0f, m_pLocalPlayer->m_Shared.GetUpgradeStationYaw() + flYawOffset, 0.0f);
+
+    Vector forward, right, up;
+    AngleVectors(menuAngles, &forward, &right, &up);
+
+    float flForwardOffset = bDynamicAnchor
+        ? tfvr_mvm_shop_menu_forward_offset.GetFloat()
+        : tfvr_mvm_shop_menu_fallback_forward_offset.GetFloat();
+    float flUpOffset = bDynamicAnchor
+        ? tfvr_mvm_shop_menu_up_offset.GetFloat()
+        : tfvr_mvm_shop_menu_fallback_up_offset.GetFloat();
+
+    Vector menuCenter = m_pLocalPlayer->m_Shared.GetUpgradeStationCenter();
+    menuCenter += forward * flForwardOffset;
+    menuCenter.z = m_pLocalPlayer->GetAbsOrigin().z + m_pLocalPlayer->GetClassEyeHeight().z + flUpOffset;
+
+    float menuHeight, menuWidth;
+    GetScaledMenuDimensions(menuWidth, menuHeight);
+
+    Vector ul = menuCenter + right * (-menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+    Vector ur = menuCenter + right * (menuWidth * 0.5f) + up * (menuHeight * 0.5f);
+    Vector ll = menuCenter + right * (-menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+    Vector lr = menuCenter + right * (menuWidth * 0.5f) + up * (-menuHeight * 0.5f);
+
+    Vector currentHeadWorldPos = m_pLocalPlayer->GetVRViewPosition();
+    g_ClientVirtualReality.SetCustomHUDBounds(currentHeadWorldPos, ul, ur, ll, lr);
+
+    m_fixedMenuPosition = menuCenter;
+    m_fixedMenuRotation = menuAngles;
+    m_bMenuPositionFixed = true;
+    m_bUsePlayspaceAnchoring = false;
+    m_bMVMUpgradeStationAnchorActive = true;
+
+    if (!bWasAnchored)
+    {
+        ResetMousePriorityTracking();
+        if (vgui::surface())
+        {
+            vgui::surface()->SetCursorAlwaysVisible(true);
+        }
+    }
+
+    return true;
+}
+
 void CVRMenuManager::HandleMenuInput()
 {
     bool menuVisible = IsMenuVisible();
+    bool bMVMUpgradePanelVisible = IsMVMUpgradePanelVisible();
 
     // Check for class/team menu button (left A button)
     // Quick press = class menu, long hold = team menu
@@ -827,7 +967,7 @@ void CVRMenuManager::HandleMenuInput()
     bLastClassMenuButtonState = bCurrentClassMenuButtonState;
 
     // Check if player has moved significantly (e.g., changed maps)
-    if (m_pLocalPlayer && m_bMenuPositionFixed)
+    if (m_pLocalPlayer && m_bMenuPositionFixed && !m_bMVMUpgradeStationAnchorActive)
     {
         Vector currentPos = m_pLocalPlayer->GetVRViewPosition();
         float distanceMoved = (currentPos - m_fixedMenuPosition).Length();
@@ -851,6 +991,7 @@ void CVRMenuManager::HandleMenuInput()
             Msg(_T("VR Menu: Map changed from '%s' to '%s', resetting menu position and VR HUD overlays\n"),
                    m_szLastMapName, currentMapName);
             m_bMenuPositionFixed = false;
+            m_bMVMUpgradeStationAnchorActive = false;
             Q_strncpy(m_szLastMapName, currentMapName, sizeof(m_szLastMapName));
             // Clear the old HUD bounds
             g_ClientVirtualReality.ClearCustomHUDBounds();
@@ -876,9 +1017,24 @@ void CVRMenuManager::HandleMenuInput()
         }
     }
 
-    // If menu just became visible, capture the fixed position
-    if (menuVisible && !m_bMenuPositionFixed)
+    // The MvM upgrade shop should live at the station itself, not in front of the player.
+    bool bUsingMVMUpgradeStationAnchor = false;
+    if (menuVisible && bMVMUpgradePanelVisible)
     {
+        bUsingMVMUpgradeStationAnchor = UpdateMVMUpgradeStationMenuBounds();
+    }
+    else if (m_bMVMUpgradeStationAnchorActive)
+    {
+        m_bMenuPositionFixed = false;
+        m_bMVMUpgradeStationAnchorActive = false;
+        g_ClientVirtualReality.ClearCustomHUDBounds();
+    }
+
+    // If menu just became visible, capture the fixed position
+    if (menuVisible && !bUsingMVMUpgradeStationAnchor && !m_bMenuPositionFixed)
+    {
+        m_bMVMUpgradeStationAnchorActive = false;
+
         if (m_pLocalPlayer)
         {
                          // Wait for player to have a valid rotation (not zero angles)
@@ -1018,6 +1174,7 @@ void CVRMenuManager::HandleMenuInput()
     else if (!menuVisible && m_bMenuPositionFixed)
     {
         m_bMenuPositionFixed = false;
+        m_bMVMUpgradeStationAnchorActive = false;
 
                  // Hide the cursor when menu closes
          if (vgui::surface())
@@ -1090,6 +1247,9 @@ bool CVRMenuManager::IsMenuPanelOpen()
         if (pClassMenuOpen && pClassMenuOpen->GetBool())
             return true;
     }
+
+    if (IsMVMUpgradePanelVisible())
+        return true;
 
     return false;
 }
@@ -1218,8 +1378,10 @@ bool CVRMenuManager::IsMenuVisible()
          }
     }
 
+    bool bUpgradePanelVisible = IsMVMUpgradePanelVisible();
+
         // Menu is considered visible if any of these conditions are true
-    return bGameUIVisible || bViewPortVisible || bHudMenuVisible || bClassMenuOpen || bTF2MenuState;
+    return bGameUIVisible || bViewPortVisible || bHudMenuVisible || bClassMenuOpen || bTF2MenuState || bUpgradePanelVisible;
 
 
 }
@@ -1714,7 +1876,12 @@ void CVRMenuManager::ComputeCursorPosition(const Vector& pointerPosition, const 
     Vector forward, right, up;
     AngleVectors(m_fixedMenuRotation, &forward, &right, &up);
 
-    if (m_bUsePlayspaceAnchoring)
+    if (m_bMVMUpgradeStationAnchorActive)
+    {
+        // MvM shop anchors are already stored as fixed world-space panel centers.
+        menuPlaneCenter = m_fixedMenuPosition;
+    }
+    else if (m_bUsePlayspaceAnchoring)
     {
         // m_fixedMenuPosition is already the menu world position
         menuPlaneCenter = m_fixedMenuPosition;
@@ -1828,7 +1995,12 @@ Vector CVRMenuManager::GetMenuPlaneIntersection(const Vector& controllerPos, con
     Vector forward, right, up;
     AngleVectors(m_fixedMenuRotation, &forward, &right, &up);
 
-    if (m_bUsePlayspaceAnchoring)
+    if (m_bMVMUpgradeStationAnchorActive)
+    {
+        // MvM shop anchors are already stored as fixed world-space panel centers.
+        menuPlaneCenter = m_fixedMenuPosition;
+    }
+    else if (m_bUsePlayspaceAnchoring)
     {
         // m_fixedMenuPosition is already the menu world position
         menuPlaneCenter = m_fixedMenuPosition;

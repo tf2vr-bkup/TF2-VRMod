@@ -48,6 +48,17 @@ public:
 	const char *	GetUpgradeAttributeName( int iUpgrade ) const;
 
 private:
+	virtual void	Activate( void );
+	float			GetYawFacingPoint( float flBaseYaw, const Vector &vecAnchorCenter, const Vector &vecPoint ) const;
+	bool			GetSignPairAnchor( const Vector &vecSearchOrigin, const Vector &vecFirstSign, const Vector &vecSecondSign, Vector &vecAnchorCenter, float &flAnchorYaw ) const;
+	bool			FindNearbyUpgradeSignPairAnchor( const Vector &vecSearchOrigin, Vector &vecAnchorCenter, float &flAnchorYaw );
+	bool			FindNearbyStaticUpgradeSignPairAnchor( const Vector &vecSearchOrigin, Vector &vecAnchorCenter, float &flAnchorYaw );
+	CBaseEntity		*FindUpgradeStationAnchorEntity( const Vector &vecSearchOrigin );
+	CBaseEntity		*FindNearbyRegenerateAssociatedModel( const Vector &vecSearchOrigin );
+	CBaseEntity		*FindNearbyUpgradeStationProp( const Vector &vecSearchOrigin );
+	bool			FindFallbackWallYaw( const Vector &vecSearchOrigin, const Vector &vecPlacementCenter, float &flAnchorYaw );
+	void			SetPlayerUpgradeStationWorldInfo( CTFPlayer *pTFPlayer );
+
 	void			NotifyItemOnUpgrade( CTFPlayer *pTFPlayer, attrib_definition_index_t nAttrDefIndex, bool bDowngrade = false );
 	void			ReportUpgrade ( CTFPlayer *pTFPlayer, int nItemDef, int nAttributeDef, int nQuality, int nCost, bool bDowngrade, bool bIsFresh, bool bIsBottle = false );
 	void			RestoreItemAttributeToBaseValue( CEconItemAttributeDefinition *pAttrib, CEconItemView *pItem );
@@ -60,6 +71,8 @@ private:
 	COutputEvent m_onPeriodicSpawn;
 
 	bool m_bIsEnabled;
+	CHandle<CBaseEntity> m_hAssociatedModel;
+	string_t m_iszAssociatedModel;
 };
 
 extern CHandle<CUpgrades>	g_hUpgradeEntity;

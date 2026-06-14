@@ -375,6 +375,7 @@ ClientModeTFNormal::ClientModeTFNormal()
 	m_pMenuSpyDisguise = NULL;
 	m_pEurekaTeleportMenu = NULL;
 	m_pMenuTauntSelection = NULL;
+	m_pMenuUpgradePanel = NULL;
 	m_pGameUI = NULL;
 	m_pFreezePanel = NULL;
 	m_pQuickSwitch = NULL;

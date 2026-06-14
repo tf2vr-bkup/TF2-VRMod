@@ -780,11 +780,11 @@ void CVRInput::ProcessVRViewAngles(CUserCmd* cmd)
 
 void CVRInput::ProcessVRMovement(CUserCmd* cmd, float frametime)
 {
-    // Check if menu is visible - if so, disable movement
-    bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
-    if (bMenuVisible)
+    // Menus normally block movement; MvM upgrade shopping is allowed to keep locomotion.
+    bool bBlockMovement = g_pVRMenuManager && g_pVRMenuManager->ShouldBlockVRMovementInput();
+    if (bBlockMovement)
     {
-        // Don't process any movement when menu is open
+        // Don't process any movement when a blocking menu is open
         return;
     }
 

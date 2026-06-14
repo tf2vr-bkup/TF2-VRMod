@@ -1028,11 +1028,11 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
     if (!UseVR() || !g_pOpenXRManager)
         return;
 
-    // Check if menu is visible - if so, disable turning
-    bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
-    if (bMenuVisible)
+    // Menus normally block turning; MvM upgrade shopping is allowed to keep locomotion.
+    bool bBlockMovement = g_pVRMenuManager && g_pVRMenuManager->ShouldBlockVRMovementInput();
+    if (bBlockMovement)
     {
-        // Don't process turning when menu is open
+        // Don't process turning when a blocking menu is open
         return;
     }
     

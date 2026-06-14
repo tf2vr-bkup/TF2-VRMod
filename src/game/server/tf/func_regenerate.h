@@ -33,6 +33,7 @@ public:
 	bool	IsDisabled( void );
 	void	SetDisabled( bool bDisabled );
 	void	Regenerate( CTFPlayer *pPlayer );
+	CBaseEntity *GetAssociatedModel( void ) const { return m_hAssociatedModel.Get(); }
 
 	// Input handlers
 	void	InputEnable( inputdata_t &inputdata );

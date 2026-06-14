@@ -46,6 +46,10 @@ public:
     // Check if a real menu panel is open (escape menu, class/team select, etc.)
     // Unlike IsMenuVisible(), does NOT count the death state itself as a menu.
     bool IsMenuPanelOpen();
+
+    // MvM upgrade panel remains interactable as a VR menu, but does not block movement by itself.
+    bool IsMVMUpgradePanelVisible() const;
+    bool ShouldBlockVRMovementInput();
     
     // Public method to get the world position where the controller ray intersects the menu plane
     Vector GetMenuPlaneIntersection(const Vector& controllerPos, const Vector& controllerForward);
@@ -91,6 +95,7 @@ private:
     bool ComputeIntersectionBarycentricCoordinates(const Vector& rayStart, const Vector& rayEnd, 
                                                    const Vector& ul, const Vector& ur, const Vector& ll, const Vector& lr,
                                                    float& u, float& v);
+    bool UpdateMVMUpgradeStationMenuBounds();
     
     // Playspace anchoring methods
     void CalculatePlayspaceAnchor();
@@ -130,6 +135,7 @@ private:
     Vector m_fixedMenuPosition;
     QAngle m_fixedMenuRotation;
     bool m_bMenuPositionFixed;
+    bool m_bMVMUpgradeStationAnchorActive;
     
     // Playspace-anchored menu positioning
     VMatrix m_menuPlayspaceAnchor;  // Menu's absolute position/rotation in playspace coordinates

@@ -354,6 +354,9 @@ BEGIN_RECV_TABLE_NOBASE( CTFPlayerShared, DT_TFPlayerSharedLocal )
 	RecvPropBool( RECVINFO( m_bRageDraining ) ),
 	RecvPropTime( RECVINFO( m_flNextRageEarnTime ) ),
 	RecvPropBool( RECVINFO( m_bInUpgradeZone ) ),
+	RecvPropVector( RECVINFO( m_vecUpgradeStationCenter ) ),
+	RecvPropFloat( RECVINFO( m_flUpgradeStationYaw ) ),
+	RecvPropBool( RECVINFO( m_bUpgradeStationDynamicAnchor ) ),
 	RecvPropArray3( RECVINFO_ARRAY( m_flItemChargeMeter ), RecvPropFloat( RECVINFO( m_flItemChargeMeter[0] ) ) ),
 	RecvPropArray3( RECVINFO_ARRAY( m_bPlayerDominated ), RecvPropBool( RECVINFO( m_bPlayerDominated[0] ) ) ),
 	RecvPropArray3( RECVINFO_ARRAY( m_bPlayerDominatingMe ), RecvPropBool( RECVINFO( m_bPlayerDominatingMe[0] ) ) ),
@@ -531,6 +534,9 @@ BEGIN_SEND_TABLE_NOBASE( CTFPlayerShared, DT_TFPlayerSharedLocal )
 	SendPropBool( SENDINFO( m_bRageDraining ) ),
 	SendPropTime( SENDINFO( m_flNextRageEarnTime ) ),
 	SendPropBool( SENDINFO( m_bInUpgradeZone ) ),
+	SendPropVector( SENDINFO( m_vecUpgradeStationCenter ), -1, SPROP_COORD ),
+	SendPropFloat( SENDINFO( m_flUpgradeStationYaw ), 0, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bUpgradeStationDynamicAnchor ) ),
 	SendPropArray3( SENDINFO_ARRAY3( m_flItemChargeMeter ), SendPropFloat( SENDINFO_ARRAY( m_flItemChargeMeter ), -1, SPROP_NOSCALE ) ),
 	SendPropArray3( SENDINFO_ARRAY3( m_bPlayerDominated ), SendPropBool( SENDINFO_ARRAY( m_bPlayerDominated ) ) ),
 	SendPropArray3( SENDINFO_ARRAY3( m_bPlayerDominatingMe ), SendPropBool( SENDINFO_ARRAY( m_bPlayerDominatingMe ) ) ),
@@ -825,6 +831,9 @@ CTFPlayerShared::CTFPlayerShared()
 
 	m_bRageDraining = false;
 	m_bInUpgradeZone = false;
+	m_vecUpgradeStationCenter = vec3_origin;
+	m_flUpgradeStationYaw = 0.0f;
+	m_bUpgradeStationDynamicAnchor = false;
 	m_bPhaseFXOn = false;
 	ResetRageBuffs();
 
