@@ -1077,6 +1077,7 @@ public:
 
 	const Vector&		GetBaseVelocity() const;
 	void				SetBaseVelocity( const Vector& v );
+	virtual void		GetGroundVelocityToApply( Vector &vecGroundVel ) { vecGroundVel = vec3_origin; }
 
 	virtual const Vector &GetViewOffset() const;
 	virtual void		  SetViewOffset( const Vector& v );

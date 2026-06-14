@@ -1489,6 +1489,7 @@ public:
 
 	// Send ForcePlayerViewAngles user message. Handled in __MsgFunc_ForcePlayerViewAngles in
 	// clientmode_tf.cpp. Sets Local and Abs angles, along with TauntYaw and VehicleMovingAngles.
+	virtual void Teleport( const Vector *newPosition, const QAngle *newAngles, const Vector *newVelocity ) OVERRIDE;
 	void ForcePlayerViewAngles( const QAngle& qTeleportAngles );
 
 	CBaseEntity *GetGrapplingHookTarget() const { return m_hGrapplingHookTarget; }

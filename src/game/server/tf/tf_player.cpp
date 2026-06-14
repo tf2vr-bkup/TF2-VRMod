@@ -495,7 +495,7 @@ void SendProxy_PlayerObjectList( const SendProp *pProp, const void *pStruct, con
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 int SendProxyArrayLength_PlayerObjects( const void *pStruct, int objectID )
 {
@@ -952,7 +952,7 @@ static void HandleCoachCommand( CTFPlayer *pPlayer, eCoachCommand command )
 };
 
 //-----------------------------------------------------------------------------
-// Purpose: 
+// Purpose:
 //-----------------------------------------------------------------------------
 CTFPlayer::CTFPlayer() 
 {
@@ -1172,6 +1172,19 @@ CTFPlayer::CTFPlayer()
 	m_vecDeathOrigin.Init();
 
 	m_bAlreadyUsedExtendFreezeThisDeath = false;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+void CTFPlayer::Teleport( const Vector *newPosition, const QAngle *newAngles, const Vector *newVelocity )
+{
+	BaseClass::Teleport( newPosition, newAngles, newVelocity );
+
+	if ( newAngles && IsInVRMode() && !IsFakeClient() )
+	{
+		ForcePlayerViewAngles( *newAngles );
+	}
 }
 
 //-----------------------------------------------------------------------------

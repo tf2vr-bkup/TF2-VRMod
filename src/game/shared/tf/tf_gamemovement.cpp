@@ -76,6 +76,8 @@ ConVar tf_movement_lost_footing_restick( "tf_movement_lost_footing_restick", "50
                                          "Early escape the lost footing condition if the player is moving slower than this across the ground" );
 ConVar tf_movement_lost_footing_friction( "tf_movement_lost_footing_friction", "0.1", FCVAR_REPLICATED | FCVAR_CHEAT,
                                           "Ground friction for players who have lost their footing" );
+ConVar tfvr_roomscale_min_move( "tfvr_roomscale_min_move", "0.01", FCVAR_REPLICATED | FCVAR_ARCHIVE,
+								"Minimum XY roomscale movement in Hammer units to process each tick." );
 
 extern ConVar cl_forwardspeed;
 extern ConVar cl_backspeed;
@@ -147,12 +149,12 @@ private:
 	void		PreventBunnyJumping();
 	void		ToggleParachute( void );
 	void		CheckKartWallBumping();
-	typedef void(CTFGameMovement::*ProcessMoveFunc)(Vector &);
+	typedef bool(CTFGameMovement::*ProcessMoveFunc)(Vector &);
 
 
 	// VR-related functions
 	void        ProcessRoomscaleMovement( ProcessMoveFunc processMove );
-	void        ProcessWalkMove(Vector &dest);
+	bool        ProcessWalkMove(Vector &dest);
 
 	// Ducking.
 #if 0
@@ -1898,12 +1900,15 @@ void CTFGameMovement::WalkMove( void )
 	}
 #endif
 
-	ProcessWalkMove(vecDestination);
+	bool bRemovedBaseVelocity = ProcessWalkMove(vecDestination);
 	ProcessRoomscaleMovement(&CTFGameMovement::ProcessWalkMove);
 
-	// Remove base velocity.
-	Vector baseVelocity = player->GetBaseVelocity();
-	VectorSubtract( mv->m_vecVelocity, baseVelocity, mv->m_vecVelocity );
+	if ( !bRemovedBaseVelocity )
+	{
+		// Remove base velocity.
+		Vector baseVelocity = player->GetBaseVelocity();
+		VectorSubtract( mv->m_vecVelocity, baseVelocity, mv->m_vecVelocity );
+	}
 
 	CheckKartWallBumping();
 
@@ -1932,7 +1937,7 @@ void CTFGameMovement::WalkMove( void )
 #endif
 }
 
-void CTFGameMovement::ProcessWalkMove(Vector &dest)
+bool CTFGameMovement::ProcessWalkMove(Vector &dest)
 {
 	// Try moving to the destination.
 	trace_t trace;
@@ -1964,7 +1969,7 @@ void CTFGameMovement::ProcessWalkMove(Vector &dest)
 			pTFPlayer->SetMetersRan( fMeters + fMetersRan, gpGlobals->framecount );
 		}
 #endif
-		return;
+		return true;
 	}
 
 	CTFPlayer* pBumpPlayer = ToTFPlayer( trace.m_pEnt );
@@ -1975,6 +1980,7 @@ void CTFGameMovement::ProcessWalkMove(Vector &dest)
 
 	// Now try and do a step move.
 	StepMove( dest, trace );
+	return false;
 }
 
 void CTFGameMovement::ProcessRoomscaleMovement(ProcessMoveFunc processMove)
@@ -1992,8 +1998,9 @@ void CTFGameMovement::ProcessRoomscaleMovement(ProcessMoveFunc processMove)
 	float distance = roomscaleMove.Length();
 	Vector clampedMove = movementDir * Clamp(distance, 0.f, mv->m_flMaxSpeed * gpGlobals->frametime);
 
-	// need to be moving at least some amount
-	if (fabsf(clampedMove.x) < 0.1f && fabsf(clampedMove.y) < 0.1f)
+	// Need to be moving at least some amount; keep this low to avoid quantized roomscale motion.
+	const float flMinRoomscaleMove = MAX( 0.0f, tfvr_roomscale_min_move.GetFloat() );
+	if ( fabsf( clampedMove.x ) < flMinRoomscaleMove && fabsf( clampedMove.y ) < flMinRoomscaleMove )
 		return;
 
 	Vector originalPos = mv->GetAbsOrigin();

@@ -846,7 +846,6 @@ void CPrediction::RunPostThink( C_BasePlayer *player )
 //-----------------------------------------------------------------------------
 void CPrediction::CheckMovingGround( C_BasePlayer *player, double frametime )
 {
-#if 0
 	CBaseEntity	    *groundentity;
 
 	if ( player->GetFlags() & FL_ONGROUND )
@@ -864,7 +863,6 @@ void CPrediction::CheckMovingGround( C_BasePlayer *player, double frametime )
 			player->AddFlag( FL_BASEVELOCITY );
 		}
 	}
-#endif
 
 	if ( !( player->GetFlags() & FL_BASEVELOCITY ) )
 	{

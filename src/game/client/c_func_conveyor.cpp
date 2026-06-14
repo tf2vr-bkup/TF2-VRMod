@@ -28,20 +28,29 @@ public:
 	C_FuncConveyor();
 
 	float GetConveyorSpeed() { return m_flConveyorSpeed; }
+	virtual void GetGroundVelocityToApply( Vector &vecGroundVel );
 
 private:
+	Vector m_vecMoveDir;
 	float m_flConveyorSpeed;
 };
 
 
 IMPLEMENT_CLIENTCLASS_DT( C_FuncConveyor, DT_FuncConveyor, CFuncConveyor )
+	RecvPropVector( RECVINFO( m_vecMoveDir ) ),
 	RecvPropFloat( RECVINFO( m_flConveyorSpeed ) ),
 END_RECV_TABLE()
 
 
 C_FuncConveyor::C_FuncConveyor()
 {
+	m_vecMoveDir.Init();
 	m_flConveyorSpeed = 0.0;
+}
+
+void C_FuncConveyor::GetGroundVelocityToApply( Vector &vecGroundVel )
+{
+	vecGroundVel = m_vecMoveDir * m_flConveyorSpeed;
 }
 
 

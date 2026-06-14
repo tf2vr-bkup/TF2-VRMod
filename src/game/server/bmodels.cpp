@@ -302,6 +302,7 @@ END_DATADESC()
 
 
 IMPLEMENT_SERVERCLASS_ST(CFuncConveyor, DT_FuncConveyor)
+	SendPropVector( SENDINFO_NOCHECK(m_vecMoveDir), 0, SPROP_NOSCALE ),
 	SendPropFloat( SENDINFO(m_flConveyorSpeed), 0, SPROP_NOSCALE ),
 END_SEND_TABLE()
 

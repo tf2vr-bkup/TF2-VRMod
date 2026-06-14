@@ -62,6 +62,7 @@
 #include "tf_hud_menu_eureka_teleport.h"
 #include "tf_hud_menu_taunt_selection.h"
 #include "tf_hud_inspectpanel.h"
+#include "prediction.h"
 #include "engine/IEngineSound.h"
 #include "tf_partyclient.h"
 
@@ -2462,6 +2463,12 @@ USER_MESSAGE( ForcePlayerViewAngles )
 		pPlayer->SetAbsAngles( viewangles );
 		pPlayer->SetTauntYaw( viewangles[YAW] );
 		pPlayer->m_Shared.SetVehicleMoveAngles( viewangles );
+
+		if ( pPlayer->IsLocalPlayer() )
+		{
+			engine->SetViewAngles( viewangles );
+			prediction->SetLocalViewAngles( viewangles );
+		}
 		
 		// For VR players, recalibrate tracking offsets
 		if ( UseVR() && tfvr_hmd_drive_rotation.GetBool() )
@@ -2492,6 +2499,9 @@ USER_MESSAGE( ForcePlayerViewAngles )
 				
 				// Reset local tracking accumulation
 				pTFPlayer->m_localRoomscaleOffset = vec3_origin;
+				pTFPlayer->m_headInPlayerA.x = hmdAngles.x;
+				pTFPlayer->m_headInPlayerA.y = viewangles.y;
+				pTFPlayer->m_headInPlayerA.z = 0.0f;
 			}
 		}
 	}

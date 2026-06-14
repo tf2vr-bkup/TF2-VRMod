@@ -7007,6 +7007,7 @@ void C_TFPlayer::AvoidPlayers( CUserCmd *pCmd )
 extern bool g_bExtraMouseSample;
 ConVar tfvr_roomscale_movement("tfvr_roomscale_movement", "1");
 ConVar tfvr_roomscale_debug("tfvr_roomscale_debug", "0");
+extern ConVar tfvr_roomscale_min_move;
 
 void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 {
@@ -7056,7 +7057,10 @@ void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 		Vector clientEyePos = EyePosition();
 		pCmd->clientEyePosition = clientEyePos;
 		// DevMsg("Client playerToHmdAngles: %f %f %f\n", pCmd->playerToHmdAngles.x, pCmd->playerToHmdAngles.y, pCmd->playerToHmdAngles.z);
-		if (tfvr_roomscale_movement.GetBool())
+		const bool bRoomscaleEnabled = tfvr_roomscale_movement.GetBool();
+		const float flMinRoomscaleMove = MAX( 0.0f, tfvr_roomscale_min_move.GetFloat() );
+		const bool bHasRoomscaleMove = fabsf( deltaHeadOrigin.x ) >= flMinRoomscaleMove || fabsf( deltaHeadOrigin.y ) >= flMinRoomscaleMove;
+		if ( bRoomscaleEnabled && bHasRoomscaleMove )
 		{
 			// Send movement in calibrated world space
 			pCmd->postFullBodyIKDeltaOrigin = deltaHeadOrigin;
@@ -7076,10 +7080,17 @@ void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 			*/
 
 		}
+		else
+		{
+			pCmd->postFullBodyIKDeltaOrigin = vec3_origin;
+		}
 		pCmd->postFullBodyIKDeltaOrigin.z = 0;
 
-		// Apply client-side prediction - accumulate the movement locally
-		m_localRoomscaleOffset += deltaHeadOrigin;
+		// Only accumulate deltas that ProcessRoomscaleMovement will apply.
+		if ( bRoomscaleEnabled && bHasRoomscaleMove )
+		{
+			m_localRoomscaleOffset += deltaHeadOrigin;
+		}
 
 		// Periodically correct based on server offset (smooth correction to avoid snapping)
 		Vector serverOffset = m_roomscaleOffset;
