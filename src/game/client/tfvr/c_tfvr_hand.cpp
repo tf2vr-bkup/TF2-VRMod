@@ -44,6 +44,7 @@
 #include "ienginevgui.h"
 #include "VGuiMatSurface/IMatSystemSurface.h"
 #include "iclientmode.h"
+#include "materialsystem/imaterialsystem.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -53,6 +54,12 @@ static int GetBreadBiteIdleVariant();
 static int GetBreadBiteDrawVariant();
 static const char *TFVR_GetRenderableModelName(C_BaseAnimating *pRenderable);
 static bool TFVR_ValidateHandRenderable(C_BaseAnimating *pRenderable, const char *pszLabel);
+
+// Left-handed mode: reflect a set of finished world-space bones across the
+// plane through the given controller frame (negates the controller-local
+// lateral axis). Defined below; forward-declared so the render weapon class
+// (defined before the definition) can use it.
+static void TFVR_ReflectBonesInControllerFrame(matrix3x4_t *pBones, int nBoneCount, const matrix3x4_t &controllerFrame);
 
 static bool TFVR_IsManualRocketLauncherWeaponID(int iWeaponID)
 {
@@ -442,6 +449,20 @@ public:
 				matrix3x4_t rotOnlyLocal;
 				QuaternionMatrix(bodyQ[wpnIdx], idlePos[wpnIdx], rotOnlyLocal);
 				ConcatTransforms(pBoneToWorldOut[pWpnBone->parent], rotOnlyLocal, pBoneToWorldOut[wpnIdx]);
+			}
+		}
+
+		// Left-handed mode: mirror the weapon mesh across the same controller
+		// frame the owning hand used, so the weapon reads as held in the
+		// mirrored hand. DrawModel flips culling to match.
+		if (bResult && pBoneToWorldOut && pHdr)
+		{
+			C_TFVRHand *pHand = GetLocalPlayerRightHand();
+			if (!pHand || pHand->GetRenderWeapon() != this)
+				pHand = GetLocalPlayerLeftHand();
+			if (pHand && pHand->GetRenderWeapon() == this && pHand->IsPoseReflected())
+			{
+				TFVR_ReflectBonesInControllerFrame(pBoneToWorldOut, MIN(nMaxBones, pHdr->numbones()), pHand->GetReflectFrame());
 			}
 		}
 
@@ -905,7 +926,20 @@ public:
 			modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
 		}
 
+		// Left-handed mode: the reflected bones invert winding, so flip culling
+		// to clockwise while drawing (matches vanilla's flipped viewmodel).
+		C_TFVRHand *pMirrorHand = GetLocalPlayerRightHand();
+		if (!pMirrorHand || pMirrorHand->GetRenderWeapon() != this)
+			pMirrorHand = GetLocalPlayerLeftHand();
+		const bool bMirrored = pMirrorHand && pMirrorHand->GetRenderWeapon() == this && pMirrorHand->IsPoseReflected();
+		CMatRenderContextPtr pRenderContext(materials);
+		if (bMirrored && (flags & STUDIO_RENDER))
+			pRenderContext->CullMode(MATERIAL_CULLMODE_CW);
+
 		ret = BaseClass::DrawModel(flags);
+
+		if (bMirrored && (flags & STUDIO_RENDER))
+			pRenderContext->CullMode(MATERIAL_CULLMODE_CCW);
 
 		// Reset material override
 		if (bInvuln && (flags & STUDIO_RENDER))
@@ -1208,6 +1242,19 @@ static bool TFVR_ValidateHandRenderable(C_BaseAnimating *pRenderable, const char
 
 // Muzzle position mode for effects (sounds, muzzle flash, tracers)
 ConVar tfvr_muzzle_direct_mode("tfvr_muzzle_direct_mode", "0", FCVAR_ARCHIVE, "Use controller pose directly for muzzle position (0=attachment system, 1=direct controller+offset)");
+
+// Left-handed mode hand-mirror tuning. The finished hand bones are reflected
+// across a plane through the controller frame; which controller-local axis is
+// the mirror plane normal, plus an optional 180-degree spin to cancel residual
+// roll/yaw, depends on the hand-pose frame orientation. These let us dial it in.
+// The reflection is done in the RAW controller frame (rigidly attached to the
+// controller), so the mirrored hand tracks the controller correctly. Reflecting
+// across the frame's lateral (Y/left) plane is the anatomical left<->right
+// mirror and preserves the aim (X) axis.
+//   tfvr_lefthand_mirror_axis: which frame row to negate (0=X aim, 1=Y lateral [default], 2=Z up)
+//   tfvr_lefthand_mirror_spin: optional extra 180 spin about a frame axis (0=none,1=X,2=Y,3=Z)
+ConVar tfvr_lefthand_mirror_axis("tfvr_lefthand_mirror_axis", "1", FCVAR_ARCHIVE, "Left-handed hand-mirror plane normal axis (0=X,1=Y,2=Z)");
+ConVar tfvr_lefthand_mirror_spin("tfvr_lefthand_mirror_spin", "0", FCVAR_ARCHIVE, "Left-handed hand-mirror extra 180-degree spin axis (0=none,1=X,2=Y,3=Z)");
 
 // Two-handed weapon convars
 ConVar tfvr_twohand_enabled("tfvr_twohand_enabled", "1", FCVAR_ARCHIVE, "Enable two-handed weapon gripping");
@@ -1764,6 +1811,72 @@ static void TFVR_BlendTransforms( const matrix3x4_t &from, const matrix3x4_t &to
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Reflect a set of finished world-space bones in the given controller
+//          frame. The reflection is expressed in the frame's LOCAL space, so it
+//          is rigidly attached to the controller: the whole mirrored skeleton
+//          follows the controller's motion (roll/pitch/yaw track correctly). A
+//          world-fixed reflection would instead reverse the sense of in-plane
+//          rotations, making roll/yaw track backwards.
+//
+//          By default we negate the frame's lateral (Y/left) row, i.e. reflect
+//          across the plane that contains the aim (X) and up (Z) axes -- the
+//          anatomical left<->right mirror that preserves the aim direction.
+//          The axis/spin convars allow tuning. The determinant flips (odd
+//          number of negated rows), so the renderer draws with CW culling.
+//-----------------------------------------------------------------------------
+static void TFVR_ReflectBonesInControllerFrame(matrix3x4_t *pBones, int nBoneCount, const matrix3x4_t &controllerFrame)
+{
+	if ( !pBones || nBoneCount <= 0 )
+		return;
+
+	extern ConVar tfvr_lefthand_mirror_axis;
+	extern ConVar tfvr_lefthand_mirror_spin;
+
+	// Build a per-row sign vector for the improper transform in frame-local
+	// space. Start with a single-axis reflection (negate one row -> determinant
+	// -1), then optionally compose a 180-degree spin about another local axis
+	// (negate the two rows perpendicular to it -> determinant +1, so the product
+	// stays an odd reflection and the renderer's CW culling remains correct).
+	float sign[3] = { 1.0f, 1.0f, 1.0f };
+
+	const int reflectAxis = clamp( tfvr_lefthand_mirror_axis.GetInt(), 0, 2 );
+	sign[reflectAxis] = -sign[reflectAxis];
+
+	const int spin = tfvr_lefthand_mirror_spin.GetInt();
+	if ( spin >= 1 && spin <= 3 )
+	{
+		const int spinAxis = spin - 1; // 1->X,2->Y,3->Z
+		for ( int a = 0; a < 3; ++a )
+		{
+			if ( a != spinAxis )
+				sign[a] = -sign[a];
+		}
+	}
+
+	matrix3x4_t invFrame;
+	MatrixInvert( controllerFrame, invFrame );
+
+	for ( int i = 0; i < nBoneCount; ++i )
+	{
+		matrix3x4_t local;
+		ConcatTransforms( invFrame, pBones[i], local );
+
+		for ( int r = 0; r < 3; ++r )
+		{
+			if ( sign[r] < 0.0f )
+			{
+				local[r][0] = -local[r][0];
+				local[r][1] = -local[r][1];
+				local[r][2] = -local[r][2];
+				local[r][3] = -local[r][3];
+			}
+		}
+
+		ConcatTransforms( controllerFrame, local, pBones[i] );
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Check if a weapon is a medigun (any variant)
 //-----------------------------------------------------------------------------
 static bool IsWeaponMedigun(C_TFWeaponBase *pWeapon)
@@ -2045,6 +2158,9 @@ C_TFVRHand::C_TFVRHand()
 	m_angLastValidAngles = vec3_angle;
 	m_szModelName[0] = '\0';
 	m_bHasGunslinger = false;
+	m_bPoseAsLeftHand = (m_handSide == VR_HAND_LEFT);
+	m_bReflectPoseActive = false;
+	SetIdentityMatrix(m_matReflectFrame);
 	SetIdentityMatrix(m_matIdleHandBoneTransform);
 	m_vecIdleHandBoneLocalPos.Init();
 	m_bHandBoneOffsetValid = false;
@@ -2356,8 +2472,14 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	// Check for Gunslinger (engineer robot arm)
 	m_bHasGunslinger = IsPlayerUsingGunslinger(pOwner);
 
-	// Get class-specific hand model path (may return NULL to force fallback)
-	const char *handModelPath = GetHandModelForClass(m_iLastPlayerClass, IsLeftHand());
+	// Left-handed mode: which authored hand side this entity poses as. In
+	// right-handed mode this equals the physical side (no behavior change).
+	m_bPoseAsLeftHand = ComputePoseAsLeftHand(pOwner->GetActiveTFWeapon());
+
+	// Get class-specific hand model path (may return NULL to force fallback).
+	// Use the authored pose side, not the physical side, so a left controller
+	// acting as the weapon hand for a right-authored weapon loads the right model.
+	const char *handModelPath = GetHandModelForClass(m_iLastPlayerClass, m_bPoseAsLeftHand);
 
 	// Engineer with Gunslinger: use recompiled gunslinger model with blank body
 	// bodygroup so only the robot arm renders. Same skeleton so finger tracking works.
@@ -2489,6 +2611,87 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Compute which authored hand side this entity should pose as for the
+//          given weapon. The weapon hand poses as the weapon's authored hand;
+//          the support hand poses as the opposite. With no weapon, default to
+//          the physical side (no mirroring).
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::ComputePoseAsLeftHand( C_TFWeaponBase *pWeapon ) const
+{
+	if ( !pWeapon )
+		return IsLeftHand();
+
+	const bool bDisplayOnLeft = TFVR_DisplayWeaponOnLeft( pWeapon );
+	const bool bThisIsWeaponHand = ( bDisplayOnLeft == IsLeftHand() );
+	const bool bAuthoredLeft = TFVR_WeaponAuthoredHandIsLeft( pWeapon );
+
+	return bThisIsWeaponHand ? bAuthoredLeft : !bAuthoredLeft;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: (Re)load the hand model for the current authored pose side, applying
+//          the Gunslinger override and bodygroups. Resets bone mapping so the
+//          finger/hand bone suffix is rebuilt for the new model.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::LoadHandModelForPoseSide()
+{
+	const char *handModelPath = GetHandModelForClass( m_iLastPlayerClass, m_bPoseAsLeftHand );
+
+	if ( m_bHasGunslinger && IsRightHand() )
+		handModelPath = "models/weapons/vr_models/vr_engineer_gunslinger.mdl";
+
+	bool bModelSet = false;
+	if ( handModelPath != NULL )
+	{
+		Q_strncpy( m_szModelName, handModelPath, sizeof( m_szModelName ) );
+		if ( modelinfo->GetModelIndex( handModelPath ) == -1 )
+			CBaseEntity::PrecacheModel( handModelPath );
+		bModelSet = SetModel( m_szModelName );
+	}
+
+	if ( !bModelSet )
+	{
+		const char *fallbackModel = GetFallbackModelForClass( m_iLastPlayerClass );
+		Q_strncpy( m_szModelName, fallbackModel, sizeof( m_szModelName ) );
+		SetModel( m_szModelName );
+	}
+
+	if ( m_bHasGunslinger && IsRightHand() && GetModelPtr() )
+	{
+		int iBody = FindBodygroupByName( "body" );
+		int iRightArm = FindBodygroupByName( "rightarm" );
+		if ( iBody >= 0 )
+			SetBodygroup( iBody, 1 );
+		if ( iRightArm >= 0 )
+			SetBodygroup( iRightArm, 0 );
+	}
+
+	// Force the finger/hand bone suffix to be re-resolved for the new model.
+	m_bBoneMappingSetup = false;
+	m_bHandBoneOffsetValid = false;
+	m_iHandBone = -1;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Recompute the authored pose side from the active weapon and reload
+//          the model if it changed. Returns true if the pose side changed.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::RefreshPoseHandSide()
+{
+	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+	if ( !pOwner )
+		return false;
+
+	const bool bDesired = ComputePoseAsLeftHand( pOwner->GetActiveTFWeapon() );
+	if ( bDesired == m_bPoseAsLeftHand )
+		return false;
+
+	m_bPoseAsLeftHand = bDesired;
+	LoadHandModelForPoseSide();
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Clean up
 //-----------------------------------------------------------------------------
 void C_TFVRHand::Shutdown()
@@ -2574,7 +2777,7 @@ void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 			CTFWeaponBase *pActiveWeapon = pPlayer->GetActiveTFWeapon();
 			if (pActiveWeapon)
 			{
-				C_TFVRHand *pWeaponHand = IsWeaponMedigun(pActiveWeapon) ? g_pLocalPlayerLeftHand : g_pLocalPlayerRightHand;
+				C_TFVRHand *pWeaponHand = TFVR_GetWeaponHand(pActiveWeapon);
 				if (pWeaponHand)
 					pWeaponHand->EquipWeapon(pActiveWeapon);
 			}
@@ -2617,7 +2820,7 @@ void C_TFVRHand::SpawnVRHands(C_TFPlayer *pPlayer)
 		CTFWeaponBase *pActiveWeapon = pPlayer->GetActiveTFWeapon();
 		if (pActiveWeapon)
 		{
-			C_TFVRHand *pWeaponHand = IsWeaponMedigun(pActiveWeapon) ? g_pLocalPlayerLeftHand : g_pLocalPlayerRightHand;
+			C_TFVRHand *pWeaponHand = TFVR_GetWeaponHand(pActiveWeapon);
 			if (pWeaponHand)
 				pWeaponHand->EquipWeapon(pActiveWeapon);
 		}
@@ -4519,13 +4722,19 @@ void C_TFVRHand::Update()
 	}
 
 	// Check if the player's active weapon has changed
-	// Per-weapon hand routing: medigun -> left hand, all other weapons -> right hand
+	// Per-weapon hand routing is centralized in TFVR_GetWeaponHand, which folds
+	// together the global handedness toggle, the medigun (authored-left), and
+	// per-weapon default flip (schema m_bFlipViewModel, e.g. the Huntsman).
 	{
 		C_TFWeaponBase *pActiveWeapon = pOwner->GetActiveTFWeapon();
-		bool bIsMedigun = IsWeaponMedigun(pActiveWeapon);
+
+		// Keep the authored pose side (and hand model) in sync with the active
+		// weapon + handedness. Reloads the model in place when it changes.
+		RefreshPoseHandSide();
 
 		// Determine if this hand should hold the current weapon
-		bool bThisHandShouldEquip = (IsRightHand() && !bIsMedigun) || (IsLeftHand() && bIsMedigun);
+		bool bThisHandShouldEquip = pActiveWeapon
+			&& ( TFVR_DisplayWeaponOnLeft(pActiveWeapon) == IsLeftHand() );
 
 		// VR: Unequip weapons on round loss or stalemate (matches vanilla TF2 behavior)
 		bool bShouldUnequipForRoundEnd = false;
@@ -7179,6 +7388,28 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		{
 			HideOppositeHand(pBoneToWorldOut, nMaxBones, pStudioHdr);
 		}
+
+		// Left-handed mode single mirror: when the physical hand differs from
+		// the authored pose side, reflect the entire finished skeleton once
+		// across the controller frame so a right-authored pose reads as a left
+		// hand (and vice versa). The render weapon mirrors across the same
+		// cached frame in its own SetupBones; both flip culling when drawn.
+		// The weapon was already positioned from the canonical (pre-reflection)
+		// bones above, so we intentionally do NOT re-derive it here.
+		m_bReflectPoseActive = ShouldMirrorPose();
+		if (m_bReflectPoseActive)
+		{
+			// Build the reflection frame from the RAW controller aim, not the
+			// offset/posed controllerTransform: the per-class hand rotation
+			// offsets rotate controllerTransform so its forward column is no
+			// longer the aim direction, which corrupts the geometric mirror
+			// plane. Use the raw controller orientation (col0 = aim) and the
+			// posed hand position (so the plane passes through the hand).
+			Vector vecReflectOrigin;
+			MatrixGetColumn(controllerTransform, 3, vecReflectOrigin);
+			AngleMatrix(m_angLastValidAngles, vecReflectOrigin, m_matReflectFrame);
+			TFVR_ReflectBonesInControllerFrame(pBoneToWorldOut, MIN(nMaxBones, pStudioHdr->numbones()), m_matReflectFrame);
+		}
 	}
 
 	return true;
@@ -7213,16 +7444,18 @@ void C_TFVRHand::SetupBoneMapping()
 		return;
 	}
 
-	// Find the hand bone in the model
-	// Try common bone names for TF2 viewmodel arms
-	const char* handSuffix = IsLeftHand() ? "_L" : "_R";
-	const char* handSuffixLower = IsLeftHand() ? "_l" : "_r";
+	// Find the hand bone in the model.
+	// Use the authored pose side (which may differ from the physical side in
+	// left-handed mode) so the loaded model's _L/_R skeleton is matched.
+	const bool bPoseLeft = m_bPoseAsLeftHand;
+	const char* handSuffix = bPoseLeft ? "_L" : "_R";
+	const char* handSuffixLower = bPoseLeft ? "_l" : "_r";
 
 	const char* boneNames[4];
-	boneNames[0] = IsLeftHand() ? "bip_hand_L" : "bip_hand_R";
-	boneNames[1] = IsLeftHand() ? "weapon_bone_L" : "weapon_bone_R";
-	boneNames[2] = IsLeftHand() ? "ValveBiped.Bip01_L_Hand" : "ValveBiped.Bip01_R_Hand";
-	boneNames[3] = IsLeftHand() ? "bip_hand_l" : "bip_hand_r";
+	boneNames[0] = bPoseLeft ? "bip_hand_L" : "bip_hand_R";
+	boneNames[1] = bPoseLeft ? "weapon_bone_L" : "weapon_bone_R";
+	boneNames[2] = bPoseLeft ? "ValveBiped.Bip01_L_Hand" : "ValveBiped.Bip01_R_Hand";
+	boneNames[3] = bPoseLeft ? "bip_hand_l" : "bip_hand_r";
 
 	// Try to find hand bone
 	for (int i = 0; i < 4; i++)
@@ -9356,7 +9589,7 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	// Always cache the hand's weapon_bone transform for overlays (HUD compositor etc.),
 	// even when there is no render weapon (e.g. bare fists).
 	int handWeaponBone = -1;
-	if (IsLeftHand() && IsWeaponMedigun(m_hHeldWeapon.Get()))
+	if (m_bPoseAsLeftHand && IsWeaponMedigun(m_hHeldWeapon.Get()))
 	{
 		handWeaponBone = LookupBone("weapon_bone_L");
 	}
@@ -9537,7 +9770,7 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		{
 			weaponWeaponBone = pRenderWeapon->LookupBone("bip_hand_R");
 		}
-		else if (IsLeftHand() && IsWeaponMedigun(pAlignWeapon))
+		else if (m_bPoseAsLeftHand && IsWeaponMedigun(pAlignWeapon))
 		{
 			weaponWeaponBone = pRenderWeapon->LookupBone("weapon_bone_L");
 		}
@@ -10084,10 +10317,18 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 	// Toggle with tfvr_muzzle_direct_mode ConVar
 	if (tfvr_muzzle_direct_mode.GetBool())
 	{
-		if (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid())
+		// Use THIS hand's physical controller pose (the muzzle method is called
+		// on the weapon hand entity, which may be the left controller).
+		const bool bHandPoseValid = IsLeftHand()
+			? (g_pOpenXRManager && g_pOpenXRManager->IsLeftControllerPoseValid())
+			: (g_pOpenXRManager && g_pOpenXRManager->IsRightControllerPoseValid());
+		if (bHandPoseValid)
 		{
 			VMatrix controllerPose;
-			if (g_pOpenXRManager->GetRightControllerPose(controllerPose))
+			const bool bGotControllerPose = IsLeftHand()
+				? g_pOpenXRManager->GetLeftControllerPose(controllerPose)
+				: g_pOpenXRManager->GetRightControllerPose(controllerPose);
+			if (bGotControllerPose)
 			{
 				// Get controller position and orientation
 				outPos = controllerPose.GetTranslation();
@@ -10112,6 +10353,31 @@ bool C_TFVRHand::GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAng
 		Vector forward;
 		AngleVectors(outAngles, &forward, NULL, NULL);
 		outPos += forward * 30.0f;
+		return true;
+	}
+
+	// LEFT-HANDED MIRROR: the visible weapon is drawn with the hand mirror
+	// reflection applied, so fire must sample that same reflected muzzle to
+	// match where the gun visually points. The cached muzzle was captured
+	// canonically (before the reflection), so apply the same reflection here.
+	// The reflected matrix is improper (negative determinant), so we cannot use
+	// MatrixAngles on it; instead we reconstruct a proper orientation from the
+	// reflected forward/up direction vectors (valid regardless of determinant).
+	if (ShouldMirrorPose() && m_bCachedMuzzleValid)
+	{
+		matrix3x4_t muzzleWorld;
+		AngleMatrix(m_angCachedMuzzleAngles, m_vecCachedMuzzlePos, muzzleWorld);
+
+		TFVR_ReflectBonesInControllerFrame(&muzzleWorld, 1, m_matReflectFrame);
+
+		MatrixGetColumn(muzzleWorld, 3, outPos);
+
+		Vector vecFwd, vecUp;
+		MatrixGetColumn(muzzleWorld, 0, vecFwd);
+		MatrixGetColumn(muzzleWorld, 2, vecUp);
+		if (vecFwd.LengthSqr() < 1e-6f)
+			vecFwd.Init(1.0f, 0.0f, 0.0f);
+		VectorAngles(vecFwd, vecUp, outAngles);
 		return true;
 	}
 
@@ -11459,16 +11725,16 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 
 	for (int i = 0; i < nFingerBoneCount; i++)
 	{
-		// Try both left and right hand suffixes
+		// Try both left and right hand suffixes (authored pose side)
 		char boneName[64];
-		const char* suffix = IsLeftHand() ? "_L" : "_R";
+		const char* suffix = m_bPoseAsLeftHand ? "_L" : "_R";
 		V_snprintf(boneName, sizeof(boneName), "%s%s", fingerBones[i], suffix);
 
 		int boneIndex = LookupBone(boneName);
 		if (boneIndex < 0 || boneIndex >= nMaxBones)
 		{
 			// Try lowercase suffix
-			suffix = IsLeftHand() ? "_l" : "_r";
+			suffix = m_bPoseAsLeftHand ? "_l" : "_r";
 			V_snprintf(boneName, sizeof(boneName), "%s%s", fingerBones[i], suffix);
 			boneIndex = LookupBone(boneName);
 		}
@@ -11725,12 +11991,12 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 				for (int i = 0; i < ARRAYSIZE(reloadFingerPrefixes); i++)
 				{
 					char boneName[64];
-					const char *sfx = IsLeftHand() ? "_L" : "_R";
+					const char *sfx = m_bPoseAsLeftHand ? "_L" : "_R";
 					V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
 					int boneIndex = LookupBone(boneName);
 					if (boneIndex < 0 || boneIndex >= nMaxBones)
 					{
-						sfx = IsLeftHand() ? "_l" : "_r";
+						sfx = m_bPoseAsLeftHand ? "_l" : "_r";
 						V_snprintf(boneName, sizeof(boneName), "%s%s", reloadFingerPrefixes[i], sfx);
 						boneIndex = LookupBone(boneName);
 					}
@@ -12103,7 +12369,22 @@ int C_TFVRHand::DrawModel(int flags)
 		modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
 	}
 
+	// Left-handed mode: reflected bones invert winding, so flip culling to
+	// clockwise while drawing the hand mesh (matches vanilla viewmodel flip).
+	// Capture the flag in a local BEFORE BaseClass::DrawModel: that call runs
+	// SetupBones internally, which can recompute m_bReflectPoseActive (e.g. when
+	// the active weapon changes on a class switch). If the set and restore read
+	// the member at different times the CW cull mode leaks globally, inverting
+	// normals on every model and hiding HUD text.
+	const bool bMirrorCull = m_bReflectPoseActive && (flags & STUDIO_RENDER);
+	CMatRenderContextPtr pRenderContext(materials);
+	if (bMirrorCull)
+		pRenderContext->CullMode(MATERIAL_CULLMODE_CW);
+
 	ret = BaseClass::DrawModel(flags);
+
+	if (bMirrorCull)
+		pRenderContext->CullMode(MATERIAL_CULLMODE_CCW);
 
 	// Reset material override
 	if (bInvuln && (flags & STUDIO_RENDER))

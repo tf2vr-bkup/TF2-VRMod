@@ -20,6 +20,32 @@
 	class CTFVRHand;
 #endif
 
+//-----------------------------------------------------------------------------
+// VR left-handed mode role + per-weapon flip helpers.
+//
+// Two derived per-weapon properties drive everything:
+//   - "authored hand": which hand the weapon's pose/model is authored for.
+//     RIGHT for almost everything; LEFT for the medigun (natively left-authored).
+//   - "prefers off hand": whether the weapon should display on the player's
+//     non-primary hand by default (medigun, or schema m_bFlipViewModel like the
+//     Huntsman). XOR'd with the global handedness toggle.
+//
+// Derived:
+//   - display-on-left: which physical controller holds the weapon.
+//   - should-mirror: reflect the finished weapon-hand bones once when the
+//     physical display hand does not match the authored hand.
+//-----------------------------------------------------------------------------
+bool TFVR_IsLeftHanded();
+bool TFVR_WeaponAuthoredHandIsLeft( const CTFWeaponBase *pWeapon );
+bool TFVR_WeaponPrefersOffHand( const CTFWeaponBase *pWeapon );
+bool TFVR_DisplayWeaponOnLeft( const CTFWeaponBase *pWeapon );
+bool TFVR_ShouldMirrorWeaponHand( const CTFWeaponBase *pWeapon );
+
+#if defined( CLIENT_DLL )
+C_TFVRHand *TFVR_GetWeaponHand( const CTFWeaponBase *pWeapon );
+C_TFVRHand *TFVR_GetSupportHand( const CTFWeaponBase *pWeapon );
+#endif
+
 //=============================================================================
 //
 // TF2VR Base Weapon Class - adds VR-specific functionality to TF2 weapons

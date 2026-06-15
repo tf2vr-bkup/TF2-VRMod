@@ -1114,6 +1114,7 @@ CTFPlayer::CTFPlayer()
 	m_leftControllerAngles.Init();
 	m_rightControllerOrigin.Init();
 	m_rightControllerAngles.Init();
+	m_bVRWeaponHandIsRight = true;
 	m_flLastControllerUpdateTime = 0.0f;
 
 	m_vecVRHandOffsetL = vec3_origin;
@@ -3321,6 +3322,7 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
         m_leftControllerAngles = ucmd->leftControllerAngles;
         m_rightControllerOrigin = ucmd->rightControllerOrigin;
         m_rightControllerAngles = ucmd->rightControllerAngles;
+        m_bVRWeaponHandIsRight = ucmd->vrWeaponHandIsRight;
         // Store the command time for lag compensation
         m_flLastControllerUpdateTime = gpGlobals->curtime;
 
@@ -3342,6 +3344,7 @@ void CTFPlayer::PlayerRunCommand( CUserCmd *ucmd, IMoveHelper *moveHelper )
         m_leftControllerAngles = QAngle(0, 0, 0);
         m_rightControllerOrigin = vec3_origin;
         m_rightControllerAngles = QAngle(0, 0, 0);
+        m_bVRWeaponHandIsRight = true;
         m_flLastControllerUpdateTime = 0.0f;
 
         m_vecVRHandOffsetL = vec3_origin;
@@ -23374,23 +23377,14 @@ Vector CTFPlayer::ScriptWeapon_ShootPosition()
 //-----------------------------------------------------------------------------
 Vector CTFPlayer::Weapon_ShootPosition( void )
 {
-	// Check if client is using VR and we have valid controller data
-	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
+	// Check if client is using VR and we have valid controller data.
+	// The weapon-hand controller is chosen from the networked bit, which the
+	// client sets from handedness + per-weapon flip (medigun, Huntsman, etc.).
+	if (m_bInVRMode)
 	{
-		// Check if active weapon is a medigun - use left controller
-		CTFWeaponBase *pActiveWeapon = GetActiveTFWeapon();
-		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
-		{
-			if (m_leftControllerOrigin != vec3_origin)
-			{
-				return m_leftControllerOrigin;
-			}
-		}
-		
-		// Use raw controller position without offset for VR consistency
-		Vector shootPos = m_rightControllerOrigin;
-
-		return shootPos;
+		const Vector &weaponOrigin = m_bVRWeaponHandIsRight ? m_rightControllerOrigin : m_leftControllerOrigin;
+		if (weaponOrigin != vec3_origin)
+			return weaponOrigin;
 	}
 
 	// Fall back to base implementation (eye position) if no VR data available
@@ -23402,21 +23396,13 @@ Vector CTFPlayer::Weapon_ShootPosition( void )
 //-----------------------------------------------------------------------------
 QAngle CTFPlayer::Weapon_ShootAngles( void )
 {
-	// Check if client is using VR and we have valid controller data
-	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
+	// Check if client is using VR and we have valid controller data.
+	// Select the weapon-hand controller from the networked bit.
+	if (m_bInVRMode)
 	{
-		// Check if active weapon is a medigun - use left controller
-		CTFWeaponBase *pActiveWeapon = GetActiveTFWeapon();
-		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
-		{
-			if (m_leftControllerOrigin != vec3_origin)
-			{
-				return m_leftControllerAngles;
-			}
-		}
-		
-		// Use right controller angles for weapon shooting (typically the shooting hand)
-		return m_rightControllerAngles;
+		const Vector &weaponOrigin = m_bVRWeaponHandIsRight ? m_rightControllerOrigin : m_leftControllerOrigin;
+		if (weaponOrigin != vec3_origin)
+			return m_bVRWeaponHandIsRight ? m_rightControllerAngles : m_leftControllerAngles;
 	}
 	// Fall back to base implementation (eye angles) if no VR data available
 	return EyeAngles();
@@ -23426,16 +23412,20 @@ QAngle CTFPlayer::Weapon_ShootAngles( void )
 //-----------------------------------------------------------------------------
 Vector CTFPlayer::GetAutoaimVector( float flScale )
 {
-	// Check if client is using VR and we have valid controller data
-	if (m_bInVRMode && m_rightControllerOrigin != vec3_origin)
+	// Check if client is using VR and we have valid controller data.
+	// Use the weapon-hand controller selected from the networked bit.
+	if (m_bInVRMode)
 	{
-		// Use right controller angles for autoaim (typically the shooting hand)
-		QAngle controllerAngles = m_rightControllerAngles;
-		// Apply punch angle if any
-		controllerAngles += m_Local.m_vecPunchAngle;
-		Vector forward;
-		AngleVectors(controllerAngles, &forward);
-		return forward;
+		const Vector &weaponOrigin = m_bVRWeaponHandIsRight ? m_rightControllerOrigin : m_leftControllerOrigin;
+		if (weaponOrigin != vec3_origin)
+		{
+			QAngle controllerAngles = m_bVRWeaponHandIsRight ? m_rightControllerAngles : m_leftControllerAngles;
+			// Apply punch angle if any
+			controllerAngles += m_Local.m_vecPunchAngle;
+			Vector forward;
+			AngleVectors(controllerAngles, &forward);
+			return forward;
+		}
 	}
 	// Fall back to base implementation (headset angles) if no VR data available
 	return BaseClass::GetAutoaimVector(flScale);

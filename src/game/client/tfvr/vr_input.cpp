@@ -19,6 +19,7 @@
 #include "tf/tf_weapon_raygun.h"
 #include "tf/tf_weapon_particle_cannon.h"
 #include "c_tfvr_hand.h"
+#include "tfvr/tfvr_weapon_base.h"
 #include <game/client/iviewport.h>
 #include "viewport_panel_names.h"
 #include "ienginevgui.h"
@@ -1197,11 +1198,12 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 	else
 	{
 		// Class/weapon swaps can briefly leave the active pistol rebound before
-		// the hand EHANDLE catches up. Treat the right hand as the weapon hand
-		// for active pistols so magazine commands and spawn transforms keep
-		// flowing during that transition.
-		pWeaponHand = pRight;
-		pOffHand = pLeft;
+		// the hand EHANDLE catches up. Fall back to the weapon hand implied by
+		// handedness + per-weapon flip so magazine commands and spawn transforms
+		// keep flowing during that transition.
+		const bool bWeaponOnLeft = TFVR_DisplayWeaponOnLeft( pWpn );
+		pWeaponHand = bWeaponOnLeft ? pLeft : pRight;
+		pOffHand = bWeaponOnLeft ? pRight : pLeft;
 		pWpn->SetHeldByVRHand( true );
 	}
 
@@ -1737,7 +1739,13 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 		cmd->vrRocketInsert = false;
 		cmd->vrRocketHold = false;
 		cmd->vrWeaponArmed = false;
-		cmd->vrWeaponHandIsRight = true;
+
+		// Default the weapon-hand bit from handedness + per-weapon flip so plain
+		// (non-pump) weapons fire from the correct controller. Pump/reload helpers
+		// below refine it for their specific weapons.
+		C_TFPlayer *pWeaponHandPlayer = C_TFPlayer::GetLocalTFPlayer();
+		CTFWeaponBase *pWeaponHandWeapon = pWeaponHandPlayer ? pWeaponHandPlayer->GetActiveTFWeapon() : NULL;
+		cmd->vrWeaponHandIsRight = !TFVR_DisplayWeaponOnLeft( pWeaponHandWeapon );
 	}
 
     // Check if controller tracking is enabled

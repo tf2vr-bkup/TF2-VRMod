@@ -15,6 +15,7 @@
 
 #ifdef CLIENT_DLL
 #include "tfvr/c_tfvr_hand.h"
+#include "tfvr/tfvr_weapon_base.h"
 #include "debugoverlay_shared.h"
 #include "engine/IEngineSound.h"
 #endif
@@ -800,7 +801,7 @@ bool CTFWeaponBase::SendWeaponAnim( int iActivity )
 #ifdef CLIENT_DLL
 	if ( m_bHeldByVRHand )
 	{
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 		{
 			if ( iActivity == ACT_VM_PRIMARYATTACK )
@@ -3224,7 +3225,7 @@ C_BaseAnimating *CTFWeaponBase::GetAppropriateWorldOrViewModel()
 	// correct VR position rather than the vanilla weapon entity position.
 	if ( m_bHeldByVRHand )
 	{
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 		if ( pRightHand )
 		{
 			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
@@ -3358,7 +3359,7 @@ void CTFWeaponBase::DispatchMuzzleFlash( const char* effectName, C_BaseEntity* p
 	// VR: Create particle effect directly on render weapon with proper entity binding
 	if ( m_bHeldByVRHand )
 	{
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 		{
 			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
@@ -3605,7 +3606,7 @@ void CTFWeaponBase::ProcessMuzzleFlashEvent( void )
 #ifdef CLIENT_DLL
 	if ( m_bHeldByVRHand )
 	{
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 		{
 			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
@@ -4842,7 +4843,7 @@ void CTFWeaponBase::WeaponSound( WeaponSound_t sound_type, float soundtime /* = 
 		if ( !GetParametersForSound( shootsound, params, NULL ) )
 			return;
 
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 		
 		if ( pRightHand )
 		{
@@ -4937,7 +4938,7 @@ Vector CTFWeaponBase::GetVRSoundPosition() const
 	if ( m_bHeldByVRHand )
 	{
 		// Primary: Use VR hand's cached muzzle position (same as visuals/effects)
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
 		{
 			Vector muzzlePos;
@@ -4970,7 +4971,7 @@ C_BaseEntity *CTFWeaponBase::GetWeaponForEffect()
 	// In VR, get the VR render weapon from the hand - it has correct position and attachments
 	if ( m_bHeldByVRHand )
 	{
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 		if ( pRightHand )
 		{
 			C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
@@ -5446,7 +5447,7 @@ bool CTFWeaponBase::OnFireEvent( C_BaseViewModel *pViewModel, const Vector& orig
 		// In VR, get the attachment from the VR render weapon instead of viewmodel
 		if ( m_bHeldByVRHand )
 		{
-			C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+			C_TFVRHand *pRightHand = TFVR_GetWeaponHand(this);
 			if ( pRightHand )
 			{
 				C_BaseAnimating *pRenderWeapon = pRightHand->GetRenderWeapon();
@@ -6278,13 +6279,14 @@ void CTFWeaponBase::GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset
 	C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
 	if (pTFPlayer && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// Try to get muzzle position from VR hand's render weapon first
-		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
-		if (pRightHand && pRightHand->GetHeldWeapon() == this)
+		// Try to get muzzle position from VR weapon hand's render weapon first
+		// (the weapon hand follows handedness + per-weapon flip).
+		C_TFVRHand *pWeaponHand = TFVR_GetWeaponHand(this);
+		if (pWeaponHand && pWeaponHand->GetHeldWeapon() == this)
 		{
 			Vector muzzlePos;
 			QAngle muzzleAngles;
-			if (pRightHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+			if (pWeaponHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
 			{
 				// Apply spread angles if any
 				QAngle angSpread = GetSpreadAngles();
@@ -6296,13 +6298,16 @@ void CTFWeaponBase::GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset
 			}
 		}
 		
-		// Fallback: use raw controller position if muzzle not available
-		VMatrix rightControllerPose;
-		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		// Fallback: use the raw controller pose for whichever hand holds the weapon
+		VMatrix weaponControllerPose;
+		const bool bGotPose = TFVR_DisplayWeaponOnLeft(this)
+			? g_pOpenXRManager->GetLeftControllerPose(weaponControllerPose)
+			: g_pOpenXRManager->GetRightControllerPose(weaponControllerPose);
+		if (bGotPose)
 		{
-			Vector controllerPos = rightControllerPose.GetTranslation();
+			Vector controllerPos = weaponControllerPose.GetTranslation();
 			QAngle controllerAngles;
-			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+			MatrixAngles(weaponControllerPose.As3x4(), controllerAngles);
 			
 			QAngle angSpread = GetSpreadAngles();
 			
@@ -6313,11 +6318,15 @@ void CTFWeaponBase::GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset
 	}
 #else
 	CTFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
-	if (pTFPlayer && pTFPlayer->IsInVRMode() && pTFPlayer->m_rightControllerOrigin != vec3_origin)
+	const bool bWeaponHandRight = pTFPlayer ? pTFPlayer->m_bVRWeaponHandIsRight : true;
+	const Vector vrWeaponOrigin = pTFPlayer
+		? ( bWeaponHandRight ? pTFPlayer->m_rightControllerOrigin : pTFPlayer->m_leftControllerOrigin )
+		: vec3_origin;
+	if (pTFPlayer && pTFPlayer->IsInVRMode() && vrWeaponOrigin != vec3_origin)
 	{
-		// Use right controller position and angles for projectile firing
-		Vector controllerPos = pTFPlayer->m_rightControllerOrigin;
-		QAngle controllerAngles = pTFPlayer->m_rightControllerAngles;
+		// Use the weapon-hand controller position and angles for projectile firing
+		Vector controllerPos = vrWeaponOrigin;
+		QAngle controllerAngles = bWeaponHandRight ? pTFPlayer->m_rightControllerAngles : pTFPlayer->m_leftControllerAngles;
 		
 		// Validate controller data is reasonable (not too far from player)
 		float flDistSqr = (controllerPos - pPlayer->GetAbsOrigin()).LengthSqr();

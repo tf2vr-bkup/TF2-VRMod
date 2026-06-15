@@ -134,6 +134,22 @@ public:
 	VRHandSide GetHandSide() const { return m_handSide; }
 	bool IsLeftHand() const { return m_handSide == VR_HAND_LEFT; }
 	bool IsRightHand() const { return m_handSide == VR_HAND_RIGHT; }
+
+	// VR left-handed mode: which authored hand side this entity poses as
+	// (model + bone suffix). May differ from the physical side; when it does,
+	// the finished bones are reflected once so a right-authored pose reads as
+	// a left hand (and vice versa). See tfvr_weapon_base for the role rules.
+	bool PoseAsLeftHand() const { return m_bPoseAsLeftHand; }
+	bool ShouldMirrorPose() const { return IsLeftHand() != m_bPoseAsLeftHand; }
+	// Recompute the authored pose side from the active weapon; reloads the
+	// hand model + bone mapping if it changed. Returns true if it changed.
+	bool RefreshPoseHandSide();
+
+	// Whether this hand's finished bones were reflected this frame, and the
+	// controller frame used. The render weapon reads these so it can mirror
+	// its own mesh across the same plane (and flip culling to match).
+	bool IsPoseReflected() const { return m_bReflectPoseActive; }
+	const matrix3x4_t &GetReflectFrame() const { return m_matReflectFrame; }
 	COpenXRHandTracker* GetHandTracker() const { return m_pHandTracker; }
 	int GetHandBoneIndex() const { return m_iHandBone; }
 	
@@ -245,6 +261,13 @@ private:
 	// Model info
 	char m_szModelName[MAX_PATH];
 	bool m_bHasGunslinger;         // Engineer has Gunslinger equipped (robot right hand)
+	bool m_bPoseAsLeftHand;        // Authored hand side this entity currently poses as (left-handed mode)
+	bool m_bReflectPoseActive;     // Finished bones were reflected this frame (left-handed mode)
+	matrix3x4_t m_matReflectFrame; // Controller frame used for the reflection this frame
+
+	// Helpers for left-handed mode (defined in .cpp)
+	bool ComputePoseAsLeftHand( C_TFWeaponBase *pWeapon ) const;
+	void LoadHandModelForPoseSide();
 	
 	// Fire animation
 	int m_iFireSequence;           // Fire animation sequence index (fire_loop for medigun)

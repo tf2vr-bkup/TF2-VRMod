@@ -106,6 +106,7 @@ extern ConVar tfvr_hmd_drive_rotation;
 
 // VR hands
 #include "tfvr/c_tfvr_hand.h"
+#include "tfvr/tfvr_weapon_base.h"
 
 #include "confirm_dialog.h"
 #include "c_tf_weapon_builder.h"
@@ -4235,17 +4236,9 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 	const bool bLocalVRActive = IsLocalPlayer() && UseVR();
 	if ((IsInVRMode() || bLocalVRActive) && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// Determine which hand holds the weapon (medigun uses left hand)
-		C_TFVRHand* pWeaponHand = NULL;
+		// Determine which physical hand holds the weapon (handedness + per-weapon flip)
 		C_TFWeaponBase* pActiveWeapon = GetActiveTFWeapon();
-		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
-		{
-			pWeaponHand = GetLocalPlayerLeftHand();
-		}
-		else
-		{
-			pWeaponHand = GetLocalPlayerRightHand();
-		}
+		C_TFVRHand* pWeaponHand = TFVR_GetWeaponHand(pActiveWeapon);
 		
 		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
@@ -4266,10 +4259,10 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 			}
 		}
 		
-		// Fallback: Get the appropriate controller pose
+		// Fallback: Get the appropriate controller pose for the weapon hand
 		VMatrix controllerPose;
 		bool bGotPose = false;
-		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
+		if (TFVR_DisplayWeaponOnLeft(pActiveWeapon))
 		{
 			bGotPose = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
 		}
@@ -4297,18 +4290,10 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 	const bool bLocalVRActive = IsLocalPlayer() && UseVR();
 	if ((IsInVRMode() || bLocalVRActive) && g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// Determine which hand holds the weapon (medigun uses left hand)
-		C_TFVRHand* pWeaponHand = NULL;
+		// Determine which physical hand holds the weapon (handedness + per-weapon flip)
 		C_TFWeaponBase* pActiveWeapon = GetActiveTFWeapon();
-		bool bIsMedigun = (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN);
-		if (bIsMedigun)
-		{
-			pWeaponHand = GetLocalPlayerLeftHand();
-		}
-		else
-		{
-			pWeaponHand = GetLocalPlayerRightHand();
-		}
+		const bool bWeaponOnLeft = TFVR_DisplayWeaponOnLeft(pActiveWeapon);
+		C_TFVRHand* pWeaponHand = TFVR_GetWeaponHand(pActiveWeapon);
 		
 		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
@@ -4320,11 +4305,14 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 
 			if (bUseRawController)
 			{
-				VMatrix rightControllerPose;
-				if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+				VMatrix rawControllerPose;
+				const bool bGotRaw = bWeaponOnLeft
+					? g_pOpenXRManager->GetLeftControllerPose(rawControllerPose)
+					: g_pOpenXRManager->GetRightControllerPose(rawControllerPose);
+				if (bGotRaw)
 				{
 					QAngle controllerAngles;
-					MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+					MatrixAngles(rawControllerPose.As3x4(), controllerAngles);
 					return controllerAngles;
 				}
 			}
@@ -4337,10 +4325,10 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 			}
 		}
 		
-		// Fallback: Get the appropriate controller pose
+		// Fallback: Get the appropriate controller pose for the weapon hand
 		VMatrix controllerPose;
 		bool bGotPose = false;
-		if (bIsMedigun)
+		if (bWeaponOnLeft)
 		{
 			bGotPose = g_pOpenXRManager->GetLeftControllerPose(controllerPose);
 		}
@@ -4370,17 +4358,9 @@ C_BaseAnimating* C_TFPlayer::GetRenderedWeaponModel()
 	// Check if VR is active and we have a VR render weapon
 	if (IsLocalPlayer() && (IsInVRMode() || UseVR()))
 	{
-		// Determine which hand holds the weapon (medigun uses left hand)
-		C_TFVRHand* pWeaponHand = NULL;
+		// Determine which physical hand holds the weapon (handedness + per-weapon flip)
 		C_TFWeaponBase* pActiveWeapon = GetActiveTFWeapon();
-		if (pActiveWeapon && pActiveWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN)
-		{
-			pWeaponHand = GetLocalPlayerLeftHand();
-		}
-		else
-		{
-			pWeaponHand = GetLocalPlayerRightHand();
-		}
+		C_TFVRHand* pWeaponHand = TFVR_GetWeaponHand(pActiveWeapon);
 		
 		if (pWeaponHand)
 		{
@@ -4404,13 +4384,18 @@ Vector C_TFPlayer::GetAutoaimVector( float flScale )
 	// Check if VR is active and controller tracking is enabled
 	if (g_pOpenXRManager && g_pOpenXRManager->IsActive() && tfvr_enable_controller_tracking.GetBool())
 	{
-		// Get the right controller pose for autoaim (typically the shooting hand)
-		VMatrix rightControllerPose;
-		if (g_pOpenXRManager->GetRightControllerPose(rightControllerPose))
+		// Use the controller pose for whichever physical hand holds the weapon
+		// (handedness + per-weapon flip), not a hardcoded right hand.
+		const bool bWeaponOnLeft = TFVR_DisplayWeaponOnLeft(GetActiveTFWeapon());
+		VMatrix controllerPose;
+		const bool bGotPose = bWeaponOnLeft
+			? g_pOpenXRManager->GetLeftControllerPose(controllerPose)
+			: g_pOpenXRManager->GetRightControllerPose(controllerPose);
+		if (bGotPose)
 		{
 			// Extract angles from the pose matrix
 			QAngle controllerAngles;
-			MatrixAngles(rightControllerPose.As3x4(), controllerAngles);
+			MatrixAngles(controllerPose.As3x4(), controllerAngles);
 			
 			// Apply punch angle if any
 			controllerAngles += m_Local.m_vecPunchAngle;

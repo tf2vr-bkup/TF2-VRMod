@@ -1641,6 +1641,7 @@ public:
 	QAngle					m_leftControllerAngles;
 	Vector					m_rightControllerOrigin;
 	QAngle					m_rightControllerAngles;
+	bool					m_bVRWeaponHandIsRight;	// Which controller holds the weapon (left-handed mode / per-weapon flip)
 	float					m_flLastControllerUpdateTime;
 
 	CNetworkVar(Vector, m_roomscaleOffset);

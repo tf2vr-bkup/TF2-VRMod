@@ -10,12 +10,91 @@
 #if defined( CLIENT_DLL )
 	#include "c_tf_player.h"
 	#include "tfvr/c_tfvr_hand.h"
+	extern ConVar tfvr_primary_hand;
 #else
 	#include "tf_player.h"
 #endif
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+//-----------------------------------------------------------------------------
+// Purpose: Is the player in left-handed (left-primary) mode?
+//          tfvr_primary_hand: 0 = left primary, 1 = right primary.
+//          Server has no notion of handedness directly; shoot paths there
+//          select the controller field from the networked weapon-hand bit
+//          instead, so this conservatively reports right-handed.
+//-----------------------------------------------------------------------------
+bool TFVR_IsLeftHanded()
+{
+#if defined( CLIENT_DLL )
+	return tfvr_primary_hand.GetInt() == 0;
+#else
+	return false;
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Which hand the weapon's pose/model is authored for.
+//          The medigun viewmodel is natively authored for the left hand;
+//          everything else is authored for the right hand.
+//-----------------------------------------------------------------------------
+bool TFVR_WeaponAuthoredHandIsLeft( const CTFWeaponBase *pWeapon )
+{
+	return pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Does the weapon default to the player's non-primary hand?
+//          Medigun always does; weapons flagged m_bFlipViewModel in the schema
+//          (e.g. the Huntsman) do as well, matching vanilla's flipped viewmodel.
+//-----------------------------------------------------------------------------
+bool TFVR_WeaponPrefersOffHand( const CTFWeaponBase *pWeapon )
+{
+	if ( !pWeapon )
+		return false;
+
+	if ( pWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN )
+		return true;
+
+	return pWeapon->m_bFlipViewModel;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Which physical controller holds the weapon.
+//          display-on-left = left-handed XOR prefers-off-hand.
+//-----------------------------------------------------------------------------
+bool TFVR_DisplayWeaponOnLeft( const CTFWeaponBase *pWeapon )
+{
+	return TFVR_IsLeftHanded() != TFVR_WeaponPrefersOffHand( pWeapon );
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Reflect the finished weapon-hand bones when the physical display
+//          hand does not match the hand the pose is authored for.
+//-----------------------------------------------------------------------------
+bool TFVR_ShouldMirrorWeaponHand( const CTFWeaponBase *pWeapon )
+{
+	return TFVR_DisplayWeaponOnLeft( pWeapon ) != TFVR_WeaponAuthoredHandIsLeft( pWeapon );
+}
+
+#if defined( CLIENT_DLL )
+//-----------------------------------------------------------------------------
+// Purpose: The physical hand entity that holds/aims the weapon.
+//-----------------------------------------------------------------------------
+C_TFVRHand *TFVR_GetWeaponHand( const CTFWeaponBase *pWeapon )
+{
+	return TFVR_DisplayWeaponOnLeft( pWeapon ) ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: The physical hand entity that supports/off-hands the weapon.
+//-----------------------------------------------------------------------------
+C_TFVRHand *TFVR_GetSupportHand( const CTFWeaponBase *pWeapon )
+{
+	return TFVR_DisplayWeaponOnLeft( pWeapon ) ? GetLocalPlayerRightHand() : GetLocalPlayerLeftHand();
+}
+#endif
 
 //-----------------------------------------------------------------------------
 // Purpose: Constructor
