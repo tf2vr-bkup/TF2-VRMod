@@ -43,8 +43,8 @@ ITexture* CVrRenderTargets::CreateVGuiTexture(IMaterialSystem* pMaterialSystem)
 		RT_SIZE_LITERAL,
 		targetFormat,								// Use appropriate format with MSAA consideration
 		MATERIAL_RT_DEPTH_SHARED,					// Use shared depth - this inherits MSAA from back buffer
-		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT,	// Minimal flags like water refraction
-		CREATERENDERTARGETFLAGS_HDR);				// HDR flag for proper alpha handling
+		TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT | TEXTUREFLAGS_TRILINEAR,
+		CREATERENDERTARGETFLAGS_HDR | CREATERENDERTARGETFLAGS_AUTOMIPMAP);
 }
 
 ITexture* CVrRenderTargets::CreateVRTwoEyesHMDRenderTarget(IMaterialSystem* pMaterialSystem, int i)
