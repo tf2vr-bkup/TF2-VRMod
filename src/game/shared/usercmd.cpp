@@ -244,6 +244,16 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 		buf->WriteOneBit( 0 );
 	}
 
+	if ( to->vrBowArrowPull01 != from->vrBowArrowPull01 )
+	{
+		buf->WriteOneBit( 1 );
+		buf->WriteFloat( to->vrBowArrowPull01 );
+	}
+	else
+	{
+		buf->WriteOneBit( 0 );
+	}
+
 	buf->WriteOneBit( to->vrBallAimActive ? 1 : 0 );
 	buf->WriteOneBit( to->vrPhysicalCrouch ? 1 : 0 );
 	buf->WriteOneBit( to->vrManualPumpReload ? 1 : 0 );
@@ -253,6 +263,11 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	buf->WriteOneBit( to->vrRocketPull ? 1 : 0 );
 	buf->WriteOneBit( to->vrRocketInsert ? 1 : 0 );
 	buf->WriteOneBit( to->vrRocketHold ? 1 : 0 );
+	buf->WriteOneBit( to->vrBowArrowPull ? 1 : 0 );
+	buf->WriteOneBit( to->vrBowArrowNock ? 1 : 0 );
+	buf->WriteOneBit( to->vrBowArrowGripHold ? 1 : 0 );
+	buf->WriteOneBit( to->vrBowArrowTriggerHold ? 1 : 0 );
+	buf->WriteOneBit( to->vrBowArrowNockIsTrigger ? 1 : 0 );
 	buf->WriteOneBit( to->vrMagazineEject ? 1 : 0 );
 	buf->WriteOneBit( to->vrMagazinePull ? 1 : 0 );
 	buf->WriteOneBit( to->vrMagazineInsert ? 1 : 0 );
@@ -430,6 +445,11 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 		move->vrMeleeGripSpeedLeft = buf->ReadFloat();
 	}
 
+	if ( buf->ReadOneBit() )
+	{
+		move->vrBowArrowPull01 = buf->ReadFloat();
+	}
+
 	move->vrBallAimActive = buf->ReadOneBit() ? true : false;
 	move->vrPhysicalCrouch = buf->ReadOneBit() ? true : false;
 	move->vrManualPumpReload = buf->ReadOneBit() ? true : false;
@@ -439,6 +459,11 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	move->vrRocketPull = buf->ReadOneBit() ? true : false;
 	move->vrRocketInsert = buf->ReadOneBit() ? true : false;
 	move->vrRocketHold = buf->ReadOneBit() ? true : false;
+	move->vrBowArrowPull = buf->ReadOneBit() ? true : false;
+	move->vrBowArrowNock = buf->ReadOneBit() ? true : false;
+	move->vrBowArrowGripHold = buf->ReadOneBit() ? true : false;
+	move->vrBowArrowTriggerHold = buf->ReadOneBit() ? true : false;
+	move->vrBowArrowNockIsTrigger = buf->ReadOneBit() ? true : false;
 	move->vrMagazineEject = buf->ReadOneBit() ? true : false;
 	move->vrMagazinePull = buf->ReadOneBit() ? true : false;
 	move->vrMagazineInsert = buf->ReadOneBit() ? true : false;

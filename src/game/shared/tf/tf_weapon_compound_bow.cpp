@@ -7,6 +7,7 @@
 #include "tf_fx_shared.h"
 #include "tf_gamerules.h"
 #include "in_buttons.h"
+#include "usercmd.h"
 
 // Client specific.
 #ifdef CLIENT_DLL
@@ -21,7 +22,6 @@
 #endif
 
 #define COMPOUND_BOW_ATTACHMENT_POINT "muzzle"
-
 //=============================================================================
 //
 // Weapon tables.
@@ -32,9 +32,23 @@ BEGIN_NETWORK_TABLE( CTFCompoundBow, DT_WeaponCompoundBow )
 #ifdef CLIENT_DLL
 	RecvPropBool( RECVINFO( m_bArrowAlight ) ),
 	RecvPropBool( RECVINFO( m_bNoFire ) ),
+	RecvPropBool( RECVINFO( m_bVRBowArrowHeld ) ),
+	RecvPropBool( RECVINFO( m_bVRBowArrowNockActive ) ),
+	RecvPropBool( RECVINFO( m_bVRBowArrowNocked ) ),
+	RecvPropFloat( RECVINFO( m_flVRBowArrowNockStartTime ) ),
+	RecvPropFloat( RECVINFO( m_flNextVRBowArrowReadyTime ) ),
+	RecvPropBool( RECVINFO( m_bVRBowNockInputIsTrigger ) ),
+	RecvPropFloat( RECVINFO( m_flVRBowArrowPull ) ),
 #else
 	SendPropBool( SENDINFO( m_bArrowAlight ) ),
 	SendPropBool( SENDINFO( m_bNoFire ) ),
+	SendPropBool( SENDINFO( m_bVRBowArrowHeld ) ),
+	SendPropBool( SENDINFO( m_bVRBowArrowNockActive ) ),
+	SendPropBool( SENDINFO( m_bVRBowArrowNocked ) ),
+	SendPropFloat( SENDINFO( m_flVRBowArrowNockStartTime ), 0, SPROP_NOSCALE ),
+	SendPropFloat( SENDINFO( m_flNextVRBowArrowReadyTime ), 0, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bVRBowNockInputIsTrigger ) ),
+	SendPropFloat( SENDINFO( m_flVRBowArrowPull ), 0, SPROP_NOSCALE ),
 #endif
 END_NETWORK_TABLE()
 
@@ -42,6 +56,13 @@ BEGIN_PREDICTION_DATA( CTFCompoundBow )
 #ifdef CLIENT_DLL
 	DEFINE_PRED_FIELD( m_flChargeBeginTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_bNoFire, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRBowArrowHeld, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRBowArrowNockActive, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRBowArrowNocked, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRBowArrowNockStartTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flNextVRBowArrowReadyTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRBowNockInputIsTrigger, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRBowArrowPull, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
 #endif
 END_PREDICTION_DATA()
 
@@ -56,6 +77,10 @@ END_DATADESC()
 
 #define TF_ARROW_MAX_CHARGE_TIME 5.0f
 
+ConVar tfvr_huntsman_manual_reload( "tfvr_huntsman_manual_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: require grabbing and nocking an arrow before charging/firing" );
+ConVar tfvr_huntsman_nock_duration( "tfvr_huntsman_nock_duration", "0.15", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: seconds spent snapping the held arrow into the nock pose" );
+ConVar tfvr_huntsman_min_fire_charge( "tfvr_huntsman_min_fire_charge", "0.06", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: releasing the draw below this charge (0..1) cancels and returns the arrow instead of firing" );
+
 //=============================================================================
 //
 // Weapon functions.
@@ -69,6 +94,13 @@ CTFCompoundBow::CTFCompoundBow()
 	m_flLastDenySoundTime = 0.0f;
 	m_bNoFire = false;
 	m_bReloadsSingly = false;
+	m_bVRBowArrowHeld = false;
+	m_bVRBowArrowNockActive = false;
+	m_bVRBowArrowNocked = false;
+	m_flVRBowArrowNockStartTime = 0.0f;
+	m_flNextVRBowArrowReadyTime = 0.0f;
+	m_bVRBowNockInputIsTrigger = false;
+	m_flVRBowArrowPull = 0.0f;
 }
 
 void CTFCompoundBow::Precache( void )
@@ -92,6 +124,7 @@ void CTFCompoundBow::WeaponReset( void )
 	m_bArrowAlight = false;
 	m_bNoAutoRelease = true;
 	m_bNoFire = false;
+	ResetVRBowArrowState();
 }
 
 #ifdef GAME_DLL
@@ -167,6 +200,7 @@ void CTFCompoundBow::LaunchGrenade( void )
 
 	SetInternalChargeBeginTime( 0 );
 	m_bArrowAlight = false;
+	ResetVRBowArrowState();
 
 	// The bow doesn't actually reload, it instead uses the AE_WPN_INCREMENTAMMO anim event in the fire to reload the clip.
 	// We need to reset this bool each time we fire so that anim event works.
@@ -282,8 +316,19 @@ float CTFCompoundBow::GetCurrentCharge( void )
 {
 	if ( GetInternalChargeBeginTime() == 0 )
 		return 0;
-	else
-		return MIN( gpGlobals->curtime - GetInternalChargeBeginTime(), 1.f );
+
+	// Time-based cap: the charge can never exceed how long the bow has been
+	// drawn (this is the throttle).
+	float flCharge = MIN( gpGlobals->curtime - GetInternalChargeBeginTime(), 1.f );
+
+	// VR drawstring control: the actual draw follows the physical pull, but is
+	// clamped to the time cap above. De-pulling reduces it immediately; pulling
+	// faster than the charge time allows is throttled to the time cap. The pull
+	// is a 0..1 fraction, so scale it into charge seconds by the max charge time.
+	if ( ShouldUseVRBowManualReload() )
+		flCharge = MIN( flCharge, clamp( m_flVRBowArrowPull, 0.f, 1.f ) * GetChargeMaxTime() );
+
+	return flCharge;
 }
 
 //-----------------------------------------------------------------------------
@@ -353,6 +398,7 @@ void CTFCompoundBow::LowerBow( void )
 
 	m_bNoFire = true;
 	m_bWantsToShoot = false;
+	ResetVRBowArrowState();
 
 	SendWeaponAnim( ACT_ITEM2_VM_DRYFIRE );
 }
@@ -379,6 +425,7 @@ bool CTFCompoundBow::Holster( CBaseCombatWeapon *pSwitchingTo )
 	m_bNoFire = false;
 	SetArrowAlight( false );
 	SetInternalChargeBeginTime( 0 );
+	ResetVRBowArrowState();
 
 	return BaseClass::Holster( pSwitchingTo );
 }
@@ -434,7 +481,8 @@ bool CTFCompoundBow::SendWeaponAnim( int iActivity )
 //-----------------------------------------------------------------------------
 void CTFCompoundBow::ItemPostFrame( void )
 {
-	CBasePlayer *pOwner = ToBasePlayer( GetOwner() );
+	CTFPlayer *pTFPlayer = GetTFPlayerOwner();
+	CBasePlayer *pOwner = pTFPlayer;
 	if ( !pOwner )
 		return;
 
@@ -452,7 +500,59 @@ void CTFCompoundBow::ItemPostFrame( void )
 		return;
 	}
 
+	const bool bUseVRBowManualReload = ShouldUseVRBowManualReload();
+	if ( bUseVRBowManualReload )
+	{
+		VRBowArrowPostFrame();
+	}
+	else
+	{
+		ResetVRBowArrowState();
+	}
+
+	int nSavedButtons = pOwner->m_nButtons;
+	int nSavedPressed = pOwner->m_afButtonPressed;
+	int nSavedReleased = pOwner->m_afButtonReleased;
+
+	if ( bUseVRBowManualReload )
+	{
+		pOwner->m_nButtons &= ~( IN_ATTACK | IN_ATTACK2 );
+		pOwner->m_afButtonPressed &= ~( IN_ATTACK | IN_ATTACK2 );
+		pOwner->m_afButtonReleased &= ~( IN_ATTACK | IN_ATTACK2 );
+
+		const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+		const bool bNockHeld = pCmd && ( m_bVRBowNockInputIsTrigger ? pCmd->vrBowArrowTriggerHold : pCmd->vrBowArrowGripHold );
+		if ( m_bVRBowArrowNocked && bNockHeld )
+		{
+			if ( GetInternalChargeBeginTime() <= 0.0f )
+				pOwner->m_afButtonPressed |= IN_ATTACK;
+			pOwner->m_nButtons |= IN_ATTACK;
+		}
+		else if ( GetInternalChargeBeginTime() > 0.0f )
+		{
+			// Released the draw. If there's effectively no charge (string not
+			// pulled / let go immediately), don't fire — cancel and return the
+			// arrow to the backpack. Otherwise release IN_ATTACK to fire.
+			if ( GetCurrentCharge() <= tfvr_huntsman_min_fire_charge.GetFloat() )
+			{
+				LowerBow();
+				ResetVRBowArrowState();
+			}
+			else
+			{
+				pOwner->m_afButtonReleased |= IN_ATTACK;
+			}
+		}
+	}
+
 	BaseClass::ItemPostFrame();
+
+	if ( bUseVRBowManualReload )
+	{
+		pOwner->m_nButtons = nSavedButtons;
+		pOwner->m_afButtonPressed = nSavedPressed;
+		pOwner->m_afButtonReleased = nSavedReleased;
+	}
 
 	if ( !(pOwner->m_nButtons & IN_ATTACK) && !(pOwner->m_nButtons & IN_ATTACK2) )
 	{
@@ -473,6 +573,155 @@ void CTFCompoundBow::ItemPostFrame( void )
 	if ( m_bNoFire )
 	{
 		WeaponIdle();
+	}
+}
+
+bool CTFCompoundBow::ShouldUseVRBowManualReload()
+{
+	if ( !tfvr_huntsman_manual_reload.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	return IsHeldByVRHand() || pOwner->IsLocalPlayer();
+#else
+	return true;
+#endif
+}
+
+bool CTFCompoundBow::CanStartVRBowArrowGrab()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !ShouldUseVRBowManualReload() )
+		return false;
+
+	if ( m_bNoFire || GetInternalChargeBeginTime() > 0.0f )
+		return false;
+
+	if ( m_iClip1 <= 0 && m_iClip1 != -1 )
+		return false;
+
+	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 && m_iClip1 <= 0 )
+		return false;
+
+	if ( gpGlobals->curtime < m_flNextPrimaryAttack || gpGlobals->curtime < m_flNextVRBowArrowReadyTime )
+		return false;
+
+	return true;
+}
+
+float CTFCompoundBow::GetVRBowArrowNockProgress() const
+{
+	if ( !m_bVRBowArrowNockActive )
+		return m_bVRBowArrowNocked ? 1.0f : 0.0f;
+
+	const float flDuration = MAX( tfvr_huntsman_nock_duration.GetFloat(), 0.01f );
+	return clamp( ( gpGlobals->curtime - m_flVRBowArrowNockStartTime ) / flDuration, 0.0f, 1.0f );
+}
+
+void CTFCompoundBow::ResetVRBowArrowState()
+{
+	m_bVRBowArrowHeld = false;
+	m_bVRBowArrowNockActive = false;
+	m_bVRBowArrowNocked = false;
+	m_flVRBowArrowNockStartTime = 0.0f;
+	m_bVRBowNockInputIsTrigger = false;
+	m_flVRBowArrowPull = 0.0f;
+}
+
+void CTFCompoundBow::VRStartBowArrowNock( bool bNockInputIsTrigger )
+{
+	if ( !m_bVRBowArrowHeld || m_bVRBowArrowNockActive || m_bVRBowArrowNocked )
+		return;
+
+	if ( !CanStartVRBowArrowGrab() )
+		return;
+
+	m_bVRBowArrowNockActive = true;
+	m_flVRBowArrowNockStartTime = gpGlobals->curtime;
+	m_bVRBowNockInputIsTrigger = bNockInputIsTrigger;
+}
+
+void CTFCompoundBow::VRFinishBowArrowNock()
+{
+	if ( !m_bVRBowArrowNockActive )
+		return;
+
+	m_bVRBowArrowHeld = false;
+	m_bVRBowArrowNockActive = false;
+	m_bVRBowArrowNocked = true;
+}
+
+void CTFCompoundBow::VRBowArrowPostFrame()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+	{
+		ResetVRBowArrowState();
+		return;
+	}
+
+	if ( m_iClip1 <= 0 && m_iClip1 != -1 )
+	{
+		ResetVRBowArrowState();
+		return;
+	}
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+		return;
+
+	const bool bGripHeld = pCmd->vrBowArrowGripHold;
+	const bool bTriggerHeld = pCmd->vrBowArrowTriggerHold;
+	const bool bAnyHeld = bGripHeld || bTriggerHeld;
+
+	if ( m_bVRBowArrowNockActive )
+	{
+		const bool bNockHeld = m_bVRBowNockInputIsTrigger ? bTriggerHeld : bGripHeld;
+		if ( !bNockHeld )
+		{
+			ResetVRBowArrowState();
+			return;
+		}
+
+		if ( GetVRBowArrowNockProgress() >= 1.0f )
+			VRFinishBowArrowNock();
+
+		return;
+	}
+
+	if ( m_bVRBowArrowNocked )
+	{
+		// Track the physical draw amount reported by the client so GetCurrentCharge
+		// can follow the string pull (clamped to the time cap).
+		m_flVRBowArrowPull = clamp( pCmd->vrBowArrowPull01, 0.0f, 1.0f );
+
+		const bool bNockHeld = m_bVRBowNockInputIsTrigger ? bTriggerHeld : bGripHeld;
+		if ( !bNockHeld && GetInternalChargeBeginTime() <= 0.0f )
+			ResetVRBowArrowState();
+		return;
+	}
+
+	if ( m_bVRBowArrowHeld )
+	{
+		if ( !bAnyHeld )
+		{
+			ResetVRBowArrowState();
+			return;
+		}
+
+		if ( pCmd->vrBowArrowNock )
+			VRStartBowArrowNock( pCmd->vrBowArrowNockIsTrigger );
+
+		return;
+	}
+
+	if ( pCmd->vrBowArrowPull && bAnyHeld && CanStartVRBowArrowGrab() )
+	{
+		m_bVRBowArrowHeld = true;
 	}
 }
 

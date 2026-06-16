@@ -287,6 +287,12 @@ private:
 	// Charge animation (sticky launcher, huntsman, loose cannon, etc.)
 	int m_iChargeSequence;         // Charge/pullback animation sequence index
 	int m_iChargeSequence2;        // Second charge phase (e.g. huntsman max-charge shake)
+	int m_iBowIdleSequence;        // bw_fire sampled at frame 10 for the bow rest/held-arrow pose
+	float m_flBowIdleCycle;        // Frame-10 cycle within bw_fire
+	float m_flBowFireEndCycle;     // Frame-15 cycle within bw_fire; fire anim returns to rest here
+	int m_iBowDrawSequence;        // bw_draw, sampled at frame 35 for the nocked/drawn pose
+	float m_flBowDrawNockCycle;    // Frame-35 cycle within bw_draw (fully nocked, hand on string)
+	int m_iBowChargeIdleSequence;  // bw_idle3, held after the max-charge shake loops out
 	bool m_bPlayingChargeAnim;     // Currently playing charge animation
 	
 	// Medigun fire animation state machine
@@ -395,6 +401,7 @@ private:
 	void UpdatePomsonPumpReloadAnimation();
 	void UpdateShotgunPumpActionAnimation();
 	void UpdatePistolReloadAnimation();
+	void UpdateBowChargeAnimation();
 
 public:
 	bool IsBackstabReady() const { return m_bBackstabReady; }
@@ -409,6 +416,13 @@ public:
 	bool GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetRocketManualReloadRocketTarget( Vector &outPos );
 	bool GetRocketManualReloadRocketPosition( Vector &outPos );
+	bool GetBowManualReloadTarget( Vector &outPos, QAngle &outAngles, matrix3x4_t *pOutWorld = NULL );
+	bool GetBowArrowPosition( Vector &outPos );
+	bool GetBowNockDetectionPoint( Vector &outPos );
+	// Blend the nocked bw_draw frame-35 pose into the already-sampled bw_charge
+	// pose by charge fraction (0 = bw_draw frame 35, 1 = bw_charge). Drives the
+	// bow + drawstring + arrow + draw-hand grip from one unified pose.
+	void ApplyBowDrawChargeBlend( CStudioHdr *pStudioHdr, int numBones, Vector *posAnim, Quaternion *qAnim, float chargeFraction );
 	
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose (model space)

@@ -74,6 +74,12 @@ public:
 		vrRocketPull = false;
 		vrRocketInsert = false;
 		vrRocketHold = false;
+		vrBowArrowPull = false;
+		vrBowArrowNock = false;
+		vrBowArrowGripHold = false;
+		vrBowArrowTriggerHold = false;
+		vrBowArrowNockIsTrigger = false;
+		vrBowArrowPull01 = 0.0f;
 		vrMagazineEject = false;
 		vrMagazinePull = false;
 		vrMagazineInsert = false;
@@ -142,6 +148,12 @@ public:
 		vrRocketPull = src.vrRocketPull;
 		vrRocketInsert = src.vrRocketInsert;
 		vrRocketHold = src.vrRocketHold;
+		vrBowArrowPull = src.vrBowArrowPull;
+		vrBowArrowNock = src.vrBowArrowNock;
+		vrBowArrowGripHold = src.vrBowArrowGripHold;
+		vrBowArrowTriggerHold = src.vrBowArrowTriggerHold;
+		vrBowArrowNockIsTrigger = src.vrBowArrowNockIsTrigger;
+		vrBowArrowPull01 = src.vrBowArrowPull01;
 		vrMagazineEject = src.vrMagazineEject;
 		vrMagazinePull = src.vrMagazinePull;
 		vrMagazineInsert = src.vrMagazineInsert;
@@ -217,6 +229,12 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrRocketPull, sizeof( vrRocketPull ) );
 		CRC32_ProcessBuffer( &crc, &vrRocketInsert, sizeof( vrRocketInsert ) );
 		CRC32_ProcessBuffer( &crc, &vrRocketHold, sizeof( vrRocketHold ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowPull, sizeof( vrBowArrowPull ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowNock, sizeof( vrBowArrowNock ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowGripHold, sizeof( vrBowArrowGripHold ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowTriggerHold, sizeof( vrBowArrowTriggerHold ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowNockIsTrigger, sizeof( vrBowArrowNockIsTrigger ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowPull01, sizeof( vrBowArrowPull01 ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazineEject, sizeof( vrMagazineEject ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazinePull, sizeof( vrMagazinePull ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazineInsert, sizeof( vrMagazineInsert ) );
@@ -274,6 +292,12 @@ public:
 		vrRocketPull = false;
 		vrRocketInsert = false;
 		vrRocketHold = false;
+		vrBowArrowPull = false;
+		vrBowArrowNock = false;
+		vrBowArrowGripHold = false;
+		vrBowArrowTriggerHold = false;
+		vrBowArrowNockIsTrigger = false;
+		vrBowArrowPull01 = 0.0f;
 		vrMagazineEject = false;
 		vrMagazinePull = false;
 		vrMagazineInsert = false;
@@ -351,6 +375,14 @@ public:
 	bool	vrRocketPull;
 	bool	vrRocketInsert;
 	bool	vrRocketHold;
+
+	// VR Huntsman manual arrow intents.
+	bool	vrBowArrowPull;
+	bool	vrBowArrowNock;
+	bool	vrBowArrowGripHold;
+	bool	vrBowArrowTriggerHold;
+	bool	vrBowArrowNockIsTrigger;
+	float	vrBowArrowPull01;       // VR Huntsman: physical draw amount 0..1 (string pull)
 
 	// VR pistol manual magazine reload intents.
 	bool	vrMagazineEject;

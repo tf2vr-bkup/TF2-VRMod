@@ -72,6 +72,12 @@ public:
 	virtual void	ForceLaunchGrenade( void );
 	virtual bool	ShouldDoMuzzleFlash( void ) { return false; }
 
+	bool			HasVRBowArrowInHand() const { return m_bVRBowArrowHeld; }
+	bool			IsVRBowArrowNocking() const { return m_bVRBowArrowNockActive; }
+	bool			IsVRBowArrowNocked() const { return m_bVRBowArrowNocked; }
+	bool			IsVRBowArrowPoseActive() const { return m_bVRBowArrowHeld || m_bVRBowArrowNockActive || m_bVRBowArrowNocked; }
+	float			GetVRBowArrowNockProgress() const;
+
 	virtual void	GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset, Vector *vecSrc, QAngle *angForward, bool bHitTeammates = true, float flEndDist = 2000.f );
 	void			ApplyRefireSpeedModifications( float &flBaseRef );
 
@@ -103,6 +109,20 @@ private:
 	float		m_flLastDenySoundTime;
 	CNetworkVar( bool, m_bNoFire );
 	CNetworkVar( bool, m_bArrowAlight );
+	CNetworkVar( bool, m_bVRBowArrowHeld );
+	CNetworkVar( bool, m_bVRBowArrowNockActive );
+	CNetworkVar( bool, m_bVRBowArrowNocked );
+	CNetworkVar( float, m_flVRBowArrowNockStartTime );
+	CNetworkVar( float, m_flNextVRBowArrowReadyTime );
+	CNetworkVar( bool, m_bVRBowNockInputIsTrigger );
+	CNetworkVar( float, m_flVRBowArrowPull );      // VR physical draw amount 0..1 (string pull)
+
+	bool			ShouldUseVRBowManualReload();
+	bool			CanStartVRBowArrowGrab();
+	void			ResetVRBowArrowState();
+	void			VRBowArrowPostFrame();
+	void			VRStartBowArrowNock( bool bNockInputIsTrigger );
+	void			VRFinishBowArrowNock();
 
 #ifdef CLIENT_DLL
 	EHANDLE		   m_hParticleEffectOwner;

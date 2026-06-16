@@ -16,6 +16,7 @@
 #include "tf/tf_weapon_pistol.h"
 #include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
+#include "tf/tf_weapon_compound_bow.h"
 #include "tf/tf_weapon_raygun.h"
 #include "tf/tf_weapon_particle_cannon.h"
 #include "c_tfvr_hand.h"
@@ -47,6 +48,7 @@ extern ConVar tfvr_shotgun_pump_action;
 extern ConVar tfvr_shotgun_pump_debug;
 extern ConVar tfvr_rocket_manual_reload_radius;
 extern ConVar tfvr_pistol_manual_reload;
+extern ConVar tfvr_huntsman_manual_reload;
 
 ConVar tfvr_bison_pump_weapon_grip_threshold( "tfvr_bison_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR bison pump: off-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_bison_pump_twohand_min_blend( "tfvr_bison_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR bison pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -72,6 +74,9 @@ ConVar tfvr_shotgun_manual_reload_chest_radius( "tfvr_shotgun_manual_reload_ches
 ConVar tfvr_shotgun_manual_reload_chest_down( "tfvr_shotgun_manual_reload_chest_down", "18.0", FCVAR_ARCHIVE, "VR shotgun manual reload: distance below the HMD for the chest ammo zone center" );
 ConVar tfvr_shotgun_manual_reload_chest_forward( "tfvr_shotgun_manual_reload_chest_forward", "5.0", FCVAR_ARCHIVE, "VR shotgun manual reload: distance in front of the HMD for the chest ammo zone center" );
 ConVar tfvr_shotgun_manual_reload_insert_radius( "tfvr_shotgun_manual_reload_insert_radius", "5.0", FCVAR_ARCHIVE, "VR shotgun manual reload: off-hand distance to authored reload pose required to insert a shell" );
+ConVar tfvr_huntsman_nock_radius( "tfvr_huntsman_nock_radius", "9.0", FCVAR_ARCHIVE, "VR Huntsman: off-hand arrow distance to authored nock pose required to nock an arrow" );
+ConVar tfvr_huntsman_draw_min( "tfvr_huntsman_draw_min", "10.0", FCVAR_ARCHIVE, "VR Huntsman: hand separation (units) that maps to zero draw" );
+ConVar tfvr_huntsman_draw_max( "tfvr_huntsman_draw_max", "28.0", FCVAR_ARCHIVE, "VR Huntsman: hand separation (units) that maps to a full draw" );
 ConVar tfvr_medigun_lever_grip_threshold( "tfvr_medigun_lever_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR medigun lever: right grip analog must reach this (0-1) to arm the lever" );
 ConVar tfvr_sticky_pump_weapon_grip_threshold( "tfvr_sticky_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR sticky pump: weapon-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_sticky_pump_twohand_min_blend( "tfvr_sticky_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR sticky pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -1457,6 +1462,159 @@ static void TFVR_UpdateRocketManualReloadInCmd( CUserCmd *cmd )
 	}
 }
 
+static void TFVR_UpdateBowManualReloadInCmd( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	if ( !tfvr_huntsman_manual_reload.GetBool() )
+		return;
+
+	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pLocal || !pRight || !pLeft )
+		return;
+
+	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
+	if ( !pWpn || pWpn->GetWeaponID() != TF_WEAPON_COMPOUND_BOW )
+		return;
+
+	CTFCompoundBow *pBow = static_cast< CTFCompoundBow * >( pWpn );
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+	else
+	{
+		const bool bWeaponOnLeft = TFVR_DisplayWeaponOnLeft( pWpn );
+		pWeaponHand = bWeaponOnLeft ? pLeft : pRight;
+		pOffHand = bWeaponOnLeft ? pRight : pLeft;
+		pWpn->SetHeldByVRHand( true );
+	}
+
+	if ( !pWeaponHand || !pOffHand )
+		return;
+
+	cmd->vrWeaponHandIsRight = ( pWeaponHand == pRight );
+
+	const float flGrip = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "right_grip" )
+		: g_pOpenXRManager->GetAnalogValue( "left_grip" );
+	const float flOffhandTrigger = ( pOffHand == pRight )
+		? g_pOpenXRManager->GetAnalogValue( "primary_attack" )
+		: g_pOpenXRManager->GetAnalogValue( "secondary_attack" );
+	const bool bGripHeld = flGrip >= tfvr_shotgun_manual_reload_grip_threshold.GetFloat();
+	const bool bTriggerHeld = flOffhandTrigger >= 0.5f;
+	const bool bHoldInput = bGripHeld || bTriggerHeld;
+
+	cmd->vrBowArrowGripHold = bGripHeld;
+	cmd->vrBowArrowTriggerHold = bTriggerHeld;
+
+	if ( !pBow->HasVRBowArrowInHand() && !pBow->IsVRBowArrowNocking() && !pBow->IsVRBowArrowNocked()
+		&& bHoldInput )
+	{
+		Vector hmdOrigin;
+		QAngle hmdAngles;
+		g_pOpenXRManager->GetHMDInChaperone( hmdOrigin, hmdAngles );
+
+		Vector hmdForward, hmdRight, hmdUp;
+		AngleVectors( hmdAngles, &hmdForward, &hmdRight, &hmdUp );
+
+		hmdForward.z = 0.0f;
+		hmdRight.z = 0.0f;
+		if ( hmdForward.IsZero() )
+			hmdForward.Init( 1.0f, 0.0f, 0.0f );
+		if ( hmdRight.IsZero() )
+			hmdRight.Init( 0.0f, -1.0f, 0.0f );
+		VectorNormalize( hmdForward );
+		VectorNormalize( hmdRight );
+
+		VMatrix offhandPose;
+		bool bGotOffhandPose = ( pOffHand == pRight )
+			? g_pOpenXRManager->GetRightControllerPoseRaw( offhandPose )
+			: g_pOpenXRManager->GetLeftControllerPoseRaw( offhandPose );
+
+		if ( bGotOffhandPose )
+		{
+			Vector offhandPos = offhandPose.GetTranslation();
+			Vector relToHead = offhandPos - hmdOrigin;
+			float flBehind = DotProduct( relToHead, -hmdForward );
+			float flLateral = fabsf( DotProduct( relToHead, hmdRight ) );
+
+			bool bInBackpack = flBehind >= tfvr_shotgun_manual_reload_back_start.GetFloat()
+				&& flBehind <= tfvr_shotgun_manual_reload_back_depth.GetFloat()
+				&& flLateral <= tfvr_shotgun_manual_reload_back_width.GetFloat()
+				&& offhandPos.z <= hmdOrigin.z + tfvr_shotgun_manual_reload_back_top.GetFloat()
+				&& offhandPos.z >= -4.0f;
+
+			if ( bInBackpack )
+				cmd->vrBowArrowPull = true;
+		}
+	}
+
+	if ( pBow->HasVRBowArrowInHand() && !pBow->IsVRBowArrowNocking() && !pBow->IsVRBowArrowNocked() )
+	{
+		Vector arrowProbePos;
+		Vector nockTargetPos;
+		// Probe = the held arrow's nock (weapon_bone_4) on the arrow/off hand.
+		bool bGotProbe = pOffHand->GetBowArrowPosition( arrowProbePos );
+		// Target = the bow's string nock (weapon_bone_3) sampled at the resting
+		// fire pose (bw_fire frame 10) on the weapon hand, not its fully-pulled
+		// live position. The off hand brings its held arrow to this point to nock.
+		bool bGotTarget = pWeaponHand->GetBowNockDetectionPoint( nockTargetPos );
+
+		if ( bGotProbe && bGotTarget )
+		{
+			float flDist = ( arrowProbePos - nockTargetPos ).Length();
+			float flRadius = tfvr_huntsman_nock_radius.GetFloat();
+			if ( tfvr_shotgun_pump_debug.GetBool() && debugoverlay )
+			{
+				debugoverlay->AddBoxOverlay( arrowProbePos, Vector( -1.5f, -1.5f, -1.5f ), Vector( 1.5f, 1.5f, 1.5f ), vec3_angle, 0, 255, 0, 160, 0.05f );
+				debugoverlay->AddBoxOverlay( nockTargetPos, Vector( -flRadius, -flRadius, -flRadius ), Vector( flRadius, flRadius, flRadius ), vec3_angle, 255, 128, 0, 80, 0.05f );
+				debugoverlay->AddLineOverlay( arrowProbePos, nockTargetPos, 255, 255, 0, false, 0.05f );
+			}
+
+			if ( flDist <= flRadius && bHoldInput )
+			{
+				cmd->vrBowArrowNock = true;
+				cmd->vrBowArrowNockIsTrigger = bTriggerHeld;
+			}
+		}
+	}
+
+	// Once nocked, report the physical draw amount (0..1) from the separation
+	// between the bow hand and the draw hand. The server clamps the actual
+	// charge to min(this pull, time-allowed), so the string follows the hand
+	// but the pull rate is throttled by the bow's charge time.
+	if ( pBow->IsVRBowArrowNocked() )
+	{
+		VMatrix weaponPoseRaw, offhandPoseRaw;
+		bool bGotWeaponPose = ( pWeaponHand == pRight )
+			? g_pOpenXRManager->GetRightControllerPoseRaw( weaponPoseRaw )
+			: g_pOpenXRManager->GetLeftControllerPoseRaw( weaponPoseRaw );
+		bool bGotOffPose = ( pOffHand == pRight )
+			? g_pOpenXRManager->GetRightControllerPoseRaw( offhandPoseRaw )
+			: g_pOpenXRManager->GetLeftControllerPoseRaw( offhandPoseRaw );
+		if ( bGotWeaponPose && bGotOffPose )
+		{
+			float flDraw = ( offhandPoseRaw.GetTranslation() - weaponPoseRaw.GetTranslation() ).Length();
+			float flMin = tfvr_huntsman_draw_min.GetFloat();
+			float flMax = tfvr_huntsman_draw_max.GetFloat();
+			cmd->vrBowArrowPull01 = clamp( ( flDraw - flMin ) / MAX( flMax - flMin, 0.01f ), 0.0f, 1.0f );
+		}
+	}
+}
+
 static void TFVR_UpdateMedigunLeverArmedInCmd( CUserCmd *cmd )
 {
 	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
@@ -1738,6 +1896,11 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 		cmd->vrRocketPull = false;
 		cmd->vrRocketInsert = false;
 		cmd->vrRocketHold = false;
+		cmd->vrBowArrowPull = false;
+		cmd->vrBowArrowNock = false;
+		cmd->vrBowArrowGripHold = false;
+		cmd->vrBowArrowTriggerHold = false;
+		cmd->vrBowArrowNockIsTrigger = false;
 		cmd->vrWeaponArmed = false;
 
 		// Default the weapon-hand bit from handedness + per-weapon flip so plain
@@ -1765,6 +1928,7 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	TFVR_UpdateShotgunManualReloadInCmd( cmd );
 	TFVR_UpdatePistolMagazineInCmd( cmd );
 	TFVR_UpdateRocketManualReloadInCmd( cmd );
+	TFVR_UpdateBowManualReloadInCmd( cmd );
 	TFVR_UpdateMedigunLeverArmedInCmd( cmd );
 	TFVR_UpdateStickyPumpArmedInCmd( cmd );
 	TFVR_UpdateBisonPumpArmedInCmd( cmd );
