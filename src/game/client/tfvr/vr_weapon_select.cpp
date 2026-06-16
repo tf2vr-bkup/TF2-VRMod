@@ -25,6 +25,7 @@
 #include "materialsystem/imaterialsystem.h"
 #include "client_virtualreality.h"
 #include "ienginevgui.h"
+#include "iinput.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -719,6 +720,23 @@ int CVRWeaponSelectManager::GetNumQuadrantsForClass(int classIndex)
 	}
 }
 
+static bool SelectWeaponFromVRSlot(CVRWeaponSelectPanel *pPanel, int selectedSlot)
+{
+	if (!pPanel || selectedSlot < 0)
+		return false;
+
+	C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+	if (!pPlayer || !pPlayer->IsAlive() || !pPlayer->IsAllowedToSwitchWeapons())
+		return false;
+
+	C_TFWeaponBase *pWeapon = pPanel->GetWeaponInSlot(selectedSlot);
+	if (!pWeapon || !pWeapon->VisibleInWeaponSelection() || !pWeapon->CanBeSelected())
+		return false;
+
+	::input->MakeWeaponSelection(pWeapon);
+	return true;
+}
+
 void CVRWeaponSelectManager::OpenMenu()
 {
 	if (!m_bInitialized || !tfvr_weapon_select_enabled.GetBool())
@@ -865,12 +883,8 @@ void CVRWeaponSelectManager::CloseMenu()
 	if (!tfvr_weapon_select_instant.GetBool() && m_pPanel)
 	{
 		int selectedSlot = m_pPanel->GetSelectedSlot();
-		if (selectedSlot >= 0)
+		if (SelectWeaponFromVRSlot(m_pPanel, selectedSlot))
 		{
-			char cmd[32];
-			Q_snprintf(cmd, sizeof(cmd), "slot%d", selectedSlot + 1);
-			engine->ClientCmd(cmd);
-
 			// Play weapon selected sound
 			if (pPlayer)
 			{
@@ -984,13 +998,8 @@ void CVRWeaponSelectManager::HandleWeaponSelection()
 	{
 		C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
 
-		if (selectedSlot >= 0)
+		if (SelectWeaponFromVRSlot(m_pPanel, selectedSlot))
 		{
-			// Switch to selected weapon slot
-			char cmd[32];
-			Q_snprintf(cmd, sizeof(cmd), "slot%d", selectedSlot + 1);
-			engine->ClientCmd(cmd);
-
 			// Play weapon selection sound only when hovering onto a slot
 			if (pPlayer)
 			{

@@ -69,6 +69,7 @@
 #include "tfvr/vr_spectator_camera.h"
 #include "tfvr/vr_collision_warning.h"
 #include "tfvr/vr_hand_render.h"
+#include "tfvr/vr_hud_visibility.h"
 
 #ifdef TF_CLIENT_DLL
 #include "tf/c_tf_player.h"
@@ -2872,47 +2873,52 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 			// NOTE: Controller models, Status HUD, and Weapon HUD are rendered
 			// after stencil is disabled so they aren't masked by the hands.
 
-			// Render VR Spring HUD (head-relative: kill feed)
-				if (g_pVRSpringHUDManager)
-				{
-					g_pVRSpringHUDManager->Render();
-				}
+				const bool bHideVRHudElements = TFVR_ShouldHideHudElements();
 
-				// Render VR Damage Indicator (head-relative: damage direction)
-				if (g_pVRDamageIndicatorManager)
+				if (!bHideVRHudElements)
 				{
-					g_pVRDamageIndicatorManager->Render();
-				}
+					// Render VR Spring HUD (head-relative: kill feed)
+					if (g_pVRSpringHUDManager)
+					{
+						g_pVRSpringHUDManager->Render();
+					}
 
-				// Render VR Popup HUD (head-relative: win/loss panels, scoreboard)
-				if (g_pVRPopupHUDManager)
-				{
-					g_pVRPopupHUDManager->Render();
-				}
+					// Render VR Damage Indicator (head-relative: damage direction)
+					if (g_pVRDamageIndicatorManager)
+					{
+						g_pVRDamageIndicatorManager->Render();
+					}
 
-				// Render VR Collision Warning (head-relative: desync/collision warning text)
-				if (g_pVRCollisionWarningManager)
-				{
-					g_pVRCollisionWarningManager->Render();
-				}
+					// Render VR Popup HUD (head-relative: win/loss panels, scoreboard)
+					if (g_pVRPopupHUDManager)
+					{
+						g_pVRPopupHUDManager->Render();
+					}
 
-				// Render VR Spectator Extras (world-space player names and health bars)
-				// Rendered before World Health Icons so targetID appears on top
-				if (g_pVRSpectatorExtrasManager)
-				{
-					g_pVRSpectatorExtrasManager->Render();
-				}
+					// Render VR Collision Warning (head-relative: desync/collision warning text)
+					if (g_pVRCollisionWarningManager)
+					{
+						g_pVRCollisionWarningManager->Render();
+					}
 
-				// Render VR World Health Icons (world-space health above players, includes targetID)
-				if (g_pVRWorldHealthIconManager)
-				{
-					g_pVRWorldHealthIconManager->Render();
-				}
+					// Render VR Spectator Extras (world-space player names and health bars)
+					// Rendered before World Health Icons so targetID appears on top
+					if (g_pVRSpectatorExtrasManager)
+					{
+						g_pVRSpectatorExtrasManager->Render();
+					}
 
-				// Render VR Damage Numbers (world-space floating damage/healing numbers)
-				if (g_pVRDamageNumberManager)
-				{
-					g_pVRDamageNumberManager->Render();
+					// Render VR World Health Icons (world-space health above players, includes targetID)
+					if (g_pVRWorldHealthIconManager)
+					{
+						g_pVRWorldHealthIconManager->Render();
+					}
+
+					// Render VR Damage Numbers (world-space floating damage/healing numbers)
+					if (g_pVRDamageNumberManager)
+					{
+						g_pVRDamageNumberManager->Render();
+					}
 				}
 
 				// Render VR Weapon Select Menu (radial weapon selection)
@@ -2941,13 +2947,16 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 			{
 				g_pVRControllerModelManager->Render();
 			}
-			if (g_pVRStatusHUDManager)
+			if (!bHideVRHudElements)
 			{
-				g_pVRStatusHUDManager->Render();
-			}
-			if (g_pVRWeaponHUDManager)
-			{
-				g_pVRWeaponHUDManager->Render();
+				if (g_pVRStatusHUDManager)
+				{
+					g_pVRStatusHUDManager->Render();
+				}
+				if (g_pVRWeaponHUDManager)
+				{
+					g_pVRWeaponHUDManager->Render();
+				}
 			}
 			if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
 			{
