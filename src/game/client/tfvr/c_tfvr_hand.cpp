@@ -197,10 +197,9 @@ static bool TFVR_MoveBoneAndChildrenToWorld(C_BaseAnimating *pAnimating, CStudio
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: "Hide" a bone (and its children) by tucking it well behind and below
-//          the local player's head, out of view. Scaling the bone to zero
-//          (TFVR_HideBoneByName) leaves a visible sliver/point for some meshes,
-//          so for the bow arrow we move it off-screen instead.
+// Purpose: "Hide" a bone (and its children) by moving it far outside the
+//          player's view, then collapsing it there. Scaling at the original
+//          location leaves a visible sliver/point for some meshes.
 //-----------------------------------------------------------------------------
 static void TFVR_MoveBoneBehindHead(C_BaseAnimating *pAnimating, CStudioHdr *pStudioHdr, matrix3x4_t *pBones, int nMaxBones, const char *pszBoneName)
 {
@@ -217,14 +216,50 @@ static void TFVR_MoveBoneBehindHead(C_BaseAnimating *pAnimating, CStudioHdr *pSt
 	Vector vEye = pLocal->EyePosition();
 	Vector vForward, vUp;
 	AngleVectors(pLocal->EyeAngles(), &vForward, NULL, &vUp);
-	Vector vBehind = vEye - vForward * 48.0f - vUp * 24.0f;
+	Vector vBehind = vEye - vForward * 512.0f - vUp * 8192.0f;
 
 	matrix3x4_t target;
 	SetIdentityMatrix(target);
 	MatrixSetColumn(vBehind, 3, target);
 
 	if (!TFVR_MoveBoneAndChildrenToWorld(pAnimating, pStudioHdr, pBones, nMaxBones, pszBoneName, target))
+	{
 		TFVR_HideBoneByName(pAnimating, pStudioHdr, pBones, nMaxBones, pszBoneName);
+		return;
+	}
+
+	const int iRootBone = pAnimating->LookupBone(pszBoneName);
+	const int nBoneCount = MIN(MIN(pStudioHdr->numbones(), nMaxBones), MAXSTUDIOBONES);
+	if (iRootBone < 0 || iRootBone >= nBoneCount)
+		return;
+
+	bool bHideBone[MAXSTUDIOBONES];
+	memset(bHideBone, 0, sizeof(bHideBone));
+	bHideBone[iRootBone] = true;
+
+	for (int i = iRootBone + 1; i < nBoneCount; ++i)
+	{
+		const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+		if (pBone && pBone->parent >= 0 && pBone->parent < nBoneCount && bHideBone[pBone->parent])
+			bHideBone[i] = true;
+	}
+
+	for (int i = iRootBone; i < nBoneCount; ++i)
+	{
+		if (!bHideBone[i])
+			continue;
+
+		pBones[i][0][0] = 0.0f;
+		pBones[i][0][1] = 0.0f;
+		pBones[i][0][2] = 0.0f;
+		pBones[i][1][0] = 0.0f;
+		pBones[i][1][1] = 0.0f;
+		pBones[i][1][2] = 0.0f;
+		pBones[i][2][0] = 0.0f;
+		pBones[i][2][1] = 0.0f;
+		pBones[i][2][2] = 0.0f;
+		MatrixSetColumn(vBehind, 3, pBones[i]);
+	}
 }
 
 static bool TFVR_CalculateModelRocketBoneInverse(C_BaseAnimating *pRocket, matrix3x4_t &outInverse)
@@ -553,6 +588,7 @@ public:
 		}
 
 		bool bLooseBowArrowTargetValid = false;
+		bool bHideBowArrow = false;
 		matrix3x4_t matLooseBowArrowTarget;
 		SetIdentityMatrix(matLooseBowArrowTarget);
 
@@ -589,10 +625,8 @@ public:
 			const bool bShowArrow = bLooseBowArrowTargetValid
 				|| pBow->IsVRBowArrowNocking()
 				|| pBow->IsVRBowArrowNocked()
-				|| pBow->GetCurrentCharge() > 0.0f
-				|| m_bPlayingFireAnim;
-			if (!bShowArrow)
-				TFVR_MoveBoneBehindHead(this, pHdr, pBoneToWorldOut, nMaxBones, "weapon_bone_4");
+				|| pBow->GetCurrentCharge() > 0.0f;
+			bHideBowArrow = !bShowArrow;
 		}
 
 		// Left-handed mode: mirror the weapon mesh across the same controller
@@ -643,6 +677,9 @@ public:
 					TFVR_MoveBoneAndChildrenToWorld(this, pHdr, pBoneToWorldOut, nMaxBones, "weapon_bone_4", handBones[iHandArrow]);
 			}
 		}
+
+		if (bHideBowArrow)
+			TFVR_MoveBoneBehindHead(this, pHdr, pBoneToWorldOut, nMaxBones, "weapon_bone_4");
 
 		return bResult;
 	}
@@ -8167,6 +8204,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		}
 
 		CTFCompoundBow *pBowForArrow = NULL;
+		bool bHideBowArrowOnThisHand = false;
 		const bool bThisHandHoldsBow = m_hHeldWeapon.Get()
 			&& m_hHeldWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
 		if (bThisHandHoldsBow)
@@ -8188,15 +8226,13 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			const bool bShowArrowOnWeaponHand = bThisHandHoldsBow
 				&& (pBowForArrow->IsVRBowArrowNocking()
 					|| pBowForArrow->IsVRBowArrowNocked()
-					|| pBowForArrow->GetCurrentCharge() > 0.0f
-					|| m_bPlayingFireAnim);
+					|| pBowForArrow->GetCurrentCharge() > 0.0f);
 			const bool bShowArrowOnSupportHand = !bThisHandHoldsBow
 				&& (pBowForArrow->HasVRBowArrowInHand()
 					|| pBowForArrow->IsVRBowArrowNocking()
 					|| pBowForArrow->IsVRBowArrowNocked());
 
-			if (!bShowArrowOnWeaponHand && !bShowArrowOnSupportHand)
-				TFVR_MoveBoneBehindHead(this, pStudioHdr, pBoneToWorldOut, nMaxBones, "weapon_bone_4");
+			bHideBowArrowOnThisHand = !bShowArrowOnWeaponHand && !bShowArrowOnSupportHand;
 		}
 
 		// Left-handed mode single mirror: when the physical hand differs from
@@ -8220,6 +8256,9 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			AngleMatrix(m_angLastValidAngles, vecReflectOrigin, m_matReflectFrame);
 			TFVR_ReflectBonesInControllerFrame(pBoneToWorldOut, MIN(nMaxBones, pStudioHdr->numbones()), m_matReflectFrame);
 		}
+
+		if (bHideBowArrowOnThisHand)
+			TFVR_MoveBoneBehindHead(this, pStudioHdr, pBoneToWorldOut, nMaxBones, "weapon_bone_4");
 	}
 
 	return true;
