@@ -61,6 +61,7 @@ static bool TFVR_ValidateHandRenderable(C_BaseAnimating *pRenderable, const char
 // lateral axis). Defined below; forward-declared so the render weapon class
 // (defined before the definition) can use it.
 static void TFVR_ReflectBonesInControllerFrame(matrix3x4_t *pBones, int nBoneCount, const matrix3x4_t &controllerFrame);
+static void SafeQuaternionSlerp(const Quaternion &from, const Quaternion &to, float t, Quaternion &result);
 
 static bool TFVR_IsManualRocketLauncherWeaponID(int iWeaponID)
 {
@@ -259,6 +260,119 @@ static void TFVR_MoveBoneBehindHead(C_BaseAnimating *pAnimating, CStudioHdr *pSt
 		pBones[i][2][1] = 0.0f;
 		pBones[i][2][2] = 0.0f;
 		MatrixSetColumn(vBehind, 3, pBones[i]);
+	}
+}
+
+static float TFVR_GetBowNockVisualProgress( CTFCompoundBow *pBow )
+{
+	if ( !pBow )
+		return 0.0f;
+
+	return SimpleSpline( clamp( pBow->GetVRBowArrowNockProgress(), 0.0f, 1.0f ) );
+}
+
+static void TFVR_BuildModelSpacePose( CStudioHdr *pStudioHdr, int numBones, Vector *pos, Quaternion *q, matrix3x4_t *modelSpace )
+{
+	if ( !pStudioHdr || !pos || !q || !modelSpace )
+		return;
+
+	const int nBoneCount = MIN( MIN( numBones, pStudioHdr->numbones() ), MAXSTUDIOBONES );
+	for ( int i = 0; i < nBoneCount; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( q[i], pos[i], local );
+
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( modelSpace[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, modelSpace[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < nBoneCount )
+			ConcatTransforms( modelSpace[pBone->parent], local, modelSpace[i] );
+		else
+			SetIdentityMatrix( modelSpace[i] );
+	}
+}
+
+static void TFVR_BlendPoseBonesRelativeToReference(
+	CStudioHdr *pStudioHdr,
+	int numBones,
+	Vector *fromPos,
+	Quaternion *fromQ,
+	Vector *toPos,
+	Quaternion *toQ,
+	float flBlend,
+	int iReferenceBone,
+	const int *pTargetBones,
+	int nTargetBones,
+	Vector *outPos,
+	Quaternion *outQ )
+{
+	if ( !pStudioHdr || !fromPos || !fromQ || !toPos || !toQ || !pTargetBones || !outPos || !outQ )
+		return;
+
+	const int nBoneCount = MIN( MIN( numBones, pStudioHdr->numbones() ), MAXSTUDIOBONES );
+	if ( iReferenceBone < 0 || iReferenceBone >= nBoneCount )
+		return;
+
+	matrix3x4_t fromModel[MAXSTUDIOBONES];
+	matrix3x4_t toModel[MAXSTUDIOBONES];
+	matrix3x4_t outModel[MAXSTUDIOBONES];
+	TFVR_BuildModelSpacePose( pStudioHdr, nBoneCount, fromPos, fromQ, fromModel );
+	TFVR_BuildModelSpacePose( pStudioHdr, nBoneCount, toPos, toQ, toModel );
+	TFVR_BuildModelSpacePose( pStudioHdr, nBoneCount, outPos, outQ, outModel );
+
+	matrix3x4_t invFromReference;
+	matrix3x4_t invToReference;
+	MatrixInvert( fromModel[iReferenceBone], invFromReference );
+	MatrixInvert( toModel[iReferenceBone], invToReference );
+
+	const float w = clamp( flBlend, 0.0f, 1.0f );
+	for ( int n = 0; n < nTargetBones; n++ )
+	{
+		const int iTargetBone = pTargetBones[n];
+		if ( iTargetBone < 0 || iTargetBone >= nBoneCount || iTargetBone == iReferenceBone )
+			continue;
+
+		matrix3x4_t fromRelative;
+		matrix3x4_t toRelative;
+		ConcatTransforms( invFromReference, fromModel[iTargetBone], fromRelative );
+		ConcatTransforms( invToReference, toModel[iTargetBone], toRelative );
+
+		Vector fromRelPos, toRelPos, blendedRelPos;
+		Quaternion fromRelQ, toRelQ, blendedRelQ;
+		MatrixAngles( fromRelative, fromRelQ, fromRelPos );
+		MatrixAngles( toRelative, toRelQ, toRelPos );
+		VectorLerp( fromRelPos, toRelPos, w, blendedRelPos );
+		SafeQuaternionSlerp( fromRelQ, toRelQ, w, blendedRelQ );
+
+		matrix3x4_t blendedRelative;
+		matrix3x4_t targetModel;
+		QuaternionMatrix( blendedRelQ, blendedRelPos, blendedRelative );
+		ConcatTransforms( outModel[iReferenceBone], blendedRelative, targetModel );
+
+		const mstudiobone_t *pTargetBone = pStudioHdr->pBone( iTargetBone );
+		if ( !pTargetBone )
+			continue;
+
+		matrix3x4_t targetLocal;
+		if ( pTargetBone->parent >= 0 && pTargetBone->parent < nBoneCount )
+		{
+			matrix3x4_t invParent;
+			MatrixInvert( outModel[pTargetBone->parent], invParent );
+			ConcatTransforms( invParent, targetModel, targetLocal );
+		}
+		else
+		{
+			MatrixCopy( targetModel, targetLocal );
+		}
+
+		MatrixAngles( targetLocal, outQ[iTargetBone], outPos[iTargetBone] );
+		MatrixCopy( targetModel, outModel[iTargetBone] );
 	}
 }
 
@@ -591,15 +705,15 @@ public:
 		bool bHideBowArrow = false;
 		matrix3x4_t matLooseBowArrowTarget;
 		SetIdentityMatrix(matLooseBowArrowTarget);
+		const bool bBowFireStartPoseActive = pOwningHand && pOwningHand->IsBowFireStartPoseActive();
 
 		if (bResult && pBoneToWorldOut && pHdr && m_hSourceWeapon.Get()
 			&& m_hSourceWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 		{
 			CTFCompoundBow *pBow = static_cast<CTFCompoundBow *>(m_hSourceWeapon.Get());
-			const bool bLooseArrowInHand = pBow->HasVRBowArrowInHand()
-				&& !pBow->IsVRBowArrowNocking()
+			const bool bArrowFollowsSupportHand = (pBow->HasVRBowArrowInHand() || pBow->IsVRBowArrowNocking())
 				&& !pBow->IsVRBowArrowNocked();
-			if (bLooseArrowInHand)
+			if (bArrowFollowsSupportHand)
 			{
 				C_TFVRHand *pArrowHand = TFVR_GetSupportHand(m_hSourceWeapon.Get());
 				if (pArrowHand)
@@ -625,7 +739,8 @@ public:
 			const bool bShowArrow = bLooseBowArrowTargetValid
 				|| pBow->IsVRBowArrowNocking()
 				|| pBow->IsVRBowArrowNocked()
-				|| pBow->GetCurrentCharge() > 0.0f;
+				|| pBow->GetCurrentCharge() > 0.0f
+				|| bBowFireStartPoseActive;
 			bHideBowArrow = !bShowArrow;
 		}
 
@@ -646,9 +761,8 @@ public:
 		if (bLooseBowArrowTargetValid)
 			TFVR_MoveBoneAndChildrenToWorld(this, pHdr, pBoneToWorldOut, nMaxBones, "weapon_bone_4", matLooseBowArrowTarget);
 
-		// Drive the bow's limb/string bones from the hand. The hand model
-		// animates weapon_bone_1 and weapon_bone_2 during bw_charge (the bow
-		// limbs flexing / string drawing back), but the render weapon's own
+		// Drive the bow's body/limb/string bones from the hand. The hand model
+		// animates these during bw_charge/shake, but the render weapon's own
 		// idle sequence does not, so copy the hand's animated bones onto the
 		// render weapon. Done after the mirror so the hand's already-final
 		// (visible) bones map straight across, like the loose arrow above.
@@ -656,21 +770,38 @@ public:
 			&& m_hSourceWeapon.Get()
 			&& m_hSourceWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 		{
-			const char *limbBones[] = { "weapon_bone_1", "weapon_bone_2" };
-			for (int n = 0; n < ARRAYSIZE(limbBones); n++)
+			const char *shakeCopyBones[] = { "weapon_bone", "vm_weapon_bone" };
+			const char *alwaysCopyBones[] = { "weapon_bone_1", "weapon_bone_2", "weapon_bone_3" };
+
+			const bool bCopyShakeRoot = pOwningHand->IsBowShakeOverlayActive() || bBowFireStartPoseActive;
+			const int nShakeCopyCount = bCopyShakeRoot ? ARRAYSIZE(shakeCopyBones) : 0;
+			const int nAlwaysCopyCount = ARRAYSIZE(alwaysCopyBones);
+			for (int n = 0; n < nShakeCopyCount + nAlwaysCopyCount; n++)
 			{
-				int iHandLimb = pOwningHand->LookupBone(limbBones[n]);
+				// Copy the animated root first, then exact child bones. Moving a
+				// root after children would preserve old child-relative offsets and
+				// erase shake from the limbs/string.
+				const char *pszBoneName = n < nShakeCopyCount
+					? shakeCopyBones[n]
+					: alwaysCopyBones[n - nShakeCopyCount];
+
+				int iHandLimb = pOwningHand->LookupBone(pszBoneName);
+				if (iHandLimb < 0 && V_stricmp(pszBoneName, "weapon_bone") == 0)
+					iHandLimb = pOwningHand->LookupBone("vm_weapon_bone");
+				else if (iHandLimb < 0 && V_stricmp(pszBoneName, "vm_weapon_bone") == 0)
+					iHandLimb = pOwningHand->LookupBone("weapon_bone");
+
 				if (iHandLimb >= 0 && iHandLimb < MAXSTUDIOBONES)
-					TFVR_MoveBoneAndChildrenToWorld(this, pHdr, pBoneToWorldOut, nMaxBones, limbBones[n], handBones[iHandLimb]);
+					TFVR_MoveBoneAndChildrenToWorld(this, pHdr, pBoneToWorldOut, nMaxBones, pszBoneName, handBones[iHandLimb]);
 			}
 
-			// Once nocked/nocking, also drive the arrow (weapon_bone_4) from the
-			// hand's blended nock/pull pose so it follows the drawstring instead of
-			// staying at the render weapon's idle sequence. (The loose-arrow case
-			// above already handles weapon_bone_4 before it is nocked.)
+			// Once fully nocked, drive the arrow (weapon_bone_4) from the weapon
+			// hand's blended nock/pull pose so it follows the drawstring instead
+			// of staying at the render weapon's idle sequence. While nocking, the
+			// arrow follows the support hand above so it stays visually in-hand.
 			CTFCompoundBow *pSourceBow = static_cast<CTFCompoundBow *>(m_hSourceWeapon.Get());
 			if (!bLooseBowArrowTargetValid
-				&& (pSourceBow->IsVRBowArrowNocking() || pSourceBow->IsVRBowArrowNocked()))
+				&& (pSourceBow->IsVRBowArrowNocked() || bBowFireStartPoseActive))
 			{
 				int iHandArrow = pOwningHand->LookupBone("weapon_bone_4");
 				if (iHandArrow >= 0 && iHandArrow < MAXSTUDIOBONES)
@@ -2458,9 +2589,15 @@ C_TFVRHand::C_TFVRHand()
 	m_iBowIdleSequence = -1;
 	m_flBowIdleCycle = 0.0f;
 	m_flBowFireEndCycle = 1.0f;
+	m_flBowFireFirstFrameCycle = 0.0f;
 	m_iBowDrawSequence = -1;
 	m_flBowDrawNockCycle = 0.0f;
 	m_iBowChargeIdleSequence = -1;
+	m_iBowShakeOverlaySequence = -1;
+	m_flBowShakeOverlayStartTime = 0.0f;
+	m_bBowShakeOverlayActive = false;
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
 	m_bPlayingChargeAnim = false;
 	m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
 	m_iFireOnSequence = -1;
@@ -2534,6 +2671,8 @@ C_TFVRHand::C_TFVRHand()
 	m_bWeaponBoneWorldValid = false;
 	SetIdentityMatrix(m_matLiveWeaponBoneWorld);
 	m_bLiveWeaponBoneWorldValid = false;
+	SetIdentityMatrix(m_matLiveBowStringBoneWorld);
+	m_bLiveBowStringBoneWorldValid = false;
 
 	// Cached muzzle position
 	m_vecCachedMuzzlePos = vec3_origin;
@@ -2688,9 +2827,15 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_iBowIdleSequence = -1;
 	m_flBowIdleCycle = 0.0f;
 	m_flBowFireEndCycle = 1.0f;
+	m_flBowFireFirstFrameCycle = 0.0f;
 	m_iBowDrawSequence = -1;
 	m_flBowDrawNockCycle = 0.0f;
 	m_iBowChargeIdleSequence = -1;
+	m_iBowShakeOverlaySequence = -1;
+	m_flBowShakeOverlayStartTime = 0.0f;
+	m_bBowShakeOverlayActive = false;
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
 	m_bPlayingChargeAnim = false;
 	m_eMedigunFireState = MEDIGUN_FIRE_IDLE;
 	m_iFireOnSequence = -1;
@@ -2742,6 +2887,8 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bWeaponBoneWorldValid = false;
 	SetIdentityMatrix(m_matLiveWeaponBoneWorld);
 	m_bLiveWeaponBoneWorldValid = false;
+	SetIdentityMatrix(m_matLiveBowStringBoneWorld);
+	m_bLiveBowStringBoneWorldValid = false;
 	m_vecCachedMuzzlePos = vec3_origin;
 	m_angCachedMuzzleAngles = vec3_angle;
 	m_bCachedMuzzleValid = false;
@@ -3252,6 +3399,8 @@ void C_TFVRHand::ClientThink()
 				SetPlaybackRate(bLiveIdleFire ? 1.0f : 0.0f);
 			}
 			m_bPlayingFireAnim = false;
+			m_bBowFireStartPoseValid = false;
+			m_iBowFireStartPoseBoneCount = 0;
 
 			if (tfvr_weapon_fire_anim_debug.GetBool())
 			{
@@ -3469,6 +3618,8 @@ void C_TFVRHand::Update()
 				SetPlaybackRate(bLiveIdleFire2 ? 1.0f : 0.0f);
 			}
 			m_bPlayingFireAnim = false;
+			m_bBowFireStartPoseValid = false;
+			m_iBowFireStartPoseBoneCount = 0;
 
 			if (tfvr_weapon_fire_anim_debug.GetBool())
 			{
@@ -6015,7 +6166,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				if (pBow->IsVRBowArrowNocking())
 				{
 					seqToSample = m_iShotgunManualReloadSequence;
-					cycleToSample = Lerp(pBow->GetVRBowArrowNockProgress(),
+					cycleToSample = Lerp(TFVR_GetBowNockVisualProgress(pBow),
 						m_flShotgunManualReloadHoldCycle,
 						m_flShotgunManualReloadCommitCycle);
 				}
@@ -6207,30 +6358,33 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		boneSetup.InitPose(posAnim, qAnim);
 		boneSetup.AccumulatePose(posAnim, qAnim, seqToSample, cycleToSample, 1.0f, gpGlobals->curtime, NULL);
 
-		// Bow nock/pull pose. posAnim currently holds the bw_charge pose (scrubbed
-		// by charge when charging, frame 0 at rest). Blend the fully-nocked
-		// bw_draw frame-35 pose in by charge fraction so at charge 0 the bow shows
-		// the authored drawn pose (bow + drawstring + arrow + draw-hand grip) and
-		// eases into bw_charge as the player pulls — this single unified pose drives
-		// the bow, string, arrow and grip together (no separate attachment needed).
-		// Then, during the nock-in transition, ease the resting fire pose into the
-		// nock pose so nothing jumps.
+		// Bow nock/pull pose. Blend the authored bw_draw nock pose into
+		// bw_charge by pull amount so full de-pull returns to the natural nocked
+		// rest while full pull reaches bw_charge. Shake offsets use the same
+		// blended base, avoiding mismatched bow/string drift.
 		{
 			C_TFWeaponBase *pBowSmooth = m_hHeldWeapon.Get();
 			CTFCompoundBow *pBowS = (pBowSmooth && pBowSmooth->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 				? static_cast<CTFCompoundBow *>(pBowSmooth) : NULL;
-			if (pBowS && (pBowS->IsVRBowArrowNocking() || pBowS->IsVRBowArrowNocked()))
+			if (pBowS && !m_bPlayingFireAnim
+				&& (pBowS->IsVRBowArrowNocking() || pBowS->IsVRBowArrowNocked()))
 			{
 				float flChargeFraction = clamp(pBowS->GetCurrentCharge() / MAX(pBowS->GetChargeMaxTime(), 0.01f), 0.0f, 1.0f);
+				const bool bUseFullChargeReference = true;
 				ApplyBowDrawChargeBlend(pStudioHdr, numBones, posAnim, qAnim, flChargeFraction);
+				ApplyBowShakeOverlay(pStudioHdr, numBones, posAnim, qAnim, flChargeFraction, bUseFullChargeReference);
 
 				if (m_iBowIdleSequence >= 0 && pBowS->IsVRBowArrowNocking())
 				{
-					float flNockBlend = clamp(pBowS->GetVRBowArrowNockProgress(), 0.0f, 1.0f);
+					float flNockBlend = TFVR_GetBowNockVisualProgress(pBowS);
+					Vector posNockTarget[MAXSTUDIOBONES];
+					Quaternion qNockTarget[MAXSTUDIOBONES];
 					Vector posBowIdle[MAXSTUDIOBONES];
 					Quaternion qBowIdle[MAXSTUDIOBONES];
 					for (int i = 0; i < MAXSTUDIOBONES; i++)
 					{
+						posNockTarget[i] = posAnim[i];
+						qNockTarget[i] = qAnim[i];
 						posBowIdle[i].Init();
 						qBowIdle[i].Init(0, 0, 0, 1);
 					}
@@ -6238,15 +6392,34 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					boneSetup.AccumulatePose(posBowIdle, qBowIdle, m_iBowIdleSequence, m_flBowIdleCycle, 1.0f, gpGlobals->curtime, NULL);
 					for (int i = 0; i < numBones; i++)
 					{
-						// Keep the arrow (weapon_bone_4) at the nocked pose (frame 35
-						// from the blend above) during the nock-in. In bw_fire frame 10
-						// the arrow is released/low, so easing it from there makes the
-						// nocked arrow start low. The bow body/limbs/string still ease.
-						const mstudiobone_t *pNockBone = pStudioHdr->pBone(i);
-						if (pNockBone && Q_strcmp(pNockBone->pszName(), "weapon_bone_4") == 0)
-							continue;
+						// Ease the arrow with the hand/string. The render weapon copies
+						// weapon_bone_4 from this blended hand pose, so skipping it here
+						// makes the arrow snap to the bow before the hand finishes.
 						VectorLerp(posBowIdle[i], posAnim[i], flNockBlend, posAnim[i]);
 						QuaternionSlerp(qBowIdle[i], qAnim[i], flNockBlend, qAnim[i]);
+					}
+
+					const int iStringBone = LookupBone("weapon_bone_3");
+					if (iStringBone >= 0)
+					{
+						int targetBones[2];
+						int nTargetBones = 0;
+
+						int iHandBone = LookupBone("bip_hand_L");
+						if (iHandBone < 0)
+							iHandBone = LookupBone("ValveBiped.Bip01_L_Hand");
+						if (iHandBone < 0)
+							iHandBone = LookupBone("bip_hand_l");
+						if (iHandBone >= 0)
+							targetBones[nTargetBones++] = iHandBone;
+
+						int iArrowBone = LookupBone("weapon_bone_4");
+						if (iArrowBone >= 0 && iHandBone < 0)
+							targetBones[nTargetBones++] = iArrowBone;
+
+						TFVR_BlendPoseBonesRelativeToReference(pStudioHdr, numBones,
+							posBowIdle, qBowIdle, posNockTarget, qNockTarget, flNockBlend,
+							iStringBone, targetBones, nTargetBones, posAnim, qAnim);
 					}
 				}
 			}
@@ -6300,6 +6473,14 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					QuaternionSlerp(qOld[i], qAnim[i], blend, qAnim[i]);
 				}
 			}
+		}
+
+		if (m_bPlayingFireAnim && m_bBowFireStartPoseValid
+			&& m_iBowIdleSequence >= 0 && seqToSample == m_iBowIdleSequence)
+		{
+			C_TFWeaponBase *pBowFireWeapon = m_hHeldWeapon.Get();
+			if (pBowFireWeapon && pBowFireWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+				ApplyBowFireStartPoseBlend(pStudioHdr, numBones, posAnim, qAnim, cycleToSample);
 		}
 
 		// Flamethrower blend: smoothly lerp between idle and fire poses using
@@ -6623,6 +6804,19 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 		for (int i = 0; i < numBones && i < nMaxBones; i++)
 		{
 			ConcatTransforms(anchorDelta, sampledBones[i], pBoneToWorldOut[i]);
+		}
+
+		{
+			C_TFWeaponBase *pBowShakeWeapon = m_hHeldWeapon.Get();
+			CTFCompoundBow *pBowShake = (pBowShakeWeapon && pBowShakeWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+				? static_cast<CTFCompoundBow *>(pBowShakeWeapon) : NULL;
+			if (pBowShake && !m_bPlayingFireAnim
+				&& (pBowShake->IsVRBowArrowNocking() || pBowShake->IsVRBowArrowNocked()))
+			{
+				const float flBowShakeCharge = clamp(pBowShake->GetCurrentCharge() / MAX(pBowShake->GetChargeMaxTime(), 0.01f), 0.0f, 1.0f);
+				const bool bUseFullChargeReference = true;
+				ApplyBowShakeWorldOverlay(pStudioHdr, pBoneToWorldOut, nMaxBones, anchorDelta, flBowShakeCharge, bUseFullChargeReference);
+			}
 		}
 
 		// Medigun fire: keep rotation from fire animations but pin position.
@@ -7651,7 +7845,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					}
 					else if (pBow)
 					{
-						flProgress = pBow->GetVRBowArrowNockProgress();
+						flProgress = TFVR_GetBowNockVisualProgress(pBow);
 					}
 					else if (pManualPistol)
 					{
@@ -7897,7 +8091,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					}
 					else if (pBow)
 					{
-						flProgress = pBow->GetVRBowArrowNockProgress();
+						flProgress = TFVR_GetBowNockVisualProgress(pBow);
 					}
 					else if (pManualPistol)
 					{
@@ -10039,6 +10233,7 @@ bool C_TFVRHand::GetBowManualReloadTarget( Vector &outPos, QAngle &outAngles, ma
 	int iWeaponBone = LookupBone( "weapon_bone" );
 	if ( iWeaponBone < 0 )
 		iWeaponBone = LookupBone( "vm_weapon_bone" );
+	int iStringBone = LookupBone( "weapon_bone_3" );
 
 	if ( iTargetBone < 0 || iTargetBone >= numBones || iTargetBone >= MAXSTUDIOBONES ||
 		iWeaponBone < 0 || iWeaponBone >= numBones || iWeaponBone >= MAXSTUDIOBONES )
@@ -10052,7 +10247,7 @@ bool C_TFVRHand::GetBowManualReloadTarget( Vector &outPos, QAngle &outAngles, ma
 	float flCycle = m_flShotgunManualReloadCommitCycle;
 	if ( pBow->IsVRBowArrowNocking() )
 	{
-		flCycle = Lerp( pBow->GetVRBowArrowNockProgress(),
+		flCycle = Lerp( TFVR_GetBowNockVisualProgress( pBow ),
 			m_flShotgunManualReloadHoldCycle,
 			m_flShotgunManualReloadCommitCycle );
 	}
@@ -10077,12 +10272,13 @@ bool C_TFVRHand::GetBowManualReloadTarget( Vector &outPos, QAngle &outAngles, ma
 	boneSetup.InitPose( posAnim, qAnim );
 	boneSetup.AccumulatePose( posAnim, qAnim, iSequence, flCycle, 1.0f, gpGlobals->curtime, NULL );
 
-	// Drive the draw-hand grip from the same unified nock/pull pose as the
-	// weapon hand: blend bw_draw frame 35 into the sampled bw_charge pose by
-	// charge fraction, so bip_hand_L lands on the authored grip on the string.
+	// Match the weapon hand's bow pose: bw_draw at no pull, bw_charge at full
+	// pull, with shake offsets layered against the same blended base.
 	{
 		float flBowChargeFraction = clamp( pBow->GetCurrentCharge() / MAX( pBow->GetChargeMaxTime(), 0.01f ), 0.0f, 1.0f );
+		const bool bUseFullChargeReference = true;
 		ApplyBowDrawChargeBlend( pStudioHdr, numBones, posAnim, qAnim, flBowChargeFraction );
+		ApplyBowShakeOverlay( pStudioHdr, numBones, posAnim, qAnim, flBowChargeFraction, bUseFullChargeReference );
 	}
 
 	matrix3x4_t sampledBones[MAXSTUDIOBONES];
@@ -10118,12 +10314,27 @@ bool C_TFVRHand::GetBowManualReloadTarget( Vector &outPos, QAngle &outAngles, ma
 	matrix3x4_t invSampledWeaponBone;
 	MatrixInvert( sampledBones[iWeaponBone], invSampledWeaponBone );
 
-	// Full grip transform: the bip_hand_L bone mapped through the live weapon
-	// bone, so the draw hand sits where the arms grip pose places it on the string.
-	matrix3x4_t offhandRelativeToWeapon;
-	ConcatTransforms( invSampledWeaponBone, sampledBones[iTargetBone], offhandRelativeToWeapon );
 	matrix3x4_t offhandWorld;
-	ConcatTransforms( liveWeaponBone, offhandRelativeToWeapon, offhandWorld );
+	if ( iStringBone >= 0 && iStringBone < numBones && iStringBone < MAXSTUDIOBONES
+		&& m_bLiveBowStringBoneWorldValid )
+	{
+		// Keep the authored draw-hand pose, but express it relative to the
+		// drawstring nock. This prevents small bow-root dips in bw_draw/bw_charge
+		// from dragging the hand away from the string during attach/charge fades.
+		matrix3x4_t invSampledStringBone;
+		MatrixInvert( sampledBones[iStringBone], invSampledStringBone );
+
+		matrix3x4_t offhandRelativeToString;
+		ConcatTransforms( invSampledStringBone, sampledBones[iTargetBone], offhandRelativeToString );
+		ConcatTransforms( m_matLiveBowStringBoneWorld, offhandRelativeToString, offhandWorld );
+	}
+	else
+	{
+		// Fallback for models without weapon_bone_3.
+		matrix3x4_t offhandRelativeToWeapon;
+		ConcatTransforms( invSampledWeaponBone, sampledBones[iTargetBone], offhandRelativeToWeapon );
+		ConcatTransforms( liveWeaponBone, offhandRelativeToWeapon, offhandWorld );
+	}
 
 	if (TFVR_ShouldMirrorWeaponHand(pWeapon))
 	{
@@ -10281,10 +10492,14 @@ void C_TFVRHand::ApplyBowDrawChargeBlend( CStudioHdr *pStudioHdr, int numBones, 
 
 	Vector posDraw[MAXSTUDIOBONES];
 	Quaternion qDraw[MAXSTUDIOBONES];
+	Vector posCharge[MAXSTUDIOBONES];
+	Quaternion qCharge[MAXSTUDIOBONES];
 	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
 	{
 		posDraw[i].Init();
 		qDraw[i].Init( 0, 0, 0, 1 );
+		posCharge[i] = posAnim[i];
+		qCharge[i] = qAnim[i];
 	}
 	boneSetup.InitPose( posDraw, qDraw );
 	boneSetup.AccumulatePose( posDraw, qDraw, m_iBowDrawSequence, m_flBowDrawNockCycle, 1.0f, gpGlobals->curtime, NULL );
@@ -10294,6 +10509,278 @@ void C_TFVRHand::ApplyBowDrawChargeBlend( CStudioHdr *pStudioHdr, int numBones, 
 	{
 		VectorLerp( posDraw[i], posAnim[i], w, posAnim[i] );
 		QuaternionSlerp( qDraw[i], qAnim[i], w, qAnim[i] );
+	}
+
+	const int iStringBone = LookupBone( "weapon_bone_3" );
+	if ( iStringBone >= 0 )
+	{
+		int targetBones[2];
+		int nTargetBones = 0;
+
+		int iHandBone = LookupBone( "bip_hand_L" );
+		if ( iHandBone < 0 )
+			iHandBone = LookupBone( "ValveBiped.Bip01_L_Hand" );
+		if ( iHandBone < 0 )
+			iHandBone = LookupBone( "bip_hand_l" );
+		if ( iHandBone >= 0 )
+			targetBones[nTargetBones++] = iHandBone;
+
+		int iArrowBone = LookupBone( "weapon_bone_4" );
+		if ( iArrowBone >= 0 )
+			targetBones[nTargetBones++] = iArrowBone;
+
+		TFVR_BlendPoseBonesRelativeToReference( pStudioHdr, numBones,
+			posDraw, qDraw, posCharge, qCharge, w,
+			iStringBone, targetBones, nTargetBones, posAnim, qAnim );
+	}
+}
+
+void C_TFVRHand::CaptureBowFireStartPose( CTFCompoundBow *pBow )
+{
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pBow || !pStudioHdr || m_iChargeSequence < 0 || m_iBowIdleSequence < 0 )
+		return;
+
+	const int nBoneCount = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	if ( nBoneCount <= 0 )
+		return;
+
+	const bool bHasBowPose = pBow->IsVRBowArrowNocking()
+		|| pBow->IsVRBowArrowNocked()
+		|| m_bPlayingChargeAnim
+		|| pBow->GetCurrentCharge() > 0.0f;
+	if ( !bHasBowPose )
+		return;
+
+	float flChargeFraction = clamp( pBow->GetCurrentCharge() / MAX( pBow->GetChargeMaxTime(), 0.01f ), 0.0f, 1.0f );
+	if ( m_bPlayingChargeAnim && GetSequence() == m_iChargeSequence )
+		flChargeFraction = MAX( flChargeFraction, clamp( GetCycle(), 0.0f, 1.0f ) );
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posCapture[MAXSTUDIOBONES];
+	Quaternion qCapture[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posCapture[i].Init();
+		qCapture[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posCapture, qCapture );
+	boneSetup.AccumulatePose( posCapture, qCapture, m_iChargeSequence, flChargeFraction, 1.0f, gpGlobals->curtime, NULL );
+
+	const bool bUseFullChargeReference = true;
+	ApplyBowDrawChargeBlend( pStudioHdr, nBoneCount, posCapture, qCapture, flChargeFraction );
+	ApplyBowShakeOverlay( pStudioHdr, nBoneCount, posCapture, qCapture, flChargeFraction, bUseFullChargeReference );
+
+	for ( int i = 0; i < nBoneCount; i++ )
+	{
+		m_vecBowFireStartPose[i] = posCapture[i];
+		m_qBowFireStartPose[i] = qCapture[i];
+	}
+
+	m_iBowFireStartPoseBoneCount = nBoneCount;
+	m_bBowFireStartPoseValid = true;
+}
+
+void C_TFVRHand::ApplyBowFireStartPoseBlend( CStudioHdr *pStudioHdr, int numBones, Vector *posAnim, Quaternion *qAnim, float fireCycle )
+{
+	if ( !pStudioHdr || !posAnim || !qAnim || !m_bBowFireStartPoseValid
+		|| m_iBowFireStartPoseBoneCount <= 0 )
+		return;
+
+	const float flFirstFrameCycle = MAX( m_flBowFireFirstFrameCycle, 0.001f );
+	const float flFrameZeroEpsilon = 0.001f;
+	if ( fireCycle >= flFirstFrameCycle )
+		return;
+
+	const int nBoneCount = MIN( MIN( numBones, pStudioHdr->numbones() ), m_iBowFireStartPoseBoneCount );
+	if ( nBoneCount <= 0 )
+		return;
+
+	if ( fireCycle <= flFrameZeroEpsilon )
+	{
+		for ( int i = 0; i < nBoneCount && i < MAXSTUDIOBONES; i++ )
+		{
+			posAnim[i] = m_vecBowFireStartPose[i];
+			qAnim[i] = m_qBowFireStartPose[i];
+		}
+		return;
+	}
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, m_iBowIdleSequence, flFirstFrameCycle, 1.0f, gpGlobals->curtime, NULL );
+}
+
+void C_TFVRHand::ApplyBowShakeOverlay( CStudioHdr *pStudioHdr, int numBones, Vector *posAnim, Quaternion *qAnim, float chargeFraction, bool bUseFullChargeReference )
+{
+	if ( !pStudioHdr || !posAnim || !qAnim || !m_bBowShakeOverlayActive
+		|| m_iChargeSequence < 0 || m_iBowShakeOverlaySequence < 0 )
+		return;
+
+	const int nBoneCount = MIN( MIN( numBones, pStudioHdr->numbones() ), MAXSTUDIOBONES );
+	if ( nBoneCount <= 0 )
+		return;
+
+	float flOverlayDuration = SequenceDuration( pStudioHdr, m_iBowShakeOverlaySequence );
+	float flOverlayCycle = 0.0f;
+	if ( flOverlayDuration > 0.0f )
+	{
+		float flElapsed = MAX( gpGlobals->curtime - m_flBowShakeOverlayStartTime, 0.0f );
+		flOverlayCycle = (m_iBowShakeOverlaySequence == m_iBowChargeIdleSequence)
+			? fmod( flElapsed / flOverlayDuration, 1.0f )
+			: clamp( flElapsed / flOverlayDuration, 0.0f, 1.0f );
+	}
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posBase[MAXSTUDIOBONES];
+	Quaternion qBase[MAXSTUDIOBONES];
+	Vector posShake[MAXSTUDIOBONES];
+	Quaternion qShake[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posBase[i].Init();
+		qBase[i].Init( 0, 0, 0, 1 );
+		posShake[i].Init();
+		qShake[i].Init( 0, 0, 0, 1 );
+	}
+
+	const float flChargeCycle = clamp( chargeFraction, 0.0f, 1.0f );
+	const float flShakeWeight = SimpleSpline( flChargeCycle );
+	if ( flShakeWeight <= 0.0f )
+		return;
+
+	// bw_shake/bw_idle3 are authored around the fully drawn pose. Use full
+	// bw_charge as the reference so the overlay contains only shake, not
+	// "pull back to full draw" displacement when the player de-pulls.
+	const float flReferenceCycle = bUseFullChargeReference ? 1.0f : flChargeCycle;
+	boneSetup.InitPose( posBase, qBase );
+	boneSetup.AccumulatePose( posBase, qBase, m_iChargeSequence, flReferenceCycle, 1.0f, gpGlobals->curtime, NULL );
+	boneSetup.InitPose( posShake, qShake );
+	boneSetup.AccumulatePose( posShake, qShake, m_iBowShakeOverlaySequence, flOverlayCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	for ( int i = 0; i < nBoneCount; i++ )
+	{
+		matrix3x4_t baseLocal;
+		matrix3x4_t shakeLocal;
+		matrix3x4_t currentLocal;
+		QuaternionMatrix( qBase[i], posBase[i], baseLocal );
+		QuaternionMatrix( qShake[i], posShake[i], shakeLocal );
+		QuaternionMatrix( qAnim[i], posAnim[i], currentLocal );
+
+		matrix3x4_t invBaseLocal;
+		matrix3x4_t shakeDelta;
+		matrix3x4_t weightedShakeDelta;
+		matrix3x4_t resultLocal;
+		MatrixInvert( baseLocal, invBaseLocal );
+		ConcatTransforms( invBaseLocal, shakeLocal, shakeDelta );
+
+		Quaternion deltaQuat;
+		Vector deltaPos;
+		MatrixAngles( shakeDelta, deltaQuat, deltaPos );
+		deltaPos *= flShakeWeight;
+		Quaternion identityQuat;
+		identityQuat.Init( 0, 0, 0, 1 );
+		Quaternion weightedQuat;
+		SafeQuaternionSlerp( identityQuat, deltaQuat, flShakeWeight, weightedQuat );
+		QuaternionMatrix( weightedQuat, deltaPos, weightedShakeDelta );
+
+		ConcatTransforms( currentLocal, weightedShakeDelta, resultLocal );
+		MatrixAngles( resultLocal, qAnim[i], posAnim[i] );
+	}
+}
+
+void C_TFVRHand::ApplyBowShakeWorldOverlay( CStudioHdr *pStudioHdr, matrix3x4_t *pBoneToWorldOut, int nMaxBones, const matrix3x4_t &anchorDelta, float chargeFraction, bool bUseFullChargeReference )
+{
+	if ( !pStudioHdr || !pBoneToWorldOut || !m_bBowShakeOverlayActive
+		|| m_iChargeSequence < 0 || m_iBowShakeOverlaySequence < 0 )
+		return;
+
+	const int nBoneCount = MIN( MIN( nMaxBones, pStudioHdr->numbones() ), MAXSTUDIOBONES );
+	if ( nBoneCount <= 0 )
+		return;
+
+	float flOverlayDuration = SequenceDuration( pStudioHdr, m_iBowShakeOverlaySequence );
+	float flOverlayCycle = 0.0f;
+	if ( flOverlayDuration > 0.0f )
+	{
+		float flElapsed = MAX( gpGlobals->curtime - m_flBowShakeOverlayStartTime, 0.0f );
+		flOverlayCycle = (m_iBowShakeOverlaySequence == m_iBowChargeIdleSequence)
+			? fmod( flElapsed / flOverlayDuration, 1.0f )
+			: clamp( flElapsed / flOverlayDuration, 0.0f, 1.0f );
+	}
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posBase[MAXSTUDIOBONES];
+	Quaternion qBase[MAXSTUDIOBONES];
+	Vector posShake[MAXSTUDIOBONES];
+	Quaternion qShake[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posBase[i].Init();
+		qBase[i].Init( 0, 0, 0, 1 );
+		posShake[i].Init();
+		qShake[i].Init( 0, 0, 0, 1 );
+	}
+
+	const float flChargeCycle = clamp( chargeFraction, 0.0f, 1.0f );
+	const float flShakeWeight = SimpleSpline( flChargeCycle );
+	if ( flShakeWeight <= 0.0f )
+		return;
+
+	// Match the local overlay: measure shake from full draw, then layer that
+	// offset onto the current controller-anchored pull/de-pull pose.
+	const float flReferenceCycle = bUseFullChargeReference ? 1.0f : flChargeCycle;
+	boneSetup.InitPose( posBase, qBase );
+	boneSetup.AccumulatePose( posBase, qBase, m_iChargeSequence, flReferenceCycle, 1.0f, gpGlobals->curtime, NULL );
+	boneSetup.InitPose( posShake, qShake );
+	boneSetup.AccumulatePose( posShake, qShake, m_iBowShakeOverlaySequence, flOverlayCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t baseModel[MAXSTUDIOBONES];
+	matrix3x4_t shakeModel[MAXSTUDIOBONES];
+	TFVR_BuildModelSpacePose( pStudioHdr, nBoneCount, posBase, qBase, baseModel );
+	TFVR_BuildModelSpacePose( pStudioHdr, nBoneCount, posShake, qShake, shakeModel );
+
+	for ( int i = 0; i < nBoneCount; i++ )
+	{
+		matrix3x4_t baseWorld;
+		matrix3x4_t shakeWorld;
+		matrix3x4_t invBaseWorld;
+		matrix3x4_t deltaWorld;
+		matrix3x4_t weightedDeltaWorld;
+		matrix3x4_t resultWorld;
+
+		ConcatTransforms( anchorDelta, baseModel[i], baseWorld );
+		ConcatTransforms( anchorDelta, shakeModel[i], shakeWorld );
+		MatrixInvert( baseWorld, invBaseWorld );
+		ConcatTransforms( shakeWorld, invBaseWorld, deltaWorld );
+
+		Quaternion deltaQuat;
+		Vector deltaPos;
+		MatrixAngles( deltaWorld, deltaQuat, deltaPos );
+		deltaPos *= flShakeWeight;
+		Quaternion identityQuat;
+		identityQuat.Init( 0, 0, 0, 1 );
+		Quaternion weightedQuat;
+		SafeQuaternionSlerp( identityQuat, deltaQuat, flShakeWeight, weightedQuat );
+		QuaternionMatrix( weightedQuat, deltaPos, weightedDeltaWorld );
+
+		ConcatTransforms( weightedDeltaWorld, pBoneToWorldOut[i], resultWorld );
+		MatrixCopy( resultWorld, pBoneToWorldOut[i] );
 	}
 }
 
@@ -10742,6 +11229,8 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 	if (!pBoneToWorldOut)
 		return;
 
+	m_bLiveBowStringBoneWorldValid = false;
+
 	// Always cache the hand's weapon_bone transform for overlays (HUD compositor etc.),
 	// even when there is no render weapon (e.g. bare fists).
 	int handWeaponBone = -1;
@@ -10776,6 +11265,16 @@ void C_TFVRHand::PositionWeaponFromBones(matrix3x4_t *pBoneToWorldOut, int nMaxB
 		// this so the magwell follows the gun as the reload anim moves it.
 		MatrixCopy(pBoneToWorldOut[handAlignBone], m_matLiveWeaponBoneWorld);
 		m_bLiveWeaponBoneWorldValid = true;
+
+		if (m_hHeldWeapon.Get() && m_hHeldWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+		{
+			int iBowStringBone = LookupBone("weapon_bone_3");
+			if (iBowStringBone >= 0 && iBowStringBone < nMaxBones)
+			{
+				MatrixCopy(pBoneToWorldOut[iBowStringBone], m_matLiveBowStringBoneWorld);
+				m_bLiveBowStringBoneWorldValid = true;
+			}
+		}
 	}
 
 	// Pomson right-hand detach: position weapon at left hand instead of right hand
@@ -12771,7 +13270,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		if (pBow->IsVRBowArrowNocking())
 		{
 			sequence = m_iShotgunManualReloadSequence;
-			cycle = Lerp(pBow->GetVRBowArrowNockProgress(),
+			cycle = Lerp(TFVR_GetBowNockVisualProgress(pBow),
 				m_flShotgunManualReloadHoldCycle,
 				m_flShotgunManualReloadCommitCycle);
 			usedName = "bow_draw";
@@ -12875,10 +13374,18 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		C_TFWeaponBase *pPoseWeapon = pWeaponOverride ? pWeaponOverride : m_hHeldWeapon.Get();
 		CTFCompoundBow *pPoseBow = (pPoseWeapon && pPoseWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 			? static_cast<CTFCompoundBow *>(pPoseWeapon) : NULL;
-		if (pPoseBow && (pPoseBow->IsVRBowArrowNocking() || pPoseBow->IsVRBowArrowNocked()))
+		if (pPoseBow && !m_bPlayingFireAnim
+			&& (pPoseBow->IsVRBowArrowNocking() || pPoseBow->IsVRBowArrowNocked()))
 		{
 			float flPoseChargeFraction = clamp(pPoseBow->GetCurrentCharge() / MAX(pPoseBow->GetChargeMaxTime(), 0.01f), 0.0f, 1.0f);
+			const bool bUseFullChargeReference = true;
 			ApplyBowDrawChargeBlend(pStudioHdr, pStudioHdr->numbones(), pos, q, flPoseChargeFraction);
+			ApplyBowShakeOverlay(pStudioHdr, pStudioHdr->numbones(), pos, q, flPoseChargeFraction, bUseFullChargeReference);
+		}
+		else if (pPoseBow && m_bPlayingFireAnim && m_bBowFireStartPoseValid
+			&& m_iBowIdleSequence >= 0 && sequence == m_iBowIdleSequence)
+		{
+			ApplyBowFireStartPoseBlend(pStudioHdr, pStudioHdr->numbones(), pos, q, cycle);
 		}
 	}
 
@@ -14381,9 +14888,15 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		m_iBowIdleSequence = -1;
 		m_flBowIdleCycle = 0.0f;
 		m_flBowFireEndCycle = 1.0f;
+		m_flBowFireFirstFrameCycle = 0.0f;
 		m_iBowDrawSequence = -1;
 		m_flBowDrawNockCycle = 0.0f;
 		m_iBowChargeIdleSequence = -1;
+		m_iBowShakeOverlaySequence = -1;
+		m_flBowShakeOverlayStartTime = 0.0f;
+		m_bBowShakeOverlayActive = false;
+		m_bBowFireStartPoseValid = false;
+		m_iBowFireStartPoseBoneCount = 0;
 		m_bPlayingChargeAnim = false;
 		const char *chargeAnimName = GetWeaponChargeAnimation(playerClass, weaponClass, pWeapon);
 		if (chargeAnimName && chargeAnimName[0])
@@ -14426,6 +14939,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 					int maxFrame = Studio_MaxFrame(pHdr, m_iBowIdleSequence, poseParams);
 					if (maxFrame > 0)
 					{
+						m_flBowFireFirstFrameCycle = clamp(1.0f / (float)maxFrame, 0.0f, 1.0f);
 						m_flBowIdleCycle = clamp(flBowIdleFrame / (float)maxFrame, 0.0f, 1.0f);
 						m_flBowFireEndCycle = clamp(flBowFireEndFrame / (float)maxFrame, m_flBowIdleCycle, 1.0f);
 					}
@@ -14855,6 +15369,7 @@ void C_TFVRHand::UnequipWeapon()
 	m_bPomsonSuppressPassiveGripPoint = false;
 	m_bPomsonSuppressReloadGripPoint = false;
 	m_bOffHandToWeaponBoneValid = false;
+	m_bLiveBowStringBoneWorldValid = false;
 	SetIdentityMatrix( m_matPomsonDetachLeftToWeaponBone );
 	m_bPomsonDetachLeftToWeaponBoneValid = false;
 	SetIdentityMatrix( m_matPomsonDetachLeftToLeftHandBone );
@@ -14881,9 +15396,15 @@ void C_TFVRHand::UnequipWeapon()
 	m_iBowIdleSequence = -1;
 	m_flBowIdleCycle = 0.0f;
 	m_flBowFireEndCycle = 1.0f;
+	m_flBowFireFirstFrameCycle = 0.0f;
 	m_iBowDrawSequence = -1;
 	m_flBowDrawNockCycle = 0.0f;
 	m_iBowChargeIdleSequence = -1;
+	m_iBowShakeOverlaySequence = -1;
+	m_flBowShakeOverlayStartTime = 0.0f;
+	m_bBowShakeOverlayActive = false;
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
 	m_iDrawSequence = -1;
 	m_bPlayingFireAnim = false;
 	m_bPlayingChargeAnim = false;
@@ -16857,8 +17378,21 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 		return;
 	}
 
+	CTFCompoundBow *pBowFire = (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+		? static_cast<CTFCompoundBow *>(pHeldWeapon) : NULL;
+	if (pBowFire && m_iBowIdleSequence >= 0 && sequenceToPlay == m_iBowIdleSequence)
+		CaptureBowFireStartPose(pBowFire);
+	else
+	{
+		m_bBowFireStartPoseValid = false;
+		m_iBowFireStartPoseBoneCount = 0;
+	}
+
 	// Play the fire animation on the HAND model (stops any active charge or draw anim)
 	m_bPlayingChargeAnim = false;
+	m_bBowShakeOverlayActive = false;
+	m_iBowShakeOverlaySequence = -1;
+	m_flBowShakeOverlayStartTime = 0.0f;
 	m_bPlayingDrawAnim = false;
 	SetSequence(sequenceToPlay);
 	SetCycle(0.0f);
@@ -16976,6 +17510,8 @@ void C_TFVRHand::PlayWeaponChargeAnimation()
 	SetPlaybackRate(pBow ? 0.0f : 1.0f);
 	m_bPlayingChargeAnim = true;
 	m_bPlayingFireAnim = false;
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
 	m_bPlayingDrawAnim = false;
 
 	InvalidateBoneCache();
@@ -17002,9 +17538,20 @@ void C_TFVRHand::PlayWeaponChargeAnimation2()
 
 	C_TFWeaponBase *pHeldWeapon = m_hHeldWeapon.Get();
 	const bool bBow = pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
-	if (bBow && m_bPlayingChargeAnim
-		&& (GetSequence() == m_iChargeSequence2 || GetSequence() == m_iBowChargeIdleSequence))
+	if (bBow)
 	{
+		if (m_bBowShakeOverlayActive)
+			return;
+
+		m_bBowShakeOverlayActive = true;
+		m_iBowShakeOverlaySequence = m_iChargeSequence2;
+		m_flBowShakeOverlayStartTime = gpGlobals->curtime;
+		m_bPlayingChargeAnim = true;
+		m_bPlayingFireAnim = false;
+		m_bBowFireStartPoseValid = false;
+		m_iBowFireStartPoseBoneCount = 0;
+		m_bPlayingDrawAnim = false;
+		InvalidateBoneCache();
 		return;
 	}
 
@@ -17013,6 +17560,8 @@ void C_TFVRHand::PlayWeaponChargeAnimation2()
 	SetPlaybackRate(1.0f);
 	m_bPlayingChargeAnim = true;
 	m_bPlayingFireAnim = false;
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
 	m_bPlayingDrawAnim = false;
 
 	InvalidateBoneCache();
@@ -17031,10 +17580,42 @@ void C_TFVRHand::UpdateBowChargeAnimation()
 	if (!pBow || !m_bPlayingChargeAnim)
 		return;
 
+	if (!pBow->IsVRBowArrowPoseActive() && pBow->GetCurrentCharge() <= 0.001f)
+	{
+		StopWeaponChargeAnimation();
+		return;
+	}
+
+	const float flChargeCycle = clamp(pBow->GetCurrentCharge() / MAX(pBow->GetChargeMaxTime(), 0.01f), 0.0f, 1.0f);
+	const float flChargeBeginTime = pBow->GetVRBowChargeBeginTime();
+	const bool bHeldPastShakeDelay = flChargeBeginTime > 0.0f
+		&& (gpGlobals->curtime - flChargeBeginTime) >= pBow->GetChargeForceReleaseTime();
+	if (flChargeCycle > 0.001f && bHeldPastShakeDelay && !m_bBowShakeOverlayActive && m_iChargeSequence2 >= 0)
+	{
+		m_bBowShakeOverlayActive = true;
+		m_iBowShakeOverlaySequence = m_iChargeSequence2;
+		m_flBowShakeOverlayStartTime = gpGlobals->curtime;
+		InvalidateBoneCache();
+	}
+
 	const int iSeq = GetSequence();
+	if (m_bBowShakeOverlayActive)
+	{
+		CStudioHdr *pHdr = GetModelPtr();
+		if (pHdr && m_iBowShakeOverlaySequence == m_iChargeSequence2 && m_iBowChargeIdleSequence >= 0)
+		{
+			const float flDuration = SequenceDuration(pHdr, m_iChargeSequence2);
+			if (flDuration <= 0.0f || (gpGlobals->curtime - m_flBowShakeOverlayStartTime) >= flDuration)
+			{
+				m_iBowShakeOverlaySequence = m_iBowChargeIdleSequence;
+				m_flBowShakeOverlayStartTime = gpGlobals->curtime;
+				InvalidateBoneCache();
+			}
+		}
+	}
+
 	if (iSeq == m_iChargeSequence)
 	{
-		float flChargeCycle = clamp(pBow->GetCurrentCharge() / MAX(pBow->GetChargeMaxTime(), 0.01f), 0.0f, 1.0f);
 		SetCycle(flChargeCycle);
 		SetPlaybackRate(0.0f);
 		InvalidateBoneCache();
@@ -17053,12 +17634,24 @@ void C_TFVRHand::UpdateBowChargeAnimation()
 //-----------------------------------------------------------------------------
 void C_TFVRHand::StopWeaponChargeAnimation()
 {
-	if (!m_bPlayingChargeAnim)
+	if (!m_bPlayingChargeAnim && !m_bBowShakeOverlayActive)
 		return;
 
 	m_bPlayingChargeAnim = false;
+	m_bBowShakeOverlayActive = false;
+	m_iBowShakeOverlaySequence = -1;
+	m_flBowShakeOverlayStartTime = 0.0f;
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
 
-	if (m_iIdleSequence >= 0)
+	C_TFWeaponBase *pHeldWeapon = m_hHeldWeapon.Get();
+	if (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW && m_iBowIdleSequence >= 0)
+	{
+		SetSequence(m_iBowIdleSequence);
+		SetCycle(m_flBowIdleCycle);
+		SetPlaybackRate(0.0f);
+	}
+	else if (m_iIdleSequence >= 0)
 	{
 		SetSequence(m_iIdleSequence);
 		SetCycle(0.0f);
@@ -17121,7 +17714,12 @@ void C_TFVRHand::PlayWeaponDrawAnimation()
 
 	m_bPlayingDrawAnim = true;
 	m_bPlayingFireAnim = false;
+	m_bBowFireStartPoseValid = false;
+	m_iBowFireStartPoseBoneCount = 0;
 	m_bPlayingChargeAnim = false;
+	m_bBowShakeOverlayActive = false;
+	m_iBowShakeOverlaySequence = -1;
+	m_flBowShakeOverlayStartTime = 0.0f;
 	m_flDrawAnimStartTime = gpGlobals->curtime;
 
 	InvalidateBoneCache();

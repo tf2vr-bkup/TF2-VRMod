@@ -408,6 +408,7 @@ class CTFWeaponBase : public CBaseCombatWeapon, public IHasOwner, public IHasGen
 	// Sound.
 	bool PlayEmptySound();
 	bool IsSilentKiller();
+	void PlayVRManualReloadAmmoGrabSound();
 
 	// Activities.
 	virtual void ItemBusyFrame( void );

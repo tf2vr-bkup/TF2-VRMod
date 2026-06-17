@@ -466,6 +466,7 @@ void CTFWeaponBase::FallInit( void )
 void CTFWeaponBase::Precache()
 {
 	BaseClass::Precache();
+	PrecacheScriptSound( "VR.ManualReloadAmmoGrab" );
 
 	if ( GetMuzzleFlashModel() )
 	{
@@ -2476,6 +2477,17 @@ bool CTFWeaponBase::PlayEmptySound()
 //	EmitSound( filter, entindex(), "Default.ClipEmpty_Rifle" );
 
 	return false;
+}
+
+// -----------------------------------------------------------------------------
+// Purpose:
+// -----------------------------------------------------------------------------
+void CTFWeaponBase::PlayVRManualReloadAmmoGrabSound()
+{
+#ifdef CLIENT_DLL
+	if ( prediction->IsFirstTimePredicted() )
+		EmitSound( "VR.ManualReloadAmmoGrab" );
+#endif
 }
 
 // -----------------------------------------------------------------------------

@@ -681,6 +681,7 @@ void CTFRocketLauncher::VRRocketManualReloadPostFrame()
 			m_flNextVRRocketStartTime = Max<float>( m_flNextVRRocketStartTime, flReloadReadyTime );
 		}
 		m_bVRRocketHeld = true;
+		PlayVRManualReloadAmmoGrabSound();
 	}
 }
 

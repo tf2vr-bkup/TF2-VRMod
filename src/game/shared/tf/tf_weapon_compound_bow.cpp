@@ -78,8 +78,13 @@ END_DATADESC()
 #define TF_ARROW_MAX_CHARGE_TIME 5.0f
 
 ConVar tfvr_huntsman_manual_reload( "tfvr_huntsman_manual_reload", "1", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: require grabbing and nocking an arrow before charging/firing" );
-ConVar tfvr_huntsman_nock_duration( "tfvr_huntsman_nock_duration", "0.15", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: seconds spent snapping the held arrow into the nock pose" );
+ConVar tfvr_huntsman_nock_duration( "tfvr_huntsman_nock_duration", "0.22", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: seconds spent snapping the held arrow into the nock pose" );
 ConVar tfvr_huntsman_min_fire_charge( "tfvr_huntsman_min_fire_charge", "0.06", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: releasing the draw below this charge (0..1) cancels and returns the arrow instead of firing" );
+ConVar tfvr_huntsman_pull_sound_delta( "tfvr_huntsman_pull_sound_delta", "0.01", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: physical pull fraction change needed to trigger pull/de-pull sounds" );
+ConVar tfvr_huntsman_pull_sound_full_delta( "tfvr_huntsman_pull_sound_full_delta", "0.16", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: initial physical pull fraction delta that chooses the full pull sound instead of short" );
+ConVar tfvr_huntsman_pull_sound_cooldown( "tfvr_huntsman_pull_sound_cooldown", "0.06", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: minimum seconds between pull direction sounds" );
+ConVar tfvr_huntsman_pull_sound_settle_time( "tfvr_huntsman_pull_sound_settle_time", "0.16", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: seconds the drawstring must stop moving before pull sounds can re-arm" );
+ConVar tfvr_huntsman_pull_sound_min_travel( "tfvr_huntsman_pull_sound_min_travel", "0.045", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: accumulated pull fraction travel required before pull/de-pull sounds play" );
 
 //=============================================================================
 //
@@ -101,11 +106,24 @@ CTFCompoundBow::CTFCompoundBow()
 	m_flNextVRBowArrowReadyTime = 0.0f;
 	m_bVRBowNockInputIsTrigger = false;
 	m_flVRBowArrowPull = 0.0f;
+	m_flVRBowLastPhysicalPullForSound = 0.0f;
+	for ( int i = 0; i < ARRAYSIZE( m_flVRBowPullSoundSamples ); i++ )
+		m_flVRBowPullSoundSamples[i] = 0.0f;
+	m_iVRBowPullSoundSampleCount = ARRAYSIZE( m_flVRBowPullSoundSamples );
+	m_iVRBowPullSoundSampleIndex = 0;
+	m_flNextVRBowPullSoundTime = 0.0f;
+	m_flVRBowPullSoundLastMoveTime = 0.0f;
+	m_flVRBowPullSoundPendingMove = 0.0f;
+	m_iVRBowPullSoundPendingDirection = 0;
+	m_iVRBowPullSoundDirection = 0;
 }
 
 void CTFCompoundBow::Precache( void )
 {
 	PrecacheScriptSound( "Weapon_CompoundBow.SinglePull" );
+	PrecacheScriptSound( "VR.CompoundBowPull" );
+	PrecacheScriptSound( "VR.CompoundBowPullShort" );
+	PrecacheScriptSound( "VR.CompoundBowPullReverse" );
 	PrecacheScriptSound( "ArrowLight" );
 
 	BaseClass::Precache();
@@ -260,9 +278,9 @@ void CTFCompoundBow::PrimaryAttack( void )
 			pPlayer->GetViewModel(1)->SetPlaybackRate( flRateMultiplyer );
 		}
 
-		bool bPlaySound = true;
+		bool bPlaySound = !ShouldUseVRBowManualReload();
 #ifdef CLIENT_DLL
-		bPlaySound = prediction->IsFirstTimePredicted();
+		bPlaySound = bPlaySound && prediction->IsFirstTimePredicted();
 #endif
 		if ( bPlaySound )
 		{
@@ -321,10 +339,9 @@ float CTFCompoundBow::GetCurrentCharge( void )
 	// drawn (this is the throttle).
 	float flCharge = MIN( gpGlobals->curtime - GetInternalChargeBeginTime(), 1.f );
 
-	// VR drawstring control: the actual draw follows the physical pull, but is
-	// clamped to the time cap above. De-pulling reduces it immediately; pulling
-	// faster than the charge time allows is throttled to the time cap. The pull
-	// is a 0..1 fraction, so scale it into charge seconds by the max charge time.
+	// VR drawstring control: m_flVRBowArrowPull is already a resisted 0..1 pull
+	// fraction. De-pulling lowers it immediately; re-pulling is rate-limited in
+	// UpdateVRBowArrowPull. Scale it into charge seconds here.
 	if ( ShouldUseVRBowManualReload() )
 		flCharge = MIN( flCharge, clamp( m_flVRBowArrowPull, 0.f, 1.f ) * GetChargeMaxTime() );
 
@@ -522,11 +539,16 @@ void CTFCompoundBow::ItemPostFrame( void )
 
 		const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
 		const bool bNockHeld = pCmd && ( m_bVRBowNockInputIsTrigger ? pCmd->vrBowArrowTriggerHold : pCmd->vrBowArrowGripHold );
-		if ( m_bVRBowArrowNocked && bNockHeld )
+		const bool bStringPulled = m_flVRBowArrowPull > 0.001f;
+		if ( m_bVRBowArrowNocked && bNockHeld && bStringPulled )
 		{
 			if ( GetInternalChargeBeginTime() <= 0.0f )
 				pOwner->m_afButtonPressed |= IN_ATTACK;
 			pOwner->m_nButtons |= IN_ATTACK;
+		}
+		else if ( m_bVRBowArrowNocked && bNockHeld )
+		{
+			StopVRBowChargeNoFire();
 		}
 		else if ( GetInternalChargeBeginTime() > 0.0f )
 		{
@@ -630,6 +652,7 @@ void CTFCompoundBow::ResetVRBowArrowState()
 	m_flVRBowArrowNockStartTime = 0.0f;
 	m_bVRBowNockInputIsTrigger = false;
 	m_flVRBowArrowPull = 0.0f;
+	ResetVRBowPullSoundState();
 }
 
 void CTFCompoundBow::VRStartBowArrowNock( bool bNockInputIsTrigger )
@@ -653,6 +676,152 @@ void CTFCompoundBow::VRFinishBowArrowNock()
 	m_bVRBowArrowHeld = false;
 	m_bVRBowArrowNockActive = false;
 	m_bVRBowArrowNocked = true;
+	m_flVRBowArrowPull = 0.0f;
+	ResetVRBowPullSoundState();
+}
+
+void CTFCompoundBow::ResetVRBowPullSoundState()
+{
+	m_flVRBowLastPhysicalPullForSound = 0.0f;
+	for ( int i = 0; i < ARRAYSIZE( m_flVRBowPullSoundSamples ); i++ )
+		m_flVRBowPullSoundSamples[i] = 0.0f;
+	m_iVRBowPullSoundSampleCount = ARRAYSIZE( m_flVRBowPullSoundSamples );
+	m_iVRBowPullSoundSampleIndex = 0;
+	m_flNextVRBowPullSoundTime = 0.0f;
+	m_flVRBowPullSoundLastMoveTime = 0.0f;
+	m_flVRBowPullSoundPendingMove = 0.0f;
+	m_iVRBowPullSoundPendingDirection = 0;
+	m_iVRBowPullSoundDirection = 0;
+}
+
+void CTFCompoundBow::PlayVRBowPullSound( const char *pszSoundName )
+{
+#ifdef CLIENT_DLL
+	if ( prediction->IsFirstTimePredicted() )
+	{
+		StopSound( "VR.CompoundBowPull" );
+		StopSound( "VR.CompoundBowPullShort" );
+		StopSound( "VR.CompoundBowPullReverse" );
+		EmitSound( pszSoundName );
+	}
+#endif
+}
+
+void CTFCompoundBow::UpdateVRBowPullSound( float flPhysicalPull )
+{
+	const float flFrameDelta = flPhysicalPull - m_flVRBowLastPhysicalPullForSound;
+	m_flVRBowLastPhysicalPullForSound = flPhysicalPull;
+
+	if ( m_iVRBowPullSoundSampleCount <= 0 )
+	{
+		for ( int i = 0; i < ARRAYSIZE( m_flVRBowPullSoundSamples ); i++ )
+			m_flVRBowPullSoundSamples[i] = flPhysicalPull;
+		m_iVRBowPullSoundSampleCount = 1;
+		m_iVRBowPullSoundSampleIndex = 1 % ARRAYSIZE( m_flVRBowPullSoundSamples );
+		return;
+	}
+
+	const int iOldestSample = m_iVRBowPullSoundSampleIndex;
+	const float flWindowStartPull = m_iVRBowPullSoundSampleCount >= ARRAYSIZE( m_flVRBowPullSoundSamples )
+		? m_flVRBowPullSoundSamples[iOldestSample]
+		: m_flVRBowPullSoundSamples[0];
+	m_flVRBowPullSoundSamples[m_iVRBowPullSoundSampleIndex] = flPhysicalPull;
+	m_iVRBowPullSoundSampleIndex = ( m_iVRBowPullSoundSampleIndex + 1 ) % ARRAYSIZE( m_flVRBowPullSoundSamples );
+	m_iVRBowPullSoundSampleCount = MIN( m_iVRBowPullSoundSampleCount + 1, ARRAYSIZE( m_flVRBowPullSoundSamples ) );
+
+	const float flDelta = flPhysicalPull - flWindowStartPull;
+	const float flThreshold = MAX( tfvr_huntsman_pull_sound_delta.GetFloat(), 0.0f );
+	const float flMovementThreshold = MAX( flThreshold * 0.1f, 0.001f );
+	const int iFrameDirection = flFrameDelta > flMovementThreshold ? 1 : ( flFrameDelta < -flMovementThreshold ? -1 : 0 );
+	if ( iFrameDirection != 0 )
+	{
+		m_flVRBowPullSoundLastMoveTime = gpGlobals->curtime;
+		if ( m_iVRBowPullSoundPendingDirection != iFrameDirection )
+		{
+			m_iVRBowPullSoundPendingDirection = iFrameDirection;
+			m_flVRBowPullSoundPendingMove = 0.0f;
+		}
+		m_flVRBowPullSoundPendingMove += fabsf( flFrameDelta );
+	}
+
+	if ( m_iVRBowPullSoundDirection != 0
+		&& gpGlobals->curtime - m_flVRBowPullSoundLastMoveTime >= MAX( tfvr_huntsman_pull_sound_settle_time.GetFloat(), 0.0f ) )
+	{
+		m_iVRBowPullSoundDirection = 0;
+		m_iVRBowPullSoundPendingDirection = 0;
+		m_flVRBowPullSoundPendingMove = 0.0f;
+	}
+
+	const float flMinTravel = MAX( tfvr_huntsman_pull_sound_min_travel.GetFloat(), flThreshold );
+	if ( gpGlobals->curtime >= m_flNextVRBowPullSoundTime )
+	{
+		if ( flPhysicalPull > flThreshold
+			&& m_iVRBowPullSoundPendingDirection == 1
+			&& m_flVRBowPullSoundPendingMove >= flMinTravel
+			&& m_iVRBowPullSoundDirection <= 0 )
+		{
+			const char *pszSound = flDelta >= tfvr_huntsman_pull_sound_full_delta.GetFloat()
+				? "VR.CompoundBowPull"
+				: "VR.CompoundBowPullShort";
+			PlayVRBowPullSound( pszSound );
+			m_iVRBowPullSoundDirection = 1;
+			m_iVRBowPullSoundPendingDirection = 0;
+			m_flVRBowPullSoundPendingMove = 0.0f;
+			m_flNextVRBowPullSoundTime = gpGlobals->curtime + MAX( tfvr_huntsman_pull_sound_cooldown.GetFloat(), 0.0f );
+		}
+		else if ( m_iVRBowPullSoundPendingDirection == -1
+			&& m_flVRBowPullSoundPendingMove >= flMinTravel
+			&& m_iVRBowPullSoundDirection >= 0 )
+		{
+			PlayVRBowPullSound( "VR.CompoundBowPullReverse" );
+			m_iVRBowPullSoundDirection = -1;
+			m_iVRBowPullSoundPendingDirection = 0;
+			m_flVRBowPullSoundPendingMove = 0.0f;
+			m_flNextVRBowPullSoundTime = gpGlobals->curtime + MAX( tfvr_huntsman_pull_sound_cooldown.GetFloat(), 0.0f );
+		}
+	}
+
+	if ( flPhysicalPull <= flThreshold )
+	{
+		m_iVRBowPullSoundDirection = 0;
+		m_iVRBowPullSoundPendingDirection = 0;
+		m_flVRBowPullSoundPendingMove = 0.0f;
+	}
+}
+
+void CTFCompoundBow::UpdateVRBowArrowPull( float flTargetPull )
+{
+	const float flPhysicalPull = clamp( flTargetPull, 0.0f, 1.0f );
+	UpdateVRBowPullSound( flPhysicalPull );
+
+	// De-pulling should feel free and immediate. Re-pulling in the same held
+	// session is resisted at the same rate as the bow's base charge delay, so
+	// the string cannot jump back to full draw just because it had previously
+	// reached that point.
+	if ( flPhysicalPull <= m_flVRBowArrowPull )
+	{
+		m_flVRBowArrowPull = flPhysicalPull;
+		return;
+	}
+
+	const float flChargeMaxTime = MAX( GetChargeMaxTime(), 0.01f );
+	const float flMaxPullDelta = gpGlobals->frametime / flChargeMaxTime;
+	m_flVRBowArrowPull = MIN( flPhysicalPull, m_flVRBowArrowPull + flMaxPullDelta );
+}
+
+void CTFCompoundBow::StopVRBowChargeNoFire()
+{
+	if ( GetInternalChargeBeginTime() <= 0.0f )
+		return;
+
+	SetInternalChargeBeginTime( 0.0f );
+
+	CTFPlayer *pPlayer = ToTFPlayer( GetPlayerOwner() );
+	if ( pPlayer )
+	{
+		pPlayer->m_Shared.RemoveCond( TF_COND_AIMING );
+		pPlayer->TeamFortress_SetSpeed();
+	}
 }
 
 void CTFCompoundBow::VRBowArrowPostFrame()
@@ -695,9 +864,7 @@ void CTFCompoundBow::VRBowArrowPostFrame()
 
 	if ( m_bVRBowArrowNocked )
 	{
-		// Track the physical draw amount reported by the client so GetCurrentCharge
-		// can follow the string pull (clamped to the time cap).
-		m_flVRBowArrowPull = clamp( pCmd->vrBowArrowPull01, 0.0f, 1.0f );
+		UpdateVRBowArrowPull( pCmd->vrBowArrowPull01 );
 
 		const bool bNockHeld = m_bVRBowNockInputIsTrigger ? bTriggerHeld : bGripHeld;
 		if ( !bNockHeld && GetInternalChargeBeginTime() <= 0.0f )
@@ -722,6 +889,7 @@ void CTFCompoundBow::VRBowArrowPostFrame()
 	if ( pCmd->vrBowArrowPull && bAnyHeld && CanStartVRBowArrowGrab() )
 	{
 		m_bVRBowArrowHeld = true;
+		PlayVRManualReloadAmmoGrabSound();
 	}
 }
 

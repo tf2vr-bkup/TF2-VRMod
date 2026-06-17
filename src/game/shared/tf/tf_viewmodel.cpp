@@ -8,6 +8,7 @@
 #include "tf_shareddefs.h"
 #include "tf_weapon_minigun.h"
 #include "tf_weapon_invis.h"
+#include "tf_weapon_compound_bow.h"
 
 #ifdef CLIENT_DLL
 #include "c_tf_player.h"
@@ -668,6 +669,16 @@ void CTFViewModel::FireEvent( const Vector& origin, const QAngle& angles, int ev
 	{
 		if ( event == AE_CL_PLAYSOUND || event == CL_EVENT_SOUND )
 		{
+			CTFCompoundBow *pBow = dynamic_cast<CTFCompoundBow *>( pTFWeapon );
+			if ( pBow && pBow->IsUsingVRBowManualReload() )
+			{
+				const bool bBowPullSound = options
+					&& ( V_stristr( options, "bow_shoot_pull" )
+						|| V_stristr( options, "Weapon_CompoundBow.SinglePull" ) );
+				if ( bBowPullSound )
+					return;
+			}
+
 			CSoundParameters params;
 			if ( CBaseEntity::GetParametersForSound( options, params, NULL ) )
 			{

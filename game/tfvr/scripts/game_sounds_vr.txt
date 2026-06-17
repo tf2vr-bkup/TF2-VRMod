@@ -1,5 +1,13 @@
 // VR-specific weapon sounds
 
+"VR.ManualReloadAmmoGrab"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"0.5"
+	"wave"		"weapons/draw_melee.wav"
+}
+
 "VR.ScattergunPumpDown"
 {
 	"channel"	"CHAN_STATIC"
@@ -78,6 +86,30 @@
 	"soundlevel"	"SNDLVL_74dB"
 	"volume"	"1.0"
 	"wave"		"weapons/vr/vr_bison_reload_pump_in.wav"
+}
+
+"VR.CompoundBowPull"
+{
+	"channel"	"CHAN_WEAPON"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/bow_shoot_pull.wav"
+}
+
+"VR.CompoundBowPullShort"
+{
+	"channel"	"CHAN_WEAPON"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/bow_shoot_pull_short.wav"
+}
+
+"VR.CompoundBowPullReverse"
+{
+	"channel"	"CHAN_WEAPON"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/bow_shoot_pull_reverse.wav"
 }
 
 "VR.ManglerPumpUp01"

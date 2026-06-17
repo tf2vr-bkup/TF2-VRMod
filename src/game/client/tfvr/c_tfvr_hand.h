@@ -14,6 +14,7 @@
 class C_TFPlayer;
 class COpenXRHandTracker;
 class C_TFWeaponBase;
+class C_TFCompoundBow;
 class CVRWatchPanel;
 
 // Hand side enum
@@ -190,6 +191,14 @@ public:
 	void PlayWeaponChargeAnimation2();  // Second phase (e.g. max-charge shake)
 	void StopWeaponChargeAnimation();
 	bool IsPlayingChargeAnim() const { return m_bPlayingChargeAnim; }
+	bool IsBowShakeOverlayActive() const { return m_bBowShakeOverlayActive; }
+	bool IsBowFireStartPoseActive()
+	{
+		const float flFrameZeroEpsilon = 0.001f;
+		return m_bBowFireStartPoseValid && m_bPlayingFireAnim
+			&& m_iBowIdleSequence >= 0 && GetSequence() == m_iBowIdleSequence
+			&& GetCycle() <= flFrameZeroEpsilon;
+	}
 	
 	// Medigun fire animation state machine (fire_on -> fire_loop -> fire_off)
 	void UpdateMedigunFireAnimation();
@@ -290,9 +299,17 @@ private:
 	int m_iBowIdleSequence;        // bw_fire sampled at frame 10 for the bow rest/held-arrow pose
 	float m_flBowIdleCycle;        // Frame-10 cycle within bw_fire
 	float m_flBowFireEndCycle;     // Frame-15 cycle within bw_fire; fire anim returns to rest here
+	float m_flBowFireFirstFrameCycle; // Frame-1 cycle within bw_fire; fire snaps here after captured frame 0
 	int m_iBowDrawSequence;        // bw_draw, sampled at frame 35 for the nocked/drawn pose
 	float m_flBowDrawNockCycle;    // Frame-35 cycle within bw_draw (fully nocked, hand on string)
 	int m_iBowChargeIdleSequence;  // bw_idle3, held after the max-charge shake loops out
+	int m_iBowShakeOverlaySequence; // Current additive shake overlay sequence
+	float m_flBowShakeOverlayStartTime;
+	bool m_bBowShakeOverlayActive;
+	bool m_bBowFireStartPoseValid;
+	int m_iBowFireStartPoseBoneCount;
+	Vector m_vecBowFireStartPose[MAXSTUDIOBONES];
+	Quaternion m_qBowFireStartPose[MAXSTUDIOBONES];
 	bool m_bPlayingChargeAnim;     // Currently playing charge animation
 	
 	// Medigun fire animation state machine
@@ -423,6 +440,10 @@ public:
 	// pose by charge fraction (0 = bw_draw frame 35, 1 = bw_charge). Drives the
 	// bow + drawstring + arrow + draw-hand grip from one unified pose.
 	void ApplyBowDrawChargeBlend( CStudioHdr *pStudioHdr, int numBones, Vector *posAnim, Quaternion *qAnim, float chargeFraction );
+	void ApplyBowShakeOverlay( CStudioHdr *pStudioHdr, int numBones, Vector *posAnim, Quaternion *qAnim, float chargeFraction, bool bUseFullChargeReference );
+	void ApplyBowShakeWorldOverlay( CStudioHdr *pStudioHdr, matrix3x4_t *pBoneToWorldOut, int nMaxBones, const matrix3x4_t &anchorDelta, float chargeFraction, bool bUseFullChargeReference );
+	void CaptureBowFireStartPose( C_TFCompoundBow *pBow );
+	void ApplyBowFireStartPoseBlend( CStudioHdr *pStudioHdr, int numBones, Vector *posAnim, Quaternion *qAnim, float fireCycle );
 	
 	// Cached transform from idle hand bone to VR controller (calculated once)
 	matrix3x4_t m_matIdleHandBoneTransform;  // Hand bone transform from idle pose (model space)
@@ -485,6 +506,8 @@ public:
 	// idle-stabilized cache above, this tracks reload animation motion.
 	matrix3x4_t m_matLiveWeaponBoneWorld;
 	bool m_bLiveWeaponBoneWorldValid;
+	matrix3x4_t m_matLiveBowStringBoneWorld;
+	bool m_bLiveBowStringBoneWorldValid;
 	
 	// Cached muzzle position - set during PositionWeaponFromBones for effects
 	Vector m_vecCachedMuzzlePos;

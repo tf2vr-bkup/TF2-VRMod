@@ -77,6 +77,8 @@ public:
 	bool			IsVRBowArrowNocked() const { return m_bVRBowArrowNocked; }
 	bool			IsVRBowArrowPoseActive() const { return m_bVRBowArrowHeld || m_bVRBowArrowNockActive || m_bVRBowArrowNocked; }
 	float			GetVRBowArrowNockProgress() const;
+	float			GetVRBowChargeBeginTime() const { return GetInternalChargeBeginTime(); }
+	bool			IsUsingVRBowManualReload() { return ShouldUseVRBowManualReload(); }
 
 	virtual void	GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffset, Vector *vecSrc, QAngle *angForward, bool bHitTeammates = true, float flEndDist = 2000.f );
 	void			ApplyRefireSpeedModifications( float &flBaseRef );
@@ -115,7 +117,16 @@ private:
 	CNetworkVar( float, m_flVRBowArrowNockStartTime );
 	CNetworkVar( float, m_flNextVRBowArrowReadyTime );
 	CNetworkVar( bool, m_bVRBowNockInputIsTrigger );
-	CNetworkVar( float, m_flVRBowArrowPull );      // VR physical draw amount 0..1 (string pull)
+	CNetworkVar( float, m_flVRBowArrowPull );      // VR resisted draw amount 0..1 (physical de-pull, timed re-pull)
+	float m_flVRBowLastPhysicalPullForSound;
+	float m_flVRBowPullSoundSamples[3];
+	int m_iVRBowPullSoundSampleCount;
+	int m_iVRBowPullSoundSampleIndex;
+	float m_flNextVRBowPullSoundTime;
+	float m_flVRBowPullSoundLastMoveTime;
+	float m_flVRBowPullSoundPendingMove;
+	int m_iVRBowPullSoundPendingDirection;         // Direction currently accumulating enough travel to play
+	int m_iVRBowPullSoundDirection;                // -1 = de-pull, 0 = neutral, 1 = pull
 
 	bool			ShouldUseVRBowManualReload();
 	bool			CanStartVRBowArrowGrab();
@@ -123,6 +134,11 @@ private:
 	void			VRBowArrowPostFrame();
 	void			VRStartBowArrowNock( bool bNockInputIsTrigger );
 	void			VRFinishBowArrowNock();
+	void			UpdateVRBowArrowPull( float flTargetPull );
+	void			StopVRBowChargeNoFire();
+	void			ResetVRBowPullSoundState();
+	void			UpdateVRBowPullSound( float flPhysicalPull );
+	void			PlayVRBowPullSound( const char *pszSoundName );
 
 #ifdef CLIENT_DLL
 	EHANDLE		   m_hParticleEffectOwner;

@@ -513,6 +513,7 @@ void CTFPistol::VRPistolMagPostFrame()
 	if ( pCmd->vrMagazinePull && CanStartVRMagPull() )
 	{
 		m_bVRMagazineHeld = true;
+		PlayVRManualReloadAmmoGrabSound();
 	}
 
 	if ( m_iVRMagPhase == VR_PISTOL_MAG_PHASE_IDLE )
