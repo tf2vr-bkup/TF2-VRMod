@@ -19,6 +19,9 @@
 ConVar tfvr_spectator_mode("tfvr_spectator_mode", "1", FCVAR_ARCHIVE,
     "Spectator camera smoothing mode: 0=off, 1=mirror-only (streaming), 2=full smoothing (trailers)");
 
+ConVar tfvr_spectator_eye("tfvr_spectator_eye", "1", FCVAR_ARCHIVE,
+    "Eye used for the spectator desktop mirror view: 0=left, 1=right");
+
 ConVar tfvr_spectator_roll_halflife("tfvr_spectator_roll_halflife", "1", FCVAR_ARCHIVE,
     "Roll smoothing half-life in seconds. Higher values = more smoothing. (Alyx default: 0.5)");
 
@@ -43,6 +46,14 @@ VRSpectatorMode_t GetVRSpectatorMode()
     if (mode < 0 || mode > 2)
         return VR_SPECTATOR_OFF;
     return static_cast<VRSpectatorMode_t>(mode);
+}
+
+VRSpectatorEye_t GetVRSpectatorEye()
+{
+    int eye = tfvr_spectator_eye.GetInt();
+    if (eye < 0 || eye > 1)
+        return VR_SPECTATOR_EYE_LEFT;
+    return static_cast<VRSpectatorEye_t>(eye);
 }
 
 float GetVRSpectatorRollHalfLife()

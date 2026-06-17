@@ -2344,7 +2344,8 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 		// Only use VR rendering when VR is actually active
 		if (UseVR() && whatToDraw != -1)
 		{
-			RenderVREyeToScreen(viewRender, STEREO_EYE_LEFT);
+			StereoEye_t spectatorEye = (GetVRSpectatorEye() == VR_SPECTATOR_EYE_RIGHT) ? STEREO_EYE_RIGHT : STEREO_EYE_LEFT;
+			RenderVREyeToScreen(viewRender, spectatorEye);
 			//RenderMenuToMenuTexture(view);
 			RenderMenuTextureToScreen(viewRender, false);
 			return;

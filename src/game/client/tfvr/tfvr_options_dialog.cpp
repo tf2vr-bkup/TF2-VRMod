@@ -490,6 +490,10 @@ public:
 		m_pSpectatorMode->AddItem( "Mirror smoothing", NULL );
 		m_pSpectatorMode->AddItem( "Full smoothing", NULL );
 
+		m_pSpectatorEye = AddCombo( "SpectatorEye", "Spectator view eye", 2 );
+		m_pSpectatorEye->AddItem( "Left eye", NULL );
+		m_pSpectatorEye->AddItem( "Right eye", NULL );
+
 		m_pSpectatorZoom = AddSlider( "SpectatorZoom", "Mirror zoom", 100, 200 );
 		m_pRollSmoothing = AddSlider( "RollSmoothing", "Roll smoothing", 10, 2000 );
 
@@ -503,6 +507,7 @@ public:
 	void OnResetData() OVERRIDE
 	{
 		m_pSpectatorMode->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_spectator_mode", 0 ), 3 ) );
+		m_pSpectatorEye->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_spectator_eye", 0 ), 2 ) );
 		m_pSpectatorZoom->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_spectator_zoom", 1.1f ) * 100.0f ) );
 		m_pRollSmoothing->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_spectator_roll_halflife", 0.5f ) * 1000.0f ) );
 		m_pYawPitchSmoothing->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_spectator_yawpitch_halflife", 0.09f ) * 1000.0f ) );
@@ -512,6 +517,7 @@ public:
 	void OnApplyChanges() OVERRIDE
 	{
 		SetCvarInt( "tfvr_spectator_mode", m_pSpectatorMode->GetActiveItem() );
+		SetCvarInt( "tfvr_spectator_eye", m_pSpectatorEye->GetActiveItem() );
 		SetCvarFloat( "tfvr_spectator_zoom", 0.01f * m_pSpectatorZoom->GetValue() );
 		SetCvarFloat( "tfvr_spectator_roll_halflife", 0.001f * m_pRollSmoothing->GetValue() );
 		SetCvarFloat( "tfvr_spectator_yawpitch_halflife", 0.001f * m_pYawPitchSmoothing->GetValue() );
@@ -521,6 +527,7 @@ public:
 
 private:
 	ComboBox *m_pSpectatorMode;
+	ComboBox *m_pSpectatorEye;
 	Slider *m_pSpectatorZoom;
 	Slider *m_pRollSmoothing;
 	Slider *m_pYawPitchSmoothing;

@@ -27,6 +27,12 @@ enum VRSpectatorMode_t
     VR_SPECTATOR_FULL = 2,          // Smooth actual view (for trailers)
 };
 
+enum VRSpectatorEye_t
+{
+    VR_SPECTATOR_EYE_LEFT = 0,
+    VR_SPECTATOR_EYE_RIGHT = 1,
+};
+
 //-----------------------------------------------------------------------------
 // Purpose: Manages VR spectator camera smoothing using exponential decay
 //          Similar to Half-Life: Alyx implementation
@@ -96,6 +102,7 @@ extern CVRSpectatorCamera* g_pVRSpectatorCamera;
 
 // ConVar accessors (defined in cpp)
 VRSpectatorMode_t GetVRSpectatorMode();
+VRSpectatorEye_t GetVRSpectatorEye();
 float GetVRSpectatorRollHalfLife();
 float GetVRSpectatorYawPitchHalfLife();
 float GetVRSpectatorZoom();
