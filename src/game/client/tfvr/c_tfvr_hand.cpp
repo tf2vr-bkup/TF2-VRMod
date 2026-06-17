@@ -5726,6 +5726,63 @@ bool C_TFVRHand::GetPalmTransform(VMatrix& outTransform)
 }
 
 //-----------------------------------------------------------------------------
+// Purpose: Recompute active two-hand aim direction in the same world/yaw frame
+//          as the weapon hand SetupBones solve.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::ComputeCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand, const matrix3x4_t &weaponControllerTransform, Vector &outDesiredY)
+{
+	if (!pWeaponHand || pWeaponHand == this)
+		return false;
+
+	UpdateHandTransform();
+
+	Vector weaponPivotPos;
+	MatrixGetColumn(weaponControllerTransform, 3, weaponPivotPos);
+
+	COpenXRHandTracker *pWeaponHandTracker = pWeaponHand->GetHandTracker();
+	if (pWeaponHandTracker)
+	{
+		Vector wristPos;
+		QAngle wristAngles;
+		if (pWeaponHandTracker->GetHandJoint(pWeaponHand->IsLeftHand(), XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
+		{
+			weaponPivotPos = wristPos;
+		}
+	}
+
+	Vector supportGripPos = m_vecLastValidPosition;
+	if (m_pHandTracker)
+	{
+		Vector fingerBasePos;
+		QAngle fingerBaseAngles;
+		if (m_pHandTracker->GetHandJoint(IsLeftHand(), XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fingerBasePos, fingerBaseAngles))
+		{
+			supportGripPos = fingerBasePos;
+		}
+	}
+
+	C_TFWeaponBase *pWeapon = pWeaponHand->GetHeldWeapon();
+	const bool bBow = pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
+	Vector desiredY = bBow ? (weaponPivotPos - supportGripPos) : (supportGripPos - weaponPivotPos);
+	const float flDistance = desiredY.Length();
+	if (flDistance <= 0.1f)
+		return false;
+
+	desiredY /= flDistance;
+
+	if (bBow && TFVR_ShouldMirrorWeaponHand(pWeapon))
+	{
+		matrix3x4_t reflectFrame;
+		AngleMatrix(pWeaponHand->m_angLastValidAngles, vec3_origin, reflectFrame);
+		TFVR_ReflectVectorInControllerFrame(desiredY, reflectFrame);
+		desiredY.NormalizeInPlace();
+	}
+
+	outDesiredY = desiredY;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Update this hand's position from hand tracking palm position
 //          Uses PALM joint as canonical reference for consistent offsets
 //          across different controllers and OpenXR runtimes.
@@ -6702,6 +6759,15 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			if (rotationBlend > 0.001f && bWasGripActive)
 			{
 				Vector desiredY = pGripHand->GetOffhandGripForward();
+				if (bIsGripActive)
+				{
+					Vector currentDesiredY;
+					if (pGripHand->ComputeCurrentOffhandGripDirection(this, controllerTransform, currentDesiredY))
+					{
+						desiredY = currentDesiredY;
+						pGripHand->m_vecOffhandGripForward = currentDesiredY;
+					}
+				}
 
 				// Skip if we don't have a valid direction yet (just activated, will be set next frame)
 				if (desiredY.LengthSqr() < 0.1f)
@@ -9250,6 +9316,15 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	if (rotationBlend > 0.001f && bWasGripActive && tfvr_offhand_grip_enabled.GetBool())
 	{
 		Vector desiredY = pGripHand->GetOffhandGripForward();
+		if (bIsGripActive)
+		{
+			Vector currentDesiredY;
+			if (pGripHand->ComputeCurrentOffhandGripDirection(this, controllerTransform, currentDesiredY))
+			{
+				desiredY = currentDesiredY;
+				pGripHand->m_vecOffhandGripForward = currentDesiredY;
+			}
+		}
 
 		if (desiredY.LengthSqr() >= 0.1f)
 		{
