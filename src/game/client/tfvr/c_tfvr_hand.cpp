@@ -5726,19 +5726,22 @@ bool C_TFVRHand::GetPalmTransform(VMatrix& outTransform)
 }
 
 //-----------------------------------------------------------------------------
-// Purpose: Recompute active two-hand aim direction in the same world/yaw frame
-//          as the weapon hand SetupBones solve.
+// Purpose: Refresh the active two-hand rotation solve in the same frame that
+//          consumes it, while preserving the authored foregrip pivot correction.
 //-----------------------------------------------------------------------------
-bool C_TFVRHand::ComputeCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand, const matrix3x4_t &weaponControllerTransform, Vector &outDesiredY)
+bool C_TFVRHand::RefreshCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand)
 {
-	if (!pWeaponHand || pWeaponHand == this)
+	if (!pWeaponHand || pWeaponHand == this || !m_bOffhandGripActive)
+		return false;
+
+	C_TFWeaponBase *pGripWeapon = pWeaponHand->GetHeldWeapon();
+	if (pGripWeapon && pGripWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 		return false;
 
 	UpdateHandTransform();
+	pWeaponHand->UpdateHandTransform();
 
-	Vector weaponPivotPos;
-	MatrixGetColumn(weaponControllerTransform, 3, weaponPivotPos);
-
+	Vector weaponWristPos = pWeaponHand->GetAbsOrigin();
 	COpenXRHandTracker *pWeaponHandTracker = pWeaponHand->GetHandTracker();
 	if (pWeaponHandTracker)
 	{
@@ -5746,7 +5749,7 @@ bool C_TFVRHand::ComputeCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand, con
 		QAngle wristAngles;
 		if (pWeaponHandTracker->GetHandJoint(pWeaponHand->IsLeftHand(), XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
 		{
-			weaponPivotPos = wristPos;
+			weaponWristPos = wristPos;
 		}
 	}
 
@@ -5761,24 +5764,48 @@ bool C_TFVRHand::ComputeCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand, con
 		}
 	}
 
-	C_TFWeaponBase *pWeapon = pWeaponHand->GetHeldWeapon();
-	const bool bBow = pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
-	Vector desiredY = bBow ? (weaponPivotPos - supportGripPos) : (supportGripPos - weaponPivotPos);
-	const float flDistance = desiredY.Length();
-	if (flDistance <= 0.1f)
+	Vector wristToFingerBase = supportGripPos - weaponWristPos;
+	float aimDistance = wristToFingerBase.Length();
+	if (aimDistance <= 0.1f)
 		return false;
 
-	desiredY /= flDistance;
+	Vector aimDirection = wristToFingerBase / aimDistance;
+	Vector dirToOffhand = aimDirection;
 
-	if (bBow && TFVR_ShouldMirrorWeaponHand(pWeapon))
+	Vector gripTargetPos;
+	QAngle gripTargetAngles;
+	if (pWeaponHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 	{
-		matrix3x4_t reflectFrame;
-		AngleMatrix(pWeaponHand->m_angLastValidAngles, vec3_origin, reflectFrame);
-		TFVR_ReflectVectorInControllerFrame(desiredY, reflectFrame);
-		desiredY.NormalizeInPlace();
+		Vector toGrip = gripTargetPos - weaponWristPos;
+		if (toGrip.LengthSqr() > 0.1f)
+		{
+			Vector pivotAxis = toGrip;
+			pivotAxis.NormalizeInPlace();
+
+			Vector currentY = m_vecOffhandGripForward;
+			if (currentY.LengthSqr() < 0.1f)
+				currentY = aimDirection;
+			currentY.NormalizeInPlace();
+
+			Vector error = aimDirection - pivotAxis;
+			dirToOffhand = currentY + error;
+			dirToOffhand.NormalizeInPlace();
+		}
 	}
 
-	outDesiredY = desiredY;
+	Vector weaponWristUp(0, 0, 1);
+	if (pWeaponHandTracker)
+	{
+		Vector wristPos;
+		QAngle wristAngles;
+		if (pWeaponHandTracker->GetHandJoint(pWeaponHand->IsLeftHand(), XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
+		{
+			AngleVectors(wristAngles, nullptr, nullptr, &weaponWristUp);
+		}
+	}
+
+	m_vecOffhandGripForward = dirToOffhand;
+	m_vecOffhandGripUp = weaponWristUp;
 	return true;
 }
 
@@ -6758,16 +6785,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			// Uses separate rotation blend that starts fresh each time grip activates
 			if (rotationBlend > 0.001f && bWasGripActive)
 			{
-				Vector desiredY = pGripHand->GetOffhandGripForward();
 				if (bIsGripActive)
-				{
-					Vector currentDesiredY;
-					if (pGripHand->ComputeCurrentOffhandGripDirection(this, controllerTransform, currentDesiredY))
-					{
-						desiredY = currentDesiredY;
-						pGripHand->m_vecOffhandGripForward = currentDesiredY;
-					}
-				}
+					pGripHand->RefreshCurrentOffhandGripDirection(this);
+
+				Vector desiredY = pGripHand->GetOffhandGripForward();
 
 				// Skip if we don't have a valid direction yet (just activated, will be set next frame)
 				if (desiredY.LengthSqr() < 0.1f)
@@ -9316,15 +9337,6 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 	if (rotationBlend > 0.001f && bWasGripActive && tfvr_offhand_grip_enabled.GetBool())
 	{
 		Vector desiredY = pGripHand->GetOffhandGripForward();
-		if (bIsGripActive)
-		{
-			Vector currentDesiredY;
-			if (pGripHand->ComputeCurrentOffhandGripDirection(this, controllerTransform, currentDesiredY))
-			{
-				desiredY = currentDesiredY;
-				pGripHand->m_vecOffhandGripForward = currentDesiredY;
-			}
-		}
 
 		if (desiredY.LengthSqr() >= 0.1f)
 		{

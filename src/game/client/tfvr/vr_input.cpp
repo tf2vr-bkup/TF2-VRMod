@@ -49,6 +49,7 @@ extern ConVar tfvr_shotgun_pump_debug;
 extern ConVar tfvr_rocket_manual_reload_radius;
 extern ConVar tfvr_pistol_manual_reload;
 extern ConVar tfvr_huntsman_manual_reload;
+extern ConVar tfvr_hmd_drive_rotation;
 
 ConVar tfvr_bison_pump_weapon_grip_threshold( "tfvr_bison_pump_weapon_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR bison pump: off-hand grip analog must reach this (0-1) while two-handing" );
 ConVar tfvr_bison_pump_twohand_min_blend( "tfvr_bison_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR bison pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
@@ -246,7 +247,16 @@ void CVRInput::ExtraMouseSample(float frametime, bool active)
 
    cmd->buttons = GetButtonBits(0);
 
-   VectorCopy(m_angPreviousViewAngles, cmd->viewangles);
+   if (UseVR() && tfvr_hmd_drive_rotation.GetBool())
+   {
+       // CInput::ExtraMouseSample already refreshed HMD-driven yaw; do not
+       // feed prediction with the previous-frame view angle during turn+move.
+       VectorCopy(viewangles, cmd->viewangles);
+   }
+   else
+   {
+       VectorCopy(m_angPreviousViewAngles, cmd->viewangles);
+   }
 
    //CopyVRPosesToUserCmd(cmd);
 
@@ -257,7 +267,10 @@ void CVRInput::ExtraMouseSample(float frametime, bool active)
    {
        // Get current view angles after the client mode tweaks with it
        //engine->SetViewAngles( cmd->viewangles );
-       prediction->SetLocalViewAngles(cmd->viewangles);
+       if (!UseVR() || !tfvr_hmd_drive_rotation.GetBool())
+       {
+           prediction->SetLocalViewAngles(cmd->viewangles);
+       }
    }
 
    g_bExtraMouseSample = false;

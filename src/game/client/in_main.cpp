@@ -1016,8 +1016,7 @@ Handles VR thumbstick turning - smooth and snap turning
 ================
 */
 
-// Static variables for smooth turning interpolation
-static float s_flAccumulatedTurnInput = 0.0f;
+// Static variable for smooth turning elapsed-time tracking
 static float s_flLastTurnUpdateTime = 0.0f;
 bool g_bTFVRSmoothTurningActive = false;
 
@@ -1053,8 +1052,7 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
     float deadzone = tfvr_turn_deadzone.GetFloat();
     if (fabs(turnInput) < deadzone)
     {
-        // Reset accumulation when input stops
-        s_flAccumulatedTurnInput = 0.0f;
+        s_flLastTurnUpdateTime = 0.0f;
         return;
     }
 
@@ -1073,31 +1071,17 @@ void ProcessVRTurning(CUserCmd* cmd, float frametime)
 
         float turnRate = tfvr_smooth_turn_rate.GetFloat();
         
-        // Use fixed tick interval for consistent turning speed regardless of framerate
-        // This prevents stuttering from 66Hz server vs 75Hz VR mismatch
-        float fixedDeltaTime = TICK_INTERVAL;
-        float targetDeltaYaw = -normalizedInput * turnRate * fixedDeltaTime;
-        
-        // Accumulate turn input to handle framerate differences smoothly
-        s_flAccumulatedTurnInput += targetDeltaYaw;
-        
-        // Apply accumulated turning in chunks based on time passage
         float currentTime = gpGlobals->realtime;
-        if (s_flLastTurnUpdateTime == 0.0f)
-            s_flLastTurnUpdateTime = currentTime;
-            
-        float timeDelta = currentTime - s_flLastTurnUpdateTime;
-        
-        // Apply smoothed turning using linear interpolation
-        float appliedDeltaYaw = 0.0f;
-        if (timeDelta > 0.0f)
-        {
-            // Calculate how much turning to apply this frame for smooth motion
-            float lerpFactor = clamp(timeDelta / fixedDeltaTime, 0.0f, 1.0f);
-            appliedDeltaYaw = s_flAccumulatedTurnInput * lerpFactor;
-            s_flAccumulatedTurnInput -= appliedDeltaYaw;
-            s_flLastTurnUpdateTime = currentTime;
-        }
+        float timeDelta = (s_flLastTurnUpdateTime > 0.0f)
+            ? (currentTime - s_flLastTurnUpdateTime)
+            : frametime;
+        timeDelta = clamp(timeDelta, 0.0f, 0.1f);
+        s_flLastTurnUpdateTime = currentTime;
+
+        // Smooth turning is called from both tick and ExtraMouseSample paths.
+        // Use elapsed realtime so mixed call rates do not add multiple fixed
+        // tick-sized yaw chunks in the same rendered frame.
+        float appliedDeltaYaw = -normalizedInput * turnRate * timeDelta;
         
         currentAngles.y += appliedDeltaYaw;
         

@@ -232,7 +232,7 @@ public:
 	bool IsRightHandDetached() const { return m_bRightHandDetached; }
 
 private:
-	bool ComputeCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand, const matrix3x4_t &weaponControllerTransform, Vector &outDesiredY);
+	bool RefreshCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand);
 
 	// Which hand this entity represents
 	VRHandSide m_handSide;
