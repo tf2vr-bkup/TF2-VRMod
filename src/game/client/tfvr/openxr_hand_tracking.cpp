@@ -9,6 +9,10 @@
 
 // External ConVar from openxr_manager.cpp
 extern ConVar tfvr_use_floor_aligned_poses;
+extern ConVar tfvr_tracking_filter_enabled;
+extern ConVar tfvr_tracking_filter_min_cutoff;
+extern ConVar tfvr_tracking_filter_beta;
+extern ConVar tfvr_tracking_filter_derivative_cutoff;
 
 // Console variables for hand tracking debug
 static ConVar tfvr_hand_tracking_debug("tfvr_hand_tracking_debug", "0", FCVAR_ARCHIVE, "Enable hand tracking debug visualization");
@@ -151,11 +155,39 @@ void COpenXRHandTracker::UpdateHandTracking()
     UpdateHandData(XR_HAND_RIGHT_EXT, m_rightHandTracker, m_rightHandData);
 }
 
+XrPosef COpenXRHandTracker::FilterHandJointPose(CTFVRPoseOneEuroFilter& filter, const XrPosef& pose, XrTime timestamp)
+{
+    if (!tfvr_tracking_filter_enabled.GetBool())
+    {
+        filter.Reset();
+        return pose;
+    }
+
+    const double seconds = static_cast<double>(timestamp) * 0.000000001;
+    const float minCutoffValue = tfvr_tracking_filter_min_cutoff.GetFloat();
+    const float betaValue = tfvr_tracking_filter_beta.GetFloat();
+    const float derivativeCutoffValue = tfvr_tracking_filter_derivative_cutoff.GetFloat();
+    const float minCutoff = minCutoffValue > 0.0001f ? minCutoffValue : 0.0001f;
+    const float beta = betaValue > 0.0f ? betaValue : 0.0f;
+    const float derivativeCutoff = derivativeCutoffValue > 0.0001f ? derivativeCutoffValue : 0.0001f;
+    return filter.Filter(pose, seconds, minCutoff, beta, derivativeCutoff);
+}
+
+void COpenXRHandTracker::ResetHandFilters(XrHandEXT hand)
+{
+    CTFVRPoseOneEuroFilter* filters = (hand == XR_HAND_LEFT_EXT) ? m_leftJointFilters : m_rightJointFilters;
+    for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i)
+        filters[i].Reset();
+}
+
 void COpenXRHandTracker::UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker, HandTrackingData& handData)
 {
+    CTFVRPoseOneEuroFilter* filters = (hand == XR_HAND_LEFT_EXT) ? m_leftJointFilters : m_rightJointFilters;
+
     if (tracker == XR_NULL_HANDLE)
     {
         handData.isHandTracked = false;
+        ResetHandFilters(hand);
         return;
     }
 
@@ -167,6 +199,7 @@ void COpenXRHandTracker::UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker
     if (currentTime == 0)
     {
         handData.isHandTracked = false;
+        ResetHandFilters(hand);
         return;
     }
 
@@ -186,6 +219,7 @@ void COpenXRHandTracker::UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker
     if (result != XR_SUCCESS)
     {
         handData.isHandTracked = false;
+        ResetHandFilters(hand);
         return;
     }
 
@@ -193,7 +227,10 @@ void COpenXRHandTracker::UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker
     handData.isHandTracked = locations.isActive;
 
     if (!handData.isHandTracked)
+    {
+        ResetHandFilters(hand);
         return;
+    }
 
     // Store raw joint data (conversion to world space happens on-demand in GetHandJoint)
     for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++)
@@ -208,7 +245,9 @@ void COpenXRHandTracker::UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker
 
         // Store raw pose - DON'T convert to world space yet!
         // This ensures we use the current frame's smoothed data when GetHandJoint() is called
-        jointData.rawPose = jointLoc.pose;
+        jointData.rawPose = jointData.isValid ? FilterHandJointPose(filters[i], jointLoc.pose, currentTime) : jointLoc.pose;
+        if (!jointData.isValid)
+            filters[i].Reset();
     }
 }
 

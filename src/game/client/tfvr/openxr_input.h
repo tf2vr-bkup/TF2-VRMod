@@ -2,6 +2,7 @@
 #define OPENXR_INPUT_H
 
 #include "../public/openxr/openxr.h"
+#include "tfvr_pose_filter.h"
 #include <string>
 #include <map>
 #include <vector>
@@ -65,6 +66,8 @@ private:
     XrInputAction CreateFloatAction(const char* name, const char* localizedName);
     XrInputAction CreatePoseAction(const char* name, const char* localizedName);
     void AddPalmPoseBindings(std::vector<XrActionSuggestedBinding>& bindings);
+    XrPosef FilterPose(const std::string& actionName, const XrPosef& pose, XrTime timestamp);
+    void ResetPoseFilter(const std::string& actionName);
 
     COpenXRManager* m_manager;
     XrInstance m_instance;
@@ -80,6 +83,7 @@ private:
     std::map<std::string, XrPosef> m_currentPoseStates;
     std::map<std::string, bool> m_currentPoseValidStates;
     std::map<std::string, XrSpace> m_actionSpaces;
+    std::map<std::string, CTFVRPoseOneEuroFilter> m_poseFilters;
 
     // Common paths
     XrPath m_leftHandPath;

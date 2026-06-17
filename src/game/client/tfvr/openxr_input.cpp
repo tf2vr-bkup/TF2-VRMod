@@ -3,6 +3,15 @@
 #include "openxr_manager.h"
 #include "hmdWrapper.h"
 
+ConVar tfvr_tracking_filter_enabled("tfvr_tracking_filter_enabled", "1", FCVAR_ARCHIVE,
+    "Enable 1Euro smoothing for VR controller and hand tracking poses");
+ConVar tfvr_tracking_filter_min_cutoff("tfvr_tracking_filter_min_cutoff", "5.0", FCVAR_ARCHIVE,
+    "1Euro tracking filter minimum cutoff in Hz. Lower values smooth more but add lag");
+ConVar tfvr_tracking_filter_beta("tfvr_tracking_filter_beta", "1.0", FCVAR_ARCHIVE,
+    "1Euro tracking filter speed coefficient. Higher values reduce lag during fast movement");
+ConVar tfvr_tracking_filter_derivative_cutoff("tfvr_tracking_filter_derivative_cutoff", "1.0", FCVAR_ARCHIVE,
+    "1Euro tracking filter derivative cutoff in Hz");
+
 COpenXRInputManager::COpenXRInputManager(COpenXRManager* manager)
     : m_manager(manager)
     , m_instance(manager->GetInstance())
@@ -54,6 +63,7 @@ void COpenXRInputManager::Shutdown()
         }
     }
     m_actionSpaces.clear();
+    m_poseFilters.clear();
 
     if (m_actionSet != XR_NULL_HANDLE)
     {
@@ -2263,6 +2273,31 @@ void COpenXRInputManager::AddPalmPoseBindings(std::vector<XrActionSuggestedBindi
     }
 }
 
+XrPosef COpenXRInputManager::FilterPose(const std::string& actionName, const XrPosef& pose, XrTime timestamp)
+{
+    if (!tfvr_tracking_filter_enabled.GetBool())
+    {
+        ResetPoseFilter(actionName);
+        return pose;
+    }
+
+    const double seconds = static_cast<double>(timestamp) * 0.000000001;
+    const float minCutoffValue = tfvr_tracking_filter_min_cutoff.GetFloat();
+    const float betaValue = tfvr_tracking_filter_beta.GetFloat();
+    const float derivativeCutoffValue = tfvr_tracking_filter_derivative_cutoff.GetFloat();
+    const float minCutoff = minCutoffValue > 0.0001f ? minCutoffValue : 0.0001f;
+    const float beta = betaValue > 0.0f ? betaValue : 0.0f;
+    const float derivativeCutoff = derivativeCutoffValue > 0.0001f ? derivativeCutoffValue : 0.0001f;
+    return m_poseFilters[actionName].Filter(pose, seconds, minCutoff, beta, derivativeCutoff);
+}
+
+void COpenXRInputManager::ResetPoseFilter(const std::string& actionName)
+{
+    auto it = m_poseFilters.find(actionName);
+    if (it != m_poseFilters.end())
+        it->second.Reset();
+}
+
 void COpenXRInputManager::PollInput()
 {
     static int frameCount = 0;
@@ -2361,10 +2396,17 @@ void COpenXRInputManager::PollInput()
                                              currentTime, &spaceLocation);
                         if (XR_SUCCEEDED(result) && (spaceLocation.locationFlags & requiredFlags) == requiredFlags)
                         {
-                            m_currentPoseStates[key] = spaceLocation.pose;
+                            m_currentPoseStates[key] = FilterPose(key, spaceLocation.pose, currentTime);
                         }
-                        // Pose location failed - silent handling
+                        else
+                        {
+                            ResetPoseFilter(key);
+                        }
                     }
+                }
+                else
+                {
+                    ResetPoseFilter(key);
                 }
             }
             // Failed to get pose state - silent handling

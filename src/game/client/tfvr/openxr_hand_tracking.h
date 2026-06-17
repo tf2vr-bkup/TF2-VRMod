@@ -2,6 +2,7 @@
 #define OPENXR_HAND_TRACKING_H
 
 #include "../public/openxr/openxr.h"
+#include "tfvr_pose_filter.h"
 #include "mathlib/vector.h"
 #include "mathlib/vmatrix.h"
 #include <vector>
@@ -52,6 +53,8 @@ private:
     void UpdateHandData(XrHandEXT hand, XrHandTrackerEXT tracker, HandTrackingData& handData);
     void ConvertXrPoseToSourceFormat(const XrPosef& xrPose, Vector& position, QAngle& angles) const;
     VMatrix ConvertXrPoseToPlayspaceMatrix(const XrPosef& xrPose) const;
+    XrPosef FilterHandJointPose(CTFVRPoseOneEuroFilter& filter, const XrPosef& pose, XrTime timestamp);
+    void ResetHandFilters(XrHandEXT hand);
 
     COpenXRManager* m_manager;
     XrInstance m_instance;
@@ -65,6 +68,8 @@ private:
     // Hand tracking data
     HandTrackingData m_leftHandData;
     HandTrackingData m_rightHandData;
+    CTFVRPoseOneEuroFilter m_leftJointFilters[XR_HAND_JOINT_COUNT_EXT];
+    CTFVRPoseOneEuroFilter m_rightJointFilters[XR_HAND_JOINT_COUNT_EXT];
     
     // OpenXR function pointers
     PFN_xrCreateHandTrackerEXT m_pfnCreateHandTrackerEXT;
