@@ -63,9 +63,11 @@ public:
 
 	virtual bool	Reload( void );
 
+	virtual bool	Deploy( void );
 	virtual bool	Holster( CBaseCombatWeapon *pSwitchingTo );
 
 	virtual bool	SendWeaponAnim( int iActivity );
+	virtual void	ItemBusyFrame( void );
 	virtual void	ItemPostFrame( void );
 
 	virtual float	GetChargeForceReleaseTime( void ) { return 5.0f; }
@@ -129,7 +131,10 @@ private:
 	int m_iVRBowPullSoundDirection;                // -1 = de-pull, 0 = neutral, 1 = pull
 
 	bool			ShouldUseVRBowManualReload();
+	bool			HasVRBowArrowAmmo();
+	bool			HasVRBowArrowPrepAmmo();
 	bool			CanStartVRBowArrowGrab();
+	bool			CanPullVRBowArrow();
 	void			ResetVRBowArrowState();
 	void			VRBowArrowPostFrame();
 	void			VRStartBowArrowNock( bool bNockInputIsTrigger );
@@ -139,6 +144,7 @@ private:
 	void			ResetVRBowPullSoundState();
 	void			UpdateVRBowPullSound( float flPhysicalPull );
 	void			PlayVRBowPullSound( const char *pszSoundName );
+	void			PlayVRBowArrowGrabSound();
 
 #ifdef CLIENT_DLL
 	EHANDLE		   m_hParticleEffectOwner;

@@ -8,6 +8,14 @@
 	"wave"		"weapons/draw_melee.wav"
 }
 
+"VR.CompoundBowArrowGrab"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"0.5"
+	"wave"		"weapons/draw_bow.wav"
+}
+
 "VR.ScattergunPumpDown"
 {
 	"channel"	"CHAN_STATIC"

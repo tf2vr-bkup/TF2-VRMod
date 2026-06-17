@@ -672,10 +672,8 @@ void CTFViewModel::FireEvent( const Vector& origin, const QAngle& angles, int ev
 			CTFCompoundBow *pBow = dynamic_cast<CTFCompoundBow *>( pTFWeapon );
 			if ( pBow && pBow->IsUsingVRBowManualReload() )
 			{
-				const bool bBowPullSound = options
-					&& ( V_stristr( options, "bow_shoot_pull" )
-						|| V_stristr( options, "Weapon_CompoundBow.SinglePull" ) );
-				if ( bBowPullSound )
+				const bool bBowDrawSound = options && V_stristr( options, "draw_bow" );
+				if ( !bBowDrawSound )
 					return;
 			}
 

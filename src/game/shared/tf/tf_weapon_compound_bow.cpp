@@ -121,6 +121,7 @@ CTFCompoundBow::CTFCompoundBow()
 void CTFCompoundBow::Precache( void )
 {
 	PrecacheScriptSound( "Weapon_CompoundBow.SinglePull" );
+	PrecacheScriptSound( "VR.CompoundBowArrowGrab" );
 	PrecacheScriptSound( "VR.CompoundBowPull" );
 	PrecacheScriptSound( "VR.CompoundBowPullShort" );
 	PrecacheScriptSound( "VR.CompoundBowPullReverse" );
@@ -429,6 +430,22 @@ bool CTFCompoundBow::DetonateRemotePipebombs( bool bFizzle )
 }
 
 //-----------------------------------------------------------------------------
+// Purpose:
+//-----------------------------------------------------------------------------
+bool CTFCompoundBow::Deploy( void )
+{
+	const bool bDeployed = BaseClass::Deploy();
+	if ( bDeployed )
+	{
+		m_bNoFire = false;
+		m_flNextVRBowArrowReadyTime = 0.0f;
+		ResetVRBowArrowState();
+	}
+
+	return bDeployed;
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
 bool CTFCompoundBow::Holster( CBaseCombatWeapon *pSwitchingTo )
@@ -493,6 +510,16 @@ bool CTFCompoundBow::SendWeaponAnim( int iActivity )
 	return BaseClass::SendWeaponAnim( iActivity );
 }
 
+void CTFCompoundBow::ItemBusyFrame( void )
+{
+	if ( ShouldUseVRBowManualReload() )
+	{
+		VRBowArrowPostFrame();
+	}
+
+	BaseClass::ItemBusyFrame();
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Play animation appropriate to ball status.
 //-----------------------------------------------------------------------------
@@ -540,7 +567,8 @@ void CTFCompoundBow::ItemPostFrame( void )
 		const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
 		const bool bNockHeld = pCmd && ( m_bVRBowNockInputIsTrigger ? pCmd->vrBowArrowTriggerHold : pCmd->vrBowArrowGripHold );
 		const bool bStringPulled = m_flVRBowArrowPull > 0.001f;
-		if ( m_bVRBowArrowNocked && bNockHeld && bStringPulled )
+		const bool bCanPull = CanPullVRBowArrow();
+		if ( m_bVRBowArrowNocked && bNockHeld && bStringPulled && bCanPull )
 		{
 			if ( GetInternalChargeBeginTime() <= 0.0f )
 				pOwner->m_afButtonPressed |= IN_ATTACK;
@@ -614,6 +642,33 @@ bool CTFCompoundBow::ShouldUseVRBowManualReload()
 #endif
 }
 
+bool CTFCompoundBow::HasVRBowArrowAmmo()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return false;
+
+	if ( m_iClip1 > 0 )
+		return true;
+
+	if ( m_iClip1 == -1 && pOwner->GetAmmoCount( m_iPrimaryAmmoType ) > 0 )
+		return true;
+
+	return false;
+}
+
+bool CTFCompoundBow::HasVRBowArrowPrepAmmo()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return false;
+
+	if ( HasVRBowArrowAmmo() )
+		return true;
+
+	return pOwner->GetAmmoCount( m_iPrimaryAmmoType ) > 0;
+}
+
 bool CTFCompoundBow::CanStartVRBowArrowGrab()
 {
 	CTFPlayer *pOwner = GetTFPlayerOwner();
@@ -623,10 +678,25 @@ bool CTFCompoundBow::CanStartVRBowArrowGrab()
 	if ( m_bNoFire || GetInternalChargeBeginTime() > 0.0f )
 		return false;
 
-	if ( m_iClip1 <= 0 && m_iClip1 != -1 )
+	if ( !HasVRBowArrowPrepAmmo() )
 		return false;
 
-	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 && m_iClip1 <= 0 )
+	if ( gpGlobals->curtime < m_flNextVRBowArrowReadyTime )
+		return false;
+
+	return true;
+}
+
+bool CTFCompoundBow::CanPullVRBowArrow()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !ShouldUseVRBowManualReload() )
+		return false;
+
+	if ( m_bNoFire )
+		return false;
+
+	if ( !HasVRBowArrowAmmo() )
 		return false;
 
 	if ( gpGlobals->curtime < m_flNextPrimaryAttack || gpGlobals->curtime < m_flNextVRBowArrowReadyTime )
@@ -704,6 +774,14 @@ void CTFCompoundBow::PlayVRBowPullSound( const char *pszSoundName )
 		StopSound( "VR.CompoundBowPullReverse" );
 		EmitSound( pszSoundName );
 	}
+#endif
+}
+
+void CTFCompoundBow::PlayVRBowArrowGrabSound()
+{
+#ifdef CLIENT_DLL
+	if ( prediction->IsFirstTimePredicted() )
+		EmitSound( "VR.CompoundBowArrowGrab" );
 #endif
 }
 
@@ -833,7 +911,7 @@ void CTFCompoundBow::VRBowArrowPostFrame()
 		return;
 	}
 
-	if ( m_iClip1 <= 0 && m_iClip1 != -1 )
+	if ( !HasVRBowArrowPrepAmmo() )
 	{
 		ResetVRBowArrowState();
 		return;
@@ -864,7 +942,7 @@ void CTFCompoundBow::VRBowArrowPostFrame()
 
 	if ( m_bVRBowArrowNocked )
 	{
-		UpdateVRBowArrowPull( pCmd->vrBowArrowPull01 );
+		UpdateVRBowArrowPull( CanPullVRBowArrow() ? pCmd->vrBowArrowPull01 : 0.0f );
 
 		const bool bNockHeld = m_bVRBowNockInputIsTrigger ? bTriggerHeld : bGripHeld;
 		if ( !bNockHeld && GetInternalChargeBeginTime() <= 0.0f )
@@ -889,7 +967,7 @@ void CTFCompoundBow::VRBowArrowPostFrame()
 	if ( pCmd->vrBowArrowPull && bAnyHeld && CanStartVRBowArrowGrab() )
 	{
 		m_bVRBowArrowHeld = true;
-		PlayVRManualReloadAmmoGrabSound();
+		PlayVRBowArrowGrabSound();
 	}
 }
 
