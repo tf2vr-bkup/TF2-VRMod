@@ -81,7 +81,7 @@ ConVar tfvr_huntsman_manual_reload( "tfvr_huntsman_manual_reload", "1", FCVAR_RE
 ConVar tfvr_huntsman_nock_duration( "tfvr_huntsman_nock_duration", "0.22", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: seconds spent snapping the held arrow into the nock pose" );
 ConVar tfvr_huntsman_min_fire_charge( "tfvr_huntsman_min_fire_charge", "0.06", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: releasing the draw below this charge (0..1) cancels and returns the arrow instead of firing" );
 ConVar tfvr_huntsman_pull_sound_delta( "tfvr_huntsman_pull_sound_delta", "0.01", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: physical pull fraction change needed to trigger pull/de-pull sounds" );
-ConVar tfvr_huntsman_pull_sound_full_delta( "tfvr_huntsman_pull_sound_full_delta", "0.16", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: initial physical pull fraction delta that chooses the full pull sound instead of short" );
+ConVar tfvr_huntsman_pull_sound_full_delta( "tfvr_huntsman_pull_sound_full_delta", "0.04", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: initial physical pull fraction delta that chooses the full pull sound instead of short" );
 ConVar tfvr_huntsman_pull_sound_cooldown( "tfvr_huntsman_pull_sound_cooldown", "0.06", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: minimum seconds between pull direction sounds" );
 ConVar tfvr_huntsman_pull_sound_settle_time( "tfvr_huntsman_pull_sound_settle_time", "0.16", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: seconds the drawstring must stop moving before pull sounds can re-arm" );
 ConVar tfvr_huntsman_pull_sound_min_travel( "tfvr_huntsman_pull_sound_min_travel", "0.045", FCVAR_REPLICATED | FCVAR_ARCHIVE, "VR Huntsman: accumulated pull fraction travel required before pull/de-pull sounds play" );
