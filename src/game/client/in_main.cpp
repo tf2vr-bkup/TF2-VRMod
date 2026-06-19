@@ -100,6 +100,9 @@ extern ConVar tfvr_smooth_turn_rate;
 extern ConVar tfvr_snap_turn_angle;
 extern ConVar tfvr_turn_deadzone;
 extern ConVar tfvr_snap_turn_delay;
+extern ConVar tfvr_flickstick_turn_rate;
+extern ConVar tfvr_flickstick_filter_time;
+extern ConVar tfvr_flickstick_eject_deadzone;
 
 extern ConVar cl_mouselook;
 
@@ -1018,162 +1021,236 @@ Handles VR thumbstick turning - smooth and snap turning
 
 // Static variable for smooth turning elapsed-time tracking
 static float s_flLastTurnUpdateTime = 0.0f;
+static bool s_bFlickStickActive = false;
+static float s_flFlickStickRawTargetYaw = 0.0f;
+static float s_flFlickStickFilteredTargetYaw = 0.0f;
+static float s_flFlickStickLastStickYaw = 0.0f;
+static float s_flFlickStickYawVelocity = 0.0f;
+static float s_flLastFlickStickUpdateTime = 0.0f;
 bool g_bTFVRSmoothTurningActive = false;
 
-void ProcessVRTurning(CUserCmd* cmd, float frametime)
+enum EVRTurningMode
 {
-    g_bTFVRSmoothTurningActive = false;
+    VR_TURNING_DISABLED = 0,
+    VR_TURNING_SMOOTH = 1,
+    VR_TURNING_SNAP = 2,
+    VR_TURNING_FLICK_STICK = 3,
+};
 
-    if (!UseVR() || !g_pOpenXRManager)
-        return;
+static void ResetVRTurningState()
+{
+    s_flLastTurnUpdateTime = 0.0f;
+    s_bFlickStickActive = false;
+    s_flFlickStickRawTargetYaw = 0.0f;
+    s_flFlickStickFilteredTargetYaw = 0.0f;
+    s_flFlickStickLastStickYaw = 0.0f;
+    s_flFlickStickYawVelocity = 0.0f;
+    s_flLastFlickStickUpdateTime = 0.0f;
+}
 
-    // Menus normally block turning; MvM upgrade shopping is allowed to keep locomotion.
-    bool bBlockMovement = g_pVRMenuManager && g_pVRMenuManager->ShouldBlockVRMovementInput();
-    if (bBlockMovement)
+static void ApplyVRTurnYaw( CUserCmd *cmd, QAngle &currentAngles, float flDeltaYaw )
+{
+    currentAngles.y += flDeltaYaw;
+    currentAngles.y = anglemod( currentAngles.y );
+
+    engine->SetViewAngles( currentAngles );
+
+    if ( tfvr_hmd_drive_rotation.GetBool() )
     {
-        // Don't process turning when a blocking menu is open
-        return;
-    }
-    
-    // Check if weapon select is open - if so, disable turning to prevent accidental rotation
-    if (g_pVRWeaponSelectManager && g_pVRWeaponSelectManager->IsMenuOpen())
-    {
-        return;
-    }
-
-    int turningMode = tfvr_turning_mode.GetInt();
-    if (turningMode == 0) // Turning disabled
-        return;
-
-    // Get the turn input from OpenXR
-    float turnInput = g_pOpenXRManager->GetAnalogValue("turn_x");
-    
-    // Apply deadzone
-    float deadzone = tfvr_turn_deadzone.GetFloat();
-    if (fabs(turnInput) < deadzone)
-    {
-        s_flLastTurnUpdateTime = 0.0f;
-        return;
-    }
-
-    // Normalize input beyond deadzone (0 to 1 range)
-    float normalizedInput = (fabs(turnInput) - deadzone) / (1.0f - deadzone);
-    if (turnInput < 0)
-        normalizedInput = -normalizedInput;
-
-    // Get current view angles
-    QAngle currentAngles;
-    engine->GetViewAngles(currentAngles);
-
-    if (turningMode == 1) // Smooth turning
-    {
-        g_bTFVRSmoothTurningActive = true;
-
-        float turnRate = tfvr_smooth_turn_rate.GetFloat();
-        
-        float currentTime = gpGlobals->realtime;
-        float timeDelta = (s_flLastTurnUpdateTime > 0.0f)
-            ? (currentTime - s_flLastTurnUpdateTime)
-            : frametime;
-        timeDelta = clamp(timeDelta, 0.0f, 0.1f);
-        s_flLastTurnUpdateTime = currentTime;
-
-        // Smooth turning is called from both tick and ExtraMouseSample paths.
-        // Use elapsed realtime so mixed call rates do not add multiple fixed
-        // tick-sized yaw chunks in the same rendered frame.
-        float appliedDeltaYaw = -normalizedInput * turnRate * timeDelta;
-        
-        currentAngles.y += appliedDeltaYaw;
-        
-        // Normalize angle
-        currentAngles.y = anglemod(currentAngles.y);
-        
-        // Update engine and command angles
-        engine->SetViewAngles(currentAngles);
-        
-        // Update HMD calibration if HMD rotation is enabled
-        if (tfvr_hmd_drive_rotation.GetBool())
+        C_TFPlayer *pPlayer = ToTFPlayer( C_BasePlayer::GetLocalPlayer() );
+        if ( pPlayer && pPlayer->m_isCalibrated )
         {
-            C_TFPlayer *pPlayer = ToTFPlayer(C_BasePlayer::GetLocalPlayer());
-            if (pPlayer && pPlayer->m_isCalibrated)
-            {
-                // Update calibrated yaw so rotation calculations use current position as pivot
-                pPlayer->m_calibratedHmdYaw -= appliedDeltaYaw;
-                
-                // CRITICAL: Update m_headInPlayerA.y to match new yaw for hitscan weapons
-                pPlayer->m_headInPlayerA.y += appliedDeltaYaw;
-                
-                // Also update the calibrated position to current HMD position to fix pivot point
-                Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
-                currentHmdPos.z = 0; // Keep Z at zero like original calibration
-                pPlayer->m_calibratedHmdXYPosition = currentHmdPos;
-                
-                // CRITICAL: Sync cmd->viewangles with what EyeAngles() will return for server consistency
-                cmd->viewangles = pPlayer->EyeAngles();
-            }
-            else
-            {
-                cmd->viewangles = currentAngles;
-            }
+            // Keep HMD-relative aiming and server command angles in sync with artificial yaw.
+            pPlayer->m_calibratedHmdYaw -= flDeltaYaw;
+            pPlayer->m_headInPlayerA.y += flDeltaYaw;
+
+            Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
+            currentHmdPos.z = 0;
+            pPlayer->m_calibratedHmdXYPosition = currentHmdPos;
+
+            cmd->viewangles = pPlayer->EyeAngles();
         }
         else
         {
             cmd->viewangles = currentAngles;
         }
     }
-    else if (turningMode == 2) // Snap turning
+    else
     {
-        float currentTime = gpGlobals->realtime;
-        float snapDelay = tfvr_snap_turn_delay.GetFloat();
-        
-        // Check if enough time has passed since last snap turn
-        if (currentTime - s_flLastSnapTurnTime >= snapDelay)
+        cmd->viewangles = currentAngles;
+    }
+}
+
+void ProcessVRTurning(CUserCmd* cmd, float frametime)
+{
+    g_bTFVRSmoothTurningActive = false;
+
+    if (!UseVR() || !g_pOpenXRManager)
+    {
+        ResetVRTurningState();
+        return;
+    }
+
+    // Menus normally block turning; MvM upgrade shopping is allowed to keep locomotion.
+    bool bBlockMovement = g_pVRMenuManager && g_pVRMenuManager->ShouldBlockVRMovementInput();
+    if (bBlockMovement)
+    {
+        // Don't process turning when a blocking menu is open
+        ResetVRTurningState();
+        return;
+    }
+    
+    // Check if weapon select is open - if so, disable turning to prevent accidental rotation
+    if (g_pVRWeaponSelectManager && g_pVRWeaponSelectManager->IsMenuOpen())
+    {
+        ResetVRTurningState();
+        return;
+    }
+
+    int turningMode = tfvr_turning_mode.GetInt();
+    if (turningMode == VR_TURNING_DISABLED) // Turning disabled
+    {
+        ResetVRTurningState();
+        return;
+    }
+
+    // Get the turn input from OpenXR
+    float turnInput = g_pOpenXRManager->GetAnalogValue("turn_x");
+    float deadzone = clamp( tfvr_turn_deadzone.GetFloat(), 0.0f, 0.99f );
+
+    // Get current view angles
+    QAngle currentAngles;
+    engine->GetViewAngles(currentAngles);
+
+    if (turningMode == VR_TURNING_FLICK_STICK)
+    {
+        float turnY = g_pOpenXRManager->GetAnalogValue("right_stick_y");
+        float flickStickTurnX = turnInput;
+        float flickStickEjectDeadzone = clamp( tfvr_flickstick_eject_deadzone.GetFloat(), 0.0f, 1.0f );
+        if ( turnY > 0.0f && fabs( flickStickTurnX ) <= flickStickEjectDeadzone )
         {
-            float snapAngle = tfvr_snap_turn_angle.GetFloat();
-            if (normalizedInput < 0)
-                snapAngle = snapAngle; // Negative input = positive turn
-            else
-                snapAngle = -snapAngle; // Positive input = negative turn
-                
-            currentAngles.y += snapAngle;
-            
-            // Normalize angle
-            currentAngles.y = anglemod(currentAngles.y);
-            
-            // Update engine and command angles
-            engine->SetViewAngles(currentAngles);
-            
-            // Update HMD calibration if HMD rotation is enabled
-            if (tfvr_hmd_drive_rotation.GetBool())
+            flickStickTurnX = 0.0f;
+        }
+
+        float stickMagnitude = sqrt( ( flickStickTurnX * flickStickTurnX ) + ( turnY * turnY ) );
+        if ( stickMagnitude < deadzone )
+        {
+            ResetVRTurningState();
+            return;
+        }
+
+        float currentTime = gpGlobals->realtime;
+        float timeDelta = (s_flLastFlickStickUpdateTime > 0.0f)
+            ? (currentTime - s_flLastFlickStickUpdateTime)
+            : frametime;
+        timeDelta = clamp(timeDelta, 0.0f, 0.1f);
+        s_flLastFlickStickUpdateTime = currentTime;
+
+        // Stick forward means no yaw change. The first deflection sets the
+        // target, then rotating around the rim adds relative yaw continuously.
+        float stickYaw = -RAD2DEG( atan2( flickStickTurnX, turnY ) );
+        if ( !s_bFlickStickActive )
+        {
+            s_bFlickStickActive = true;
+            s_flFlickStickRawTargetYaw = anglemod( currentAngles.y + stickYaw );
+            s_flFlickStickFilteredTargetYaw = s_flFlickStickRawTargetYaw;
+            s_flFlickStickLastStickYaw = stickYaw;
+            s_flFlickStickYawVelocity = 0.0f;
+        }
+        else
+        {
+            s_flFlickStickRawTargetYaw = anglemod( s_flFlickStickRawTargetYaw
+                + AngleDiff( stickYaw, s_flFlickStickLastStickYaw ) );
+            s_flFlickStickLastStickYaw = stickYaw;
+        }
+
+        float filterTime = MAX( tfvr_flickstick_filter_time.GetFloat(), 0.0f );
+        float filterAlpha = ( filterTime > 0.0f )
+            ? clamp( timeDelta / ( filterTime + timeDelta ), 0.0f, 1.0f )
+            : 1.0f;
+
+        s_flFlickStickFilteredTargetYaw = anglemod( s_flFlickStickFilteredTargetYaw
+            + ( AngleDiff( s_flFlickStickRawTargetYaw, s_flFlickStickFilteredTargetYaw ) * filterAlpha ) );
+
+        float yawToTarget = AngleDiff( s_flFlickStickFilteredTargetYaw, currentAngles.y );
+        float turnRate = MAX( tfvr_flickstick_turn_rate.GetFloat(), 1.0f );
+        float desiredYawVelocity = clamp( yawToTarget / MAX( timeDelta, 0.001f ), -turnRate, turnRate );
+        s_flFlickStickYawVelocity += ( desiredYawVelocity - s_flFlickStickYawVelocity ) * filterAlpha;
+
+        float appliedDeltaYaw = s_flFlickStickYawVelocity * timeDelta;
+        if ( appliedDeltaYaw * yawToTarget <= 0.0f )
+        {
+            appliedDeltaYaw = 0.0f;
+        }
+        else if ( fabs( appliedDeltaYaw ) > fabs( yawToTarget ) )
+        {
+            appliedDeltaYaw = yawToTarget;
+            s_flFlickStickYawVelocity = 0.0f;
+        }
+
+        g_bTFVRSmoothTurningActive = fabs( yawToTarget ) > 0.01f;
+        ApplyVRTurnYaw( cmd, currentAngles, appliedDeltaYaw );
+    }
+    else
+    {
+        s_bFlickStickActive = false;
+        s_flLastFlickStickUpdateTime = 0.0f;
+        s_flFlickStickYawVelocity = 0.0f;
+
+        // Apply deadzone
+        if (fabs(turnInput) < deadzone)
+        {
+            s_flLastTurnUpdateTime = 0.0f;
+            return;
+        }
+
+        // Normalize input beyond deadzone (0 to 1 range)
+        float normalizedInput = (fabs(turnInput) - deadzone) / (1.0f - deadzone);
+        if (turnInput < 0)
+            normalizedInput = -normalizedInput;
+
+        if (turningMode == VR_TURNING_SMOOTH) // Smooth turning
+        {
+            g_bTFVRSmoothTurningActive = true;
+
+            float turnRate = tfvr_smooth_turn_rate.GetFloat();
+
+            float currentTime = gpGlobals->realtime;
+            float timeDelta = (s_flLastTurnUpdateTime > 0.0f)
+                ? (currentTime - s_flLastTurnUpdateTime)
+                : frametime;
+            timeDelta = clamp(timeDelta, 0.0f, 0.1f);
+            s_flLastTurnUpdateTime = currentTime;
+
+            // Smooth turning is called from both tick and ExtraMouseSample paths.
+            // Use elapsed realtime so mixed call rates do not add multiple fixed
+            // tick-sized yaw chunks in the same rendered frame.
+            float appliedDeltaYaw = -normalizedInput * turnRate * timeDelta;
+
+            ApplyVRTurnYaw( cmd, currentAngles, appliedDeltaYaw );
+        }
+        else if (turningMode == VR_TURNING_SNAP) // Snap turning
+        {
+            float currentTime = gpGlobals->realtime;
+            float snapDelay = tfvr_snap_turn_delay.GetFloat();
+
+            // Check if enough time has passed since last snap turn
+            if (currentTime - s_flLastSnapTurnTime >= snapDelay)
             {
-                C_TFPlayer *pPlayer = ToTFPlayer(C_BasePlayer::GetLocalPlayer());
-                if (pPlayer && pPlayer->m_isCalibrated)
-                {
-                    // Update calibrated yaw so rotation calculations use current position as pivot
-                    pPlayer->m_calibratedHmdYaw -= snapAngle;
-                    
-                    // CRITICAL: Update m_headInPlayerA.y to match new yaw for hitscan weapons
-                    pPlayer->m_headInPlayerA.y += snapAngle;
-                    
-                    // Also update the calibrated position to current HMD position to fix pivot point
-                    Vector currentHmdPos = g_pOpenXRManager->GetMideyePose().GetTranslation();
-                    currentHmdPos.z = 0; // Keep Z at zero like original calibration
-                    pPlayer->m_calibratedHmdXYPosition = currentHmdPos;
-                    
-                    // CRITICAL: Sync cmd->viewangles with what EyeAngles() will return for server consistency
-                    cmd->viewangles = pPlayer->EyeAngles();
-                }
+                float snapAngle = tfvr_snap_turn_angle.GetFloat();
+                if (normalizedInput < 0)
+                    snapAngle = snapAngle; // Negative input = positive turn
                 else
-                {
-                    cmd->viewangles = currentAngles;
-                }
+                    snapAngle = -snapAngle; // Positive input = negative turn
+
+                ApplyVRTurnYaw( cmd, currentAngles, snapAngle );
+
+                s_flLastSnapTurnTime = currentTime;
             }
-            else
-            {
-                cmd->viewangles = currentAngles;
-            }
-            
-            s_flLastSnapTurnTime = currentTime;
+        }
+        else
+        {
+            ResetVRTurningState();
         }
     }
 }

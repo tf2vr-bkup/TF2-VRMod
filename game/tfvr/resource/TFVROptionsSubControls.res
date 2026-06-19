@@ -137,6 +137,34 @@
 		"leftText"			"15"
 		"rightText"			"90"
 	}
+	"FlickStickTurnRateLabel"
+	{
+		"ControlName"		"Label"
+		"fieldName"			"FlickStickTurnRateLabel"
+		"xpos"				"242"
+		"ypos"				"80"
+		"wide"				"198"
+		"tall"				"24"
+		"visible"			"1"
+		"enabled"			"1"
+		"labelText"			"Flick stick speed"
+		"textAlignment"		"west"
+		"associate"			"FlickStickTurnRate"
+	}
+	"FlickStickTurnRate"
+	{
+		"ControlName"		"Slider"
+		"fieldName"			"FlickStickTurnRate"
+		"xpos"				"242"
+		"ypos"				"104"
+		"wide"				"175"
+		"tall"				"50"
+		"visible"			"1"
+		"enabled"			"1"
+		"tabPosition"		"5"
+		"leftText"			"Slow"
+		"rightText"			"Fast"
+	}
 	"MoveSensitivityLabel"
 	{
 		"ControlName"		"Label"

@@ -83,11 +83,14 @@ ConVar tfvr_sticky_pump_weapon_grip_threshold( "tfvr_sticky_pump_weapon_grip_thr
 ConVar tfvr_sticky_pump_twohand_min_blend( "tfvr_sticky_pump_twohand_min_blend", "0.5", FCVAR_ARCHIVE, "VR sticky pump: minimum two-hand blend on the off-hand before pump motion counts (0-1)" );
 
 // VR Turning ConVars
-ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap" );
+ConVar tfvr_turning_mode( "tfvr_turning_mode", "1", FCVAR_ARCHIVE, "VR turning mode: 0=disabled, 1=smooth, 2=snap, 3=flick stick" );
 ConVar tfvr_smooth_turn_rate( "tfvr_smooth_turn_rate", "80", FCVAR_ARCHIVE, "Smooth turning rate in degrees per second" );
 ConVar tfvr_snap_turn_angle( "tfvr_snap_turn_angle", "45", FCVAR_ARCHIVE, "Snap turning angle in degrees" );
 ConVar tfvr_turn_deadzone( "tfvr_turn_deadzone", "0.200000", FCVAR_ARCHIVE, "Deadzone for turning input (0.0-1.0)" );
 ConVar tfvr_snap_turn_delay( "tfvr_snap_turn_delay", "0.25", FCVAR_ARCHIVE, "Delay between snap turns in seconds" );
+ConVar tfvr_flickstick_turn_rate( "tfvr_flickstick_turn_rate", "720", FCVAR_ARCHIVE, "Flick stick turn speed in degrees per second" );
+ConVar tfvr_flickstick_filter_time( "tfvr_flickstick_filter_time", "0.050000", FCVAR_ARCHIVE, "Flick stick smoothing time in seconds (0 disables filtering)" );
+ConVar tfvr_flickstick_eject_deadzone( "tfvr_flickstick_eject_deadzone", "0.150000", FCVAR_ARCHIVE, "Horizontal deadzone around stick-up for magazine eject while flick stick is enabled" );
 
 // Pistol manual magazine reload ConVars (zones shared with the shotgun manual reload)
 ConVar tfvr_pistol_mag_insert_radius( "tfvr_pistol_mag_insert_radius", "4.0", FCVAR_ARCHIVE, "VR pistol: distance (inches) between the held mag and the magwell that counts as inserting" );
@@ -1533,6 +1536,20 @@ static void TFVR_UpdateBowManualReloadInCmd( CUserCmd *cmd )
 	cmd->vrBowArrowGripHold = bGripHeld;
 	cmd->vrBowArrowTriggerHold = bTriggerHeld;
 
+	if ( pWeaponHand->GetBowArrowAimPose( cmd->vrBowArrowAimOrigin, cmd->vrBowArrowAimAngles ) )
+	{
+		if ( pWeaponHand == pRight )
+		{
+			cmd->rightControllerOrigin = cmd->vrBowArrowAimOrigin;
+			cmd->rightControllerAngles = cmd->vrBowArrowAimAngles;
+		}
+		else
+		{
+			cmd->leftControllerOrigin = cmd->vrBowArrowAimOrigin;
+			cmd->leftControllerAngles = cmd->vrBowArrowAimAngles;
+		}
+	}
+
 	if ( !pBow->HasVRBowArrowInHand() && !pBow->IsVRBowArrowNocking() && !pBow->IsVRBowArrowNocked()
 		&& bHoldInput )
 	{
@@ -1625,6 +1642,7 @@ static void TFVR_UpdateBowManualReloadInCmd( CUserCmd *cmd )
 			float flMax = tfvr_huntsman_draw_max.GetFloat();
 			cmd->vrBowArrowPull01 = clamp( ( flDraw - flMin ) / MAX( flMax - flMin, 0.01f ), 0.0f, 1.0f );
 		}
+
 	}
 }
 
@@ -1914,6 +1932,8 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 		cmd->vrBowArrowGripHold = false;
 		cmd->vrBowArrowTriggerHold = false;
 		cmd->vrBowArrowNockIsTrigger = false;
+		cmd->vrBowArrowAimOrigin.Init();
+		cmd->vrBowArrowAimAngles.Init();
 		cmd->vrWeaponArmed = false;
 
 		// Default the weapon-hand bit from handedness + per-weapon flip so plain
@@ -2008,9 +2028,16 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
         // Check if left hand is holding a weapon (e.g., medigun) - if so, send muzzle position/angles
         if (pLeftHand && pLeftHand->GetHeldWeapon())
         {
+            C_TFWeaponBase *pHeldWeapon = pLeftHand->GetHeldWeapon();
             Vector muzzlePos;
             QAngle muzzleAngles;
-            if (pLeftHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
+            if (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW
+                && cmd->vrBowArrowAimOrigin != vec3_origin)
+            {
+                cmd->leftControllerOrigin = cmd->vrBowArrowAimOrigin;
+                cmd->leftControllerAngles = cmd->vrBowArrowAimAngles;
+            }
+            else if (pLeftHand->GetWeaponMuzzlePositionAndAngles(muzzlePos, muzzleAngles))
             {
                 // Send weapon muzzle position AND angles for server-side hit detection
                 cmd->leftControllerOrigin = muzzlePos;
@@ -2112,7 +2139,13 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 
             Vector muzzlePos;
             QAngle muzzleAngles;
-            if (pRightHand->GetIdleWeaponBoneTransform( idleWpnPos, idleWpnAng ))
+            if (pHeldWeapon && pHeldWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW
+                && cmd->vrBowArrowAimOrigin != vec3_origin)
+            {
+                cmd->rightControllerOrigin = cmd->vrBowArrowAimOrigin;
+                cmd->rightControllerAngles = cmd->vrBowArrowAimAngles;
+            }
+            else if (pRightHand->GetIdleWeaponBoneTransform( idleWpnPos, idleWpnAng ))
             {
                 cmd->rightControllerOrigin = idleWpnPos;
                 cmd->rightControllerAngles = idleWpnAng;

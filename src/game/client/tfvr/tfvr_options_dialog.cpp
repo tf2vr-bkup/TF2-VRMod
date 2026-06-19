@@ -217,8 +217,10 @@ public:
 	{
 		m_pSmoothTurnRate = NULL;
 		m_pSnapTurnAngle = NULL;
+		m_pFlickStickTurnRate = NULL;
 		m_pSmoothTurnRateLabel = NULL;
 		m_pSnapTurnAngleLabel = NULL;
+		m_pFlickStickTurnRateLabel = NULL;
 
 		m_pPrimaryHand = AddCombo( "PrimaryHand", "Primary hand", 2 );
 		m_pPrimaryHand->AddItem( "Left", NULL );
@@ -231,13 +233,15 @@ public:
 		m_pLocomotionSource->AddItem( "Left hand", NULL );
 		m_pLocomotionSource->AddItem( "Right hand", NULL );
 
-		m_pTurningMode = AddCombo( "TurningMode", "Turn mode", 3 );
+		m_pTurningMode = AddCombo( "TurningMode", "Turn mode", 4 );
 		m_pTurningMode->AddItem( "Disabled", NULL );
 		m_pTurningMode->AddItem( "Smooth", NULL );
 		m_pTurningMode->AddItem( "Snap", NULL );
+		m_pTurningMode->AddItem( "Flick Stick", NULL );
 
 		m_pSmoothTurnRate = AddSlider( "SmoothTurnRate", "Smooth turn speed", 30, 240 );
 		m_pSnapTurnAngle = AddSlider( "SnapTurnAngle", "Snap turn angle", 15, 90 );
+		m_pFlickStickTurnRate = AddSlider( "FlickStickTurnRate", "Flick stick speed", 90, 1440 );
 
 		StartRightColumn();
 		m_pMoveSensitivity = AddSlider( "MoveSensitivity", "Movement sensitivity", 25, 200 );
@@ -247,15 +251,17 @@ public:
 		LoadControlSettings( "resource/TFVROptionsSubControls.res" );
 		m_pSmoothTurnRateLabel = FindChildByName( "SmoothTurnRateLabel" );
 		m_pSnapTurnAngleLabel = FindChildByName( "SnapTurnAngleLabel" );
+		m_pFlickStickTurnRateLabel = FindChildByName( "FlickStickTurnRateLabel" );
 	}
 
 	void OnResetData() OVERRIDE
 	{
 		m_pPrimaryHand->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_primary_hand", 1 ), 2 ) );
 		m_pLocomotionSource->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_locomotion_source", 0 ), 5 ) );
-		m_pTurningMode->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_turning_mode", 1 ), 3 ) );
+		m_pTurningMode->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_turning_mode", 1 ), 4 ) );
 		m_pSmoothTurnRate->SetValue( GetCvarInt( "tfvr_smooth_turn_rate", 120 ) );
 		m_pSnapTurnAngle->SetValue( GetCvarInt( "tfvr_snap_turn_angle", 45 ) );
+		m_pFlickStickTurnRate->SetValue( GetCvarInt( "tfvr_flickstick_turn_rate", 720 ) );
 		m_pMoveSensitivity->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_move_sensitivity", 1.0f ) * 100.0f ) );
 		m_pThumbstickDeadzone->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_thumbstick_deadzone", 0.1f ) * 100.0f ) );
 		m_pTurnDeadzone->SetValue( RoundFloatToInt( GetCvarFloat( "tfvr_turn_deadzone", 0.3f ) * 100.0f ) );
@@ -269,6 +275,7 @@ public:
 		SetCvarInt( "tfvr_turning_mode", m_pTurningMode->GetActiveItem() );
 		SetCvarInt( "tfvr_smooth_turn_rate", m_pSmoothTurnRate->GetValue() );
 		SetCvarInt( "tfvr_snap_turn_angle", m_pSnapTurnAngle->GetValue() );
+		SetCvarInt( "tfvr_flickstick_turn_rate", m_pFlickStickTurnRate->GetValue() );
 		SetCvarFloat( "tfvr_move_sensitivity", 0.01f * m_pMoveSensitivity->GetValue() );
 		SetCvarFloat( "tfvr_thumbstick_deadzone", 0.01f * m_pThumbstickDeadzone->GetValue() );
 		SetCvarFloat( "tfvr_turn_deadzone", 0.01f * m_pTurnDeadzone->GetValue() );
@@ -284,17 +291,20 @@ public:
 private:
 	void UpdateTurnControls()
 	{
-		if ( !m_pSmoothTurnRate || !m_pSnapTurnAngle )
+		if ( !m_pSmoothTurnRate || !m_pSnapTurnAngle || !m_pFlickStickTurnRate )
 			return;
 
 		const int nTurningMode = m_pTurningMode->GetActiveItem();
 		const bool bShowSmooth = ( nTurningMode == 1 );
 		const bool bShowSnap = ( nTurningMode == 2 );
+		const bool bShowFlickStick = ( nTurningMode == 3 );
 
 		m_pSmoothTurnRate->SetVisible( bShowSmooth );
 		m_pSmoothTurnRate->SetEnabled( bShowSmooth );
 		m_pSnapTurnAngle->SetVisible( bShowSnap );
 		m_pSnapTurnAngle->SetEnabled( bShowSnap );
+		m_pFlickStickTurnRate->SetVisible( bShowFlickStick );
+		m_pFlickStickTurnRate->SetEnabled( bShowFlickStick );
 
 		if ( m_pSmoothTurnRateLabel )
 		{
@@ -307,6 +317,12 @@ private:
 			m_pSnapTurnAngleLabel->SetVisible( bShowSnap );
 			m_pSnapTurnAngleLabel->SetEnabled( bShowSnap );
 		}
+
+		if ( m_pFlickStickTurnRateLabel )
+		{
+			m_pFlickStickTurnRateLabel->SetVisible( bShowFlickStick );
+			m_pFlickStickTurnRateLabel->SetEnabled( bShowFlickStick );
+		}
 	}
 
 	ComboBox *m_pPrimaryHand;
@@ -314,8 +330,10 @@ private:
 	ComboBox *m_pTurningMode;
 	Slider *m_pSmoothTurnRate;
 	Slider *m_pSnapTurnAngle;
+	Slider *m_pFlickStickTurnRate;
 	Panel *m_pSmoothTurnRateLabel;
 	Panel *m_pSnapTurnAngleLabel;
+	Panel *m_pFlickStickTurnRateLabel;
 	Slider *m_pMoveSensitivity;
 	Slider *m_pThumbstickDeadzone;
 	Slider *m_pTurnDeadzone;

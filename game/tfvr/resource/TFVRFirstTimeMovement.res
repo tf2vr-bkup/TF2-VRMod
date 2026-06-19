@@ -124,6 +124,34 @@
 		"leftText"			"Slow"
 		"rightText"			"Fast"
 	}
+	"FlickStickTurnRateLabel"
+	{
+		"ControlName"		"Label"
+		"fieldName"			"FlickStickTurnRateLabel"
+		"xpos"				"242"
+		"ypos"				"140"
+		"wide"				"198"
+		"tall"				"24"
+		"visible"			"1"
+		"enabled"			"1"
+		"labelText"			"Flick stick speed"
+		"textAlignment"		"west"
+		"associate"			"FlickStickTurnRate"
+	}
+	"FlickStickTurnRate"
+	{
+		"ControlName"		"Slider"
+		"fieldName"			"FlickStickTurnRate"
+		"xpos"				"242"
+		"ypos"				"166"
+		"wide"				"175"
+		"tall"				"50"
+		"visible"			"1"
+		"enabled"			"1"
+		"tabPosition"		"4"
+		"leftText"			"Slow"
+		"rightText"			"Fast"
+	}
 	"ComfortVignette"
 	{
 		"ControlName"		"CheckButton"

@@ -136,6 +136,7 @@ public:
 	{
 		m_pSmoothTurnRateLabel = NULL;
 		m_pSnapTurnAngleLabel = NULL;
+		m_pFlickStickTurnRateLabel = NULL;
 
 		m_pLocomotionSource = new vgui::ComboBox( this, "LocomotionSource", 5, false );
 		m_pLocomotionSource->AddItem( "Head", NULL );
@@ -145,11 +146,12 @@ public:
 		m_pLocomotionSource->AddItem( "Right hand", NULL );
 		m_pLocomotionSource->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_locomotion_source", 0 ), 5 ) );
 
-		m_pTurningMode = new vgui::ComboBox( this, "TurningMode", 3, false );
+		m_pTurningMode = new vgui::ComboBox( this, "TurningMode", 4, false );
 		m_pTurningMode->AddItem( "Disabled", NULL );
 		m_pTurningMode->AddItem( "Smooth", NULL );
 		m_pTurningMode->AddItem( "Snap", NULL );
-		m_pTurningMode->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_turning_mode", 1 ), 3 ) );
+		m_pTurningMode->AddItem( "Flick Stick", NULL );
+		m_pTurningMode->ActivateItem( ClampComboIndex( GetCvarInt( "tfvr_turning_mode", 1 ), 4 ) );
 		m_pTurningMode->AddActionSignalTarget( this );
 
 		m_pSnapTurnAngle = new vgui::Slider( this, "SnapTurnAngle" );
@@ -160,6 +162,10 @@ public:
 		m_pSmoothTurnRate->SetRange( 30, 240 );
 		m_pSmoothTurnRate->SetValue( GetCvarInt( "tfvr_smooth_turn_rate", 120 ) );
 
+		m_pFlickStickTurnRate = new vgui::Slider( this, "FlickStickTurnRate" );
+		m_pFlickStickTurnRate->SetRange( 90, 1440 );
+		m_pFlickStickTurnRate->SetValue( GetCvarInt( "tfvr_flickstick_turn_rate", 720 ) );
+
 		m_pComfortVignette = new vgui::CheckButton( this, "ComfortVignette", "Comfort vignette while moving" );
 		m_pComfortVignette->SetSelected( GetCvarInt( "tfvr_comfort_vignette_enabled", 0 ) != 0 );
 
@@ -169,6 +175,7 @@ public:
 		LoadControlSettings( "resource/TFVRFirstTimeMovement.res" );
 		m_pSmoothTurnRateLabel = FindChildByName( "SmoothTurnRateLabel" );
 		m_pSnapTurnAngleLabel = FindChildByName( "SnapTurnAngleLabel" );
+		m_pFlickStickTurnRateLabel = FindChildByName( "FlickStickTurnRateLabel" );
 		UpdateTurnControls();
 	}
 
@@ -202,6 +209,7 @@ private:
 		SetCvarInt( "tfvr_turning_mode", m_pTurningMode->GetActiveItem() );
 		SetCvarInt( "tfvr_snap_turn_angle", m_pSnapTurnAngle->GetValue() );
 		SetCvarInt( "tfvr_smooth_turn_rate", m_pSmoothTurnRate->GetValue() );
+		SetCvarInt( "tfvr_flickstick_turn_rate", m_pFlickStickTurnRate->GetValue() );
 		SetCvarInt( "tfvr_comfort_vignette_enabled", m_pComfortVignette->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_seated_mode", m_pSeatedMode->IsSelected() ? 1 : 0 );
 	}
@@ -216,11 +224,14 @@ private:
 		const int nTurningMode = m_pTurningMode->GetActiveItem();
 		const bool bShowSmooth = ( nTurningMode == 1 );
 		const bool bShowSnap = ( nTurningMode == 2 );
+		const bool bShowFlickStick = ( nTurningMode == 3 );
 
 		m_pSmoothTurnRate->SetVisible( bShowSmooth );
 		m_pSmoothTurnRate->SetEnabled( bShowSmooth );
 		m_pSnapTurnAngle->SetVisible( bShowSnap );
 		m_pSnapTurnAngle->SetEnabled( bShowSnap );
+		m_pFlickStickTurnRate->SetVisible( bShowFlickStick );
+		m_pFlickStickTurnRate->SetEnabled( bShowFlickStick );
 
 		if ( m_pSmoothTurnRateLabel )
 		{
@@ -233,6 +244,12 @@ private:
 			m_pSnapTurnAngleLabel->SetVisible( bShowSnap );
 			m_pSnapTurnAngleLabel->SetEnabled( bShowSnap );
 		}
+
+		if ( m_pFlickStickTurnRateLabel )
+		{
+			m_pFlickStickTurnRateLabel->SetVisible( bShowFlickStick );
+			m_pFlickStickTurnRateLabel->SetEnabled( bShowFlickStick );
+		}
 	}
 
 	vgui::WizardSubPanel *m_pNext;
@@ -240,8 +257,10 @@ private:
 	vgui::ComboBox *m_pTurningMode;
 	vgui::Slider *m_pSnapTurnAngle;
 	vgui::Slider *m_pSmoothTurnRate;
+	vgui::Slider *m_pFlickStickTurnRate;
 	vgui::Panel *m_pSmoothTurnRateLabel;
 	vgui::Panel *m_pSnapTurnAngleLabel;
+	vgui::Panel *m_pFlickStickTurnRateLabel;
 	vgui::CheckButton *m_pComfortVignette;
 	vgui::CheckButton *m_pSeatedMode;
 };

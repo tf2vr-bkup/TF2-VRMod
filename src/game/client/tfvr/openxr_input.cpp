@@ -12,6 +12,10 @@ ConVar tfvr_tracking_filter_beta("tfvr_tracking_filter_beta", "1.0", FCVAR_ARCHI
 ConVar tfvr_tracking_filter_derivative_cutoff("tfvr_tracking_filter_derivative_cutoff", "1.0", FCVAR_ARCHIVE,
     "1Euro tracking filter derivative cutoff in Hz");
 
+extern ConVar tfvr_turning_mode;
+extern ConVar tfvr_flickstick_eject_deadzone;
+static const int TFVR_TURNING_FLICK_STICK = 3;
+
 COpenXRInputManager::COpenXRInputManager(COpenXRManager* manager)
     : m_manager(manager)
     , m_instance(manager->GetInstance())
@@ -2452,7 +2456,12 @@ void COpenXRInputManager::PollInput()
     // Suppressed while the radial weapon menu is held open on the same stick.
     // Runs after the trackpad-force block so Index's weapon_select_hold is current.
     const float STICK_EJECT_THRESHOLD = 0.7f;
-    if (m_currentAnalogStates["right_stick_y"] > STICK_EJECT_THRESHOLD
+    bool bFlickStickMode = (tfvr_turning_mode.GetInt() == TFVR_TURNING_FLICK_STICK);
+    float flFlickStickEjectDeadzone = clamp(tfvr_flickstick_eject_deadzone.GetFloat(), 0.0f, 1.0f);
+    bool bStickMostlyUp = !bFlickStickMode
+        || fabs(m_currentAnalogStates["turn_x"]) <= flFlickStickEjectDeadzone;
+    if (bStickMostlyUp
+        && m_currentAnalogStates["right_stick_y"] > STICK_EJECT_THRESHOLD
         && !m_currentButtonStates["weapon_select_hold"])
     {
         m_currentButtonStates["magazine_eject"] = true;
