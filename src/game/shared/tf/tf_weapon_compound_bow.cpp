@@ -986,6 +986,16 @@ void CTFCompoundBow::GetProjectileFireSetup( CTFPlayer *pPlayer, Vector vecOffse
 {
 	BaseClass::GetProjectileFireSetup( pPlayer, vecOffset, vecSrc, angForward, bHitTeammates, flEndDist );
 
+	if ( pPlayer && ShouldUseVRBowManualReload() && m_bVRBowArrowNocked )
+	{
+		const CUserCmd *pCmd = pPlayer->GetCurrentUserCommand();
+		if ( pCmd && pCmd->vrBowArrowAimOrigin != vec3_origin )
+		{
+			*vecSrc = pCmd->vrBowArrowAimOrigin;
+			*angForward = pCmd->vrBowArrowAimAngles;
+		}
+	}
+
 	float flTotalChargeTime = gpGlobals->curtime - GetInternalChargeBeginTime();
 	if ( flTotalChargeTime >= TF_ARROW_MAX_CHARGE_TIME )
 	{

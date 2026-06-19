@@ -27,6 +27,7 @@
 #include "animation.h"
 #include "choreoscene.h"
 #include "tf_weaponbase.h"
+#include "tf_weapon_compound_bow.h"
 #include "c_tf_playerresource.h"
 #include "toolframework/itoolframework.h"
 #include "tier1/KeyValues.h"
@@ -4243,6 +4244,14 @@ Vector C_TFPlayer::Weapon_ShootPosition( void )
 		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
 			C_TFWeaponBase *pWeapon = pWeaponHand->GetHeldWeapon();
+			if (pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+			{
+				Vector bowArrowPos;
+				QAngle bowArrowAngles;
+				if (pWeaponHand->GetBowArrowAimPose(bowArrowPos, bowArrowAngles))
+					return bowArrowPos;
+			}
+
 			const char *cls = pWeapon->GetClassname();
 			bool bUseRawController = (pWeapon->GetWeaponID() == TF_WEAPON_FISTS);
 			if (cls && (V_stristr(cls, "sapper") || V_stristr(cls, "builder")))
@@ -4298,6 +4307,14 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 		if (pWeaponHand && pWeaponHand->GetHeldWeapon())
 		{
 			C_TFWeaponBase* pWeapon = pWeaponHand->GetHeldWeapon();
+			if (pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+			{
+				Vector bowArrowPos;
+				QAngle bowArrowAngles;
+				if (pWeaponHand->GetBowArrowAimPose(bowArrowPos, bowArrowAngles))
+					return bowArrowAngles;
+			}
+
 			const char *cls = pWeapon->GetClassname();
 			bool bUseRawController = (pWeapon->GetTFWpnData().m_iWeaponType == TF_WPN_TYPE_MELEE);
 			if (cls && (V_stristr(cls, "sapper") || V_stristr(cls, "builder")))

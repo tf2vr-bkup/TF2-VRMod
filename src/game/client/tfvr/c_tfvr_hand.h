@@ -168,6 +168,7 @@ public:
 	
 	// Get the weapon's muzzle position and angles in world space
 	bool GetWeaponMuzzlePositionAndAngles(Vector &outPos, QAngle &outAngles);
+	bool GetBowArrowAimPose(Vector &outPos, QAngle &outAngles);
 	
 	// Get cached weapon bone world transform (for overlays to avoid bone cache issues)
 	bool GetCachedWeaponBoneTransform(matrix3x4_t &outTransform) const;

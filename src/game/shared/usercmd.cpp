@@ -223,6 +223,8 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	WriteVec3Diff(buf, to->vrThrowOrigin, from->vrThrowOrigin);
 	WriteVec3Diff(buf, to->vrThrowAngles, from->vrThrowAngles);
 	WriteVec3Diff(buf, to->vrThrowAngVel, from->vrThrowAngVel);
+	WriteVec3Diff(buf, to->vrBowArrowAimOrigin, from->vrBowArrowAimOrigin);
+	WriteVec3Diff(buf, to->vrBowArrowAimAngles, from->vrBowArrowAimAngles);
 
 	if ( to->vrMeleeGripSpeed != from->vrMeleeGripSpeed )
 	{
@@ -434,6 +436,8 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	ReadVec3Diff(buf, move->vrThrowOrigin);
 	ReadVec3Diff(buf, move->vrThrowAngles);
 	ReadVec3Diff(buf, move->vrThrowAngVel);
+	ReadVec3Diff(buf, move->vrBowArrowAimOrigin);
+	ReadVec3Diff(buf, move->vrBowArrowAimAngles);
 
 	if ( buf->ReadOneBit() )
 	{

@@ -10465,6 +10465,205 @@ bool C_TFVRHand::GetBowArrowPosition( Vector &outPos )
 	return true;
 }
 
+ConVar tfvr_bow_aim_debug( "tfvr_bow_aim_debug", "0", FCVAR_NONE, "Draw the Huntsman computed aim ray and log its pose." );
+ConVar tfvr_bow_aim_axis( "tfvr_bow_aim_axis", "-1", FCVAR_NONE, "Huntsman aim direction: -1 auto-pick arrow shaft axis, else force arrow-bone local axis 0=X 1=Y 2=Z." );
+ConVar tfvr_bow_aim_flip( "tfvr_bow_aim_flip", "0", FCVAR_NONE, "Reverse the Huntsman computed aim direction." );
+
+//-----------------------------------------------------------------------------
+// Purpose: World position + direction of the nocked arrow at full draw, used as
+//          the Huntsman's aim point for both the VR crosshair and the projectile
+//          fire setup.
+//
+//          This deliberately reuses the SAME proven, controller-tracked source
+//          as the bow nock detection and the crossbow muzzle synthesis:
+//          GetCachedWeaponBoneTransform() (the render-stabilized weapon bone).
+//          Calling SetupBones() fresh here produced a non-tracking pose, which
+//          is why the aim previously appeared "stuck" in one world direction.
+//
+//          - Origin:    the arrow bone (weapon_bone_4) sampled at the end of the
+//                        full-pull charge pose (bw_charge, cycle 1.0), mapped
+//                        through the live weapon bone. This sits on the
+//                        arrowhead/shaft, fixing the "aim is low" complaint.
+//          - Direction: the arrow bone's own long axis, but the axis/sign is
+//                        chosen to best match the bow's forward so it can never
+//                        come out 90-degrees-off or reversed.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetBowArrowAimPose( Vector &outPos, QAngle &outAngles )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_COMPOUND_BOW )
+		return false;
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr )
+		return false;
+
+	// Weapon bone in world space. The visible arrow is parented to the LIVE
+	// (animation-following) weapon bone, so we must map the sampled arrow offset
+	// through that same bone - the idle-stabilized cache is held steady and does
+	// NOT follow the charge animation, which left the aim a few degrees off the
+	// drawn arrow. Fall back to the idle-stabilized cache, then the idle matrix.
+	// Never call SetupBones() here - it returns a non-tracking pose in this
+	// calling context.
+	matrix3x4_t liveWeaponBone;
+	if ( !GetLiveWeaponBoneTransform( liveWeaponBone ) &&
+		!GetCachedWeaponBoneTransform( liveWeaponBone ) )
+	{
+		if ( m_bHasIdleWeaponBone )
+			MatrixCopy( m_matIdleWeaponBoneWorld, liveWeaponBone );
+		else
+			return false;
+	}
+
+	// Sample the arrow + weapon bone at the END of the full-pull charge pose
+	// (bw_charge, cycle 1.0) - this is where the arrow sits/points at full
+	// draw, which is the aim the player expects. Fall back to the bw_fire idle
+	// pose only if the charge sequence is unavailable.
+	const int iSeq = ( m_iChargeSequence >= 0 ) ? m_iChargeSequence : m_iBowIdleSequence;
+	const float flCycle = ( m_iChargeSequence >= 0 ) ? 1.0f : m_flBowIdleCycle;
+	if ( iSeq < 0 )
+		return false;
+
+	const int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	int iArrowBone = LookupBone( "weapon_bone_4" );
+	int iWeaponBone = LookupBone( "weapon_bone" );
+	if ( iWeaponBone < 0 )
+		iWeaponBone = LookupBone( "vm_weapon_bone" );
+	if ( iArrowBone < 0 || iArrowBone >= numBones || iWeaponBone < 0 || iWeaponBone >= numBones )
+		return false;
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, iSeq, flCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( qAnim[i], posAnim[i], local );
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones )
+			ConcatTransforms( sampledBones[pBone->parent], local, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	matrix3x4_t invSampledWeaponBone;
+	MatrixInvert( sampledBones[iWeaponBone], invSampledWeaponBone );
+
+	matrix3x4_t arrowRelativeToWeapon;
+	ConcatTransforms( invSampledWeaponBone, sampledBones[iArrowBone], arrowRelativeToWeapon );
+
+	// Map the arrow (and a copy of the weapon bone, for the direction reference)
+	// through the live, tracking weapon bone.
+	matrix3x4_t worldMats[2];
+	ConcatTransforms( liveWeaponBone, arrowRelativeToWeapon, worldMats[0] ); // arrow
+	MatrixCopy( liveWeaponBone, worldMats[1] );                              // weapon bone
+
+	// Mirror for left-handed / flipped weapons, exactly like nock detection,
+	// so the aim follows the visibly reflected bow.
+	if ( TFVR_ShouldMirrorWeaponHand( pWeapon ) )
+	{
+		matrix3x4_t reflectFrame;
+		if ( m_bReflectPoseActive )
+			MatrixCopy( m_matReflectFrame, reflectFrame );
+		else
+			AngleMatrix( m_angLastValidAngles, m_vecLastValidPosition, reflectFrame );
+		TFVR_ReflectBonesInControllerFrame( worldMats, 2, reflectFrame );
+	}
+
+	const matrix3x4_t &arrowWorld = worldMats[0];
+	const matrix3x4_t &weaponWorld = worldMats[1];
+
+	MatrixGetColumn( arrowWorld, 3, outPos );
+
+	// Forward reference for disambiguating the arrow shaft axis. The weapon bone's
+	// own axis convention is model-specific (for this bow its "forward" column
+	// points up), so derive forward geometrically instead: at full draw the arrow
+	// nock (arrow bone) is pulled back near the face while the bow grip (weapon
+	// bone) is extended forward, so grip - nock points down the shooting line.
+	Vector weaponPos;
+	MatrixGetColumn( weaponWorld, 3, weaponPos );
+	Vector forwardRef = weaponPos - outPos;
+	if ( forwardRef.NormalizeInPlace() < 0.001f )
+	{
+		QAngle wpnAngles;
+		MatrixAngles( weaponWorld, wpnAngles );
+		AngleVectors( wpnAngles, &forwardRef );
+		forwardRef.NormalizeInPlace();
+	}
+
+	Vector vecArrowForward = forwardRef;
+	int iChosenAxis = -1;
+	const int iForceAxis = tfvr_bow_aim_axis.GetInt();
+	if ( iForceAxis >= 0 && iForceAxis <= 2 )
+	{
+		// Forced arrow-bone local axis, signed to face the shooting line.
+		MatrixGetColumn( arrowWorld, iForceAxis, vecArrowForward );
+		if ( vecArrowForward.NormalizeInPlace() >= 0.001f && DotProduct( vecArrowForward, forwardRef ) < 0.0f )
+			vecArrowForward = -vecArrowForward;
+		iChosenAxis = iForceAxis;
+	}
+	else
+	{
+		// Auto: pick the arrow bone's local axis closest to the shooting line.
+		float flBestAbsDot = -1.0f;
+		for ( int axis = 0; axis < 3; axis++ )
+		{
+			Vector col;
+			MatrixGetColumn( arrowWorld, axis, col );
+			if ( col.NormalizeInPlace() < 0.001f )
+				continue;
+
+			const float flDot = DotProduct( col, forwardRef );
+			if ( fabsf( flDot ) > flBestAbsDot )
+			{
+				flBestAbsDot = fabsf( flDot );
+				vecArrowForward = ( flDot < 0.0f ) ? -col : col;
+				iChosenAxis = axis;
+			}
+		}
+	}
+
+	if ( tfvr_bow_aim_flip.GetBool() )
+		vecArrowForward = -vecArrowForward;
+
+	if ( vecArrowForward.NormalizeInPlace() < 0.001f )
+		return false;
+
+	VectorAngles( vecArrowForward, outAngles );
+
+	if ( tfvr_bow_aim_debug.GetBool() && debugoverlay )
+	{
+		debugoverlay->AddLineOverlay( outPos, outPos + vecArrowForward * 200.0f, 0, 255, 0, true, 0.0f );
+		debugoverlay->AddLineOverlay( outPos, outPos + forwardRef * 120.0f, 255, 128, 0, true, 0.0f );
+		debugoverlay->AddTextOverlay( outPos, 0.0f, "bow aim (green=shaft, orange=ref)" );
+		DevMsg( "BowAim: pos(%.1f %.1f %.1f) ang(%.1f %.1f %.1f) axis=%d\n",
+			outPos.x, outPos.y, outPos.z, outAngles.x, outAngles.y, outAngles.z, iChosenAxis );
+	}
+
+	return true;
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: World position of the bow's nock point for arrow-nock detection.
 //          This is the arrow bone (weapon_bone_4) sampled in the RESTING fire

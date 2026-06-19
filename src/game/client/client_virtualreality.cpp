@@ -25,6 +25,9 @@
 #include "steam/steam_api.h"
 #include <tfvr/openxr_manager.h>
 #include "tf/c_tf_player.h"
+#include "tf/tf_weapon_compound_bow.h"
+#include "tfvr/c_tfvr_hand.h"
+#include "tfvr/tfvr_weapon_base.h"
 #include "engine/ivdebugoverlay.h"
 #include "econ/econ_ui.h"
 #include "tf/vgui/class_loadout_panel.h"
@@ -48,6 +51,7 @@ ConVar vr_activate_default( "vr_activate_default",		"1", FCVAR_ARCHIVE, "If this
 
 // Debug visualization ConVars
 ConVar tfvr_debug_playspace_origin( "tfvr_debug_playspace_origin", "0", FCVAR_NONE, "Draw a debug cube at the calculated playspace origin in world coordinates" );
+ConVar tfvr_bow_crosshair_roll( "tfvr_bow_crosshair_roll", "0", FCVAR_ARCHIVE, "Roll (degrees) applied to the Huntsman crosshair on top of the computed arrow roll." );
 
 ConVar vr_moveaim_mode      ( "vr_moveaim_mode",      "1", FCVAR_ARCHIVE, "0=move+shoot from face. 1=move with torso. 2,3,4=shoot with face+mouse cursor. 5+ are probably not that useful." );
 ConVar vr_moveaim_mode_zoom ( "vr_moveaim_mode_zoom", "3", FCVAR_ARCHIVE, "0=move+shoot from face. 1=move with torso. 2,3,4=shoot with face+mouse cursor. 5+ are probably not that useful." );
@@ -526,6 +530,39 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 		C_TFPlayer *pTFPlayer = ToTFPlayer(pPlayer);
 		if ( pTFPlayer )
 		{
+			C_TFWeaponBase *pWeapon = pTFPlayer->GetActiveTFWeapon();
+			if ( pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW )
+			{
+				C_TFVRHand *pWeaponHand = TFVR_GetWeaponHand(pWeapon);
+				Vector bowArrowPos;
+				QAngle bowArrowAngles;
+				if ( pWeaponHand
+					&& pWeaponHand->GetBowArrowAimPose(bowArrowPos, bowArrowAngles) )
+				{
+					*pAimOrigin = bowArrowPos;
+
+					Vector forward;
+					AngleVectors( bowArrowAngles, &forward );
+					*pAimDirection = forward;
+
+					extern ConVar tfvr_crosshair_follow_controller_roll;
+					if (tfvr_crosshair_follow_controller_roll.GetBool())
+					{
+						// The arrow aim's roll is 0 from VectorAngles; the old
+						// "-90" left the reticle rolled a quarter turn. Roll it
+						// back to upright (tunable via tfvr_bow_crosshair_roll).
+						m_flCrosshairRollAngle = bowArrowAngles.z + tfvr_bow_crosshair_roll.GetFloat();
+						m_bCrosshairRollValid = true;
+					}
+					else
+					{
+						m_bCrosshairRollValid = false;
+					}
+
+					return true;
+				}
+			}
+
 			// Use weapon shoot position for origin (controller position in VR)
 			*pAimOrigin = pTFPlayer->Weapon_ShootPosition();
 

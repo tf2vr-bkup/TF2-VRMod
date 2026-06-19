@@ -80,6 +80,8 @@ public:
 		vrBowArrowTriggerHold = false;
 		vrBowArrowNockIsTrigger = false;
 		vrBowArrowPull01 = 0.0f;
+		vrBowArrowAimOrigin.Init();
+		vrBowArrowAimAngles.Init();
 		vrMagazineEject = false;
 		vrMagazinePull = false;
 		vrMagazineInsert = false;
@@ -154,6 +156,8 @@ public:
 		vrBowArrowTriggerHold = src.vrBowArrowTriggerHold;
 		vrBowArrowNockIsTrigger = src.vrBowArrowNockIsTrigger;
 		vrBowArrowPull01 = src.vrBowArrowPull01;
+		vrBowArrowAimOrigin = src.vrBowArrowAimOrigin;
+		vrBowArrowAimAngles = src.vrBowArrowAimAngles;
 		vrMagazineEject = src.vrMagazineEject;
 		vrMagazinePull = src.vrMagazinePull;
 		vrMagazineInsert = src.vrMagazineInsert;
@@ -235,6 +239,8 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrBowArrowTriggerHold, sizeof( vrBowArrowTriggerHold ) );
 		CRC32_ProcessBuffer( &crc, &vrBowArrowNockIsTrigger, sizeof( vrBowArrowNockIsTrigger ) );
 		CRC32_ProcessBuffer( &crc, &vrBowArrowPull01, sizeof( vrBowArrowPull01 ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowAimOrigin, sizeof( vrBowArrowAimOrigin ) );
+		CRC32_ProcessBuffer( &crc, &vrBowArrowAimAngles, sizeof( vrBowArrowAimAngles ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazineEject, sizeof( vrMagazineEject ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazinePull, sizeof( vrMagazinePull ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazineInsert, sizeof( vrMagazineInsert ) );
@@ -298,6 +304,8 @@ public:
 		vrBowArrowTriggerHold = false;
 		vrBowArrowNockIsTrigger = false;
 		vrBowArrowPull01 = 0.0f;
+		vrBowArrowAimOrigin.Init();
+		vrBowArrowAimAngles.Init();
 		vrMagazineEject = false;
 		vrMagazinePull = false;
 		vrMagazineInsert = false;
@@ -383,6 +391,8 @@ public:
 	bool	vrBowArrowTriggerHold;
 	bool	vrBowArrowNockIsTrigger;
 	float	vrBowArrowPull01;       // VR Huntsman: physical draw amount 0..1 (string pull)
+	Vector	vrBowArrowAimOrigin;     // VR Huntsman: full-charge arrow pose used as muzzle origin
+	QAngle	vrBowArrowAimAngles;     // VR Huntsman: full-charge arrow +Z axis used as muzzle angles
 
 	// VR pistol manual magazine reload intents.
 	bool	vrMagazineEject;
