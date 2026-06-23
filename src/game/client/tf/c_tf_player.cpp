@@ -9359,14 +9359,22 @@ void BuildHandScaleTransformations( CBaseAnimating *pObject, CStudioHdr *hdr, Ve
 //-----------------------------------------------------------------------------
 ConVar tfvr_ik_enabled("tfvr_ik_enabled", "1", FCVAR_NONE, "Enable third-person arm IK for VR players");
 ConVar tfvr_ik_local_body("tfvr_ik_local_body", "0", FCVAR_NONE, "Show IK'd body on local VR player (first-person full body)");
-ConVar tfvr_ik_pole_blend("tfvr_ik_pole_blend", "0.4", FCVAR_NONE, "How much hand orientation affects elbow direction (0-1)");
+ConVar tfvr_ik_pole_blend("tfvr_ik_pole_blend", "0", FCVAR_NONE, "Extra hand-orientation influence on top of the HVR-style bend heuristic (0-1)");
 ConVar tfvr_ik_shoulder_range("tfvr_ik_shoulder_range", "25", FCVAR_NONE, "Max collar bone rotation in degrees for shoulder reach");
-ConVar tfvr_ik_wrist_twist_share("tfvr_ik_wrist_twist_share", "0.5", FCVAR_NONE, "Fraction of wrist twist distributed to forearm (0=all wrist, 1=all forearm)");
+ConVar tfvr_ik_shoulder_forward_range("tfvr_ik_shoulder_forward_range", "18", FCVAR_NONE, "Extra collar forward/back rotation in degrees when hands reach far forward or back");
+ConVar tfvr_ik_wrist_twist_share("tfvr_ik_wrist_twist_share", "0.5", FCVAR_NONE, "Fraction of wrist/controller roll distributed to forearm before residual limiting (0=none, 1=all)");
+ConVar tfvr_ik_wrist_max_twist("tfvr_ik_wrist_max_twist", "25", FCVAR_NONE, "Target max residual wrist seam twist in degrees; hand remains controller-authoritative (<0 or >=180 disables)");
+ConVar tfvr_ik_forearm_max_twist("tfvr_ik_forearm_max_twist", "70", FCVAR_NONE, "Soft forearm twist limit in degrees; twist continues past this with resistance (<0 or >=180 disables soft limit)");
+ConVar tfvr_ik_forearm_hard_max_twist("tfvr_ik_forearm_hard_max_twist", "130", FCVAR_NONE, "Absolute forearm twist limit in degrees after soft limiting (<0 or >=180 disables hard limit)");
+ConVar tfvr_ik_upper_arm_max_twist("tfvr_ik_upper_arm_max_twist", "15", FCVAR_NONE, "Soft upper-arm roll limit in degrees relative to the elbow plane (<0 or >=180 disables soft limit)");
+ConVar tfvr_ik_upper_arm_hard_max_twist("tfvr_ik_upper_arm_hard_max_twist", "45", FCVAR_NONE, "Absolute upper-arm roll limit in degrees after soft limiting (<0 or >=180 disables hard limit)");
 ConVar tfvr_ik_debug("tfvr_ik_debug", "0", FCVAR_NONE, "Draw debug lines for VR arm IK");
 ConVar tfvr_ik_pole_dist("tfvr_ik_pole_dist", "50", FCVAR_NONE, "Distance from shoulder to pole target point");
 ConVar tfvr_ik_elbow_up_bias("tfvr_ik_elbow_up_bias", "0.8", FCVAR_NONE, "How strongly the elbow drops when reaching up");
 ConVar tfvr_ik_elbow_fwd_bias("tfvr_ik_elbow_fwd_bias", "0.5", FCVAR_NONE, "How strongly the elbow drops when reaching forward");
 ConVar tfvr_ik_elbow_cross_bias("tfvr_ik_elbow_cross_bias", "0.6", FCVAR_NONE, "How strongly the elbow pushes outward when reaching across body");
+ConVar tfvr_ik_elbow_min_outward("tfvr_ik_elbow_min_outward", "0.06", FCVAR_NONE, "Minimum solved-elbow outward offset as fraction of arm length (0=prevents inward crossing, -1 disables)");
+ConVar tfvr_ik_elbow_max_up("tfvr_ik_elbow_max_up", "-0.05", FCVAR_NONE, "Maximum solved-elbow upward offset as fraction of arm length (0=shoulder height max, negative favors downward, >=1 disables)");
 
 // IK solver functions are in tf_vr_ik_shared.cpp (shared client/server).
 
@@ -9544,86 +9552,55 @@ void C_TFPlayer::BuildVRControllerIK( CStudioHdr *hdr, Vector *pos, Quaternion q
 	float upBias = tfvr_ik_elbow_up_bias.GetFloat();
 	float fwdBias = tfvr_ik_elbow_fwd_bias.GetFloat();
 	float crossBias = tfvr_ik_elbow_cross_bias.GetFloat();
+	float minElbowOutward = tfvr_ik_elbow_min_outward.GetFloat();
+	float maxElbowUp = tfvr_ik_elbow_max_up.GetFloat();
 
 	// Right arm IK
-	if ( bHaveR && m_iUpperArmBoneR != -1 )
+	if ( bHaveR && m_iUpperArmBoneR != -1 && m_iLowerArmBoneR != -1 )
 	{
 		Vector shoulderPos;
 		MatrixPosition( GetBone( m_iUpperArmBoneR ), shoulderPos );
+		Vector elbowPos;
+		MatrixPosition( GetBone( m_iLowerArmBoneR ), elbowPos );
+		Vector preferredBendDir = elbowPos - shoulderPos;
 
-		// Adaptive pole: direction depends on where the hand is relative to shoulder
-		Vector reachDir = ( targetPosR - shoulderPos );
-		reachDir.NormalizeInPlace();
-
-		float dotFwd = DotProduct( reachDir, vForward );
-		float dotRight = DotProduct( reachDir, vRight );
-		float dotUp = DotProduct( reachDir, vUp );
-
-		Vector pole = -vForward * 0.5f - vUp * 0.3f;
-
-		if ( dotUp > 0.0f )
-			pole += ( -vUp * upBias + vForward * 0.3f ) * dotUp;
-
-		if ( dotFwd > 0.0f )
-			pole += -vUp * fwdBias * dotFwd;
-
-		float crossAmount = -dotRight;
-		if ( crossAmount > 0.0f )
-			pole += vRight * crossBias * crossAmount;
-
-		pole.NormalizeInPlace();
-
-		// Blend with hand orientation
-		Vector hFwd, hRight, hUp;
-		AngleVectors( targetAngR, &hFwd, &hRight, &hUp );
-		Vector poleDir = pole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
-		poleDir.NormalizeInPlace();
+		Vector poleDir;
+		VRIK_BuildAnatomicalArmPole( shoulderPos, targetPosR, targetAngR, vForward, vUp, vRight, preferredBendDir,
+			m_flUpperArmLen, m_flForearmLen, poleBlend, upBias, fwdBias, crossBias, minElbowOutward, maxElbowUp, poleDir );
 
 		Vector poleTarget = shoulderPos + poleDir * poleDist;
 
 		VRIK_ApplyArmIK( this, pHdr, m_BoneAccessor.GetBoneArrayForWrite(), m_iCollarBoneR, m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR,
 			m_flCollarLen, m_flUpperArmLen, m_flForearmLen, targetPosR, targetAngR, poleTarget,
-			tfvr_ik_shoulder_range.GetFloat(), tfvr_ik_wrist_twist_share.GetFloat(), bDebug );
+			vRight, vUp, minElbowOutward, maxElbowUp,
+			vForward, tfvr_ik_shoulder_forward_range.GetFloat(),
+			tfvr_ik_shoulder_range.GetFloat(), tfvr_ik_wrist_twist_share.GetFloat(), tfvr_ik_wrist_max_twist.GetFloat(),
+			tfvr_ik_forearm_max_twist.GetFloat(), tfvr_ik_forearm_hard_max_twist.GetFloat(),
+			tfvr_ik_upper_arm_max_twist.GetFloat(), tfvr_ik_upper_arm_hard_max_twist.GetFloat(), bDebug );
 	}
 
 	// Left arm IK
-	if ( bHaveL && m_iUpperArmBoneL != -1 )
+	if ( bHaveL && m_iUpperArmBoneL != -1 && m_iLowerArmBoneL != -1 )
 	{
 		Vector shoulderPos;
 		MatrixPosition( GetBone( m_iUpperArmBoneL ), shoulderPos );
+		Vector elbowPos;
+		MatrixPosition( GetBone( m_iLowerArmBoneL ), elbowPos );
+		Vector preferredBendDir = elbowPos - shoulderPos;
 
-		Vector reachDir = ( targetPosL - shoulderPos );
-		reachDir.NormalizeInPlace();
-
-		float dotFwd = DotProduct( reachDir, vForward );
-		float dotRight = DotProduct( reachDir, vRight );
-		float dotUp = DotProduct( reachDir, vUp );
-
-		Vector pole = -vForward * 0.5f - vUp * 0.3f;
-
-		if ( dotUp > 0.0f )
-			pole += ( -vUp * upBias + vForward * 0.3f ) * dotUp;
-
-		if ( dotFwd > 0.0f )
-			pole += -vUp * fwdBias * dotFwd;
-
-		// Left arm: crossing is when dotRight > 0 (reaching rightward)
-		float crossAmount = dotRight;
-		if ( crossAmount > 0.0f )
-			pole += -vRight * crossBias * crossAmount;
-
-		pole.NormalizeInPlace();
-
-		Vector hFwd, hRight, hUp;
-		AngleVectors( targetAngL, &hFwd, &hRight, &hUp );
-		Vector poleDir = pole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
-		poleDir.NormalizeInPlace();
+		Vector poleDir;
+		VRIK_BuildAnatomicalArmPole( shoulderPos, targetPosL, targetAngL, vForward, vUp, -vRight, preferredBendDir,
+			m_flUpperArmLen, m_flForearmLen, poleBlend, upBias, fwdBias, crossBias, minElbowOutward, maxElbowUp, poleDir );
 
 		Vector poleTarget = shoulderPos + poleDir * poleDist;
 
 		VRIK_ApplyArmIK( this, pHdr, m_BoneAccessor.GetBoneArrayForWrite(), m_iCollarBoneL, m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL,
 			m_flCollarLen, m_flUpperArmLen, m_flForearmLen, targetPosL, targetAngL, poleTarget,
-			tfvr_ik_shoulder_range.GetFloat(), tfvr_ik_wrist_twist_share.GetFloat(), bDebug );
+			-vRight, vUp, minElbowOutward, maxElbowUp,
+			vForward, tfvr_ik_shoulder_forward_range.GetFloat(),
+			tfvr_ik_shoulder_range.GetFloat(), tfvr_ik_wrist_twist_share.GetFloat(), tfvr_ik_wrist_max_twist.GetFloat(),
+			tfvr_ik_forearm_max_twist.GetFloat(), tfvr_ik_forearm_hard_max_twist.GetFloat(),
+			tfvr_ik_upper_arm_max_twist.GetFloat(), tfvr_ik_upper_arm_hard_max_twist.GetFloat(), bDebug );
 	}
 }
 

@@ -23832,94 +23832,70 @@ void CTFPlayer::SetupBones( matrix3x4_t *pBoneToWorld, int boneMask )
 	AngleVectors( GetAbsAngles(), &vForward, &vRight, &vUp );
 
 	float shoulderRange = 25.0f;
+	float shoulderForwardRange = 18.0f;
 	float wristTwistShare = 0.5f;
-	float poleBlend = 0.4f;
+	float maxWristTwist = 25.0f;
+	float maxForearmTwist = 70.0f;
+	float maxForearmHardTwist = 130.0f;
+	float maxUpperArmTwist = 15.0f;
+	float maxUpperArmHardTwist = 45.0f;
+	float poleBlend = 0.0f;
 	float poleDist = 50.0f;
 	float upBias = 0.8f;
 	float fwdBias = 0.5f;
 	float crossBias = 0.6f;
+	float minElbowOutward = 0.06f;
+	float maxElbowUp = -0.05f;
 
 	// Right arm
-	if ( (Vector)m_vecVRHandOffsetR != vec3_origin && m_iUpperArmBoneR != -1 )
+	if ( (Vector)m_vecVRHandOffsetR != vec3_origin && m_iUpperArmBoneR != -1 && m_iLowerArmBoneR != -1 )
 	{
 		Vector targetPosR = headBonePos + (Vector)m_vecVRHandOffsetR;
 		QAngle targetAngR = m_angVRHandAngR;
 
 		Vector shoulderPos;
 		MatrixPosition( pBoneToWorld[m_iUpperArmBoneR], shoulderPos );
+		Vector elbowPos;
+		MatrixPosition( pBoneToWorld[m_iLowerArmBoneR], elbowPos );
+		Vector preferredBendDir = elbowPos - shoulderPos;
 
-		Vector reachDir = ( targetPosR - shoulderPos );
-		reachDir.NormalizeInPlace();
-
-		float dotFwd = DotProduct( reachDir, vForward );
-		float dotRight = DotProduct( reachDir, vRight );
-		float dotUp = DotProduct( reachDir, vUp );
-
-		Vector pole = -vForward * 0.5f - vUp * 0.3f;
-
-		if ( dotUp > 0.0f )
-			pole += ( -vUp * upBias + vForward * 0.3f ) * dotUp;
-
-		if ( dotFwd > 0.0f )
-			pole += -vUp * fwdBias * dotFwd;
-
-		float crossAmount = -dotRight;
-		if ( crossAmount > 0.0f )
-			pole += vRight * crossBias * crossAmount;
-
-		pole.NormalizeInPlace();
-
-		Vector hFwd, hRight, hUp;
-		AngleVectors( targetAngR, &hFwd, &hRight, &hUp );
-		Vector poleDir = pole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
-		poleDir.NormalizeInPlace();
+		Vector poleDir;
+		VRIK_BuildAnatomicalArmPole( shoulderPos, targetPosR, targetAngR, vForward, vUp, vRight, preferredBendDir,
+			m_flUpperArmLen, m_flForearmLen, poleBlend, upBias, fwdBias, crossBias, minElbowOutward, maxElbowUp, poleDir );
 
 		Vector poleTarget = shoulderPos + poleDir * poleDist;
 
 		VRIK_ApplyArmIK( this, pHdr, pBoneToWorld, m_iCollarBoneR, m_iUpperArmBoneR, m_iLowerArmBoneR, m_iHandBoneR,
 			m_flCollarLen, m_flUpperArmLen, m_flForearmLen, targetPosR, targetAngR, poleTarget,
-			shoulderRange, wristTwistShare, false );
+			vRight, vUp, minElbowOutward, maxElbowUp,
+			vForward, shoulderForwardRange,
+			shoulderRange, wristTwistShare, maxWristTwist, maxForearmTwist, maxForearmHardTwist,
+			maxUpperArmTwist, maxUpperArmHardTwist, false );
 	}
 
 	// Left arm
-	if ( (Vector)m_vecVRHandOffsetL != vec3_origin && m_iUpperArmBoneL != -1 )
+	if ( (Vector)m_vecVRHandOffsetL != vec3_origin && m_iUpperArmBoneL != -1 && m_iLowerArmBoneL != -1 )
 	{
 		Vector targetPosL = headBonePos + (Vector)m_vecVRHandOffsetL;
 		QAngle targetAngL = m_angVRHandAngL;
 
 		Vector shoulderPos;
 		MatrixPosition( pBoneToWorld[m_iUpperArmBoneL], shoulderPos );
+		Vector elbowPos;
+		MatrixPosition( pBoneToWorld[m_iLowerArmBoneL], elbowPos );
+		Vector preferredBendDir = elbowPos - shoulderPos;
 
-		Vector reachDir = ( targetPosL - shoulderPos );
-		reachDir.NormalizeInPlace();
-
-		float dotFwd = DotProduct( reachDir, vForward );
-		float dotRight = DotProduct( reachDir, vRight );
-		float dotUp = DotProduct( reachDir, vUp );
-
-		Vector pole = -vForward * 0.5f - vUp * 0.3f;
-
-		if ( dotUp > 0.0f )
-			pole += ( -vUp * upBias + vForward * 0.3f ) * dotUp;
-
-		if ( dotFwd > 0.0f )
-			pole += -vUp * fwdBias * dotFwd;
-
-		float crossAmount = dotRight;
-		if ( crossAmount > 0.0f )
-			pole += -vRight * crossBias * crossAmount;
-
-		pole.NormalizeInPlace();
-
-		Vector hFwd, hRight, hUp;
-		AngleVectors( targetAngL, &hFwd, &hRight, &hUp );
-		Vector poleDir = pole * ( 1.0f - poleBlend ) + ( -hUp ) * poleBlend;
-		poleDir.NormalizeInPlace();
+		Vector poleDir;
+		VRIK_BuildAnatomicalArmPole( shoulderPos, targetPosL, targetAngL, vForward, vUp, -vRight, preferredBendDir,
+			m_flUpperArmLen, m_flForearmLen, poleBlend, upBias, fwdBias, crossBias, minElbowOutward, maxElbowUp, poleDir );
 
 		Vector poleTarget = shoulderPos + poleDir * poleDist;
 
 		VRIK_ApplyArmIK( this, pHdr, pBoneToWorld, m_iCollarBoneL, m_iUpperArmBoneL, m_iLowerArmBoneL, m_iHandBoneL,
 			m_flCollarLen, m_flUpperArmLen, m_flForearmLen, targetPosL, targetAngL, poleTarget,
-			shoulderRange, wristTwistShare, false );
+			-vRight, vUp, minElbowOutward, maxElbowUp,
+			vForward, shoulderForwardRange,
+			shoulderRange, wristTwistShare, maxWristTwist, maxForearmTwist, maxForearmHardTwist,
+			maxUpperArmTwist, maxUpperArmHardTwist, false );
 	}
 }
