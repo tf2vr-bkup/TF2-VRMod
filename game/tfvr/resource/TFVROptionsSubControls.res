@@ -249,17 +249,4 @@
 		"leftText"			"0"
 		"rightText"			"80"
 	}
-	"WeaponSwitchStick"
-	{
-		"ControlName"		"CheckButton"
-		"fieldName"			"WeaponSwitchStick"
-		"xpos"				"242"
-		"ypos"				"322"
-		"wide"				"220"
-		"tall"				"36"
-		"visible"			"1"
-		"enabled"			"1"
-		"tabPosition"		"9"
-		"textAlignment"		"west"
-	}
 }

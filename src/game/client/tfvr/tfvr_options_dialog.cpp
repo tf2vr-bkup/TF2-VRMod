@@ -402,6 +402,7 @@ public:
 		StartRightColumn();
 		m_pMouthActivate = AddCheck( "MouthActivate", "Mouth activation for lunchbox items" );
 		m_pVoiceGesture = AddCheck( "VoiceGesture", "Walkie-talkie voice gesture" );
+		m_pTeammatePushaway = AddCheck( "TeammatePushaway", "Teammate collision pushback" );
 
 		LoadControlSettings( "resource/TFVROptionsSubGameplay.res" );
 	}
@@ -415,6 +416,7 @@ public:
 		m_pAutomaticReloads->SetSelected( ArePumpReloadsAutomatic() );
 		m_pMouthActivate->SetSelected( GetCvarInt( "tfvr_mouth_activate_enabled", 1 ) != 0 );
 		m_pVoiceGesture->SetSelected( GetCvarInt( "tfvr_voice_gesture_enabled", 1 ) != 0 );
+		m_pTeammatePushaway->SetSelected( GetCvarInt( "tfvr_teammate_pushaway", 0 ) != 0 );
 	}
 
 	void OnApplyChanges() OVERRIDE
@@ -426,6 +428,7 @@ public:
 		SetPumpReloadsAutomatic( m_pAutomaticReloads->IsSelected() );
 		SetCvarInt( "tfvr_mouth_activate_enabled", m_pMouthActivate->IsSelected() ? 1 : 0 );
 		SetCvarInt( "tfvr_voice_gesture_enabled", m_pVoiceGesture->IsSelected() ? 1 : 0 );
+		SetCvarInt( "tfvr_teammate_pushaway", m_pTeammatePushaway->IsSelected() ? 1 : 0 );
 		engine->ClientCmd_Unrestricted( "host_writeconfig\n" );
 	}
 
@@ -437,6 +440,7 @@ private:
 	CheckButton *m_pAutomaticReloads;
 	CheckButton *m_pMouthActivate;
 	CheckButton *m_pVoiceGesture;
+	CheckButton *m_pTeammatePushaway;
 };
 
 class CTFVROptionsSubVideo : public CTFVROptionsSubPage

@@ -6736,6 +6736,7 @@ void C_TFPlayer::UpdateLookAt( void )
 #define TF_OO_AVOID_MAX_RADIUS_SQR	0.00019f
 
 ConVar tf_max_separation_force ( "tf_max_separation_force", "256", FCVAR_DEVELOPMENTONLY );
+ConVar tfvr_teammate_pushaway( "tfvr_teammate_pushaway", "0", FCVAR_ARCHIVE, "VR: enable vanilla teammate collision pushback when overlapping other players." );
 
 extern ConVar cl_forwardspeed;
 extern ConVar cl_backspeed;
@@ -6779,6 +6780,7 @@ void C_TFPlayer::AvoidPlayers( CUserCmd *pCmd )
 	C_TFPlayer *pIntersectPlayer = NULL;
 	CBaseObject *pIntersectObject = NULL;
 	float flAvoidRadius = 0.0f;
+	const bool bAvoidTeammatePlayers = !UseVR() || tfvr_teammate_pushaway.GetBool();
 
 	Vector vecAvoidCenter, vecAvoidMin, vecAvoidMax;
 	for ( int i = 0; i < pTeam->GetNumPlayers(); ++i )
@@ -6815,7 +6817,7 @@ void C_TFPlayer::AvoidPlayers( CUserCmd *pCmd )
 		VectorAdd( vecAvoidMin, vecAvoidCenter, vecAvoidMin );
 		VectorAdd( vecAvoidMax, vecAvoidCenter, vecAvoidMax );
 
-		if ( IsBoxIntersectingBox( vecTFPlayerMin, vecTFPlayerMax, vecAvoidMin, vecAvoidMax ) )
+		if ( bAvoidTeammatePlayers && IsBoxIntersectingBox( vecTFPlayerMin, vecTFPlayerMax, vecAvoidMin, vecAvoidMax ) )
 		{
 			// Need to avoid this player.
 			if ( !pIntersectPlayer )
