@@ -1,0 +1,86 @@
+"TFVRWeaponHudProfiles"
+{
+	// Global VR weapon HUD profile applied after the tfvr_weapon_hud_* cvar defaults.
+	"default"
+	{
+	}
+
+	// Preserves the existing pistol-specific HUD placement in data form.
+	"pistol"
+	{
+		"HudOffset" "5.5 4 4"
+	}
+	
+	"shotgun"
+	{
+		"HudOffset" "4 20 6"
+	}
+	
+	"launcher"
+	{
+		"HudOffset" "6.000 15.000 8.000"
+	}
+	
+	"tf_weapon_scattergun"
+	{
+		"HudOffset" "3.000 11.000 6"
+	}
+	
+	"melee"
+	{
+		"HudOffset" "0 0 5"
+	}
+	
+	"tf_weapon_flamethrower"
+	{
+		"HudOffset" "5 30 5"
+	}
+	
+	"tf_weapon_flaregun"
+	{
+		"HudOffset" "5 15 5"
+	}
+	
+	"tf_weapon_grenadelauncher"
+	{
+		"HudOffset" "2 15 8"
+	}
+	
+	"tf_weapon_pipebomblauncher"
+	{
+		"HudOffset" "2 15 10"
+	}
+	
+	"tf_weapon_cannon"
+	{
+		"HudOffset" "3.5 15 8"
+	}
+	
+	"minigun"
+	{
+		"HudOffset" "6 25 10"
+	}
+	
+	"tf_weapon_syringegun_medic"
+	{
+		"HudOffset" "10 9 7"
+	}
+	
+	"tf_weapon_medigun"
+	{
+		"HudOffset" "-7 12 6"
+		"HudAngles" "170 -95 16"
+	}
+	
+	"tf_weapon_compound_bow"
+	{
+		"HudOffset" "9 -1 8"
+		"HudAngles" "-90 90 0"
+	}
+	
+	"tf_weapon_bonesaw"
+	{
+		"HudOffset" "0 0 0"
+		"HudAngles" "-90 90 0"
+	}
+}

@@ -17,6 +17,7 @@ class CHudItemEffectMeter;
 class CTFHudMatchStatus;
 class C_TFPlayer;
 class C_TFVRHand;
+class C_TFWeaponBase;
 
 // Forward declare CHudElement
 class CHudElement;
@@ -102,7 +103,7 @@ public:
     
     // Set compositor size
     void SetCompositorSize(int width, int height);
-    
+
 protected:
     // Override Paint to draw child panels at our specified offsets
     virtual void Paint() override;
@@ -313,6 +314,8 @@ public:
 
 private:
     bool CalculateWeaponBoneTransform(VMatrix& transform);
+    C_TFVRHand* GetCurrentWeaponHand(C_TFWeaponBase** ppWeapon = nullptr) const;
+    bool ShouldMirrorWeaponHUDPlacement(const C_TFWeaponBase* pWeapon) const;
     void ApplyCenteringOffset(VMatrix& transform, float worldWidth, float worldHeight);
     
 private:
@@ -321,8 +324,6 @@ private:
     // Track last weapon to detect changes
     CHandle<C_BaseCombatWeapon> m_hLastWeapon;
     
-    // True when weapon is held by left hand (e.g. medigun)
-    bool m_bWeaponOnLeftHand;
 };
 
 // Global instances

@@ -11,6 +11,9 @@
 #include "tf_hud_ammostatus.h"
 #include "tf_hud_itemeffectmeter.h"
 #include "tf_hud_match_status.h"
+#include "tfvr/tfvr_weapon_base.h"
+#include "KeyValues.h"
+#include "filesystem.h"
 #include "vgui/ISurface.h"
 #include "vgui/IVGui.h"
 #include "view.h"
@@ -26,6 +29,9 @@
 CVRStatusHUDManager* g_pVRStatusHUDManager = nullptr;
 CVRWeaponHUDManager* g_pVRWeaponHUDManager = nullptr;
 
+extern ConVar tfvr_lefthand_mirror_axis;
+extern ConVar tfvr_lefthand_mirror_spin;
+
 static float GetVRScreenScaleFactor()
 {
 	int w, h;
@@ -40,7 +46,9 @@ static float GetVRScreenScaleFactor()
 ConVar tfvr_status_hud_enabled("tfvr_status_hud_enabled", "1", FCVAR_ARCHIVE,
     "Enable the VR hand HUD (health/objective on left hand)");
 ConVar tfvr_status_hud_hand("tfvr_status_hud_hand", "0", FCVAR_ARCHIVE,
-    "Which hand to attach HUD to: 0=left, 1=right");
+    "Manual status HUD hand when auto hand is disabled: 0=left, 1=right");
+ConVar tfvr_status_hud_auto_hand("tfvr_status_hud_auto_hand", "1", FCVAR_ARCHIVE,
+    "Automatically attach status HUD to the off-hand based on tfvr_primary_hand");
 ConVar tfvr_status_hud_use_hand_tracking("tfvr_status_hud_use_hand_tracking", "1", FCVAR_ARCHIVE,
     "Use hand tracking instead of controller pose");
 ConVar tfvr_status_hud_width("tfvr_status_hud_width", "500", FCVAR_ARCHIVE,
@@ -63,6 +71,8 @@ ConVar tfvr_status_hud_base_yaw("tfvr_status_hud_base_yaw", "0", FCVAR_ARCHIVE,
     "Base yaw rotation for panel orientation");
 ConVar tfvr_status_hud_base_roll("tfvr_status_hud_base_roll", "-90", FCVAR_ARCHIVE,
     "Base roll rotation for panel orientation");
+ConVar tfvr_status_hud_mirror_surface_roll("tfvr_status_hud_mirror_surface_roll", "90", FCVAR_ARCHIVE,
+    "Extra in-plane roll for the mirrored/off-hand status HUD");
 ConVar tfvr_status_hud_pitch("tfvr_status_hud_pitch", "0", FCVAR_ARCHIVE,
     "Additional pitch rotation adjustment");
 ConVar tfvr_status_hud_yaw("tfvr_status_hud_yaw", "0", FCVAR_ARCHIVE,
@@ -141,6 +151,8 @@ ConVar tfvr_weapon_hud_scale("tfvr_weapon_hud_scale", "8", FCVAR_ARCHIVE,
     "Scale of the weapon HUD in world units");
 ConVar tfvr_weapon_hud_center("tfvr_weapon_hud_center", "1", FCVAR_ARCHIVE,
     "Auto-center the weapon HUD on the weapon bone");
+ConVar tfvr_weapon_hud_backface_cull("tfvr_weapon_hud_backface_cull", "0", FCVAR_ARCHIVE,
+    "Cull weapon HUD when its panel normal faces away from the camera");
 ConVar tfvr_weapon_hud_offset_x("tfvr_weapon_hud_offset_x", "-2", FCVAR_ARCHIVE,
     "X offset from weapon bone");
 ConVar tfvr_weapon_hud_offset_y("tfvr_weapon_hud_offset_y", "15", FCVAR_ARCHIVE,
@@ -169,6 +181,8 @@ ConVar tfvr_weapon_hud_yaw("tfvr_weapon_hud_yaw", "0", FCVAR_ARCHIVE,
     "Yaw rotation adjustment");
 ConVar tfvr_weapon_hud_roll("tfvr_weapon_hud_roll", "0", FCVAR_ARCHIVE,
     "Roll rotation adjustment");
+ConVar tfvr_weapon_hud_mirrored_bone_roll("tfvr_weapon_hud_mirrored_bone_roll", "180", FCVAR_ARCHIVE,
+    "Extra roll applied when the weapon HUD is attached to a mirrored weapon bone");
 
 // Ammo panel layout
 ConVar tfvr_weapon_hud_ammo_enabled("tfvr_weapon_hud_ammo_enabled", "1", FCVAR_ARCHIVE,
@@ -211,6 +225,39 @@ ConVar tfvr_weapon_hud_meters_content_offset_x("tfvr_weapon_hud_meters_content_o
 ConVar tfvr_weapon_hud_debug_bg("tfvr_weapon_hud_debug_bg", "0", FCVAR_ARCHIVE,
     "Show debug background for weapon HUD");
 
+// Live tuning cvars are intentionally not archived; profile data is the
+// persistent store, while these are temporary in-game adjustment deltas.
+ConVar tfvr_weapon_hud_tune_enabled("tfvr_weapon_hud_tune_enabled", "0", 0,
+    "Enable temporary active-weapon HUD tuning overrides");
+ConVar tfvr_weapon_hud_tune_target("tfvr_weapon_hud_tune_target", "0", 0,
+    "Active weapon HUD tuning target: 0=both, 1=placement, 2=layout");
+ConVar tfvr_weapon_hud_tune_offset_x("tfvr_weapon_hud_tune_offset_x", "0", 0,
+    "Active weapon HUD tuning: placement X offset delta");
+ConVar tfvr_weapon_hud_tune_offset_y("tfvr_weapon_hud_tune_offset_y", "0", 0,
+    "Active weapon HUD tuning: placement Y offset delta");
+ConVar tfvr_weapon_hud_tune_offset_z("tfvr_weapon_hud_tune_offset_z", "0", 0,
+    "Active weapon HUD tuning: placement Z offset delta");
+ConVar tfvr_weapon_hud_tune_pitch("tfvr_weapon_hud_tune_pitch", "0", 0,
+    "Active weapon HUD tuning: pitch delta");
+ConVar tfvr_weapon_hud_tune_yaw("tfvr_weapon_hud_tune_yaw", "0", 0,
+    "Active weapon HUD tuning: yaw delta");
+ConVar tfvr_weapon_hud_tune_roll("tfvr_weapon_hud_tune_roll", "0", 0,
+    "Active weapon HUD tuning: roll delta");
+ConVar tfvr_weapon_hud_tune_scale("tfvr_weapon_hud_tune_scale", "0", 0,
+    "Active weapon HUD tuning: world scale delta");
+ConVar tfvr_weapon_hud_tune_ammo_x("tfvr_weapon_hud_tune_ammo_x", "0", 0,
+    "Active weapon HUD tuning: ammo X offset delta");
+ConVar tfvr_weapon_hud_tune_ammo_y("tfvr_weapon_hud_tune_ammo_y", "0", 0,
+    "Active weapon HUD tuning: ammo Y offset delta");
+ConVar tfvr_weapon_hud_tune_ammo_content_offset_x("tfvr_weapon_hud_tune_ammo_content_offset_x", "0", 0,
+    "Active weapon HUD tuning: ammo content X offset delta");
+ConVar tfvr_weapon_hud_tune_ammo_content_offset_y("tfvr_weapon_hud_tune_ammo_content_offset_y", "0", 0,
+    "Active weapon HUD tuning: ammo content Y offset delta");
+ConVar tfvr_weapon_hud_tune_ammo_scale("tfvr_weapon_hud_tune_ammo_scale", "0", 0,
+    "Active weapon HUD tuning: ammo scale delta");
+ConVar tfvr_weapon_hud_tune_meters_y("tfvr_weapon_hud_tune_meters_y", "0", 0,
+    "Active weapon HUD tuning: meter Y offset delta");
+
 //=============================================================================
 // Helper Functions
 //=============================================================================
@@ -226,6 +273,498 @@ static bool IsPanelBackfacing(const VMatrix& panelToWorld)
     Vector toCamera = MainViewOrigin() - panelPos;
     return DotProduct(panelNormal, toCamera) < 0;
 }
+
+//-----------------------------------------------------------------------------
+// Rotate the rendered panel within its own surface. This spins the panel X/Y
+// basis around the panel normal without changing where the surface faces.
+//-----------------------------------------------------------------------------
+static void RotatePanelInPlane(VMatrix& panelToWorld, float flDegrees)
+{
+    if (flDegrees == 0.0f)
+        return;
+
+    float flRadians = DEG2RAD(flDegrees);
+    float flCos = cosf(flRadians);
+    float flSin = sinf(flRadians);
+
+    Vector panelX(panelToWorld[0][0], panelToWorld[1][0], panelToWorld[2][0]);
+    Vector panelY(panelToWorld[0][1], panelToWorld[1][1], panelToWorld[2][1]);
+
+    Vector rotatedX = panelX * flCos + panelY * flSin;
+    Vector rotatedY = panelY * flCos - panelX * flSin;
+
+    panelToWorld.SetForward(rotatedX);
+    panelToWorld.SetLeft(rotatedY);
+}
+
+//-----------------------------------------------------------------------------
+static void GetWeaponHudMirrorSigns(float sign[3])
+{
+    sign[0] = 1.0f;
+    sign[1] = 1.0f;
+    sign[2] = 1.0f;
+
+    const int reflectAxis = clamp(tfvr_lefthand_mirror_axis.GetInt(), 0, 2);
+    sign[reflectAxis] = -sign[reflectAxis];
+
+    const int spin = tfvr_lefthand_mirror_spin.GetInt();
+    if (spin >= 1 && spin <= 3)
+    {
+        const int spinAxis = spin - 1;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            if (axis != spinAxis)
+                sign[axis] = -sign[axis];
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+static Vector MirrorWeaponHudLocalOffset(const Vector& offset)
+{
+    float sign[3];
+    GetWeaponHudMirrorSigns(sign);
+
+    return Vector(offset.x * sign[0], offset.y * sign[1], offset.z * sign[2]);
+}
+
+//-----------------------------------------------------------------------------
+struct VRWeaponHudPlacementProfile_t
+{
+    int nWidth;
+    int nHeight;
+    Vector vOffset;
+    QAngle angRotation;
+    float flScale;
+};
+
+struct VRWeaponHudLayoutProfile_t
+{
+    bool bAmmoEnabled;
+    int nAmmoX;
+    int nAmmoY;
+    bool bAmmoCenter;
+    int nAmmoContentOffsetX;
+    int nAmmoContentOffsetY;
+    float flAmmoScale;
+    int nChargeOffsetX;
+    int nChargeOffsetY;
+    int nAccountOffsetX;
+    int nAccountOffsetY;
+    int nMetersY;
+    int nMetersSpacing;
+    int nMetersWidthOverride;
+    int nMetersContentOffsetX;
+};
+
+struct VRWeaponHudProfile_t
+{
+    VRWeaponHudPlacementProfile_t placement;
+    VRWeaponHudLayoutProfile_t layout;
+};
+
+static const char* TFVR_WEAPON_HUD_PROFILE_FILE = "scripts/tfvr_weapon_hud_profiles.txt";
+static KeyValues* g_pWeaponHudProfileData = nullptr;
+static bool g_bWeaponHudProfileDataLoaded = false;
+
+static bool IsPistolWeaponID(int iWeaponID)
+{
+    return iWeaponID == TF_WEAPON_PISTOL ||
+           iWeaponID == TF_WEAPON_PISTOL_SCOUT ||
+           iWeaponID == TF_WEAPON_HANDGUN_SCOUT_PRIMARY ||
+           iWeaponID == TF_WEAPON_HANDGUN_SCOUT_SECONDARY;
+}
+
+static const char* GetWeaponHudFamilyKey(const C_TFWeaponBase* pWeapon)
+{
+    if (!pWeapon)
+        return nullptr;
+
+    int iWeaponID = pWeapon->GetWeaponID();
+    if (IsPistolWeaponID(iWeaponID))
+        return "pistol";
+
+    switch (iWeaponID)
+    {
+    case TF_WEAPON_SHOTGUN_PRIMARY:
+    case TF_WEAPON_SHOTGUN_SOLDIER:
+    case TF_WEAPON_SHOTGUN_HWG:
+    case TF_WEAPON_SHOTGUN_PYRO:
+    case TF_WEAPON_SHOTGUN_BUILDING_RESCUE:
+    case TF_WEAPON_SCATTERGUN:
+        return "shotgun";
+    case TF_WEAPON_ROCKETLAUNCHER:
+    case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
+    case TF_WEAPON_GRENADELAUNCHER:
+    case TF_WEAPON_PIPEBOMBLAUNCHER:
+        return "launcher";
+    case TF_WEAPON_FLAMETHROWER:
+    case TF_WEAPON_FLAREGUN:
+    case TF_WEAPON_FLAREGUN_REVENGE:
+        return "pyro";
+    case TF_WEAPON_MINIGUN:
+        return "minigun";
+    case TF_WEAPON_SNIPERRIFLE:
+    case TF_WEAPON_SNIPERRIFLE_DECAP:
+    case TF_WEAPON_SNIPERRIFLE_CLASSIC:
+    case TF_WEAPON_COMPOUND_BOW:
+    case TF_WEAPON_SMG:
+        return "sniper";
+    case TF_WEAPON_MEDIGUN:
+        return "medigun";
+    case TF_WEAPON_BAT:
+    case TF_WEAPON_BAT_WOOD:
+    case TF_WEAPON_BAT_FISH:
+    case TF_WEAPON_BAT_GIFTWRAP:
+    case TF_WEAPON_BOTTLE:
+    case TF_WEAPON_FIREAXE:
+    case TF_WEAPON_CLUB:
+    case TF_WEAPON_KNIFE:
+    case TF_WEAPON_FISTS:
+    case TF_WEAPON_SHOVEL:
+    case TF_WEAPON_WRENCH:
+    case TF_WEAPON_SWORD:
+        return "melee";
+    case TF_WEAPON_PDA:
+    case TF_WEAPON_PDA_ENGINEER_BUILD:
+    case TF_WEAPON_PDA_ENGINEER_DESTROY:
+    case TF_WEAPON_PDA_SPY:
+    case TF_WEAPON_PDA_SPY_BUILD:
+    case TF_WEAPON_BUILDER:
+        return "pda";
+    case TF_WEAPON_LUNCHBOX:
+    case TF_WEAPON_CLEAVER:
+        return "throwable";
+    default:
+        return nullptr;
+    }
+}
+
+static C_TFWeaponBase* GetActiveHudWeapon()
+{
+    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    return pPlayer ? pPlayer->GetActiveTFWeapon() : nullptr;
+}
+
+static bool WeaponHudProfileHasKey(KeyValues* pProfileData, const char* pszKey)
+{
+    return pProfileData && pProfileData->FindKey(pszKey, false) != nullptr;
+}
+
+static void WeaponHudProfileReload()
+{
+    if (g_pWeaponHudProfileData)
+    {
+        g_pWeaponHudProfileData->deleteThis();
+        g_pWeaponHudProfileData = nullptr;
+    }
+
+    g_bWeaponHudProfileDataLoaded = false;
+}
+
+static KeyValues* GetWeaponHudProfileData()
+{
+    if (g_bWeaponHudProfileDataLoaded)
+        return g_pWeaponHudProfileData;
+
+    g_bWeaponHudProfileDataLoaded = true;
+
+    KeyValues* pProfileData = new KeyValues("TFVRWeaponHudProfiles");
+    if (!pProfileData->LoadFromFile(filesystem, TFVR_WEAPON_HUD_PROFILE_FILE, "GAME"))
+    {
+        pProfileData->deleteThis();
+        return nullptr;
+    }
+
+    g_pWeaponHudProfileData = pProfileData;
+    return g_pWeaponHudProfileData;
+}
+
+static void ParseWeaponHudProfileVector2(KeyValues* pProfileData, const char* pszKey, int& nX, int& nY)
+{
+    if (!WeaponHudProfileHasKey(pProfileData, pszKey))
+        return;
+
+    Vector vecValue(0, 0, 0);
+    UTIL_StringToVector(vecValue.Base(), pProfileData->GetString(pszKey, "0 0 0"));
+    nX = (int)vecValue.x;
+    nY = (int)vecValue.y;
+}
+
+static bool TFVRWeaponHudTuningAffectsPlacement()
+{
+    if (!tfvr_weapon_hud_tune_enabled.GetBool())
+        return false;
+
+    int nTarget = tfvr_weapon_hud_tune_target.GetInt();
+    return nTarget == 0 || nTarget == 1;
+}
+
+static bool TFVRWeaponHudTuningAffectsLayout()
+{
+    if (!tfvr_weapon_hud_tune_enabled.GetBool())
+        return false;
+
+    int nTarget = tfvr_weapon_hud_tune_target.GetInt();
+    return nTarget == 0 || nTarget == 2;
+}
+
+static VRWeaponHudProfile_t BuildWeaponHudGlobalDefaults()
+{
+    VRWeaponHudProfile_t profile;
+
+    profile.placement.nWidth = tfvr_weapon_hud_width.GetInt();
+    profile.placement.nHeight = tfvr_weapon_hud_height.GetInt();
+    profile.placement.vOffset.Init(
+        tfvr_weapon_hud_offset_x.GetFloat(),
+        tfvr_weapon_hud_offset_y.GetFloat(),
+        tfvr_weapon_hud_offset_z.GetFloat()
+    );
+    profile.placement.angRotation.Init(
+        tfvr_weapon_hud_pitch.GetFloat(),
+        tfvr_weapon_hud_yaw.GetFloat(),
+        tfvr_weapon_hud_roll.GetFloat()
+    );
+    profile.placement.flScale = tfvr_weapon_hud_scale.GetFloat();
+
+    profile.layout.bAmmoEnabled = tfvr_weapon_hud_ammo_enabled.GetBool();
+    profile.layout.nAmmoX = tfvr_weapon_hud_ammo_x.GetInt();
+    profile.layout.nAmmoY = tfvr_weapon_hud_ammo_y.GetInt();
+    profile.layout.bAmmoCenter = tfvr_weapon_hud_ammo_center.GetBool();
+    profile.layout.nAmmoContentOffsetX = tfvr_weapon_hud_ammo_content_offset_x.GetInt();
+    profile.layout.nAmmoContentOffsetY = tfvr_weapon_hud_ammo_content_offset_y.GetInt();
+    profile.layout.flAmmoScale = tfvr_weapon_hud_ammo_scale.GetFloat();
+    profile.layout.nChargeOffsetX = tfvr_weapon_hud_charge_offset_x.GetInt();
+    profile.layout.nChargeOffsetY = tfvr_weapon_hud_charge_offset_y.GetInt();
+    profile.layout.nAccountOffsetX = tfvr_weapon_hud_account_offset_x.GetInt();
+    profile.layout.nAccountOffsetY = tfvr_weapon_hud_account_offset_y.GetInt();
+    profile.layout.nMetersY = tfvr_weapon_hud_meters_y.GetInt();
+    profile.layout.nMetersSpacing = tfvr_weapon_hud_meters_spacing.GetInt();
+    profile.layout.nMetersWidthOverride = tfvr_weapon_hud_meters_width_override.GetInt();
+    profile.layout.nMetersContentOffsetX = tfvr_weapon_hud_meters_content_offset_x.GetInt();
+
+    return profile;
+}
+
+static void ApplyWeaponHudFamilyProfile(VRWeaponHudProfile_t& profile, C_TFWeaponBase* pWeapon)
+{
+    if (!pWeapon || !IsPistolWeaponID(pWeapon->GetWeaponID()))
+        return;
+
+    // Preserve the old pistol override as a fallback until the profile file
+    // contains explicit pistol tuning.
+    profile.placement.vOffset.Init(
+        tfvr_weapon_hud_pistol_offset_x.GetFloat(),
+        tfvr_weapon_hud_pistol_offset_y.GetFloat(),
+        tfvr_weapon_hud_pistol_offset_z.GetFloat()
+    );
+    profile.placement.angRotation.Init(
+        tfvr_weapon_hud_pistol_pitch.GetFloat(),
+        tfvr_weapon_hud_pistol_yaw.GetFloat(),
+        tfvr_weapon_hud_pistol_roll.GetFloat()
+    );
+    profile.placement.flScale = tfvr_weapon_hud_pistol_scale.GetFloat();
+}
+
+static void ApplyWeaponHudKeyValuesProfile(VRWeaponHudProfile_t& profile, KeyValues* pProfileData)
+{
+    if (!pProfileData)
+        return;
+
+    if (WeaponHudProfileHasKey(pProfileData, "HudSize"))
+    {
+        Vector vecSize(0, 0, 0);
+        UTIL_StringToVector(vecSize.Base(), pProfileData->GetString("HudSize", "0 0 0"));
+        if (vecSize.x > 0 && vecSize.y > 0)
+        {
+            profile.placement.nWidth = (int)vecSize.x;
+            profile.placement.nHeight = (int)vecSize.y;
+        }
+    }
+
+    if (WeaponHudProfileHasKey(pProfileData, "HudOffset"))
+        UTIL_StringToVector(profile.placement.vOffset.Base(), pProfileData->GetString("HudOffset", "0 0 0"));
+    if (WeaponHudProfileHasKey(pProfileData, "HudAngles"))
+        UTIL_StringToVector(profile.placement.angRotation.Base(), pProfileData->GetString("HudAngles", "0 0 0"));
+    if (WeaponHudProfileHasKey(pProfileData, "HudScale"))
+        profile.placement.flScale = pProfileData->GetFloat("HudScale", profile.placement.flScale);
+
+    if (WeaponHudProfileHasKey(pProfileData, "AmmoEnabled"))
+        profile.layout.bAmmoEnabled = pProfileData->GetBool("AmmoEnabled", profile.layout.bAmmoEnabled);
+    if (WeaponHudProfileHasKey(pProfileData, "AmmoCenter"))
+        profile.layout.bAmmoCenter = pProfileData->GetBool("AmmoCenter", profile.layout.bAmmoCenter);
+
+    ParseWeaponHudProfileVector2(pProfileData, "AmmoOffset", profile.layout.nAmmoX, profile.layout.nAmmoY);
+    ParseWeaponHudProfileVector2(pProfileData, "AmmoContentOffset", profile.layout.nAmmoContentOffsetX, profile.layout.nAmmoContentOffsetY);
+    ParseWeaponHudProfileVector2(pProfileData, "ChargeOffset", profile.layout.nChargeOffsetX, profile.layout.nChargeOffsetY);
+    ParseWeaponHudProfileVector2(pProfileData, "AccountOffset", profile.layout.nAccountOffsetX, profile.layout.nAccountOffsetY);
+
+    if (WeaponHudProfileHasKey(pProfileData, "AmmoScale"))
+        profile.layout.flAmmoScale = pProfileData->GetFloat("AmmoScale", profile.layout.flAmmoScale);
+    if (WeaponHudProfileHasKey(pProfileData, "MetersY"))
+        profile.layout.nMetersY = pProfileData->GetInt("MetersY", profile.layout.nMetersY);
+    if (WeaponHudProfileHasKey(pProfileData, "MetersSpacing"))
+        profile.layout.nMetersSpacing = pProfileData->GetInt("MetersSpacing", profile.layout.nMetersSpacing);
+    if (WeaponHudProfileHasKey(pProfileData, "MetersWidthOverride"))
+        profile.layout.nMetersWidthOverride = pProfileData->GetInt("MetersWidthOverride", profile.layout.nMetersWidthOverride);
+    if (WeaponHudProfileHasKey(pProfileData, "MetersContentOffsetX"))
+        profile.layout.nMetersContentOffsetX = pProfileData->GetInt("MetersContentOffsetX", profile.layout.nMetersContentOffsetX);
+}
+
+static void ApplyWeaponHudNamedProfile(VRWeaponHudProfile_t& profile, KeyValues* pProfileRoot, const char* pszProfileName)
+{
+    if (!pProfileRoot || !pszProfileName || pszProfileName[0] == '\0')
+        return;
+
+    ApplyWeaponHudKeyValuesProfile(profile, pProfileRoot->FindKey(pszProfileName, false));
+}
+
+static void ApplyWeaponHudDefaultFileProfile(VRWeaponHudProfile_t& profile)
+{
+    KeyValues* pProfileRoot = GetWeaponHudProfileData();
+    if (!pProfileRoot)
+        return;
+
+    ApplyWeaponHudNamedProfile(profile, pProfileRoot, "default");
+}
+
+static void ApplyWeaponHudSpecificFileProfiles(VRWeaponHudProfile_t& profile, C_TFWeaponBase* pWeapon)
+{
+    KeyValues* pProfileRoot = GetWeaponHudProfileData();
+    if (!pProfileRoot)
+        return;
+
+    const char* pszFamilyKey = GetWeaponHudFamilyKey(pWeapon);
+    ApplyWeaponHudNamedProfile(profile, pProfileRoot, pszFamilyKey);
+
+    if (pWeapon)
+    {
+        const char* pszClassname = pWeapon->GetClassname();
+        ApplyWeaponHudNamedProfile(profile, pProfileRoot, pszClassname);
+    }
+}
+
+static void ApplyWeaponHudTuningProfile(VRWeaponHudProfile_t& profile)
+{
+    if (TFVRWeaponHudTuningAffectsPlacement())
+    {
+        profile.placement.vOffset.x += tfvr_weapon_hud_tune_offset_x.GetFloat();
+        profile.placement.vOffset.y += tfvr_weapon_hud_tune_offset_y.GetFloat();
+        profile.placement.vOffset.z += tfvr_weapon_hud_tune_offset_z.GetFloat();
+        profile.placement.angRotation.x += tfvr_weapon_hud_tune_pitch.GetFloat();
+        profile.placement.angRotation.y += tfvr_weapon_hud_tune_yaw.GetFloat();
+        profile.placement.angRotation.z += tfvr_weapon_hud_tune_roll.GetFloat();
+        profile.placement.flScale = MAX(0.1f, profile.placement.flScale + tfvr_weapon_hud_tune_scale.GetFloat());
+    }
+
+    if (TFVRWeaponHudTuningAffectsLayout())
+    {
+        profile.layout.nAmmoX += tfvr_weapon_hud_tune_ammo_x.GetInt();
+        profile.layout.nAmmoY += tfvr_weapon_hud_tune_ammo_y.GetInt();
+        profile.layout.nAmmoContentOffsetX += tfvr_weapon_hud_tune_ammo_content_offset_x.GetInt();
+        profile.layout.nAmmoContentOffsetY += tfvr_weapon_hud_tune_ammo_content_offset_y.GetInt();
+        profile.layout.flAmmoScale = MAX(0.1f, profile.layout.flAmmoScale + tfvr_weapon_hud_tune_ammo_scale.GetFloat());
+        profile.layout.nMetersY += tfvr_weapon_hud_tune_meters_y.GetInt();
+    }
+}
+
+static VRWeaponHudProfile_t ResolveWeaponHudProfile(C_TFWeaponBase* pWeapon, bool bApplyTuning)
+{
+    VRWeaponHudProfile_t profile = BuildWeaponHudGlobalDefaults();
+
+    ApplyWeaponHudDefaultFileProfile(profile);
+    ApplyWeaponHudFamilyProfile(profile, pWeapon);
+    ApplyWeaponHudSpecificFileProfiles(profile, pWeapon);
+
+    if (bApplyTuning)
+        ApplyWeaponHudTuningProfile(profile);
+
+    return profile;
+}
+
+static const char* GetWeaponHudExportKey(const CCommand& args, C_TFWeaponBase* pWeapon)
+{
+    const char* pszMode = args.ArgC() > 1 ? args[1] : "weapon";
+    if (FStrEq(pszMode, "default"))
+        return "default";
+    if (FStrEq(pszMode, "family"))
+    {
+        const char* pszFamilyKey = GetWeaponHudFamilyKey(pWeapon);
+        return pszFamilyKey ? pszFamilyKey : "default";
+    }
+    if (FStrEq(pszMode, "weapon"))
+    {
+        const char* pszClassname = pWeapon ? pWeapon->GetClassname() : nullptr;
+        return pszClassname && pszClassname[0] != '\0' ? pszClassname : "default";
+    }
+
+    Msg("Unknown export mode '%s'. Use: weapon, family, or default.\n", pszMode);
+    const char* pszClassname = pWeapon ? pWeapon->GetClassname() : nullptr;
+    return pszClassname && pszClassname[0] != '\0' ? pszClassname : "default";
+}
+
+static void ExportActiveWeaponHudProfile(const CCommand& args)
+{
+    C_TFWeaponBase* pWeapon = GetActiveHudWeapon();
+    if (!pWeapon)
+    {
+        Msg("tfvr_weapon_hud_export_profile: no active TF weapon\n");
+        return;
+    }
+
+    VRWeaponHudProfile_t profile = ResolveWeaponHudProfile(pWeapon, true);
+    const char* pszClassname = pWeapon->GetClassname();
+    const char* pszFamilyKey = GetWeaponHudFamilyKey(pWeapon);
+    const char* pszExportKey = GetWeaponHudExportKey(args, pWeapon);
+
+    Msg("=== TF2VR weapon HUD profile ===\n");
+    Msg("Weapon: %s (id %d)\n", pszClassname ? pszClassname : "<unknown>", pWeapon->GetWeaponID());
+    Msg("Family: %s\n", pszFamilyKey ? pszFamilyKey : "<none>");
+    Msg("Export key: %s\n", pszExportKey);
+    Msg("Profile file: %s\n", TFVR_WEAPON_HUD_PROFILE_FILE);
+    Msg("\"%s\"\n", pszExportKey);
+    Msg("{\n");
+    Msg("\t\"HudSize\" \"%d %d\"\n", profile.placement.nWidth, profile.placement.nHeight);
+    Msg("\t\"HudOffset\" \"%.3f %.3f %.3f\"\n", profile.placement.vOffset.x, profile.placement.vOffset.y, profile.placement.vOffset.z);
+    Msg("\t\"HudAngles\" \"%.3f %.3f %.3f\"\n", profile.placement.angRotation.x, profile.placement.angRotation.y, profile.placement.angRotation.z);
+    Msg("\t\"HudScale\" \"%.3f\"\n", profile.placement.flScale);
+    Msg("\t\"AmmoEnabled\" \"%d\"\n", profile.layout.bAmmoEnabled ? 1 : 0);
+    Msg("\t\"AmmoCenter\" \"%d\"\n", profile.layout.bAmmoCenter ? 1 : 0);
+    Msg("\t\"AmmoOffset\" \"%d %d\"\n", profile.layout.nAmmoX, profile.layout.nAmmoY);
+    Msg("\t\"AmmoContentOffset\" \"%d %d\"\n", profile.layout.nAmmoContentOffsetX, profile.layout.nAmmoContentOffsetY);
+    Msg("\t\"AmmoScale\" \"%.3f\"\n", profile.layout.flAmmoScale);
+    Msg("\t\"MetersY\" \"%d\"\n", profile.layout.nMetersY);
+    Msg("\t\"MetersSpacing\" \"%d\"\n", profile.layout.nMetersSpacing);
+    Msg("\t\"MetersWidthOverride\" \"%d\"\n", profile.layout.nMetersWidthOverride);
+    Msg("\t\"MetersContentOffsetX\" \"%d\"\n", profile.layout.nMetersContentOffsetX);
+    Msg("\t\"ChargeOffset\" \"%d %d\"\n", profile.layout.nChargeOffsetX, profile.layout.nChargeOffsetY);
+    Msg("\t\"AccountOffset\" \"%d %d\"\n", profile.layout.nAccountOffsetX, profile.layout.nAccountOffsetY);
+    Msg("}\n");
+}
+
+static ConCommand tfvr_weapon_hud_export_profile(
+    "tfvr_weapon_hud_export_profile",
+    ExportActiveWeaponHudProfile,
+    "Print active weapon HUD profile for profile file. Args: weapon (default), family, default"
+);
+
+static ConCommand tfvr_weapon_hud_print_profile(
+    "tfvr_weapon_hud_print_profile",
+    ExportActiveWeaponHudProfile,
+    "Alias for tfvr_weapon_hud_export_profile"
+);
+
+static void ReloadWeaponHudProfiles(const CCommand& /*args*/)
+{
+    WeaponHudProfileReload();
+    Msg("Reloaded %s\n", TFVR_WEAPON_HUD_PROFILE_FILE);
+}
+
+static ConCommand tfvr_weapon_hud_reload_profiles(
+    "tfvr_weapon_hud_reload_profiles",
+    ReloadWeaponHudProfiles,
+    "Reload TF2VR weapon HUD profiles from scripts/tfvr_weapon_hud_profiles.txt"
+);
 
 //-----------------------------------------------------------------------------
 // Check if an item effect meter pointer is still valid
@@ -939,21 +1478,22 @@ void CVRWeaponHUDCompositor::RefreshDynamicElements()
 void CVRWeaponHUDCompositor::UpdateLayout()
 {
     float sf = GetVRScreenScaleFactor();
-    SetCompositorSize((int)(tfvr_weapon_hud_width.GetInt() * sf), (int)(tfvr_weapon_hud_height.GetInt() * sf));
+    VRWeaponHudProfile_t profile = ResolveWeaponHudProfile(GetActiveHudWeapon(), true);
+    SetCompositorSize((int)(profile.placement.nWidth * sf), (int)(profile.placement.nHeight * sf));
     m_bShowDebugBackground = tfvr_weapon_hud_debug_bg.GetBool();
 
     // Ammo panel layout
     if (m_nAmmoSlotIndex >= 0)
     {
         VRHudElementSlot_t& slot = m_HudSlots[m_nAmmoSlotIndex];
-        slot.bEnabled = tfvr_weapon_hud_ammo_enabled.GetBool();
-        slot.nOffsetX = (int)(tfvr_weapon_hud_ammo_x.GetInt() * sf);
-        slot.nOffsetY = (int)(tfvr_weapon_hud_ammo_y.GetInt() * sf);
-        slot.bCenterHorizontally = tfvr_weapon_hud_ammo_center.GetBool();
+        slot.bEnabled = profile.layout.bAmmoEnabled;
+        slot.nOffsetX = (int)(profile.layout.nAmmoX * sf);
+        slot.nOffsetY = (int)(profile.layout.nAmmoY * sf);
+        slot.bCenterHorizontally = profile.layout.bAmmoCenter;
         slot.bCenterVertically = false;
-        slot.nContentOffsetX = (int)(tfvr_weapon_hud_ammo_content_offset_x.GetInt() * sf);
-        slot.nContentOffsetY = (int)(tfvr_weapon_hud_ammo_content_offset_y.GetInt() * sf);
-        slot.flScale = tfvr_weapon_hud_ammo_scale.GetFloat();
+        slot.nContentOffsetX = (int)(profile.layout.nAmmoContentOffsetX * sf);
+        slot.nContentOffsetY = (int)(profile.layout.nAmmoContentOffsetY * sf);
+        slot.flScale = profile.layout.flAmmoScale;
     }
 
     // Update meter layout (stacked horizontally below ammo)
@@ -964,11 +1504,12 @@ void CVRWeaponHUDCompositor::UpdateLayout()
 void CVRWeaponHUDCompositor::UpdateMeterLayout()
 {
     float sf = GetVRScreenScaleFactor();
-    int metersY = (int)(tfvr_weapon_hud_meters_y.GetInt() * sf);
-    int spacing = (int)(tfvr_weapon_hud_meters_spacing.GetInt() * sf);
-    int rawWidthOverride = tfvr_weapon_hud_meters_width_override.GetInt();
+    VRWeaponHudProfile_t profile = ResolveWeaponHudProfile(GetActiveHudWeapon(), true);
+    int metersY = (int)(profile.layout.nMetersY * sf);
+    int spacing = (int)(profile.layout.nMetersSpacing * sf);
+    int rawWidthOverride = profile.layout.nMetersWidthOverride;
     int widthOverride = rawWidthOverride > 0 ? (int)(rawWidthOverride * sf) : 0;
-    int contentOffsetX = (int)(tfvr_weapon_hud_meters_content_offset_x.GetInt() * sf);
+    int contentOffsetX = (int)(profile.layout.nMetersContentOffsetX * sf);
 
     // Get ammo position for layered elements
     int ammoX = 0, ammoY = 0;
@@ -1013,8 +1554,8 @@ void CVRWeaponHUDCompositor::UpdateMeterLayout()
         {
             slot.bCenterHorizontally = false;
             slot.bCenterVertically = false;
-            slot.nOffsetX = ammoX + (int)(tfvr_weapon_hud_charge_offset_x.GetInt() * sf);
-            slot.nOffsetY = ammoY + (int)(tfvr_weapon_hud_charge_offset_y.GetInt() * sf);
+            slot.nOffsetX = ammoX + (int)(profile.layout.nChargeOffsetX * sf);
+            slot.nOffsetY = ammoY + (int)(profile.layout.nChargeOffsetY * sf);
             continue;
         }
 
@@ -1079,8 +1620,8 @@ void CVRWeaponHUDCompositor::UpdateMeterLayout()
     if (m_nAccountPanelSlotIndex >= 0)
     {
         VRHudElementSlot_t& accountSlot = m_HudSlots[m_nAccountPanelSlotIndex];
-        accountSlot.nOffsetX += (int)(tfvr_weapon_hud_account_offset_x.GetInt() * sf);
-        accountSlot.nOffsetY += (int)(tfvr_weapon_hud_account_offset_y.GetInt() * sf);
+        accountSlot.nOffsetX += (int)(profile.layout.nAccountOffsetX * sf);
+        accountSlot.nOffsetY += (int)(profile.layout.nAccountOffsetY * sf);
     }
 }
 
@@ -1187,7 +1728,15 @@ void CVRStatusHUDManager::Update()
         return;
 
     m_bEnabled = tfvr_status_hud_enabled.GetBool();
-    m_nAttachedHand = tfvr_status_hud_hand.GetInt();
+    if (tfvr_status_hud_auto_hand.GetBool())
+    {
+        // Status HUD lives on the support/off-hand opposite the primary weapon hand.
+        m_nAttachedHand = TFVR_IsLeftHanded() ? 1 : 0;
+    }
+    else
+    {
+        m_nAttachedHand = clamp(tfvr_status_hud_hand.GetInt(), 0, 1);
+    }
 
     m_vOffset.Init(
         tfvr_status_hud_offset_x.GetFloat(),
@@ -1377,10 +1926,15 @@ bool CVRStatusHUDManager::CalculateHandTrackingTransform(VMatrix& transform)
 
     VMatrix baseRotMatrix;
     matrix3x4_t baseRot3x4;
+    bool mirrorHandRotation = !leftHand;
+    float baseRoll = tfvr_status_hud_base_roll.GetFloat();
+    if (mirrorHandRotation)
+        baseRoll = -baseRoll;
+
     QAngle baseRotation(
         tfvr_status_hud_base_pitch.GetFloat(),
-        tfvr_status_hud_base_yaw.GetFloat(),
-        tfvr_status_hud_base_roll.GetFloat()
+        mirrorHandRotation ? -tfvr_status_hud_base_yaw.GetFloat() : tfvr_status_hud_base_yaw.GetFloat(),
+        baseRoll
     );
     AngleMatrix(baseRotation, Vector(0, 0, 0), baseRot3x4);
     baseRotMatrix.CopyFrom3x4(baseRot3x4);
@@ -1388,11 +1942,23 @@ bool CVRStatusHUDManager::CalculateHandTrackingTransform(VMatrix& transform)
 
     if (m_angRotation.x != 0 || m_angRotation.y != 0 || m_angRotation.z != 0)
     {
+        QAngle adjustedRotation = m_angRotation;
+        if (mirrorHandRotation)
+        {
+            adjustedRotation.y = -adjustedRotation.y;
+            adjustedRotation.z = -adjustedRotation.z;
+        }
+
         matrix3x4_t rotMatrix;
-        AngleMatrix(m_angRotation, Vector(0, 0, 0), rotMatrix);
+        AngleMatrix(adjustedRotation, Vector(0, 0, 0), rotMatrix);
         VMatrix rotVMatrix;
         rotVMatrix.CopyFrom3x4(rotMatrix);
         transform = transform * rotVMatrix;
+    }
+
+    if (mirrorHandRotation)
+    {
+        RotatePanelInPlane(transform, tfvr_status_hud_mirror_surface_roll.GetFloat());
     }
 
     transform.SetTranslation(quadPosition);
@@ -1426,6 +1992,8 @@ bool CVRStatusHUDManager::CalculateControllerTransform(VMatrix& transform)
     Vector handPos = handPose.GetTranslation();
     Vector forward, right, up;
     handPose.GetBasisVectors(forward, right, up);
+    if (m_nAttachedHand == 1)
+        right = -right;
 
     Vector quadPos = handPos +
                      right * m_vOffset.x +
@@ -1437,12 +2005,27 @@ bool CVRStatusHUDManager::CalculateControllerTransform(VMatrix& transform)
 
     VMatrix adjustMatrix;
     matrix3x4_t adjustMatrix3x4;
-    QAngle adjustAngles(-90, -90, 90);
-    adjustAngles += m_angRotation;
+    bool mirrorHandRotation = (m_nAttachedHand == 1);
+    QAngle adjustAngles(
+        -90,
+        mirrorHandRotation ? 90 : -90,
+        mirrorHandRotation ? -90 : 90
+    );
+    QAngle adjustedRotation = m_angRotation;
+    if (mirrorHandRotation)
+    {
+        adjustedRotation.y = -adjustedRotation.y;
+        adjustedRotation.z = -adjustedRotation.z;
+    }
+    adjustAngles += adjustedRotation;
     AngleMatrix(adjustAngles, Vector(0, 0, 0), adjustMatrix3x4);
     adjustMatrix.CopyFrom3x4(adjustMatrix3x4);
 
     transform = transform * adjustMatrix;
+    if (mirrorHandRotation)
+    {
+        RotatePanelInPlane(transform, tfvr_status_hud_mirror_surface_roll.GetFloat());
+    }
 
     return true;
 }
@@ -1467,7 +2050,6 @@ CVRWeaponHUDManager::CVRWeaponHUDManager()
 {
     m_pCompositor = nullptr;
     m_hLastWeapon = nullptr;
-    m_bWeaponOnLeftHand = false;
 }
 
 //-----------------------------------------------------------------------------
@@ -1526,60 +2108,23 @@ void CVRWeaponHUDManager::Update()
 
     m_bEnabled = tfvr_weapon_hud_enabled.GetBool();
 
-    m_vOffset.Init(
-        tfvr_weapon_hud_offset_x.GetFloat(),
-        tfvr_weapon_hud_offset_y.GetFloat(),
-        tfvr_weapon_hud_offset_z.GetFloat()
-    );
-
-    m_angRotation.Init(
-        tfvr_weapon_hud_pitch.GetFloat(),
-        tfvr_weapon_hud_yaw.GetFloat(),
-        tfvr_weapon_hud_roll.GetFloat()
-    );
-
-    m_flScale = tfvr_weapon_hud_scale.GetFloat();
-
     // Check for weapon change and refresh dynamic elements
     C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    C_TFWeaponBase* pTFWeapon = pPlayer ? pPlayer->GetActiveTFWeapon() : nullptr;
+    VRWeaponHudProfile_t profile = ResolveWeaponHudProfile(pTFWeapon, true);
+
+    m_vOffset = profile.placement.vOffset;
+    m_angRotation = profile.placement.angRotation;
+    m_flScale = profile.placement.flScale;
+
     if (pPlayer)
     {
         C_BaseCombatWeapon* pWeapon = pPlayer->GetActiveWeapon();
+
         if (pWeapon != m_hLastWeapon.Get())
         {
             m_hLastWeapon = pWeapon;
             m_pCompositor->RefreshDynamicElements();
-
-            // Medigun is held on left hand; all other weapons on right
-            CTFWeaponBase* pTFWeapon = pPlayer->GetActiveTFWeapon();
-            m_bWeaponOnLeftHand = (pTFWeapon && pTFWeapon->GetWeaponID() == TF_WEAPON_MEDIGUN);
-        }
-
-        // Pistols use their own placement: the generic offsets are tuned for
-        // larger weapons and sit poorly on the small pistol frame.
-        CTFWeaponBase* pActiveTFWeapon = pPlayer->GetActiveTFWeapon();
-        if (pActiveTFWeapon)
-        {
-            int iWeaponID = pActiveTFWeapon->GetWeaponID();
-            if (iWeaponID == TF_WEAPON_PISTOL ||
-                iWeaponID == TF_WEAPON_PISTOL_SCOUT ||
-                iWeaponID == TF_WEAPON_HANDGUN_SCOUT_PRIMARY ||
-                iWeaponID == TF_WEAPON_HANDGUN_SCOUT_SECONDARY)
-            {
-                m_vOffset.Init(
-                    tfvr_weapon_hud_pistol_offset_x.GetFloat(),
-                    tfvr_weapon_hud_pistol_offset_y.GetFloat(),
-                    tfvr_weapon_hud_pistol_offset_z.GetFloat()
-                );
-
-                m_angRotation.Init(
-                    tfvr_weapon_hud_pistol_pitch.GetFloat(),
-                    tfvr_weapon_hud_pistol_yaw.GetFloat(),
-                    tfvr_weapon_hud_pistol_roll.GetFloat()
-                );
-
-                m_flScale = tfvr_weapon_hud_pistol_scale.GetFloat();
-            }
         }
     }
 }
@@ -1597,7 +2142,7 @@ void CVRWeaponHUDManager::Render()
         return;
 
     // VR: Don't show weapon HUD if no weapon is equipped (e.g., during loser/stalemate)
-    C_TFVRHand* pWeaponHand = m_bWeaponOnLeftHand ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
+    C_TFVRHand* pWeaponHand = GetCurrentWeaponHand();
     if (!pWeaponHand || !pWeaponHand->GetHeldWeapon())
         return;
 
@@ -1617,8 +2162,9 @@ void CVRWeaponHUDManager::Render()
         ApplyCenteringOffset(panelToWorld, worldWidth, worldHeight);
     }
 
-    // Skip if panel is facing away from camera
-    if (IsPanelBackfacing(panelToWorld))
+    // Optional: mirrored weapon-bone frames can make the software normal test
+    // disagree with DrawPanelIn3DSpace, so leave this off by default.
+    if (tfvr_weapon_hud_backface_cull.GetBool() && IsPanelBackfacing(panelToWorld))
         return;
 
     // Queue for distance-sorted rendering
@@ -1660,16 +2206,42 @@ void CVRWeaponHUDManager::ResetState()
     }
 
     m_hLastWeapon = nullptr;
-    m_bWeaponOnLeftHand = false;
+}
+
+//-----------------------------------------------------------------------------
+C_TFVRHand* CVRWeaponHUDManager::GetCurrentWeaponHand(C_TFWeaponBase** ppWeapon) const
+{
+    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    C_TFWeaponBase* pTFWeapon = pPlayer ? pPlayer->GetActiveTFWeapon() : nullptr;
+
+    if (ppWeapon)
+        *ppWeapon = pTFWeapon;
+
+    return pTFWeapon ? TFVR_GetWeaponHand(pTFWeapon) : nullptr;
+}
+
+//-----------------------------------------------------------------------------
+bool CVRWeaponHUDManager::ShouldMirrorWeaponHUDPlacement(const C_TFWeaponBase* pWeapon) const
+{
+    if (!pWeapon)
+        return false;
+
+    // Placement ConVars are tuned for ordinary right-primary weapons.
+    // Whenever the HUD rides a left/off-hand weapon frame, mirror the user
+    // offsets and yaw/roll so the panel stays on the same relative weapon side.
+    return TFVR_DisplayWeaponOnLeft(pWeapon) || TFVR_WeaponPrefersOffHand(pWeapon);
 }
 
 //-----------------------------------------------------------------------------
 bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
 {
-    // Get the hand that holds the weapon (left for medigun, right for everything else)
-    C_TFVRHand* pHand = m_bWeaponOnLeftHand ? GetLocalPlayerLeftHand() : GetLocalPlayerRightHand();
+    C_TFWeaponBase* pTFWeapon = nullptr;
+    C_TFVRHand* pHand = GetCurrentWeaponHand(&pTFWeapon);
     if (!pHand)
         return false;
+
+    bool bMirrorPlacement = ShouldMirrorWeaponHUDPlacement(pTFWeapon);
+    bool bMirroredWeaponBone = pTFWeapon && TFVR_ShouldMirrorWeaponHand(pTFWeapon);
 
     bool bGotTransform = false;
 
@@ -1687,9 +2259,10 @@ bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
         C_BaseAnimating* pRenderWeapon = pHand->GetRenderWeapon();
         if (pRenderWeapon)
         {
-            // Left-hand medigun uses weapon_bone_L
+            // The medigun is authored with a left-hand weapon bone; mirrored
+            // right-hand weapons continue to expose the standard weapon_bone.
             int weaponBone = -1;
-            if (m_bWeaponOnLeftHand)
+            if (TFVR_WeaponAuthoredHandIsLeft(pTFWeapon))
                 weaponBone = pRenderWeapon->LookupBone("weapon_bone_L");
             if (weaponBone < 0)
                 weaponBone = pRenderWeapon->LookupBone("weapon_bone");
@@ -1729,29 +2302,38 @@ bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
     if (!bGotTransform)
         return false;
 
-    // Apply user offsets in weapon space
-    // Flip X offset for left-hand weapons so the HUD mirrors to the other side
+    // Apply user offsets in weapon space. For reflected weapon bones, mirror
+    // the local offset as authored data before converting it through the
+    // reflected bone frame; this matches the hand mirror instead of layering
+    // an unrelated post-flip sign change on one axis.
     if (m_vOffset.x != 0 || m_vOffset.y != 0 || m_vOffset.z != 0)
     {
         Vector weaponForward, weaponRight, weaponUp;
         transform.GetBasisVectors(weaponForward, weaponRight, weaponUp);
 
-        float offsetX = m_bWeaponOnLeftHand ? -m_vOffset.x : m_vOffset.x;
+        Vector localOffset = m_vOffset;
+        if (bMirroredWeaponBone)
+        {
+            localOffset = MirrorWeaponHudLocalOffset(localOffset);
+        }
+        else if (bMirrorPlacement)
+        {
+            localOffset.x = -localOffset.x;
+        }
 
-        Vector worldOffset = weaponRight * offsetX +
-                             weaponUp * m_vOffset.y +
-                             weaponForward * m_vOffset.z;
+        Vector worldOffset = weaponRight * localOffset.x +
+                             weaponUp * localOffset.y +
+                             weaponForward * localOffset.z;
 
         Vector currentPos = transform.GetTranslation();
         transform.SetTranslation(currentPos + worldOffset);
     }
 
-    // Apply rotation adjustments
-    // Flip yaw and roll for left-hand weapons to mirror the HUD orientation
+    // Apply rotation adjustments.
     if (m_angRotation.x != 0 || m_angRotation.y != 0 || m_angRotation.z != 0)
     {
         QAngle adjustedRotation = m_angRotation;
-        if (m_bWeaponOnLeftHand)
+        if (bMirrorPlacement)
         {
             adjustedRotation.y = -adjustedRotation.y;
             adjustedRotation.z = -adjustedRotation.z;
@@ -1763,6 +2345,11 @@ bool CVRWeaponHUDManager::CalculateWeaponBoneTransform(VMatrix& transform)
         rotationMatrix.CopyFrom3x4(rotMatrix);
 
         transform = transform * rotationMatrix;
+    }
+
+    if (bMirroredWeaponBone && tfvr_weapon_hud_mirrored_bone_roll.GetFloat() != 0.0f)
+    {
+        RotatePanelInPlane(transform, tfvr_weapon_hud_mirrored_bone_roll.GetFloat());
     }
 
     return true;
