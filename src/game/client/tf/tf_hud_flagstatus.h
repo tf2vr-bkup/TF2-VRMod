@@ -50,6 +50,8 @@ private:
 	bool				m_bUseRed;
 	float				m_flNextColorSwitch;
 	IMaterial			*m_pMaterial;
+	int					m_nVguiTextureID;
+	IMaterial			*m_pVguiTextureMaterial;
 };
 
 //-----------------------------------------------------------------------------

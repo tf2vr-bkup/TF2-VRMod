@@ -38,6 +38,7 @@
 #include "view.h"
 #include "prediction.h"
 #include "tf_logic_robot_destruction.h"
+#include "VGuiMatSurface/IMatSystemSurface.h"
 
 using namespace vgui;
 
@@ -49,6 +50,7 @@ DECLARE_HUDELEMENT( CTFFlagCalloutPanel );
 ConVar tf_rd_flag_ui_mode( "tf_rd_flag_ui_mode", "3", FCVAR_DEVELOPMENTONLY, "When flags are stolen and not visible: 0 = Show outlines (glows), 1 = Show most valuable enemy flag (icons), 2 = Show all enemy flags (icons), 3 = Show all flags (icons)." );
 
 extern ConVar tf_flag_caps_per_round;
+extern bool g_bTFVRHUDCompositorPaintOffsetActive;
 
 void AddSubKeyNamed( KeyValues *pKeys, const char *pszName );
 
@@ -68,6 +70,8 @@ CTFArrowPanel::CTFArrowPanel( Panel *parent, const char *name ) : vgui::Panel( p
 	m_pMaterial = m_NeutralMaterial;
 	m_bUseRed = false;
 	m_flNextColorSwitch = 0.0f;
+	m_nVguiTextureID = -1;
+	m_pVguiTextureMaterial = NULL;
 
 	ivgui()->AddTickSignal( GetVPanel(), 100 );
 }
@@ -214,6 +218,53 @@ void CTFArrowPanel::Paint()
 	int x = 0;
 	int y = 0;
 	ipanel()->GetAbsPos( GetVPanel(), x, y );
+	if ( g_bTFVRHUDCompositorPaintOffsetActive && m_pMaterial )
+	{
+		if ( m_nVguiTextureID == -1 )
+		{
+			m_nVguiTextureID = vgui::surface()->CreateNewTextureID();
+		}
+
+		if ( m_pVguiTextureMaterial != m_pMaterial )
+		{
+			g_pMatSystemSurface->DrawSetTextureMaterial( m_nVguiTextureID, m_pMaterial );
+			m_pVguiTextureMaterial = m_pMaterial;
+		}
+
+		const float flCenterX = GetWide() * 0.5f;
+		const float flCenterY = GetTall() * 0.5f;
+		const float flHalfWide = GetWide() * 0.5f;
+		const float flHalfTall = GetTall() * 0.5f;
+		const float flAngle = DEG2RAD( GetAngleRotation() );
+		const float flCos = cosf( flAngle );
+		const float flSin = sinf( flAngle );
+
+		float corners[4][2] =
+		{
+			{ -flHalfWide, -flHalfTall },
+			{  flHalfWide, -flHalfTall },
+			{  flHalfWide,  flHalfTall },
+			{ -flHalfWide,  flHalfTall },
+		};
+
+		vgui::Vertex_t verts[4];
+		for ( int i = 0; i < 4; i++ )
+		{
+			float flRotatedX = corners[i][0] * flCos - corners[i][1] * flSin;
+			float flRotatedY = corners[i][0] * flSin + corners[i][1] * flCos;
+			verts[i].m_Position.Init( flCenterX + flRotatedX, flCenterY + flRotatedY );
+		}
+
+		verts[0].m_TexCoord.Init( 0, 0 );
+		verts[1].m_TexCoord.Init( 1, 0 );
+		verts[2].m_TexCoord.Init( 1, 1 );
+		verts[3].m_TexCoord.Init( 0, 1 );
+
+		vgui::surface()->DrawSetTexture( m_nVguiTextureID );
+		vgui::surface()->DrawSetColor( 255, 255, 255, 255 );
+		vgui::surface()->DrawTexturedPolygon( 4, verts );
+		return;
+	}
 	int nWidth = GetWide();
 	int nHeight = GetTall();
 

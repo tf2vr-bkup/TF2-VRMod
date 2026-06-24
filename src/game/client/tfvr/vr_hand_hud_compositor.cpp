@@ -29,6 +29,10 @@
 CVRStatusHUDManager* g_pVRStatusHUDManager = nullptr;
 CVRWeaponHUDManager* g_pVRWeaponHUDManager = nullptr;
 
+// Raw material-painted HUD children can clobber DrawPanelIn3DSpace transforms.
+// Expose the active compositor pass so those panels can use a VGUI-safe path.
+bool g_bTFVRHUDCompositorPaintOffsetActive = false;
+
 extern ConVar tfvr_lefthand_mirror_axis;
 extern ConVar tfvr_lefthand_mirror_spin;
 
@@ -1129,9 +1133,13 @@ void CVRHUDCompositor::PaintPanelAtOffset(vgui::Panel* pPanel, int targetX, int 
     int offsetY = targetY - panelScreenY;
 
     // Apply the offset and paint
+    g_bTFVRHUDCompositorPaintOffsetActive = true;
+
     vgui::surface()->ForceScreenPosOffset(true, offsetX, offsetY);
     vgui::surface()->PaintTraverse(pPanel->GetVPanel());
     vgui::surface()->ForceScreenPosOffset(false, 0, 0);
+
+    g_bTFVRHUDCompositorPaintOffsetActive = false;
 }
 
 //=============================================================================
