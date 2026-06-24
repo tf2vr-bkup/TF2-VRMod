@@ -12,14 +12,14 @@ class CHudElement;
 
 //-----------------------------------------------------------------------------
 // Purpose: Manages the VR damage direction indicator that lazily follows the
-//          player's view yaw. Similar to the spring HUD for kill feed but
+//          player's view yaw/pitch. Similar to the spring HUD for kill feed but
 //          with its own settings tuned for damage indication visibility.
 //          Also renders medic caller panels on the same overlay.
 //          Features:
 //          - Deadzone: HUD stays still when view is within deadzone angle
 //          - Smooth follow: Outside deadzone, HUD smoothly catches up
 //          - Edge clamp: Clamps to max_lag angle when turning quickly
-//          - Fixed pitch/roll: HUD always stays level
+//          - Fixed roll: HUD stays level around the view axis
 //-----------------------------------------------------------------------------
 class CVRDamageIndicatorManager
 {

@@ -138,14 +138,23 @@ void CVRWorldUIQueue::QueuePanel(vgui::Panel* pPanel, const VMatrix& transform,
                                   int pixelWidth, int pixelHeight,
                                   float worldWidth, float worldHeight,
                                   int priority,
-                                  bool bRestoreVisibility, bool bWasVisible)
+                                  bool bRestoreVisibility, bool bWasVisible,
+                                  bool bRestoreBounds,
+                                  int originalX, int originalY,
+                                  int originalWide, int originalTall)
 {
     if (!m_bInitialized)
         return;
 
     if (!TFVR_ShouldRenderWorldUIPanel(pPanel, transform, pixelWidth, pixelHeight,
                                        worldWidth, worldHeight, "QueuePanel"))
+    {
+        if (bRestoreBounds)
+        {
+            pPanel->SetBounds(originalX, originalY, originalWide, originalTall);
+        }
         return;
+    }
     
     if (!tfvr_world_ui_queue_enabled.GetBool())
     {
@@ -172,6 +181,11 @@ void CVRWorldUIQueue::QueuePanel(vgui::Panel* pPanel, const VMatrix& transform,
         {
             pPanel->SetVisible(bWasVisible);
         }
+
+        if (bRestoreBounds)
+        {
+            pPanel->SetBounds(originalX, originalY, originalWide, originalTall);
+        }
         return;
     }
     
@@ -184,6 +198,11 @@ void CVRWorldUIQueue::QueuePanel(vgui::Panel* pPanel, const VMatrix& transform,
     item.worldHeight = worldHeight;
     item.bRestoreVisibility = bRestoreVisibility;
     item.bWasVisible = bWasVisible;
+    item.bRestoreBounds = bRestoreBounds;
+    item.originalX = originalX;
+    item.originalY = originalY;
+    item.originalWide = originalWide;
+    item.originalTall = originalTall;
     item.priority = priority;
     
     // Calculate distance from head to panel center
@@ -252,7 +271,13 @@ void CVRWorldUIQueue::FlushRenderQueue()
 
         if (!TFVR_ShouldRenderWorldUIPanel(item.pPanel, item.transform, item.pixelWidth, item.pixelHeight,
                                            item.worldWidth, item.worldHeight, "FlushRenderQueue"))
+        {
+            if (item.bRestoreBounds)
+            {
+                item.pPanel->SetBounds(item.originalX, item.originalY, item.originalWide, item.originalTall);
+            }
             continue;
+        }
         
         // Make panel visible for rendering if needed
         if (item.bRestoreVisibility)
@@ -273,6 +298,11 @@ void CVRWorldUIQueue::FlushRenderQueue()
         if (item.bRestoreVisibility)
         {
             item.pPanel->SetVisible(item.bWasVisible);
+        }
+
+        if (item.bRestoreBounds)
+        {
+            item.pPanel->SetBounds(item.originalX, item.originalY, item.originalWide, item.originalTall);
         }
     }
     

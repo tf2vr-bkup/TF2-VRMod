@@ -75,7 +75,7 @@ ConVar tfvr_status_hud_base_yaw("tfvr_status_hud_base_yaw", "0", FCVAR_ARCHIVE,
     "Base yaw rotation for panel orientation");
 ConVar tfvr_status_hud_base_roll("tfvr_status_hud_base_roll", "-90", FCVAR_ARCHIVE,
     "Base roll rotation for panel orientation");
-ConVar tfvr_status_hud_mirror_surface_roll("tfvr_status_hud_mirror_surface_roll", "90", FCVAR_ARCHIVE,
+ConVar tfvr_status_hud_mirror_surface_roll("tfvr_status_hud_mirror_surface_roll", "180", FCVAR_ARCHIVE,
     "Extra in-plane roll for the mirrored/off-hand status HUD");
 ConVar tfvr_status_hud_pitch("tfvr_status_hud_pitch", "0", FCVAR_ARCHIVE,
     "Additional pitch rotation adjustment");
@@ -164,11 +164,11 @@ ConVar tfvr_weapon_hud_offset_y("tfvr_weapon_hud_offset_y", "15", FCVAR_ARCHIVE,
 ConVar tfvr_weapon_hud_offset_z("tfvr_weapon_hud_offset_z", "4", FCVAR_ARCHIVE,
     "Z offset from weapon bone");
 // Pistol-specific placement (small weapon; the generic spot sits poorly)
-ConVar tfvr_weapon_hud_pistol_offset_x("tfvr_weapon_hud_pistol_offset_x", "-2", FCVAR_ARCHIVE,
+ConVar tfvr_weapon_hud_pistol_offset_x("tfvr_weapon_hud_pistol_offset_x", "5", FCVAR_ARCHIVE,
     "Pistol weapon HUD: side offset in weapon space");
-ConVar tfvr_weapon_hud_pistol_offset_y("tfvr_weapon_hud_pistol_offset_y", "8", FCVAR_ARCHIVE,
+ConVar tfvr_weapon_hud_pistol_offset_y("tfvr_weapon_hud_pistol_offset_y", "-2", FCVAR_ARCHIVE,
     "Pistol weapon HUD: up offset in weapon space");
-ConVar tfvr_weapon_hud_pistol_offset_z("tfvr_weapon_hud_pistol_offset_z", "0", FCVAR_ARCHIVE,
+ConVar tfvr_weapon_hud_pistol_offset_z("tfvr_weapon_hud_pistol_offset_z", "4", FCVAR_ARCHIVE,
     "Pistol weapon HUD: forward offset in weapon space");
 ConVar tfvr_weapon_hud_pistol_pitch("tfvr_weapon_hud_pistol_pitch", "180", FCVAR_ARCHIVE,
     "Pistol weapon HUD: pitch rotation in degrees");

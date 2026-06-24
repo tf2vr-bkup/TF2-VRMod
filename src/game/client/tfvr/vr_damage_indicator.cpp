@@ -31,9 +31,9 @@ ConVar tfvr_damage_indicator_distance("tfvr_damage_indicator_distance", "50", FC
     "Distance of damage indicator from head in units");
 ConVar tfvr_damage_indicator_scale("tfvr_damage_indicator_scale", "0.5", FCVAR_ARCHIVE,
     "Scale of the damage indicator panel");
-ConVar tfvr_damage_indicator_offset_x("tfvr_damage_indicator_offset_x", "-1", FCVAR_ARCHIVE,
+ConVar tfvr_damage_indicator_offset_x("tfvr_damage_indicator_offset_x", "0", FCVAR_ARCHIVE,
     "Horizontal offset (-1 to 1, positive = right)");
-ConVar tfvr_damage_indicator_offset_y("tfvr_damage_indicator_offset_y", "0", FCVAR_ARCHIVE,
+ConVar tfvr_damage_indicator_offset_y("tfvr_damage_indicator_offset_y", "-1", FCVAR_ARCHIVE,
     "Vertical offset (-1 to 1, positive = up)");
 
 ConVar tfvr_damage_indicator_follow_speed("tfvr_damage_indicator_follow_speed", "10", FCVAR_ARCHIVE,
@@ -292,16 +292,16 @@ bool CVRDamageIndicatorManager::CalculateSpringTransform(VMatrix& transform)
     Vector forward, right, up;
     AngleVectors(panelAngles, &forward, &right, &up);
 
-    // Calculate panel position
+    // Calculate panel center.
     // Start at distance in front, then apply offsets
-    Vector panelPos = eyePos + forward * m_flDistance;
+    Vector panelCenter = eyePos + forward * m_flDistance;
 
     // Apply horizontal and vertical offsets
     // Offset is relative to the panel's orientation
     float horizontalOffset = m_flOffsetX * m_flDistance * 0.5f;
     float verticalOffset = m_flOffsetY * m_flDistance * 0.3f;
-    panelPos += right * horizontalOffset;
-    panelPos += up * verticalOffset;
+    panelCenter += right * horizontalOffset;
+    panelCenter += up * verticalOffset;
 
     // Build the transformation matrix
     // Panel should face the player (negative forward direction)
@@ -310,12 +310,18 @@ bool CVRDamageIndicatorManager::CalculateSpringTransform(VMatrix& transform)
     Vector panelRight = right;
     Vector panelUp = up;
 
+    // DrawPanelIn3DSpace consumes a top-left transform, so convert the
+    // desired center point to the panel origin after offsets are applied.
+    Vector panelTopLeft = panelCenter
+        - panelRight * (m_flPanelWidth * 0.5f)
+        + panelUp * (m_flPanelHeight * 0.5f);
+
     // Build rotation matrix (column-major for VMatrix)
     transform.Identity();
     transform[0][0] = panelRight.x;  transform[0][1] = panelUp.x;  transform[0][2] = panelForward.x;
     transform[1][0] = panelRight.y;  transform[1][1] = panelUp.y;  transform[1][2] = panelForward.y;
     transform[2][0] = panelRight.z;  transform[2][1] = panelUp.z;  transform[2][2] = panelForward.z;
-    transform.SetTranslation(panelPos);
+    transform.SetTranslation(panelTopLeft);
 
     return true;
 }
@@ -345,6 +351,10 @@ void CVRDamageIndicatorManager::Render()
     if (!CalculateSpringTransform(panelToWorld))
         return;
 
+    int originalX, originalY, originalWide, originalTall;
+    m_pDamageIndicatorPanel->GetBounds(originalX, originalY, originalWide, originalTall);
+    m_pDamageIndicatorPanel->SetBounds(0, 0, m_nPanelPixelWidth, m_nPanelPixelHeight);
+
     // Queue for distance-sorted rendering
     bool bWasVisible = m_pDamageIndicatorPanel->IsVisible();
 
@@ -353,7 +363,8 @@ void CVRDamageIndicatorManager::Render()
         g_pVRWorldUIQueue->QueuePanel(m_pDamageIndicatorPanel, panelToWorld,
                                       m_nPanelPixelWidth, m_nPanelPixelHeight,
                                       m_flPanelWidth, m_flPanelHeight,
-                                      PRIORITY_DAMAGE_INDICATOR, true, bWasVisible);
+                                      PRIORITY_DAMAGE_INDICATOR, true, bWasVisible,
+                                      true, originalX, originalY, originalWide, originalTall);
     }
     else
     {
@@ -370,6 +381,7 @@ void CVRDamageIndicatorManager::Render()
         );
         g_pMatSystemSurface->DisableClipping(false);
         m_pDamageIndicatorPanel->SetVisible(bWasVisible);
+        m_pDamageIndicatorPanel->SetBounds(originalX, originalY, originalWide, originalTall);
     }
 
     if (tfvr_damage_indicator_debug.GetBool())
@@ -426,10 +438,23 @@ void CVRDamageIndicatorManager::RenderMedicCallers(const VMatrix& panelToWorld)
         float worldHeight = m_flDistance * scale * 0.5f;  // Slightly smaller than damage indicator
         float worldWidth = worldHeight * aspectRatio;
 
+        Vector panelRight(panelToWorld[0][0], panelToWorld[1][0], panelToWorld[2][0]);
+        Vector panelUp(panelToWorld[0][1], panelToWorld[1][1], panelToWorld[2][1]);
+        Vector damageTopLeft = panelToWorld.GetTranslation();
+        Vector damageCenter = damageTopLeft
+            + panelRight * (m_flPanelWidth * 0.5f)
+            - panelUp * (m_flPanelHeight * 0.5f);
+        Vector callerTopLeft = damageCenter
+            - panelRight * (worldWidth * 0.5f)
+            + panelUp * (worldHeight * 0.5f);
+
+        VMatrix callerToWorld = panelToWorld;
+        callerToWorld.SetTranslation(callerTopLeft);
+
         // Queue for rendering on the same overlay as damage indicator
         if (g_pVRWorldUIQueue && g_pVRWorldUIQueue->IsInitialized())
         {
-            g_pVRWorldUIQueue->QueuePanel(pChild, panelToWorld,
+            g_pVRWorldUIQueue->QueuePanel(pChild, callerToWorld,
                                           panelWidth, panelHeight,
                                           worldWidth, worldHeight,
                                           PRIORITY_DAMAGE_INDICATOR + 1, true, false);
@@ -441,7 +466,7 @@ void CVRDamageIndicatorManager::RenderMedicCallers(const VMatrix& panelToWorld)
             g_pMatSystemSurface->DisableClipping(true);
             g_pMatSystemSurface->DrawPanelIn3DSpace(
                 pChild->GetVPanel(),
-                panelToWorld,
+                callerToWorld,
                 panelWidth,
                 panelHeight,
                 worldWidth,

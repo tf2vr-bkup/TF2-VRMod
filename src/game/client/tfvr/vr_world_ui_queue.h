@@ -23,6 +23,11 @@ struct VRWorldUIRenderItem
     float distanceFromHead;     // Distance from head (for sorting)
     bool bRestoreVisibility;    // Whether to restore visibility after render
     bool bWasVisible;           // Original visibility state
+    bool bRestoreBounds;        // Whether to restore panel bounds after render
+    int originalX;              // Original panel bounds
+    int originalY;
+    int originalWide;
+    int originalTall;
     int priority;               // Render priority (higher = rendered later/on top at same distance)
 };
 
@@ -51,7 +56,10 @@ public:
                     int pixelWidth, int pixelHeight,
                     float worldWidth, float worldHeight,
                     int priority = 0,
-                    bool bRestoreVisibility = false, bool bWasVisible = false);
+                    bool bRestoreVisibility = false, bool bWasVisible = false,
+                    bool bRestoreBounds = false,
+                    int originalX = 0, int originalY = 0,
+                    int originalWide = 0, int originalTall = 0);
     
     // Call at the end of VR UI rendering to flush all queued panels
     void FlushRenderQueue();

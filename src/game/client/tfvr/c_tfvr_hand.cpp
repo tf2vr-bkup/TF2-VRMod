@@ -1552,7 +1552,7 @@ static bool IsBareFists(C_TFWeaponBase *pWeapon);
 
 // ConVars for debugging and control
 ConVar tfvr_hands_enabled("tfvr_hands_enabled", "1", FCVAR_ARCHIVE, "Enable VR hand rendering");
-ConVar tfvr_pistol_reload_wrist_motion("tfvr_pistol_reload_wrist_motion", "0.35", FCVAR_ARCHIVE,
+ConVar tfvr_pistol_reload_wrist_motion("tfvr_pistol_reload_wrist_motion", "0.4", FCVAR_ARCHIVE,
 	"VR pistol manual reload: fraction (0-1) of the authored wrist motion applied to the weapon hand during the reload animation. 0 = hand fully pinned to the controller.");
 ConVar tfvr_pistol_reload_blend_out("tfvr_pistol_reload_blend_out", "0.5", FCVAR_ARCHIVE,
 	"VR pistol manual reload: seconds to blend the weapon hand back to the idle pose after the reload finish motion ends");
@@ -1630,7 +1630,7 @@ ConVar tfvr_muzzle_direct_mode("tfvr_muzzle_direct_mode", "0", FCVAR_ARCHIVE, "U
 //   tfvr_lefthand_mirror_axis: which frame row to negate (0=X aim, 1=Y lateral [default], 2=Z up)
 //   tfvr_lefthand_mirror_spin: optional extra 180 spin about a frame axis (0=none,1=X,2=Y,3=Z)
 ConVar tfvr_lefthand_mirror_axis("tfvr_lefthand_mirror_axis", "1", FCVAR_ARCHIVE, "Left-handed hand-mirror plane normal axis (0=X,1=Y,2=Z)");
-ConVar tfvr_lefthand_mirror_spin("tfvr_lefthand_mirror_spin", "0", FCVAR_ARCHIVE, "Left-handed hand-mirror extra 180-degree spin axis (0=none,1=X,2=Y,3=Z)");
+ConVar tfvr_lefthand_mirror_spin("tfvr_lefthand_mirror_spin", "2", FCVAR_ARCHIVE, "Left-handed hand-mirror extra 180-degree spin axis (0=none,1=X,2=Y,3=Z)");
 
 // Two-handed weapon convars
 ConVar tfvr_twohand_enabled("tfvr_twohand_enabled", "1", FCVAR_ARCHIVE, "Enable two-handed weapon gripping");

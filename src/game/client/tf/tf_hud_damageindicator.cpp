@@ -172,8 +172,15 @@ void CHudDamageIndicator::GetDamagePosition( const Vector &vecDelta, float flRad
 	float sa = sin( yawRadians );
 				 
 	// Rotate it around the circle
-	*xpos = (int)((ScreenWidth() / 2) + (flRadius * sa));
-	*ypos = (int)((ScreenHeight() / 2) - (flRadius * ca));
+	int nPanelWide = GetWide();
+	int nPanelTall = GetTall();
+	if ( nPanelWide <= 0 )
+		nPanelWide = ScreenWidth();
+	if ( nPanelTall <= 0 )
+		nPanelTall = ScreenHeight();
+
+	*xpos = ( nPanelWide * 0.5f ) + ( flRadius * sa );
+	*ypos = ( nPanelTall * 0.5f ) - ( flRadius * ca );
 }
 
 //-----------------------------------------------------------------------------
