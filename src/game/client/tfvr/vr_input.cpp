@@ -1948,6 +1948,14 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
     if (!tfvr_enable_controller_tracking.GetBool())
         return;
 
+	if ( cmd )
+	{
+		// This is a weapon-mode bit, not a gesture input. Keep it populated
+		// while UI menus block tracking so the server continues suppressing
+		// vanilla auto/singly reload for manual VR reload weapons.
+		cmd->vrManualPumpReload = TFVR_ShouldManualPumpReloadForActiveWeapon();
+	}
+
     // Check if menu is visible - if so, disable tracking
     bool bMenuVisible = g_pVRMenuManager && g_pVRMenuManager->IsMenuVisible();
     if (bMenuVisible)
@@ -1967,11 +1975,6 @@ void CVRInput::ProcessVRControllerTracking(CUserCmd* cmd)
 	TFVR_UpdateBisonPumpArmedInCmd( cmd );
 	TFVR_UpdateManglerPumpArmedInCmd( cmd );
 	TFVR_UpdatePomsonPumpArmedInCmd( cmd );
-	if ( cmd )
-	{
-		cmd->vrManualPumpReload = TFVR_ShouldManualPumpReloadForActiveWeapon();
-	}
-
     // Get controller poses
     VMatrix leftControllerPose, rightControllerPose;
     bool leftValid = g_pOpenXRManager->GetLeftControllerPose(leftControllerPose);
