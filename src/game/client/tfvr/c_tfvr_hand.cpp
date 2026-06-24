@@ -112,6 +112,24 @@ static CTFPistol *TFVR_GetManualReloadPistol(C_TFWeaponBase *pWeapon)
 	return pPistol;
 }
 
+static const char *TFVR_GetRenderWeaponModel(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon)
+		return NULL;
+
+	const char *pszWorldModel = pWeapon->GetWorldModel();
+	if (TFVR_GetManualReloadPistol(pWeapon))
+		return VRPistol_GunModelForWorldModel(pszWorldModel);
+
+	return pszWorldModel;
+}
+
+static int TFVR_GetRenderWeaponModelIndex(C_TFWeaponBase *pWeapon)
+{
+	const char *pszModel = TFVR_GetRenderWeaponModel(pWeapon);
+	return (pszModel && pszModel[0] && modelinfo) ? modelinfo->GetModelIndex(pszModel) : -1;
+}
+
 static int TFVR_GetPistolVisualWeaponID(C_TFWeaponBase *pWeapon, C_TFPlayer *pOwner)
 {
 	if (pOwner)
@@ -5457,8 +5475,18 @@ void C_TFVRHand::Update()
 			{
 				// Detect weapon change: either different weapon, or current held weapon is now invalid
 				bool bNeedsWeaponUpdate = false;
+				C_BaseAnimating *pCurrentRenderWeapon = m_hRenderWeapon.Get();
+				const int iActiveRenderModelIndex = TFVR_GetRenderWeaponModelIndex(pActiveWeapon);
 
-				if (pCurrentHeld && m_iLastEquippedWeaponID >= 0
+				if (pCurrentRenderWeapon && iActiveRenderModelIndex > 0
+					&& pCurrentRenderWeapon->GetModelIndex() != iActiveRenderModelIndex)
+				{
+					// Some primary swaps reuse the same Source weapon ID but need
+					// a different VR render model. Refresh instead of taking the
+					// same-ID entity recreation fast path below.
+					bNeedsWeaponUpdate = true;
+				}
+				else if (pCurrentHeld && m_iLastEquippedWeaponID >= 0
 					&& pCurrentHeld->GetWeaponID() != m_iLastEquippedWeaponID)
 				{
 					// Class/loadout changes can mutate or reuse the same client
@@ -14612,12 +14640,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 	// and we have full control over a separate worldmodel entity for rendering
 
 	// Use world model for VR (c_models in TF2 are the world models)
-	const char *worldModel = pWeapon->GetWorldModel();
-
-	// Manual-reload pistols use dedicated VR models with the magazine split
-	// into its own mesh so the mag can leave the gun.
-	if (TFVR_GetManualReloadPistol(pWeapon))
-		worldModel = VRPistol_GunModelForWorldModel(pWeapon->GetWorldModel());
+	const char *worldModel = TFVR_GetRenderWeaponModel(pWeapon);
 
 	if (!worldModel || !worldModel[0])
 		return;
