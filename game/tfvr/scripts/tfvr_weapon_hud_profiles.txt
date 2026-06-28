@@ -80,7 +80,37 @@
 	
 	"tf_weapon_bonesaw"
 	{
+		"HudOffset" "1 2 7"
+		"HudAngles" "0 180 90"
+	}
+
+	"tf_weapon_sniperrifle"
+	{
 		"HudOffset" "0 0 0"
-		"HudAngles" "-90 90 0"
+		"HudAngles" "180 0 0"
+	}
+
+	"tf_weapon_smg"
+	{
+		"HudOffset" "2.5 12 6"
+		"HudAngles" "180 0 0"
+	}
+
+	"tf_weapon_revolver"
+	{
+		"HudOffset" "2.5 8 5"
+		"HudAngles" "180 0 0"
+	}
+
+	"tf_weapon_builder"
+	{
+		"HudOffset" "-4 0 0"
+		"HudAngles" "0 0 0"
+	}
+
+	"tf_weapon_pda_engineer_build"
+	{
+		"HudOffset" "8.2 3 0.9"
+		"HudAngles" "0 0 0"
 	}
 }
