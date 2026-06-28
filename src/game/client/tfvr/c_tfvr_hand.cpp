@@ -1180,6 +1180,36 @@ public:
 		}
 	}
 
+	void SyncAttachedModels(C_TFWeaponBase *pSourceWeapon)
+	{
+		if (!pSourceWeapon)
+		{
+			if (m_vecAttachedModels.Count() > 0)
+				m_vecAttachedModels.Purge();
+			return;
+		}
+
+		pSourceWeapon->UpdateAttachmentModels();
+
+		bool bNeedsCopy = m_vecAttachedModels.Count() != pSourceWeapon->m_vecAttachedModels.Count();
+		if (!bNeedsCopy)
+		{
+			for (int i = 0; i < m_vecAttachedModels.Count(); i++)
+			{
+				const AttachedModelData_t &dst = m_vecAttachedModels[i];
+				const AttachedModelData_t &src = pSourceWeapon->m_vecAttachedModels[i];
+				if (dst.m_pModel != src.m_pModel || dst.m_iModelDisplayFlags != src.m_iModelDisplayFlags)
+				{
+					bNeedsCopy = true;
+					break;
+				}
+			}
+		}
+
+		if (bNeedsCopy)
+			CopyAttachedModels(pSourceWeapon);
+	}
+
 	// Sync particle effects from the source weapon to this VR render weapon
 	void SyncParticleEffects()
 	{
@@ -15572,6 +15602,11 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 
 	// Sample the idle animation DIRECTLY using IBoneSetup
 	// This bypasses any entity animation state and gives us the pure idle pose
+	// Class rebuilds can equip before SetupBones has run on the new hand model.
+	// Build the mapping now so the first equip can cache the same anchors as a reselect.
+	if (!m_bBoneMappingSetup)
+		SetupBoneMapping();
+
 	CStudioHdr *pStudioHdr = GetModelPtr();
 	if (pStudioHdr && m_iHandBone >= 0 && m_iIdleSequence >= 0)
 	{
@@ -15866,10 +15901,41 @@ void C_TFVRHand::UpdateWeaponTransform()
 	// on bread creatures and doubled geometry on everything else.
 	// Also freeze its animation so its StudioFrameAdvance doesn't
 	// fire duplicate sound events.
-	if (m_hRenderWeapon.Get())
+	C_VRRenderWeapon *pRenderWeapon = static_cast<C_VRRenderWeapon*>(m_hRenderWeapon.Get());
+	if (pRenderWeapon)
 	{
 		pWeapon->AddEffects(EF_NODRAW);
 		pWeapon->SetPlaybackRate(0.0f);
+
+		pRenderWeapon->SyncAttachedModels(pWeapon);
+
+		C_TFWearable *pExtraWearable = pWeapon->m_hExtraWearable.Get();
+		if (pExtraWearable && pExtraWearable->GetMoveParent() != pRenderWeapon)
+		{
+			pExtraWearable->FollowEntity(pRenderWeapon, true);
+			pExtraWearable->ValidateModelIndex();
+			pExtraWearable->UpdateVisibility();
+			pExtraWearable->CreateShadow();
+		}
+
+		C_TFWearable *pExtraWearableVM = pWeapon->m_hExtraWearableViewModel.Get();
+		if (pExtraWearableVM && pExtraWearableVM->GetMoveParent() != pRenderWeapon)
+		{
+			pExtraWearableVM->FollowEntity(pRenderWeapon, true);
+			pExtraWearableVM->UpdateVisibility();
+		}
+
+		if (pWeapon->m_viewmodelStatTrakAddon.Get()
+			&& pWeapon->m_viewmodelStatTrakAddon->GetMoveParent() != pRenderWeapon)
+		{
+			pWeapon->m_viewmodelStatTrakAddon->FollowEntity(pRenderWeapon, true);
+		}
+
+		if (pWeapon->m_worldmodelStatTrakAddon.Get()
+			&& pWeapon->m_worldmodelStatTrakAddon->GetMoveParent() != pRenderWeapon)
+		{
+			pWeapon->m_worldmodelStatTrakAddon->FollowEntity(pRenderWeapon, true);
+		}
 
 		// Bread creature weapons: sync the viewmodel's animation to the
 		// hand so both fire sound events at the same instant.  The
