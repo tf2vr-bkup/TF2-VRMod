@@ -6,6 +6,8 @@
 
 #include "cbase.h"
 #include "c_tfvr_weapon_magazine.h"
+#include "tf/tf_shareddefs.h"
+#include "tfvr/vr_hand_render.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -34,6 +36,23 @@ C_TFVRWeaponMagazine::C_TFVRWeaponMagazine()
 //-----------------------------------------------------------------------------
 C_TFVRWeaponMagazine::~C_TFVRWeaponMagazine()
 {
+}
+
+bool C_TFVRWeaponMagazine::ShouldDrawInVRHandLayer() const
+{
+	return m_iWeaponType == TF_WEAPON_SYRINGEGUN_MEDIC
+		|| m_iWeaponType == TF_WEAPON_CROSSBOW;
+}
+
+int C_TFVRWeaponMagazine::DrawModel( int flags )
+{
+	if ( ShouldDrawInVRHandLayer() && VRHandLayer_ShouldSkipDraw() )
+	{
+		VRHandLayer_AddLateRenderable( this );
+		return 0;
+	}
+
+	return BaseClass::DrawModel( flags );
 }
 
 //=============================================================================

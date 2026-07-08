@@ -26,12 +26,16 @@ public:
 	C_TFVRWeaponMagazine();
 	virtual ~C_TFVRWeaponMagazine();
 
+	virtual int DrawModel( int flags ) OVERRIDE;
+
 	// Accessors
 	int GetWeaponType() const { return m_iWeaponType; }
 	int GetAmmoCount() const { return m_iAmmoCount; }
 	float GetClientSpawnTime() const { return m_flClientSpawnTime; }
 
 private:
+	bool ShouldDrawInVRHandLayer() const;
+
 	int m_iWeaponType;
 	int m_iAmmoCount;
 	float m_flClientSpawnTime;  // when this entity appeared on the client
