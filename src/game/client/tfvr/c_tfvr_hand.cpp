@@ -15,6 +15,7 @@
 #include "tf/tf_weapon_shotgun.h"
 #include "tf/tf_weapon_pistol.h"
 #include "tf/tf_weapon_syringegun.h"
+#include "tf/tf_weapon_smg.h"
 #include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_compound_bow.h"
@@ -137,9 +138,21 @@ static CTFCrossbow *TFVR_GetManualReloadCrossbow(C_TFWeaponBase *pWeapon)
 	return pCrossbow;
 }
 
+static CTFSMG *TFVR_GetManualReloadSMG(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || (pWeapon->GetWeaponID() != TF_WEAPON_SMG && pWeapon->GetWeaponID() != TF_WEAPON_CHARGED_SMG))
+		return NULL;
+
+	CTFSMG *pSMG = static_cast<CTFSMG *>(pWeapon);
+	if (!pSMG->ShouldUseVRSMGManualReload())
+		return NULL;
+
+	return pSMG;
+}
+
 static C_TFWeaponBase *TFVR_GetManualReloadMagazineWeapon(C_TFWeaponBase *pWeapon)
 {
-	if (TFVR_GetManualReloadPistol(pWeapon) || TFVR_GetManualReloadSyringeGun(pWeapon) || TFVR_GetManualReloadCrossbow(pWeapon))
+	if (TFVR_GetManualReloadPistol(pWeapon) || TFVR_GetManualReloadSyringeGun(pWeapon) || TFVR_GetManualReloadCrossbow(pWeapon) || TFVR_GetManualReloadSMG(pWeapon))
 		return pWeapon;
 
 	return NULL;
@@ -156,7 +169,11 @@ static bool TFVR_IsManualReloadMagazinePoseActive(C_TFWeaponBase *pWeapon)
 		return pSyringeGun->IsVRSyringeGunAmmoPoseActive();
 
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
-	return pCrossbow && pCrossbow->IsVRCrossbowAmmoPoseActive();
+	if (pCrossbow)
+		return pCrossbow->IsVRCrossbowAmmoPoseActive();
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG(pWeapon);
+	return pSMG && pSMG->IsVRSMGAmmoPoseActive();
 }
 
 static bool TFVR_IsManualReloadMagazineInserting(C_TFWeaponBase *pWeapon)
@@ -170,7 +187,11 @@ static bool TFVR_IsManualReloadMagazineInserting(C_TFWeaponBase *pWeapon)
 		return pSyringeGun->IsVRAmmoInserting();
 
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
-	return pCrossbow && pCrossbow->IsVRAmmoInserting();
+	if (pCrossbow)
+		return pCrossbow->IsVRAmmoInserting();
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG(pWeapon);
+	return pSMG && pSMG->IsVRAmmoInserting();
 }
 
 static bool TFVR_IsManualReloadMagazineOut(C_TFWeaponBase *pWeapon)
@@ -184,7 +205,11 @@ static bool TFVR_IsManualReloadMagazineOut(C_TFWeaponBase *pWeapon)
 		return pSyringeGun->IsVRAmmoOut();
 
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
-	return pCrossbow && pCrossbow->IsVRAmmoOut();
+	if (pCrossbow)
+		return pCrossbow->IsVRAmmoOut();
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG(pWeapon);
+	return pSMG && pSMG->IsVRAmmoOut();
 }
 
 static bool TFVR_HasManualReloadMagazineInHand(C_TFWeaponBase *pWeapon)
@@ -198,7 +223,11 @@ static bool TFVR_HasManualReloadMagazineInHand(C_TFWeaponBase *pWeapon)
 		return pSyringeGun->HasVRAmmoInHand();
 
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
-	return pCrossbow && pCrossbow->HasVRAmmoInHand();
+	if (pCrossbow)
+		return pCrossbow->HasVRAmmoInHand();
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG(pWeapon);
+	return pSMG && pSMG->HasVRAmmoInHand();
 }
 
 static bool TFVR_IsManualReloadMagazineBusy(C_TFWeaponBase *pWeapon)
@@ -212,7 +241,11 @@ static bool TFVR_IsManualReloadMagazineBusy(C_TFWeaponBase *pWeapon)
 		return pSyringeGun->IsVRSyringeGunManualReloadBusy();
 
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
-	return pCrossbow && pCrossbow->IsVRCrossbowManualReloadBusy();
+	if (pCrossbow)
+		return pCrossbow->IsVRCrossbowManualReloadBusy();
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG(pWeapon);
+	return pSMG && pSMG->IsVRSMGManualReloadBusy();
 }
 
 static float TFVR_GetManualReloadMagazineProgress(C_TFWeaponBase *pWeapon)
@@ -226,7 +259,11 @@ static float TFVR_GetManualReloadMagazineProgress(C_TFWeaponBase *pWeapon)
 		return pSyringeGun->GetVRAmmoPhaseProgress();
 
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
-	return pCrossbow ? pCrossbow->GetVRAmmoPhaseProgress() : 0.0f;
+	if (pCrossbow)
+		return pCrossbow->GetVRAmmoPhaseProgress();
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG(pWeapon);
+	return pSMG ? pSMG->GetVRAmmoPhaseProgress() : 0.0f;
 }
 
 static int TFVR_GetManualReloadMagazinePhase(C_TFWeaponBase *pWeapon)
@@ -240,12 +277,20 @@ static int TFVR_GetManualReloadMagazinePhase(C_TFWeaponBase *pWeapon)
 		return pSyringeGun->GetVRAmmoPhase();
 
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
-	return pCrossbow ? pCrossbow->GetVRAmmoPhase() : VR_PISTOL_MAG_PHASE_IDLE;
+	if (pCrossbow)
+		return pCrossbow->GetVRAmmoPhase();
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG(pWeapon);
+	return pSMG ? pSMG->GetVRAmmoPhase() : VR_PISTOL_MAG_PHASE_IDLE;
 }
 
 static const char *TFVR_GetManualReloadMagazineBoneName(C_TFWeaponBase *pWeapon)
 {
-	return (TFVR_GetManualReloadSyringeGun(pWeapon) || TFVR_GetManualReloadCrossbow(pWeapon)) ? VRSyringeGun_AmmoBoneName() : "vm_weapon_bone";
+	if (TFVR_GetManualReloadSyringeGun(pWeapon) || TFVR_GetManualReloadCrossbow(pWeapon))
+		return VRSyringeGun_AmmoBoneName();
+	if (TFVR_GetManualReloadSMG(pWeapon))
+		return VRSMG_AmmoBoneName();
+	return "vm_weapon_bone";
 }
 
 static const char *TFVR_GetManualReloadMagazineModel(C_TFWeaponBase *pWeapon)
@@ -254,6 +299,8 @@ static const char *TFVR_GetManualReloadMagazineModel(C_TFWeaponBase *pWeapon)
 		return VRSyringeGun_AmmoModelForWorldModel(pWeapon->GetWorldModel());
 	if (TFVR_GetManualReloadCrossbow(pWeapon))
 		return "models/weapons/vr_models/vr_crusaders_crossbow/vr_crusaders_crossbow_ammo.mdl";
+	if (TFVR_GetManualReloadSMG(pWeapon))
+		return VRSMG_AmmoModelForWorldModel(pWeapon->GetWorldModel());
 
 	if (TFVR_GetManualReloadPistol(pWeapon))
 		return VRPistol_AmmoModelForWorldModel(pWeapon->GetWorldModel());
@@ -271,6 +318,8 @@ static const char *TFVR_GetRenderWeaponModel(C_TFWeaponBase *pWeapon)
 		return VRPistol_GunModelForWorldModel(pszWorldModel);
 	if (TFVR_GetManualReloadSyringeGun(pWeapon))
 		return VRSyringeGun_GunModelForWorldModel(pszWorldModel);
+	if (TFVR_GetManualReloadSMG(pWeapon))
+		return VRSMG_GunModelForWorldModel(pszWorldModel);
 	if (pWeapon->GetWeaponID() == TF_WEAPON_CROSSBOW)
 		return "models/weapons/vr_models/vr_crusaders_crossbow/vr_crusaders_crossbow.mdl";
 
@@ -2926,6 +2975,7 @@ C_TFVRHand::C_TFVRHand()
 	m_flShotgunManualReloadHoldCycle = 0.0f;
 	m_flShotgunManualReloadCommitCycle = 1.0f;
 	m_flPistolOneFrameCycle = 0.0f;
+	m_flPistolEjectStartCycle = 0.0f;
 	m_flPistolMagFreeCycle = 0.0f;
 	m_flPistolPauseCycle = 1.0f;
 	m_flPistolInsertTargetCycle = 0.0f;
@@ -4284,8 +4334,15 @@ void C_TFVRHand::Update()
 			if (pWeapon)
 			{
 				int iWeaponID = pWeapon->GetWeaponID();
+				C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pWeapon);
+				if (pManualMagWeapon && (TFVR_IsManualReloadMagazineBusy(pManualMagWeapon)
+					|| TFVR_IsManualReloadMagazineOut(pManualMagWeapon)
+					|| TFVR_HasManualReloadMagazineInHand(pManualMagWeapon)))
+				{
+					bSkipTwoHand = true;
+				}
 				// Heavy fists/gloves - left hand does its own melee
-				if (iWeaponID == TF_WEAPON_FISTS)
+				else if (iWeaponID == TF_WEAPON_FISTS)
 				{
 					bSkipTwoHand = true;
 				}
@@ -4326,7 +4383,6 @@ void C_TFVRHand::Update()
 					// No passive grip while a manual mag reload is in
 					// progress (or a spare mag is in this hand): the off
 					// hand must stay free to fetch and insert the mag.
-					C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pWeapon);
 					if (pManualMagWeapon && (TFVR_IsManualReloadMagazineBusy(pManualMagWeapon)
 						|| TFVR_IsManualReloadMagazineOut(pManualMagWeapon)
 						|| TFVR_HasManualReloadMagazineInHand(pManualMagWeapon)))
@@ -14098,7 +14154,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 						if (TFVR_GetManualReloadPistol(pManualMagWeapon)
 							&& VRPistol_IsEngineer(TFVR_GetPistolVisualWeaponID(pManualMagWeapon, GetOwnerPlayer())))
 							flWristScale = 0.0f;
-						if (TFVR_GetManualReloadSyringeGun(pManualMagWeapon) || TFVR_GetManualReloadCrossbow(pManualMagWeapon))
+						if (TFVR_GetManualReloadSyringeGun(pManualMagWeapon) || TFVR_GetManualReloadCrossbow(pManualMagWeapon) || TFVR_GetManualReloadSMG(pManualMagWeapon))
 							flWristScale = 0.0f;
 
 						if (flWristScale > 0.0f && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
@@ -15116,6 +15172,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		m_flShotgunManualReloadHoldCycle = 0.0f;
 		m_flShotgunManualReloadCommitCycle = 1.0f;
 		m_flPistolOneFrameCycle = 0.0f;
+		m_flPistolEjectStartCycle = 0.0f;
 		m_flPistolMagFreeCycle = 0.0f;
 		m_flPistolPauseCycle = 1.0f;
 		m_flPistolInsertTargetCycle = 0.0f;
@@ -15280,6 +15337,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 					if (maxFrame > 0)
 					{
 						m_flPistolOneFrameCycle = 1.0f / (float)maxFrame;
+						m_flPistolEjectStartCycle = 0.0f;
 						m_flPistolMagFreeCycle = clamp( VRPistol_FrameMagFree(iPistolID) / (float)maxFrame, 0.0f, 1.0f );
 						m_flPistolPauseCycle = clamp( VRPistol_FramePause(iPistolID) / (float)maxFrame, m_flPistolMagFreeCycle, 1.0f );
 						m_flShotgunManualReloadHoldCycle = clamp( VRPistol_FrameInsertStart(iPistolID) / (float)maxFrame, 0.0f, 1.0f );
@@ -15313,6 +15371,7 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 					if (maxFrame > 0)
 					{
 						m_flPistolOneFrameCycle = 1.0f / (float)maxFrame;
+						m_flPistolEjectStartCycle = clamp(VRSyringeGun_FrameEjectStart() / (float)maxFrame, 0.0f, 1.0f);
 						m_flPistolMagFreeCycle = clamp(VRSyringeGun_FrameAmmoFree() / (float)maxFrame, 0.0f, 1.0f);
 						m_flPistolPauseCycle = clamp(VRSyringeGun_FramePause() / (float)maxFrame, m_flPistolMagFreeCycle, 1.0f);
 						m_flShotgunManualReloadHoldCycle = clamp(VRSyringeGun_FrameInsertStart() / (float)maxFrame, 0.0f, 1.0f);
@@ -15329,6 +15388,44 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 
 			DevMsg("VR: Syringe gun manual reload sequence '%s': seq=%d ammoFree=%.3f pause=%.3f hold=%.3f target=%.3f commit=%.3f finish=%.3f on '%s'\n",
 				pszSyringeReloadSeq, m_iShotgunManualReloadSequence, m_flPistolMagFreeCycle, m_flPistolPauseCycle,
+				m_flShotgunManualReloadHoldCycle, m_flPistolInsertTargetCycle, m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle, GetModelName());
+		}
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_SMG || pWeapon->GetWeaponID() == TF_WEAPON_CHARGED_SMG)
+		{
+			const char *pszSMGReloadSeq = VRSMG_ReloadSequenceName();
+			m_iShotgunManualReloadSequence = LookupSequence(pszSMGReloadSeq);
+
+			if (m_iShotgunManualReloadSequence >= 0)
+			{
+				m_flLeverReloadCycle = 0.0f;
+				m_flPistolReloadAnimWeight = 1.0f;
+				m_bPistolReloadBlendOut = false;
+
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iShotgunManualReloadSequence, poseParams);
+					if (maxFrame > 0)
+					{
+						m_flPistolOneFrameCycle = 1.0f / (float)maxFrame;
+						m_flPistolEjectStartCycle = clamp(VRSMG_FrameEjectStart() / (float)maxFrame, 0.0f, 1.0f);
+						m_flPistolMagFreeCycle = clamp(VRSMG_FrameAmmoFree() / (float)maxFrame, m_flPistolEjectStartCycle, 1.0f);
+						m_flPistolPauseCycle = clamp(VRSMG_FramePause() / (float)maxFrame, m_flPistolMagFreeCycle, 1.0f);
+						m_flShotgunManualReloadHoldCycle = clamp(VRSMG_FrameInsertStart() / (float)maxFrame, 0.0f, 1.0f);
+						m_flPistolInsertTargetCycle = clamp(VRSMG_FrameInsertTarget() / (float)maxFrame, 0.0f, 1.0f);
+						m_flShotgunManualReloadCommitCycle = clamp(VRSMG_FrameInsertEnd() / (float)maxFrame, m_flShotgunManualReloadHoldCycle, 1.0f);
+
+						const float flFinishFrame = VRSMG_FrameFinishEnd();
+						m_flPistolFinishEndCycle = flFinishFrame < 0.0f
+							? 1.0f
+							: clamp(flFinishFrame / (float)maxFrame, m_flShotgunManualReloadCommitCycle, 1.0f);
+					}
+				}
+			}
+
+			DevMsg("VR: SMG manual reload sequence '%s': seq=%d ejectStart=%.3f ammoFree=%.3f pause=%.3f hold=%.3f target=%.3f commit=%.3f finish=%.3f on '%s'\n",
+				pszSMGReloadSeq, m_iShotgunManualReloadSequence, m_flPistolEjectStartCycle, m_flPistolMagFreeCycle, m_flPistolPauseCycle,
 				m_flShotgunManualReloadHoldCycle, m_flPistolInsertTargetCycle, m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle, GetModelName());
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
@@ -16042,6 +16139,7 @@ void C_TFVRHand::UnequipWeapon()
 	m_flShotgunManualReloadHoldCycle = 0.0f;
 	m_flShotgunManualReloadCommitCycle = 1.0f;
 	m_flPistolOneFrameCycle = 0.0f;
+		m_flPistolEjectStartCycle = 0.0f;
 	m_flPistolMagFreeCycle = 0.0f;
 	m_flPistolPauseCycle = 1.0f;
 	m_flPistolInsertTargetCycle = 0.0f;
@@ -17302,7 +17400,7 @@ void C_TFVRHand::UpdatePistolReloadAnimation()
 	switch (iPhase)
 	{
 	case VR_PISTOL_MAG_PHASE_EJECTING:
-		flCycle = flProgress * m_flPistolPauseCycle;
+		flCycle = Lerp(flProgress, m_flPistolEjectStartCycle, m_flPistolPauseCycle);
 		break;
 	case VR_PISTOL_MAG_PHASE_INSERTING:
 		flCycle = Lerp(flProgress, m_flPistolPauseCycle, m_flShotgunManualReloadCommitCycle);
@@ -19369,7 +19467,7 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 			{
 				// Mag rides the eject animation until it clears the gun (frame 6),
 				// then falls ballistically until the server's physics prop arrives.
-				flCycle = TFVR_GetManualReloadMagazineProgress(pOwnMagWeapon) * m_flPistolPauseCycle;
+				flCycle = Lerp(TFVR_GetManualReloadMagazineProgress(pOwnMagWeapon), m_flPistolEjectStartCycle, m_flPistolPauseCycle);
 				bWantMag = !TFVR_IsManualReloadMagazineOut(pOwnMagWeapon);
 
 				if (!bWantMag && m_hPistolMagazine.Get() && m_bPistolMagLastWorldValid)
@@ -19384,12 +19482,24 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 				flCycle = Lerp(TFVR_GetManualReloadMagazineProgress(pOwnMagWeapon), m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle);
 				bWantMag = true;
 			}
+			else if (iPhase == VR_PISTOL_MAG_PHASE_INSERTING)
+			{
+				// The offhand clip is the primary visible insert model, but
+				// bring the weapon-side clip in just before commit so there is
+				// no one-frame disappearance when ownership switches hands.
+				const float flInsertProgress = TFVR_GetManualReloadMagazineProgress(pOwnMagWeapon);
+				if (flInsertProgress >= 0.9f)
+				{
+					flCycle = m_flShotgunManualReloadCommitCycle;
+					bWantMag = true;
+				}
+			}
 			else if (iPhase == VR_PISTOL_MAG_PHASE_IDLE)
 			{
 				flCycle = 0.0f;
 				bWantMag = !TFVR_IsManualReloadMagazineOut(pOwnMagWeapon);
 			}
-			// INSERTING: the off hand's held mag is the visible one.
+			// INSERTING before the final handoff: the off hand's held mag is the visible one.
 
 			if (bWantMag && m_iShotgunManualReloadSequence >= 0)
 			{

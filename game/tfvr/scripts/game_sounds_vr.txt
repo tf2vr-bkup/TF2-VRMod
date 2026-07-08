@@ -104,6 +104,22 @@
 	"wave"		"weapons/syringegun_reload_glass2.wav"
 }
 
+"VR.SMGClipOut"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/smg_clip_out.wav"
+}
+
+"VR.SMGClipIn"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/smg_clip_in.wav"
+}
+
 "VR.BisonPumpOut"
 {
 	"channel"	"CHAN_STATIC"

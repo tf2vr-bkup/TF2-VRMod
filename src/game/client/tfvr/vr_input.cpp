@@ -15,6 +15,7 @@
 #include "tf/tf_weapon_shotgun.h"
 #include "tf/tf_weapon_pistol.h"
 #include "tf/tf_weapon_syringegun.h"
+#include "tf/tf_weapon_smg.h"
 #include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_compound_bow.h"
@@ -50,6 +51,7 @@ extern ConVar tfvr_shotgun_pump_debug;
 extern ConVar tfvr_rocket_manual_reload_radius;
 extern ConVar tfvr_pistol_manual_reload;
 extern ConVar tfvr_syringegun_manual_reload;
+extern ConVar tfvr_smg_manual_reload;
 extern ConVar tfvr_huntsman_manual_reload;
 extern ConVar tfvr_hmd_drive_rotation;
 
@@ -1213,12 +1215,21 @@ static CTFCrossbow *TFVR_GetManualReloadCrossbowForInput( C_TFWeaponBase *pWpn )
 	return pCrossbow->ShouldUseVRCrossbowManualReload() ? pCrossbow : NULL;
 }
 
+static CTFSMG *TFVR_GetManualReloadSMGForInput( C_TFWeaponBase *pWpn )
+{
+	if ( !pWpn || ( pWpn->GetWeaponID() != TF_WEAPON_SMG && pWpn->GetWeaponID() != TF_WEAPON_CHARGED_SMG ) )
+		return NULL;
+
+	CTFSMG *pSMG = static_cast< CTFSMG * >( pWpn );
+	return pSMG->ShouldUseVRSMGManualReload() ? pSMG : NULL;
+}
+
 static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 {
 	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
 		return;
 
-	if ( !tfvr_pistol_manual_reload.GetBool() && !tfvr_syringegun_manual_reload.GetBool() )
+	if ( !tfvr_pistol_manual_reload.GetBool() && !tfvr_syringegun_manual_reload.GetBool() && !tfvr_smg_manual_reload.GetBool() )
 		return;
 
 	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
@@ -1231,7 +1242,8 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 	CTFPistol *pPistol = TFVR_GetManualReloadPistolForInput( pWpn );
 	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGunForInput( pWpn );
 	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbowForInput( pWpn );
-	if ( !pPistol && !pSyringeGun && !pCrossbow )
+	CTFSMG *pSMG = TFVR_GetManualReloadSMGForInput( pWpn );
+	if ( !pPistol && !pSyringeGun && !pCrossbow && !pSMG )
 		return;
 
 	C_TFVRHand *pWeaponHand = NULL;
@@ -1287,10 +1299,10 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 		|| flOffhandTrigger >= 0.5f;
 	cmd->vrMagazineHold = bHoldInput;
 
-	const bool bHasMagazineInHand = pPistol ? pPistol->HasVRMagazineInHand() : ( pSyringeGun ? pSyringeGun->HasVRAmmoInHand() : pCrossbow->HasVRAmmoInHand() );
-	const bool bIsMagOut = pPistol ? pPistol->IsVRMagOut() : ( pSyringeGun ? pSyringeGun->IsVRAmmoOut() : pCrossbow->IsVRAmmoOut() );
-	const bool bIsMagInserting = pPistol ? pPistol->IsVRMagInserting() : ( pSyringeGun ? pSyringeGun->IsVRAmmoInserting() : pCrossbow->IsVRAmmoInserting() );
-	const char *pszHeldAmmoBone = ( pSyringeGun || pCrossbow ) ? VRSyringeGun_AmmoBoneName() : "vm_weapon_bone";
+	const bool bHasMagazineInHand = pPistol ? pPistol->HasVRMagazineInHand() : ( pSyringeGun ? pSyringeGun->HasVRAmmoInHand() : ( pCrossbow ? pCrossbow->HasVRAmmoInHand() : pSMG->HasVRAmmoInHand() ) );
+	const bool bIsMagOut = pPistol ? pPistol->IsVRMagOut() : ( pSyringeGun ? pSyringeGun->IsVRAmmoOut() : ( pCrossbow ? pCrossbow->IsVRAmmoOut() : pSMG->IsVRAmmoOut() ) );
+	const bool bIsMagInserting = pPistol ? pPistol->IsVRMagInserting() : ( pSyringeGun ? pSyringeGun->IsVRAmmoInserting() : ( pCrossbow ? pCrossbow->IsVRAmmoInserting() : pSMG->IsVRAmmoInserting() ) );
+	const char *pszHeldAmmoBone = pSMG ? VRSMG_AmmoBoneName() : ( ( pSyringeGun || pCrossbow ) ? VRSyringeGun_AmmoBoneName() : "vm_weapon_bone" );
 
 	// Backpack / chest grab zones (shared with the shotgun manual reload)
 	if ( !bHasMagazineInHand || tfvr_shotgun_pump_debug.GetBool() )

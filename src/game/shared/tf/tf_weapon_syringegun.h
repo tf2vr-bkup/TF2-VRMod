@@ -79,6 +79,11 @@ inline const char *VRSyringeGun_AmmoBoneName()
 	return "vm_weapon_bone_1";
 }
 
+inline float VRSyringeGun_FrameEjectStart()
+{
+	return 9.0f;
+}
+
 inline float VRSyringeGun_FrameAmmoFree()
 {
 	return 12.0f;

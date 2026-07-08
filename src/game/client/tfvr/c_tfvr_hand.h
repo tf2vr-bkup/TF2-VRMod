@@ -393,6 +393,7 @@ private:
 	// Pistol manual reload: extra frame markers beyond hold/commit
 	// (per-class: scout p_reload vs engineer pstl_reload)
 	float m_flPistolOneFrameCycle;  // cycle advance of a single animation frame
+	float m_flPistolEjectStartCycle; // first frame of the visible eject motion
 	float m_flPistolMagFreeCycle;   // mag clears the gun (swap to physics prop)
 	float m_flPistolPauseCycle;     // weapon hand pauses awaiting a fresh mag
 	float m_flPistolInsertTargetCycle; // vm_weapon_bone sample used for insert detection

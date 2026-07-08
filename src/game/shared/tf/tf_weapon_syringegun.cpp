@@ -383,7 +383,8 @@ void CTFSyringeGun::VRSyringeGunAmmoPostFrame()
 	{
 	case VR_SYRINGEGUN_AMMO_PHASE_EJECTING:
 	{
-		const float flAmmoFreeProgress = VRSyringeGun_FrameAmmoFree() / VRSyringeGun_FramePause();
+		const float flEjectFrames = MAX( VRSyringeGun_FramePause() - VRSyringeGun_FrameEjectStart(), 1.0f );
+		const float flAmmoFreeProgress = clamp( ( VRSyringeGun_FrameAmmoFree() - VRSyringeGun_FrameEjectStart() ) / flEjectFrames, 0.0f, 1.0f );
 		if ( !m_bVRAmmoOut && flProgress >= flAmmoFreeProgress )
 		{
 			m_bVRAmmoOut = true;
