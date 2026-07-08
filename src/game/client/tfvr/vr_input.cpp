@@ -14,6 +14,7 @@
 #include "tf/tf_shareddefs.h"
 #include "tf/tf_weapon_shotgun.h"
 #include "tf/tf_weapon_pistol.h"
+#include "tf/tf_weapon_syringegun.h"
 #include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_compound_bow.h"
@@ -48,6 +49,7 @@ extern ConVar tfvr_shotgun_pump_action;
 extern ConVar tfvr_shotgun_pump_debug;
 extern ConVar tfvr_rocket_manual_reload_radius;
 extern ConVar tfvr_pistol_manual_reload;
+extern ConVar tfvr_syringegun_manual_reload;
 extern ConVar tfvr_huntsman_manual_reload;
 extern ConVar tfvr_hmd_drive_rotation;
 
@@ -1184,12 +1186,39 @@ static void TFVR_UpdateShotgunManualReloadInCmd( CUserCmd *cmd )
 //  - pull a fresh mag from the backpack/chest zone (same zones as the shotgun)
 //  - insert when the held mag's vm_weapon_bone reaches the magwell target
 //-----------------------------------------------------------------------------
+static CTFPistol *TFVR_GetManualReloadPistolForInput( C_TFWeaponBase *pWpn )
+{
+	if ( !pWpn || !VRPistol_IsManualReloadWeaponID( pWpn->GetWeaponID() ) )
+		return NULL;
+
+	CTFPistol *pPistol = static_cast< CTFPistol * >( pWpn );
+	return pPistol->ShouldUseVRPistolManualReload() ? pPistol : NULL;
+}
+
+static CTFSyringeGun *TFVR_GetManualReloadSyringeGunForInput( C_TFWeaponBase *pWpn )
+{
+	if ( !pWpn || pWpn->GetWeaponID() != TF_WEAPON_SYRINGEGUN_MEDIC )
+		return NULL;
+
+	CTFSyringeGun *pSyringeGun = static_cast< CTFSyringeGun * >( pWpn );
+	return pSyringeGun->ShouldUseVRSyringeGunManualReload() ? pSyringeGun : NULL;
+}
+
+static CTFCrossbow *TFVR_GetManualReloadCrossbowForInput( C_TFWeaponBase *pWpn )
+{
+	if ( !pWpn || pWpn->GetWeaponID() != TF_WEAPON_CROSSBOW )
+		return NULL;
+
+	CTFCrossbow *pCrossbow = static_cast< CTFCrossbow * >( pWpn );
+	return pCrossbow->ShouldUseVRCrossbowManualReload() ? pCrossbow : NULL;
+}
+
 static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 {
 	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
 		return;
 
-	if ( !tfvr_pistol_manual_reload.GetBool() )
+	if ( !tfvr_pistol_manual_reload.GetBool() && !tfvr_syringegun_manual_reload.GetBool() )
 		return;
 
 	C_TFPlayer *pLocal = C_TFPlayer::GetLocalTFPlayer();
@@ -1199,10 +1228,11 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 		return;
 
 	CTFWeaponBase *pWpn = pLocal->GetActiveTFWeapon();
-	if ( !pWpn || !VRPistol_IsManualReloadWeaponID( pWpn->GetWeaponID() ) )
+	CTFPistol *pPistol = TFVR_GetManualReloadPistolForInput( pWpn );
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGunForInput( pWpn );
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbowForInput( pWpn );
+	if ( !pPistol && !pSyringeGun && !pCrossbow )
 		return;
-
-	CTFPistol *pPistol = static_cast< CTFPistol * >( pWpn );
 
 	C_TFVRHand *pWeaponHand = NULL;
 	C_TFVRHand *pOffHand = NULL;
@@ -1257,8 +1287,13 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 		|| flOffhandTrigger >= 0.5f;
 	cmd->vrMagazineHold = bHoldInput;
 
+	const bool bHasMagazineInHand = pPistol ? pPistol->HasVRMagazineInHand() : ( pSyringeGun ? pSyringeGun->HasVRAmmoInHand() : pCrossbow->HasVRAmmoInHand() );
+	const bool bIsMagOut = pPistol ? pPistol->IsVRMagOut() : ( pSyringeGun ? pSyringeGun->IsVRAmmoOut() : pCrossbow->IsVRAmmoOut() );
+	const bool bIsMagInserting = pPistol ? pPistol->IsVRMagInserting() : ( pSyringeGun ? pSyringeGun->IsVRAmmoInserting() : pCrossbow->IsVRAmmoInserting() );
+	const char *pszHeldAmmoBone = ( pSyringeGun || pCrossbow ) ? VRSyringeGun_AmmoBoneName() : "vm_weapon_bone";
+
 	// Backpack / chest grab zones (shared with the shotgun manual reload)
-	if ( !pPistol->HasVRMagazineInHand() || tfvr_shotgun_pump_debug.GetBool() )
+	if ( !bHasMagazineInHand || tfvr_shotgun_pump_debug.GetBool() )
 	{
 		Vector hmdOrigin;
 		QAngle hmdAngles;
@@ -1301,18 +1336,18 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 			bool bInChestZone = flChestRadius > 0.0f
 				&& ( offhandPos - chestCenter ).LengthSqr() <= Square( flChestRadius );
 
-			if ( !pPistol->HasVRMagazineInHand() && bHoldInput && ( bInBackpack || bInChestZone ) )
+			if ( !bHasMagazineInHand && bHoldInput && ( bInBackpack || bInChestZone ) )
 				cmd->vrMagazinePull = true;
 		}
 	}
 
 	// Insert proximity: held mag's vm_weapon_bone against the magwell target
 	// sampled from p_reload on the weapon hand.
-	if ( pPistol->HasVRMagazineInHand() && pPistol->IsVRMagOut() && !pPistol->IsVRMagInserting() )
+	if ( bHasMagazineInHand && bIsMagOut && !bIsMagInserting )
 	{
 		Vector insertProbePos;
 		Vector insertTargetPos;
-		bool bGotInsertProbe = pOffHand->GetShotgunManualReloadShellPosition( insertProbePos );
+		bool bGotInsertProbe = pOffHand->GetManualReloadMagazinePosition( insertProbePos, pszHeldAmmoBone );
 		bool bGotInsertTarget = pWeaponHand->GetPistolMagazineInsertTarget( insertTargetPos );
 
 		if ( bGotInsertProbe && bGotInsertTarget )

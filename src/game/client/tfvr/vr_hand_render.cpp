@@ -19,7 +19,9 @@ static ConVar tfvr_hand_layer_zfar("tfvr_hand_layer_zfar", "500", FCVAR_ARCHIVE,
 
 static bool g_bWorldPassActive = false;
 static bool g_bHandPassActive = false;
+static CUtlVector<IClientRenderable*> g_HandLayerBaseRenderables;
 static CUtlVector<IClientRenderable*> g_HandLayerRenderables;
+static CUtlVector<IClientRenderable*> g_HandLayerLateRenderables;
 static CUtlVector<C_BaseEntity*> g_ParticleOwners;
 static CUtlVector<IClientRenderable*> g_DeferredParticles;
 
@@ -27,7 +29,9 @@ void VRHandLayer_BeginWorldPass()
 {
 	g_bWorldPassActive = true;
 	g_bHandPassActive = false;
+	g_HandLayerBaseRenderables.RemoveAll();
 	g_HandLayerRenderables.RemoveAll();
+	g_HandLayerLateRenderables.RemoveAll();
 	g_ParticleOwners.RemoveAll();
 	g_DeferredParticles.RemoveAll();
 }
@@ -55,6 +59,46 @@ void VRHandLayer_AddRenderable(IClientRenderable *pRenderable)
 	}
 }
 
+void VRHandLayer_AddBaseRenderable(IClientRenderable *pRenderable)
+{
+	if (pRenderable && g_HandLayerBaseRenderables.Find(pRenderable) == g_HandLayerBaseRenderables.InvalidIndex())
+	{
+		g_HandLayerBaseRenderables.AddToTail(pRenderable);
+	}
+}
+
+int VRHandLayer_GetBaseRenderableCount()
+{
+	return g_HandLayerBaseRenderables.Count();
+}
+
+IClientRenderable *VRHandLayer_GetBaseRenderable(int index)
+{
+	if (index >= 0 && index < g_HandLayerBaseRenderables.Count())
+		return g_HandLayerBaseRenderables[index];
+	return NULL;
+}
+
+void VRHandLayer_AddLateRenderable(IClientRenderable *pRenderable)
+{
+	if (pRenderable && g_HandLayerLateRenderables.Find(pRenderable) == g_HandLayerLateRenderables.InvalidIndex())
+	{
+		g_HandLayerLateRenderables.AddToTail(pRenderable);
+	}
+}
+
+int VRHandLayer_GetLateRenderableCount()
+{
+	return g_HandLayerLateRenderables.Count();
+}
+
+IClientRenderable *VRHandLayer_GetLateRenderable(int index)
+{
+	if (index >= 0 && index < g_HandLayerLateRenderables.Count())
+		return g_HandLayerLateRenderables[index];
+	return NULL;
+}
+
 int VRHandLayer_GetRenderableCount()
 {
 	return g_HandLayerRenderables.Count();
@@ -69,7 +113,9 @@ IClientRenderable *VRHandLayer_GetRenderable(int index)
 
 void VRHandLayer_ClearRenderables()
 {
+	g_HandLayerBaseRenderables.RemoveAll();
 	g_HandLayerRenderables.RemoveAll();
+	g_HandLayerLateRenderables.RemoveAll();
 }
 
 bool VRHandLayer_IsEnabled()

@@ -15,6 +15,14 @@
 
 #include "tf_flame.h"
 
+enum VRCrossbowAmmoPhase
+{
+	VR_CROSSBOW_AMMO_PHASE_IDLE = 0,
+	VR_CROSSBOW_AMMO_PHASE_EJECTING,
+	VR_CROSSBOW_AMMO_PHASE_INSERTING,
+	VR_CROSSBOW_AMMO_PHASE_FINISHING,
+};
+
 #ifdef CLIENT_DLL
 #include "particle_property.h"
 #endif
@@ -199,24 +207,61 @@ public:
 	DECLARE_DATADESC();
 #endif
 
+	CTFCrossbow();
+
+	virtual void	Precache( void ) OVERRIDE;
 	virtual bool	Holster( CBaseCombatWeapon *pSwitchingTo ) OVERRIDE;
 	virtual int		GetWeaponID( void ) const			{ return TF_WEAPON_CROSSBOW; }
 	virtual void	SecondaryAttack( void );
+	virtual void	PrimaryAttack( void ) OVERRIDE;
 	virtual float	GetProjectileSpeed( void );
 	virtual float	GetProjectileGravity( void );
 	virtual bool	IsViewModelFlipped( void );
 
 	virtual void	ItemPostFrame( void );
+	virtual void	ItemBusyFrame( void ) OVERRIDE;
+	virtual bool	Reload( void ) OVERRIDE;
+	virtual void	HandleFireOnEmpty( void ) OVERRIDE;
+	virtual bool	ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
 	virtual void	ModifyProjectile( CBaseEntity* pProj );
 	virtual void	WeaponRegenerate( void );
 
 	float				GetProgress( void );
 	const char*			GetEffectLabelText( void )					{ return "#TF_BOLT"; }
 
+	bool	ShouldUseVRCrossbowManualReload() const;
+	int		GetVRAmmoPhase() const					{ return m_iVRAmmoPhase; }
+	float	GetVRAmmoPhaseProgress() const;
+	bool	IsVRAmmoOut() const					{ return m_bVRAmmoOut; }
+	bool	HasVRAmmoInHand() const				{ return m_bVRAmmoHeld; }
+	bool	IsVRAmmoInserting() const				{ return m_iVRAmmoPhase == VR_CROSSBOW_AMMO_PHASE_INSERTING; }
+	bool	IsVRCrossbowManualReloadBusy() const		{ return m_iVRAmmoPhase != VR_CROSSBOW_AMMO_PHASE_IDLE; }
+	bool	IsVRCrossbowAmmoPoseActive() const		{ return m_bVRAmmoHeld || IsVRAmmoInserting(); }
+	bool	CanStartVRAmmoPull() const;
+	bool	CanStartVRAmmoEject() const;
+
+	float	GetVRAmmoEjectDuration() const;
+	float	GetVRAmmoInsertDuration() const;
+	float	GetVRAmmoFinishDuration() const;
+
 	CNetworkVar( float, m_flRegenerateDuration );
 	CNetworkVar( float, m_flLastUsedTimestamp );
+	CNetworkVar( int, m_iVRAmmoPhase );
+	CNetworkVar( float, m_flVRAmmoPhaseStartTime );
+	CNetworkVar( bool, m_bVRAmmoOut );
+	CNetworkVar( bool, m_bVRAmmoHeld );
 
 private:
+	void	VRCrossbowAmmoPostFrame();
+	void	ResetVRCrossbowAmmoState();
+	void	VRStartAmmoEject();
+	void	VRStartAmmoInsert();
+	void	VRCommitAmmoInsert();
+#ifdef GAME_DLL
+	void	VRSpawnEjectedAmmo();
+	bool	m_bVRAmmoPhysSpawned;
+#endif
+
 	bool m_bMilkNextAttack;
 };
 

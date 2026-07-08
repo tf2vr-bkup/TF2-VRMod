@@ -80,6 +80,30 @@
 	"wave"		"weapons/pistol_clipin.wav"
 }
 
+"VR.SyringeGunEject"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/syringegun_reload_air1.wav"
+}
+
+"VR.SyringeGunReload"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/syringegun_reload_air2.wav"
+}
+
+"VR.SyringeGunAmmoGrab"
+{
+	"channel"	"CHAN_STATIC"
+	"soundlevel"	"SNDLVL_74dB"
+	"volume"	"1.0"
+	"wave"		"weapons/syringegun_reload_glass2.wav"
+}
+
 "VR.BisonPumpOut"
 {
 	"channel"	"CHAN_STATIC"

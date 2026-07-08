@@ -14,6 +14,7 @@
 #include "tf/tf_weapon_knife.h"
 #include "tf/tf_weapon_shotgun.h"
 #include "tf/tf_weapon_pistol.h"
+#include "tf/tf_weapon_syringegun.h"
 #include "tf/tf_weapon_rocketlauncher.h"
 #include "tf/tf_weapon_pipebomblauncher.h"
 #include "tf/tf_weapon_compound_bow.h"
@@ -112,6 +113,154 @@ static CTFPistol *TFVR_GetManualReloadPistol(C_TFWeaponBase *pWeapon)
 	return pPistol;
 }
 
+static CTFSyringeGun *TFVR_GetManualReloadSyringeGun(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_SYRINGEGUN_MEDIC)
+		return NULL;
+
+	CTFSyringeGun *pSyringeGun = static_cast<CTFSyringeGun *>(pWeapon);
+	if (!pSyringeGun->ShouldUseVRSyringeGunManualReload())
+		return NULL;
+
+	return pSyringeGun;
+}
+
+static CTFCrossbow *TFVR_GetManualReloadCrossbow(C_TFWeaponBase *pWeapon)
+{
+	if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_CROSSBOW)
+		return NULL;
+
+	CTFCrossbow *pCrossbow = static_cast<CTFCrossbow *>(pWeapon);
+	if (!pCrossbow->ShouldUseVRCrossbowManualReload())
+		return NULL;
+
+	return pCrossbow;
+}
+
+static C_TFWeaponBase *TFVR_GetManualReloadMagazineWeapon(C_TFWeaponBase *pWeapon)
+{
+	if (TFVR_GetManualReloadPistol(pWeapon) || TFVR_GetManualReloadSyringeGun(pWeapon) || TFVR_GetManualReloadCrossbow(pWeapon))
+		return pWeapon;
+
+	return NULL;
+}
+
+static bool TFVR_IsManualReloadMagazinePoseActive(C_TFWeaponBase *pWeapon)
+{
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (pPistol)
+		return pPistol->IsVRPistolMagPoseActive();
+
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGun(pWeapon);
+	if (pSyringeGun)
+		return pSyringeGun->IsVRSyringeGunAmmoPoseActive();
+
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
+	return pCrossbow && pCrossbow->IsVRCrossbowAmmoPoseActive();
+}
+
+static bool TFVR_IsManualReloadMagazineInserting(C_TFWeaponBase *pWeapon)
+{
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (pPistol)
+		return pPistol->IsVRMagInserting();
+
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGun(pWeapon);
+	if (pSyringeGun)
+		return pSyringeGun->IsVRAmmoInserting();
+
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
+	return pCrossbow && pCrossbow->IsVRAmmoInserting();
+}
+
+static bool TFVR_IsManualReloadMagazineOut(C_TFWeaponBase *pWeapon)
+{
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (pPistol)
+		return pPistol->IsVRMagOut();
+
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGun(pWeapon);
+	if (pSyringeGun)
+		return pSyringeGun->IsVRAmmoOut();
+
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
+	return pCrossbow && pCrossbow->IsVRAmmoOut();
+}
+
+static bool TFVR_HasManualReloadMagazineInHand(C_TFWeaponBase *pWeapon)
+{
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (pPistol)
+		return pPistol->HasVRMagazineInHand();
+
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGun(pWeapon);
+	if (pSyringeGun)
+		return pSyringeGun->HasVRAmmoInHand();
+
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
+	return pCrossbow && pCrossbow->HasVRAmmoInHand();
+}
+
+static bool TFVR_IsManualReloadMagazineBusy(C_TFWeaponBase *pWeapon)
+{
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (pPistol)
+		return pPistol->IsVRPistolManualReloadBusy();
+
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGun(pWeapon);
+	if (pSyringeGun)
+		return pSyringeGun->IsVRSyringeGunManualReloadBusy();
+
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
+	return pCrossbow && pCrossbow->IsVRCrossbowManualReloadBusy();
+}
+
+static float TFVR_GetManualReloadMagazineProgress(C_TFWeaponBase *pWeapon)
+{
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (pPistol)
+		return pPistol->GetVRMagPhaseProgress();
+
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGun(pWeapon);
+	if (pSyringeGun)
+		return pSyringeGun->GetVRAmmoPhaseProgress();
+
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
+	return pCrossbow ? pCrossbow->GetVRAmmoPhaseProgress() : 0.0f;
+}
+
+static int TFVR_GetManualReloadMagazinePhase(C_TFWeaponBase *pWeapon)
+{
+	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
+	if (pPistol)
+		return pPistol->GetVRMagPhase();
+
+	CTFSyringeGun *pSyringeGun = TFVR_GetManualReloadSyringeGun(pWeapon);
+	if (pSyringeGun)
+		return pSyringeGun->GetVRAmmoPhase();
+
+	CTFCrossbow *pCrossbow = TFVR_GetManualReloadCrossbow(pWeapon);
+	return pCrossbow ? pCrossbow->GetVRAmmoPhase() : VR_PISTOL_MAG_PHASE_IDLE;
+}
+
+static const char *TFVR_GetManualReloadMagazineBoneName(C_TFWeaponBase *pWeapon)
+{
+	return (TFVR_GetManualReloadSyringeGun(pWeapon) || TFVR_GetManualReloadCrossbow(pWeapon)) ? VRSyringeGun_AmmoBoneName() : "vm_weapon_bone";
+}
+
+static const char *TFVR_GetManualReloadMagazineModel(C_TFWeaponBase *pWeapon)
+{
+	if (TFVR_GetManualReloadSyringeGun(pWeapon))
+		return VRSyringeGun_AmmoModelForWorldModel(pWeapon->GetWorldModel());
+	if (TFVR_GetManualReloadCrossbow(pWeapon))
+		return "models/weapons/vr_models/vr_crusaders_crossbow/vr_crusaders_crossbow_ammo.mdl";
+
+	if (TFVR_GetManualReloadPistol(pWeapon))
+		return VRPistol_AmmoModelForWorldModel(pWeapon->GetWorldModel());
+
+	return "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+}
+
 static const char *TFVR_GetRenderWeaponModel(C_TFWeaponBase *pWeapon)
 {
 	if (!pWeapon)
@@ -120,6 +269,10 @@ static const char *TFVR_GetRenderWeaponModel(C_TFWeaponBase *pWeapon)
 	const char *pszWorldModel = pWeapon->GetWorldModel();
 	if (TFVR_GetManualReloadPistol(pWeapon))
 		return VRPistol_GunModelForWorldModel(pszWorldModel);
+	if (TFVR_GetManualReloadSyringeGun(pWeapon))
+		return VRSyringeGun_GunModelForWorldModel(pszWorldModel);
+	if (pWeapon->GetWeaponID() == TF_WEAPON_CROSSBOW)
+		return "models/weapons/vr_models/vr_crusaders_crossbow/vr_crusaders_crossbow.mdl";
 
 	return pszWorldModel;
 }
@@ -1312,7 +1465,7 @@ public:
 		// VR hand layer: skip during world pass, the owning hand will register us
 		if (VRHandLayer_ShouldSkipDraw())
 		{
-			VRHandLayer_AddRenderable(this);
+			VRHandLayer_AddBaseRenderable(this);
 			return 0;
 		}
 
@@ -4173,10 +4326,10 @@ void C_TFVRHand::Update()
 					// No passive grip while a manual mag reload is in
 					// progress (or a spare mag is in this hand): the off
 					// hand must stay free to fetch and insert the mag.
-					CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(pWeapon);
-					if (pManualPistol && (pManualPistol->IsVRPistolManualReloadBusy()
-						|| pManualPistol->IsVRMagOut()
-						|| pManualPistol->HasVRMagazineInHand()))
+					C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pWeapon);
+					if (pManualMagWeapon && (TFVR_IsManualReloadMagazineBusy(pManualMagWeapon)
+						|| TFVR_IsManualReloadMagazineOut(pManualMagWeapon)
+						|| TFVR_HasManualReloadMagazineInHand(pManualMagWeapon)))
 					{
 						bPassiveGripOnly = false;
 						bSkipTwoHand = true;
@@ -7951,11 +8104,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				? static_cast<CTFRocketLauncher *>(pLeftWeapon) : NULL;
 			CTFCompoundBow *pBow = (pLeftWeapon && pLeftWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 				? static_cast<CTFCompoundBow *>(pLeftWeapon) : NULL;
-			CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(pLeftWeapon);
+			C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pLeftWeapon);
 			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
 				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive())
 				|| (pBow && pBow->IsVRBowArrowPoseActive())
-				|| (pManualPistol && pManualPistol->IsVRPistolMagPoseActive());
+				|| TFVR_IsManualReloadMagazinePoseActive(pManualMagWeapon);
 			if (pLeftHand && bManualReloadActive
 				&& pLeftHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
@@ -7992,10 +8145,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					{
 						flProgress = TFVR_GetBowNockVisualProgress(pBow);
 					}
-					else if (pManualPistol)
+					else if (pManualMagWeapon)
 					{
-						flProgress = pManualPistol->IsVRMagInserting()
-							? pManualPistol->GetVRMagPhaseProgress() : 0.0f;
+						flProgress = TFVR_IsManualReloadMagazineInserting(pManualMagWeapon)
+							? TFVR_GetManualReloadMagazineProgress(pManualMagWeapon) : 0.0f;
 					}
 					float flCycle = 0.0f;
 					if (pBow && pBow->HasVRBowArrowInHand() && !pBow->IsVRBowArrowNocking() && !pBow->IsVRBowArrowNocked())
@@ -8053,7 +8206,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					const bool bInserting = (pShotgun && pShotgun->IsVRShotgunShellInserting())
 						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting())
 						|| (pBow && (pBow->IsVRBowArrowNocking() || pBow->IsVRBowArrowNocked()))
-						|| (pManualPistol && pManualPistol->IsVRMagInserting());
+						|| TFVR_IsManualReloadMagazineInserting(pManualMagWeapon);
 					if (bInserting)
 					{
 						Vector targetPos;
@@ -8068,7 +8221,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 							bGotTarget = pLeftHand->GetBowManualReloadTarget(targetPos, targetAngles, &bowWorld);
 							bHaveBowMatrix = bGotTarget;
 						}
-						else if (pManualPistol)
+						else if (pManualMagWeapon)
 							bGotTarget = pLeftHand->GetPistolManualReloadTarget(targetPos, targetAngles);
 						else
 							bGotTarget = pLeftHand->GetRocketManualReloadTarget(targetPos, targetAngles);
@@ -8197,11 +8350,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				? static_cast<CTFRocketLauncher *>(pRightWeapon) : NULL;
 			CTFCompoundBow *pBow = (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 				? static_cast<CTFCompoundBow *>(pRightWeapon) : NULL;
-			CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(pRightWeapon);
+			C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pRightWeapon);
 			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
 				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive())
 				|| (pBow && pBow->IsVRBowArrowPoseActive())
-				|| (pManualPistol && pManualPistol->IsVRPistolMagPoseActive());
+				|| TFVR_IsManualReloadMagazinePoseActive(pManualMagWeapon);
 			if (pRightHand && bManualReloadActive
 				&& pRightHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
@@ -8238,10 +8391,10 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					{
 						flProgress = TFVR_GetBowNockVisualProgress(pBow);
 					}
-					else if (pManualPistol)
+					else if (pManualMagWeapon)
 					{
-						flProgress = pManualPistol->IsVRMagInserting()
-							? pManualPistol->GetVRMagPhaseProgress() : 0.0f;
+						flProgress = TFVR_IsManualReloadMagazineInserting(pManualMagWeapon)
+							? TFVR_GetManualReloadMagazineProgress(pManualMagWeapon) : 0.0f;
 					}
 					float flCycle = 0.0f;
 					if (pBow && pBow->HasVRBowArrowInHand() && !pBow->IsVRBowArrowNocking() && !pBow->IsVRBowArrowNocked())
@@ -8300,7 +8453,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					const bool bInserting = (pShotgun && pShotgun->IsVRShotgunShellInserting())
 						|| (pRocketLauncher && pRocketLauncher->IsVRRocketInserting())
 						|| (pBow && (pBow->IsVRBowArrowNocking() || pBow->IsVRBowArrowNocked()))
-						|| (pManualPistol && pManualPistol->IsVRMagInserting());
+						|| TFVR_IsManualReloadMagazineInserting(pManualMagWeapon);
 					if (bInserting)
 					{
 						Vector targetPos;
@@ -8315,7 +8468,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 							bGotTarget = pRightHand->GetBowManualReloadTarget(targetPos, targetAngles, &bowWorld);
 							bHaveBowMatrix = bGotTarget;
 						}
-						else if (pManualPistol)
+						else if (pManualMagWeapon)
 							bGotTarget = pRightHand->GetPistolManualReloadTarget(targetPos, targetAngles);
 						else
 							bGotTarget = pRightHand->GetRocketManualReloadTarget(targetPos, targetAngles);
@@ -9956,6 +10109,23 @@ bool C_TFVRHand::GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseH
 	return true;
 }
 
+bool C_TFVRHand::GetManualReloadMagazinePosition( Vector &outPos, const char *pszBoneName )
+{
+	if ( !pszBoneName || !pszBoneName[0] )
+		return false;
+
+	int iMagBone = LookupBone( pszBoneName );
+	if ( iMagBone < 0 || iMagBone >= MAXSTUDIOBONES )
+		return false;
+
+	matrix3x4_t bones[MAXSTUDIOBONES];
+	if ( !SetupBones( bones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime ) )
+		return false;
+
+	MatrixGetColumn( bones[iMagBone], 3, outPos );
+	return true;
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Sample p_reload at flCycle and return vm_weapon_bone relative to
 //          weapon_bone (model space). Used to ride the mag on the live gun.
@@ -9967,7 +10137,8 @@ bool C_TFVRHand::GetPistolReloadMagRelativeToWeapon( float flCycle, matrix3x4_t 
 		return false;
 
 	const int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
-	int iMagBone = LookupBone( "vm_weapon_bone" );
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	int iMagBone = LookupBone( TFVR_GetManualReloadMagazineBoneName(pWeapon) );
 	int iWeaponBone = LookupBone( "weapon_bone" );
 	if ( iMagBone < 0 || iMagBone >= numBones || iWeaponBone < 0 || iWeaponBone >= numBones )
 		return false;
@@ -10022,8 +10193,8 @@ bool C_TFVRHand::GetPistolReloadMagRelativeToWeapon( float flCycle, matrix3x4_t 
 bool C_TFVRHand::GetPistolMagazineInsertTarget( Vector &outPos )
 {
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
-	CTFPistol *pPistol = TFVR_GetManualReloadPistol( pWeapon );
-	if ( !pPistol || m_iShotgunManualReloadSequence < 0 )
+	C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon( pWeapon );
+	if ( !pManualMagWeapon || m_iShotgunManualReloadSequence < 0 )
 		return false;
 
 	matrix3x4_t magRelWeapon;
@@ -10056,11 +10227,11 @@ bool C_TFVRHand::GetPistolMagazineInsertTarget( Vector &outPos )
 bool C_TFVRHand::GetPistolManualReloadTarget( Vector &outPos, QAngle &outAngles )
 {
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
-	CTFPistol *pPistol = TFVR_GetManualReloadPistol( pWeapon );
-	if ( !pPistol || m_iShotgunManualReloadSequence < 0 )
+	C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon( pWeapon );
+	if ( !pManualMagWeapon || m_iShotgunManualReloadSequence < 0 )
 		return false;
 
-	if ( !pPistol->IsVRPistolMagPoseActive() )
+	if ( !TFVR_IsManualReloadMagazinePoseActive( pManualMagWeapon ) )
 		return false;
 
 	CStudioHdr *pStudioHdr = GetModelPtr();
@@ -10084,7 +10255,7 @@ bool C_TFVRHand::GetPistolManualReloadTarget( Vector &outPos, QAngle &outAngles 
 		iWeaponBone < 0 || iWeaponBone >= numBones || iWeaponBone >= MAXSTUDIOBONES )
 		return false;
 
-	float flProgress = pPistol->IsVRMagInserting() ? pPistol->GetVRMagPhaseProgress() : 0.0f;
+	float flProgress = TFVR_IsManualReloadMagazineInserting( pManualMagWeapon ) ? TFVR_GetManualReloadMagazineProgress( pManualMagWeapon ) : 0.0f;
 	float flCycle = Lerp( flProgress, m_flShotgunManualReloadHoldCycle, m_flShotgunManualReloadCommitCycle );
 
 	float poseParams[MAXSTUDIOPOSEPARAM];
@@ -13856,7 +14027,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 	// so the right hand keeps its VR controller position and finger tracking.
 	bool bAllowReloadAnimDuringFire = false;
 	if (m_hHeldWeapon.Get() && (IsPumpActionShotgunWeaponID(m_hHeldWeapon->GetWeaponID())
-		|| TFVR_GetManualReloadPistol(m_hHeldWeapon.Get()) != NULL))
+		|| TFVR_GetManualReloadMagazineWeapon(m_hHeldWeapon.Get()) != NULL))
 	{
 		bAllowReloadAnimDuringFire = true;
 	}
@@ -13890,12 +14061,12 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 					|| IsPumpActionShotgunWeaponID(wid));
 			}
 			bool bThisHandPumps = bIsLeftHandPumpWeapon ? IsLeftHand() : IsRightHand();
+			C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(m_hHeldWeapon.Get());
+			const bool bIsManualMagWeapon = pManualMagWeapon != NULL;
 
 			if (bThisHandPumps)
 			{
-				CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(m_hHeldWeapon.Get());
-				const bool bIsManualPistol = pManualPistol != NULL;
-				if (bIsManualPistol)
+				if (bIsManualMagWeapon)
 				{
 					// Pistol: the hand stays anchored to the controller; the
 					// WEAPON moves around the hand per the animation, and the
@@ -13924,7 +14095,10 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 
 						// Engineer: keep the hand fully pinned for now; Scout
 						// keeps the small authored wrist bump.
-						if (VRPistol_IsEngineer(TFVR_GetPistolVisualWeaponID(pManualPistol, GetOwnerPlayer())))
+						if (TFVR_GetManualReloadPistol(pManualMagWeapon)
+							&& VRPistol_IsEngineer(TFVR_GetPistolVisualWeaponID(pManualMagWeapon, GetOwnerPlayer())))
+							flWristScale = 0.0f;
+						if (TFVR_GetManualReloadSyringeGun(pManualMagWeapon) || TFVR_GetManualReloadCrossbow(pManualMagWeapon))
 							flWristScale = 0.0f;
 
 						if (flWristScale > 0.0f && m_iHandBone >= 0 && m_iHandBone < nMaxBones)
@@ -14070,23 +14244,19 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 					ConcatTransforms(pBoneToWorldOut[pBone->parent], localBoneMatrix, reloadFingerWorld);
 
 					// Pistol blend-out: ease fingers back to their tracked pose
-					if (bIsManualPistol && m_flPistolReloadAnimWeight < 1.0f)
+					if (bIsManualMagWeapon && m_flPistolReloadAnimWeight < 1.0f)
 						TFVR_BlendTransforms(pBoneToWorldOut[boneIndex], reloadFingerWorld, m_flPistolReloadAnimWeight, pBoneToWorldOut[boneIndex]);
 					else
 						MatrixCopy(reloadFingerWorld, pBoneToWorldOut[boneIndex]);
 				}
 			}
 
-			// Lever bone: weapon-specific lookup since both weapon_bone_1
-			// and handle_bone exist on the shared hand model.
-			int leverBoneIdx = -1;
-			if (m_hHeldWeapon.Get() && m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON)
-				leverBoneIdx = LookupBone("handle_bone");
-			else
-				leverBoneIdx = LookupBone("weapon_bone_1");
-			if (leverBoneIdx >= 0 && leverBoneIdx < nMaxBones)
+			// Weapon child bones: manual magazine reloads (pistol/syringe gun)
+			// can animate multiple weapon_bone/vm_weapon_bone attachments.
+			// Move the full weapon-bone family relative to the live weapon_bone
+			// so ammo, needles, glass, etc. follow the sampled reload pose.
+			if (bIsManualMagWeapon)
 			{
-				// Build model-space transforms to handle any bone hierarchy
 				int numBones = pStudioHdr->numbones();
 				matrix3x4_t modelSpace[MAXSTUDIOBONES];
 				for (int i = 0; i < numBones && i < MAXSTUDIOBONES; i++)
@@ -14102,9 +14272,59 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 
 				matrix3x4_t weaponModelInv;
 				MatrixInvert(modelSpace[weaponBoneIdx], weaponModelInv);
-				matrix3x4_t leverRelativeToWeapon;
-				ConcatTransforms(weaponModelInv, modelSpace[leverBoneIdx], leverRelativeToWeapon);
-				ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], leverRelativeToWeapon, pBoneToWorldOut[leverBoneIdx]);
+				for (int i = 0; i < numBones && i < MAXSTUDIOBONES && i < nMaxBones; i++)
+				{
+					if (i == weaponBoneIdx)
+						continue;
+
+					const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+					const char *pszBoneName = pBone ? pBone->pszName() : NULL;
+					if (!pszBoneName)
+						continue;
+
+					const bool bWeaponChildBone =
+						V_stristr(pszBoneName, "weapon_bone_") == pszBoneName ||
+						V_stristr(pszBoneName, "vm_weapon_bone") == pszBoneName;
+					if (!bWeaponChildBone)
+						continue;
+
+					matrix3x4_t boneRelativeToWeapon;
+					ConcatTransforms(weaponModelInv, modelSpace[i], boneRelativeToWeapon);
+					ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], boneRelativeToWeapon, pBoneToWorldOut[i]);
+				}
+
+			}
+			else
+			{
+				// Lever bone: weapon-specific lookup since both weapon_bone_1
+				// and handle_bone exist on the shared hand model.
+				int leverBoneIdx = -1;
+				if (m_hHeldWeapon.Get() && m_hHeldWeapon->GetWeaponID() == TF_WEAPON_PARTICLE_CANNON)
+					leverBoneIdx = LookupBone("handle_bone");
+				else
+					leverBoneIdx = LookupBone("weapon_bone_1");
+				if (leverBoneIdx >= 0 && leverBoneIdx < nMaxBones)
+				{
+					// Build model-space transforms to handle any bone hierarchy
+					int numBones = pStudioHdr->numbones();
+					matrix3x4_t modelSpace[MAXSTUDIOBONES];
+					for (int i = 0; i < numBones && i < MAXSTUDIOBONES; i++)
+					{
+						matrix3x4_t localMat;
+						QuaternionMatrix(reloadQ[i], reloadPos[i], localMat);
+						const mstudiobone_t *pBone = pStudioHdr->pBone(i);
+						if (!pBone || pBone->parent < 0)
+							MatrixCopy(localMat, modelSpace[i]);
+						else
+							ConcatTransforms(modelSpace[pBone->parent], localMat, modelSpace[i]);
+					}
+
+					matrix3x4_t weaponModelInv;
+					MatrixInvert(modelSpace[weaponBoneIdx], weaponModelInv);
+					matrix3x4_t leverRelativeToWeapon;
+					ConcatTransforms(weaponModelInv, modelSpace[leverBoneIdx], leverRelativeToWeapon);
+					ConcatTransforms(pBoneToWorldOut[weaponBoneIdx], leverRelativeToWeapon, pBoneToWorldOut[leverBoneIdx]);
+				}
 			}
 		}
 	}
@@ -14359,18 +14579,21 @@ int C_TFVRHand::DrawModel(int flags)
 	// VR hand layer: skip during world pass, register self and attachables for hand layer
 	if (VRHandLayer_ShouldSkipDraw())
 	{
-		VRHandLayer_AddRenderable(this);
-		VRHandLayer_AddParticleOwner(this);
-
 		if (m_hRenderWeapon.Get())
 		{
 			C_BaseAnimating *pRenderWeapon = m_hRenderWeapon.Get();
 			if (TFVR_ValidateHandRenderable(pRenderWeapon, "render weapon"))
 			{
-				VRHandLayer_AddRenderable(pRenderWeapon);
+				VRHandLayer_AddBaseRenderable(pRenderWeapon);
 				VRHandLayer_AddParticleOwner(pRenderWeapon);
 			}
 		}
+
+		// Hand draw also draws separate ammo/held items. Those should always
+		// happen after base weapon models, regardless of cross-hand registration
+		// order, so translucent ammo blends over the weapon behind it.
+		VRHandLayer_AddRenderable(this);
+		VRHandLayer_AddParticleOwner(this);
 
 		// Source weapon creates particles like loose cannon sparks
 		if (m_hHeldWeapon.Get())
@@ -14477,15 +14700,22 @@ int C_TFVRHand::DrawModel(int flags)
 		C_BaseAnimating *pMag = m_hPistolMagazine.Get();
 		if (TFVR_ValidateHandRenderable(pMag, "pistol magazine"))
 		{
-			if (bInvuln && (flags & STUDIO_RENDER))
-				modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+			if (VRHandLayer_IsHandPass())
+			{
+				VRHandLayer_AddLateRenderable(pMag);
+			}
+			else
+			{
+				if (bInvuln && (flags & STUDIO_RENDER))
+					modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
 
-			pMag->RemoveEffects(EF_NODRAW);
-			pMag->DrawModel(flags);
-			pMag->AddEffects(EF_NODRAW);
+				pMag->RemoveEffects(EF_NODRAW);
+				pMag->DrawModel(flags);
+				pMag->AddEffects(EF_NODRAW);
 
-			if (bInvuln && (flags & STUDIO_RENDER))
-				modelrender->ForcedMaterialOverride(NULL);
+				if (bInvuln && (flags & STUDIO_RENDER))
+					modelrender->ForcedMaterialOverride(NULL);
+			}
 		}
 	}
 
@@ -15066,6 +15296,39 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 
 			DevMsg("VR: Pistol manual reload sequence '%s': seq=%d magFree=%.3f pause=%.3f hold=%.3f target=%.3f commit=%.3f finish=%.3f on '%s'\n",
 				pszPistolReloadSeq, m_iShotgunManualReloadSequence, m_flPistolMagFreeCycle, m_flPistolPauseCycle,
+				m_flShotgunManualReloadHoldCycle, m_flPistolInsertTargetCycle, m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle, GetModelName());
+		}
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_SYRINGEGUN_MEDIC || pWeapon->GetWeaponID() == TF_WEAPON_CROSSBOW)
+		{
+			const char *pszSyringeReloadSeq = VRSyringeGun_ReloadSequenceName();
+			m_iShotgunManualReloadSequence = LookupSequence(pszSyringeReloadSeq);
+
+			if (m_iShotgunManualReloadSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iShotgunManualReloadSequence, poseParams);
+					if (maxFrame > 0)
+					{
+						m_flPistolOneFrameCycle = 1.0f / (float)maxFrame;
+						m_flPistolMagFreeCycle = clamp(VRSyringeGun_FrameAmmoFree() / (float)maxFrame, 0.0f, 1.0f);
+						m_flPistolPauseCycle = clamp(VRSyringeGun_FramePause() / (float)maxFrame, m_flPistolMagFreeCycle, 1.0f);
+						m_flShotgunManualReloadHoldCycle = clamp(VRSyringeGun_FrameInsertStart() / (float)maxFrame, 0.0f, 1.0f);
+						m_flPistolInsertTargetCycle = clamp(VRSyringeGun_FrameInsertTarget() / (float)maxFrame, 0.0f, 1.0f);
+						m_flShotgunManualReloadCommitCycle = clamp(VRSyringeGun_FrameInsertEnd() / (float)maxFrame, m_flShotgunManualReloadHoldCycle, 1.0f);
+
+						const float flFinishFrame = VRSyringeGun_FrameFinishEnd();
+						m_flPistolFinishEndCycle = flFinishFrame < 0.0f
+							? 1.0f
+							: clamp(flFinishFrame / (float)maxFrame, m_flShotgunManualReloadCommitCycle, 1.0f);
+					}
+				}
+			}
+
+			DevMsg("VR: Syringe gun manual reload sequence '%s': seq=%d ammoFree=%.3f pause=%.3f hold=%.3f target=%.3f commit=%.3f finish=%.3f on '%s'\n",
+				pszSyringeReloadSeq, m_iShotgunManualReloadSequence, m_flPistolMagFreeCycle, m_flPistolPauseCycle,
 				m_flShotgunManualReloadHoldCycle, m_flPistolInsertTargetCycle, m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle, GetModelName());
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
@@ -17025,15 +17288,15 @@ void C_TFVRHand::UpdateShotgunPumpActionAnimation()
 void C_TFVRHand::UpdatePistolReloadAnimation()
 {
 	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
-	CTFPistol *pPistol = TFVR_GetManualReloadPistol(pWeapon);
-	if (!pPistol)
+	C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pWeapon);
+	if (!pManualMagWeapon)
 		return;
 
 	if (m_iShotgunManualReloadSequence < 0)
 		return;
 
-	const int iPhase = pPistol->GetVRMagPhase();
-	const float flProgress = pPistol->GetVRMagPhaseProgress();
+	const int iPhase = TFVR_GetManualReloadMagazinePhase(pManualMagWeapon);
+	const float flProgress = TFVR_GetManualReloadMagazineProgress(pManualMagWeapon);
 
 	float flCycle = -1.0f;
 	switch (iPhase)
@@ -17048,7 +17311,7 @@ void C_TFVRHand::UpdatePistolReloadAnimation()
 		flCycle = Lerp(flProgress, m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle);
 		break;
 	default:
-		if (pPistol->IsVRMagOut())
+		if (TFVR_IsManualReloadMagazineOut(pManualMagWeapon))
 			flCycle = m_flPistolPauseCycle; // paused, waiting for a fresh mag
 		break;
 	}
@@ -18882,13 +19145,13 @@ bool C_TFVRHand::EnsurePistolMagazineModel()
 {
 	const char *pszMagModel = "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
 	C_TFWeaponBase *pMagWeapon = m_hHeldWeapon.Get();
-	if (!TFVR_GetManualReloadPistol(pMagWeapon))
+	if (!TFVR_GetManualReloadMagazineWeapon(pMagWeapon))
 	{
 		C_TFVRHand *pOtherHand = GetOppositeVRHand(this);
 		pMagWeapon = pOtherHand ? pOtherHand->GetHeldWeapon() : NULL;
 	}
-	if (TFVR_GetManualReloadPistol(pMagWeapon))
-		pszMagModel = VRPistol_AmmoModelForWorldModel(pMagWeapon->GetWorldModel());
+	if (TFVR_GetManualReloadMagazineWeapon(pMagWeapon))
+		pszMagModel = TFVR_GetManualReloadMagazineModel(pMagWeapon);
 
 	if (m_hPistolMagazine.Get())
 	{
@@ -18937,8 +19200,16 @@ bool C_TFVRHand::EnsurePistolMagazineModel()
 
 	m_bPistolMagBoneInverseValid = false;
 	SetIdentityMatrix(m_matPistolMagBoneInverse);
+	const char *pszMagBoneName = TFVR_GetManualReloadMagazineWeapon(pMagWeapon)
+		? TFVR_GetManualReloadMagazineBoneName(pMagWeapon)
+		: "vm_weapon_bone";
 	m_bPistolMagBoneInverseValid =
-		TFVR_CalculateModelBoneInverse(pMag, "vm_weapon_bone", m_matPistolMagBoneInverse);
+		TFVR_CalculateModelBoneInverse(pMag, pszMagBoneName, m_matPistolMagBoneInverse);
+	if (!m_bPistolMagBoneInverseValid && Q_stricmp(pszMagBoneName, "vm_weapon_bone"))
+	{
+		m_bPistolMagBoneInverseValid =
+			TFVR_CalculateModelBoneInverse(pMag, "vm_weapon_bone", m_matPistolMagBoneInverse);
+	}
 
 	m_hPistolMagazine = pMag;
 	return true;
@@ -19086,20 +19357,20 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 	if (pBoneToWorldOut)
 	{
 		C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
-		CTFPistol *pOwnPistol = TFVR_GetManualReloadPistol(pWeapon);
-		if (pOwnPistol)
+		C_TFWeaponBase *pOwnMagWeapon = TFVR_GetManualReloadMagazineWeapon(pWeapon);
+		if (pOwnMagWeapon)
 		{
 			bIsGunMag = true;
 			// Weapon hand: the gun's own magazine.
 			float flCycle = 0.0f;
 			bool bWantMag = false;
-			const int iPhase = pOwnPistol->GetVRMagPhase();
+			const int iPhase = TFVR_GetManualReloadMagazinePhase(pOwnMagWeapon);
 			if (iPhase == VR_PISTOL_MAG_PHASE_EJECTING)
 			{
 				// Mag rides the eject animation until it clears the gun (frame 6),
 				// then falls ballistically until the server's physics prop arrives.
-				flCycle = pOwnPistol->GetVRMagPhaseProgress() * m_flPistolPauseCycle;
-				bWantMag = !pOwnPistol->IsVRMagOut();
+				flCycle = TFVR_GetManualReloadMagazineProgress(pOwnMagWeapon) * m_flPistolPauseCycle;
+				bWantMag = !TFVR_IsManualReloadMagazineOut(pOwnMagWeapon);
 
 				if (!bWantMag && m_hPistolMagazine.Get() && m_bPistolMagLastWorldValid)
 				{
@@ -19110,13 +19381,13 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 			}
 			else if (iPhase == VR_PISTOL_MAG_PHASE_FINISHING)
 			{
-				flCycle = Lerp(pOwnPistol->GetVRMagPhaseProgress(), m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle);
+				flCycle = Lerp(TFVR_GetManualReloadMagazineProgress(pOwnMagWeapon), m_flShotgunManualReloadCommitCycle, m_flPistolFinishEndCycle);
 				bWantMag = true;
 			}
 			else if (iPhase == VR_PISTOL_MAG_PHASE_IDLE)
 			{
 				flCycle = 0.0f;
-				bWantMag = !pOwnPistol->IsVRMagOut();
+				bWantMag = !TFVR_IsManualReloadMagazineOut(pOwnMagWeapon);
 			}
 			// INSERTING: the off hand's held mag is the visible one.
 
@@ -19151,10 +19422,10 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 			// Off hand: spare mag pulled from the backpack.
 			C_TFVRHand *pOtherHand = GetOppositeVRHand(this);
 			C_TFWeaponBase *pOtherWeapon = pOtherHand ? pOtherHand->GetHeldWeapon() : NULL;
-			CTFPistol *pOtherPistol = TFVR_GetManualReloadPistol(pOtherWeapon);
-			if (pOtherPistol && bManualReloadPoseApplied && pOtherPistol->IsVRPistolMagPoseActive())
+			C_TFWeaponBase *pOtherMagWeapon = TFVR_GetManualReloadMagazineWeapon(pOtherWeapon);
+			if (pOtherMagWeapon && bManualReloadPoseApplied && TFVR_IsManualReloadMagazinePoseActive(pOtherMagWeapon))
 			{
-				int iMagBone = LookupBone("vm_weapon_bone");
+				int iMagBone = LookupBone(TFVR_GetManualReloadMagazineBoneName(pOtherMagWeapon));
 				if (iMagBone >= 0 && iMagBone < nMaxBones)
 				{
 					MatrixCopy(pBoneToWorldOut[iMagBone], magBoneWorld);

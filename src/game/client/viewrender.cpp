@@ -1221,9 +1221,10 @@ void CViewRender::DrawVRHands( const CViewSetup &viewRender )
 	if (!VRHandLayer_IsEnabled())
 		return;
 
+	int nBaseRenderables = VRHandLayer_GetBaseRenderableCount();
 	int nRenderables = VRHandLayer_GetRenderableCount();
 	int nParticles = VRHandLayer_GetDeferredParticleCount();
-	if (nRenderables == 0 && nParticles == 0)
+	if (nBaseRenderables == 0 && nRenderables == 0 && nParticles == 0)
 	{
 		VRHandLayer_ClearRenderables();
 		VRHandLayer_ClearDeferredParticles();
@@ -1323,12 +1324,43 @@ void CViewRender::DrawVRHands( const CViewSetup &viewRender )
 
 	VRHandLayer_SetHandPassActive( true );
 
+	for (int i = 0; i < nBaseRenderables; i++)
+	{
+		IClientRenderable *pRenderable = VRHandLayer_GetBaseRenderable(i);
+		if (pRenderable)
+		{
+			pRenderable->DrawModel( STUDIO_RENDER );
+		}
+	}
+
 	for (int i = 0; i < nRenderables; i++)
 	{
 		IClientRenderable *pRenderable = VRHandLayer_GetRenderable(i);
 		if (pRenderable)
 		{
 			pRenderable->DrawModel( STUDIO_RENDER );
+		}
+	}
+
+	int nLateRenderables = VRHandLayer_GetLateRenderableCount();
+	for (int i = 0; i < nLateRenderables; i++)
+	{
+		IClientRenderable *pRenderable = VRHandLayer_GetLateRenderable(i);
+		if (pRenderable)
+		{
+			C_BaseEntity *pEntity = NULL;
+			IClientUnknown *pUnknown = pRenderable->GetIClientUnknown();
+			if (pUnknown)
+				pEntity = pUnknown->GetBaseEntity();
+
+			const bool bWasNoDraw = pEntity && pEntity->IsEffectActive(EF_NODRAW);
+			if (bWasNoDraw)
+				pEntity->RemoveEffects(EF_NODRAW);
+
+			pRenderable->DrawModel( STUDIO_RENDER );
+
+			if (bWasNoDraw)
+				pEntity->AddEffects(EF_NODRAW);
 		}
 	}
 

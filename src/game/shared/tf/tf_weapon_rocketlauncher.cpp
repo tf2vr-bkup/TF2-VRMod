@@ -7,6 +7,7 @@
 #include "tf_weapon_rocketlauncher.h"
 #include "tf_fx_shared.h"
 #include "tf_weaponbase_rocket.h"
+#include "tf_weapon_syringegun.h"
 #include "in_buttons.h"
 #include "tf_gamerules.h"
 
@@ -24,6 +25,7 @@
 #include "tf_player.h"
 #include "tf_obj_sentrygun.h"
 #include "tf_projectile_arrow.h"
+#include "tfvr/tfvr_weapon_magazine.h"
 
 #endif
 
@@ -32,6 +34,11 @@
 #define BOMBARDMENT_ROCKET_MODEL "models/buildables/sentry3_rockets.mdl"
 
 extern ConVar tfvr_reload_throttle_scale;
+extern ConVar tfvr_syringegun_manual_reload;
+extern ConVar tfvr_syringegun_ammo_eject_duration;
+extern ConVar tfvr_syringegun_ammo_insert_duration;
+extern ConVar tfvr_syringegun_ammo_finish_duration;
+extern ConVar tfvr_syringegun_ammo_eject_speed;
 
 static inline float TFVR_RocketReloadThrottleScale()
 {
@@ -154,13 +161,27 @@ BEGIN_NETWORK_TABLE( CTFCrossbow, DT_Crossbow )
 #ifdef CLIENT_DLL
 	RecvPropFloat( RECVINFO( m_flRegenerateDuration ) ),
 	RecvPropFloat( RECVINFO( m_flLastUsedTimestamp ) ),
+	RecvPropInt( RECVINFO( m_iVRAmmoPhase ) ),
+	RecvPropFloat( RECVINFO( m_flVRAmmoPhaseStartTime ) ),
+	RecvPropBool( RECVINFO( m_bVRAmmoOut ) ),
+	RecvPropBool( RECVINFO( m_bVRAmmoHeld ) ),
 #else
 	SendPropFloat( SENDINFO( m_flRegenerateDuration ), 0, SPROP_NOSCALE ),
 	SendPropFloat( SENDINFO( m_flLastUsedTimestamp ), 0, SPROP_NOSCALE ),
+	SendPropInt( SENDINFO( m_iVRAmmoPhase ), 3, SPROP_UNSIGNED ),
+	SendPropFloat( SENDINFO( m_flVRAmmoPhaseStartTime ), 0, SPROP_NOSCALE ),
+	SendPropBool( SENDINFO( m_bVRAmmoOut ) ),
+	SendPropBool( SENDINFO( m_bVRAmmoHeld ) ),
 #endif
 END_NETWORK_TABLE()
 
 BEGIN_PREDICTION_DATA( CTFCrossbow )
+#ifdef CLIENT_DLL
+	DEFINE_PRED_FIELD( m_iVRAmmoPhase, FIELD_INTEGER, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_flVRAmmoPhaseStartTime, FIELD_FLOAT, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRAmmoOut, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRAmmoHeld, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
+#endif
 END_PREDICTION_DATA()
 
 LINK_ENTITY_TO_CLASS( tf_weapon_crossbow, CTFCrossbow );
@@ -993,10 +1014,333 @@ void CTFRocketLauncher_Mortar::RedirectRockets( void )
 //----------------------------------------------------------------------------------------------------------------------------------------------------------
 // CROSSBOW BEGIN
 //----------------------------------------------------------------------------------------------------------------------------------------------------------
+CTFCrossbow::CTFCrossbow()
+{
+	m_bMilkNextAttack = false;
+	m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_IDLE;
+	m_flVRAmmoPhaseStartTime = 0.0f;
+	m_bVRAmmoOut = false;
+	m_bVRAmmoHeld = false;
+#ifdef GAME_DLL
+	m_bVRAmmoPhysSpawned = false;
+#endif
+}
+
+void CTFCrossbow::Precache( void )
+{
+	BaseClass::Precache();
+
+	PrecacheModel( "models/weapons/vr_models/vr_crusaders_crossbow/vr_crusaders_crossbow.mdl" );
+	PrecacheModel( "models/weapons/vr_models/vr_crusaders_crossbow/vr_crusaders_crossbow_ammo.mdl" );
+	PrecacheScriptSound( "VR.SyringeGunEject" );
+	PrecacheScriptSound( "VR.SyringeGunReload" );
+	PrecacheScriptSound( "VR.SyringeGunAmmoGrab" );
+}
+
+bool CTFCrossbow::ShouldUseVRCrossbowManualReload() const
+{
+	if ( !tfvr_syringegun_manual_reload.GetBool() )
+		return false;
+
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !pOwner->IsInVRMode() )
+		return false;
+
+#ifdef CLIENT_DLL
+	if ( IsHeldByVRHand() )
+		return true;
+
+	if ( pOwner->IsLocalPlayer() )
+	{
+		C_TFVRHand *pRightHand = GetLocalPlayerRightHand();
+		if ( pRightHand && pRightHand->GetHeldWeapon() == this )
+			return true;
+
+		C_TFVRHand *pLeftHand = GetLocalPlayerLeftHand();
+		if ( pLeftHand && pLeftHand->GetHeldWeapon() == this )
+			return true;
+	}
+
+	return false;
+#else
+	return true;
+#endif
+}
+
+bool CTFCrossbow::ShouldSuppressAutoAndSinglyReloadForVR() const
+{
+	return ShouldUseVRCrossbowManualReload();
+}
+
+bool CTFCrossbow::Reload( void )
+{
+	if ( ShouldUseVRCrossbowManualReload() )
+		return false;
+
+	return BaseClass::Reload();
+}
+
+float CTFCrossbow::GetVRAmmoEjectDuration() const
+{
+	return MAX( tfvr_syringegun_ammo_eject_duration.GetFloat(), 0.05f );
+}
+
+float CTFCrossbow::GetVRAmmoInsertDuration() const
+{
+	return MAX( tfvr_syringegun_ammo_insert_duration.GetFloat(), 0.05f );
+}
+
+float CTFCrossbow::GetVRAmmoFinishDuration() const
+{
+	return MAX( tfvr_syringegun_ammo_finish_duration.GetFloat(), 0.05f );
+}
+
+float CTFCrossbow::GetVRAmmoPhaseProgress() const
+{
+	float flDuration = 0.0f;
+	switch ( m_iVRAmmoPhase )
+	{
+	case VR_CROSSBOW_AMMO_PHASE_EJECTING:	flDuration = GetVRAmmoEjectDuration(); break;
+	case VR_CROSSBOW_AMMO_PHASE_INSERTING:	flDuration = GetVRAmmoInsertDuration(); break;
+	case VR_CROSSBOW_AMMO_PHASE_FINISHING:	flDuration = GetVRAmmoFinishDuration(); break;
+	default:
+		return 0.0f;
+	}
+
+	if ( flDuration <= 0.0f )
+		return 1.0f;
+
+	return clamp( ( gpGlobals->curtime - m_flVRAmmoPhaseStartTime ) / flDuration, 0.0f, 1.0f );
+}
+
+bool CTFCrossbow::CanStartVRAmmoPull() const
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || m_bVRAmmoHeld )
+		return false;
+
+	return pOwner->GetAmmoCount( m_iPrimaryAmmoType ) > 0;
+}
+
+bool CTFCrossbow::CanStartVRAmmoEject() const
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return false;
+
+	if ( m_iVRAmmoPhase != VR_CROSSBOW_AMMO_PHASE_IDLE || m_bVRAmmoOut )
+		return false;
+
+	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+		return false;
+
+	if ( m_iClip1 >= GetMaxClip1() )
+		return false;
+
+	return true;
+}
+
+void CTFCrossbow::ResetVRCrossbowAmmoState()
+{
+	m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_IDLE;
+	m_flVRAmmoPhaseStartTime = 0.0f;
+	m_bVRAmmoOut = false;
+	m_bVRAmmoHeld = false;
+#ifdef GAME_DLL
+	m_bVRAmmoPhysSpawned = false;
+#endif
+}
+
+void CTFCrossbow::VRStartAmmoEject()
+{
+	if ( !CanStartVRAmmoEject() )
+		return;
+
+#ifdef GAME_DLL
+	m_bVRAmmoPhysSpawned = false;
+#endif
+	m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_EJECTING;
+	m_flVRAmmoPhaseStartTime = gpGlobals->curtime;
+	m_flNextPrimaryAttack = Max<float>( m_flNextPrimaryAttack, gpGlobals->curtime + GetVRAmmoEjectDuration() );
+
+#ifdef CLIENT_DLL
+	if ( prediction->IsFirstTimePredicted() )
+		EmitSound( "VR.SyringeGunEject" );
+#endif
+}
+
+void CTFCrossbow::VRStartAmmoInsert()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner || !m_bVRAmmoHeld || !m_bVRAmmoOut || m_iVRAmmoPhase != VR_CROSSBOW_AMMO_PHASE_IDLE )
+		return;
+
+	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
+	{
+		m_bVRAmmoHeld = false;
+		return;
+	}
+
+	m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_INSERTING;
+	m_flVRAmmoPhaseStartTime = gpGlobals->curtime;
+
+#ifdef CLIENT_DLL
+	if ( prediction->IsFirstTimePredicted() )
+		EmitSound( "VR.SyringeGunReload" );
+#endif
+}
+
+void CTFCrossbow::VRCommitAmmoInsert()
+{
+	if ( m_iVRAmmoPhase != VR_CROSSBOW_AMMO_PHASE_INSERTING )
+		return;
+
+	IncrementAmmo();
+
+	m_bVRAmmoHeld = false;
+	m_bVRAmmoOut = false;
+	m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_FINISHING;
+	m_flVRAmmoPhaseStartTime = gpGlobals->curtime;
+	m_flNextPrimaryAttack = Max<float>( m_flNextPrimaryAttack, gpGlobals->curtime + GetVRAmmoFinishDuration() );
+}
+
+#ifdef GAME_DLL
+void CTFCrossbow::VRSpawnEjectedAmmo()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+		return;
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+		return;
+
+	const bool bRightHand = pCmd->vrWeaponHandIsRight;
+	Vector vecHandOrigin = bRightHand ? pCmd->rightControllerOrigin : pCmd->leftControllerOrigin;
+	QAngle angHand = bRightHand ? pCmd->rightControllerAngles : pCmd->leftControllerAngles;
+
+	if ( vecHandOrigin == vec3_origin )
+	{
+		vecHandOrigin = GetAbsOrigin();
+		angHand = GetAbsAngles();
+	}
+
+	Vector vecForward, vecRight, vecUp;
+	AngleVectors( angHand, &vecForward, &vecRight, &vecUp );
+	Vector vecEjectDir = -vecUp * 0.9f - vecForward * 0.2f;
+	VectorNormalize( vecEjectDir );
+
+	Vector vecSpawnPos = pCmd->vrMagSpawnOrigin != vec3_origin
+		? pCmd->vrMagSpawnOrigin
+		: vecHandOrigin + vecEjectDir * 3.0f;
+	QAngle angSpawn = pCmd->vrMagSpawnOrigin != vec3_origin
+		? pCmd->vrMagSpawnAngles
+		: angHand;
+
+	CTFVRWeaponMagazine *pAmmo = (CTFVRWeaponMagazine *)CreateEntityByName( "tfvr_weapon_magazine" );
+	if ( !pAmmo )
+		return;
+
+	pAmmo->SetWeaponType( GetWeaponID() );
+	pAmmo->SetMagazineModel( "models/weapons/vr_models/vr_crusaders_crossbow/vr_crusaders_crossbow_ammo.mdl" );
+	pAmmo->SetAmmoCount( 0 );
+	pAmmo->SetAbsOrigin( vecSpawnPos );
+	pAmmo->SetAbsAngles( angSpawn );
+	pAmmo->Spawn();
+
+	IPhysicsObject *pPhys = pAmmo->VPhysicsGetObject();
+	if ( pPhys )
+	{
+		Vector vecVel = pCmd->vrMagEjectVel != vec3_origin
+			? pCmd->vrMagEjectVel + pOwner->GetAbsVelocity()
+			: vecEjectDir * tfvr_syringegun_ammo_eject_speed.GetFloat() + pOwner->GetAbsVelocity();
+		pPhys->SetVelocity( &vecVel, NULL );
+	}
+}
+#endif
+
+void CTFCrossbow::VRCrossbowAmmoPostFrame()
+{
+	CTFPlayer *pOwner = GetTFPlayerOwner();
+	if ( !pOwner )
+	{
+		ResetVRCrossbowAmmoState();
+		return;
+	}
+
+	if ( m_bVRAmmoOut && m_iVRAmmoPhase == VR_CROSSBOW_AMMO_PHASE_IDLE && m_iClip1 > 0 )
+		m_bVRAmmoOut = false;
+
+	const float flProgress = GetVRAmmoPhaseProgress();
+	switch ( m_iVRAmmoPhase )
+	{
+	case VR_CROSSBOW_AMMO_PHASE_EJECTING:
+	{
+		const float flAmmoFreeProgress = VRSyringeGun_FrameAmmoFree() / VRSyringeGun_FramePause();
+		if ( !m_bVRAmmoOut && flProgress >= flAmmoFreeProgress )
+		{
+			m_bVRAmmoOut = true;
+#ifdef GAME_DLL
+			if ( !m_bVRAmmoPhysSpawned )
+			{
+				m_bVRAmmoPhysSpawned = true;
+				VRSpawnEjectedAmmo();
+			}
+#endif
+		}
+
+		if ( flProgress >= 1.0f )
+		{
+			m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_IDLE;
+			m_flVRAmmoPhaseStartTime = 0.0f;
+		}
+		break;
+	}
+	case VR_CROSSBOW_AMMO_PHASE_INSERTING:
+		if ( flProgress >= 1.0f )
+			VRCommitAmmoInsert();
+		break;
+	case VR_CROSSBOW_AMMO_PHASE_FINISHING:
+		if ( flProgress >= 1.0f )
+		{
+			m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_IDLE;
+			m_flVRAmmoPhaseStartTime = 0.0f;
+		}
+		break;
+	default:
+		break;
+	}
+
+	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
+	if ( !pCmd )
+		return;
+
+	if ( m_bVRAmmoHeld && !pCmd->vrMagazineHold )
+		m_bVRAmmoHeld = false;
+
+	if ( pCmd->vrMagazinePull && CanStartVRAmmoPull() )
+	{
+		m_bVRAmmoHeld = true;
+#ifdef CLIENT_DLL
+		if ( prediction->IsFirstTimePredicted() )
+			EmitSound( "VR.SyringeGunAmmoGrab" );
+#endif
+	}
+
+	if ( m_iVRAmmoPhase == VR_CROSSBOW_AMMO_PHASE_IDLE )
+	{
+		if ( pCmd->vrMagazineEject && !m_bVRAmmoOut )
+			VRStartAmmoEject();
+
+		if ( m_bVRAmmoOut && m_bVRAmmoHeld && pCmd->vrMagazineInsert )
+			VRStartAmmoInsert();
+	}
+}
+
 bool CTFCrossbow::Holster( CBaseCombatWeapon *pSwitchingTo )
 {
 	// Allow Crossbow to silently reload like the flaregun
-	if ( m_iClip1 == 0 )
+	if ( m_iClip1 == 0 && !ShouldUseVRCrossbowManualReload() )
 	{
 		// These Values need to match the anim times since all this stuff is actually driven by animation sequence time in the base code
 		float flFireDelay = ApplyFireDelay( m_pWeaponInfo->GetWeaponData( m_iWeaponMode ).m_flTimeFireDelay );
@@ -1015,6 +1359,10 @@ bool CTFCrossbow::Holster( CBaseCombatWeapon *pSwitchingTo )
 
 		IncrementAmmo();
 	}
+
+	m_iVRAmmoPhase = VR_CROSSBOW_AMMO_PHASE_IDLE;
+	m_flVRAmmoPhaseStartTime = 0.0f;
+	m_bVRAmmoHeld = false;
 
 	return BaseClass::Holster( pSwitchingTo );
 }
@@ -1048,6 +1396,43 @@ void CTFCrossbow::SecondaryAttack( void )
 	}
 }
 
+void CTFCrossbow::PrimaryAttack( void )
+{
+	if ( ShouldUseVRCrossbowManualReload() && ( IsVRCrossbowManualReloadBusy() || m_bVRAmmoOut ) )
+	{
+		if ( m_flNextEmptySoundTime < gpGlobals->curtime )
+		{
+			WeaponSound( EMPTY );
+			m_flNextEmptySoundTime = gpGlobals->curtime + 0.5f;
+		}
+		m_flNextPrimaryAttack = gpGlobals->curtime + 0.1f;
+		return;
+	}
+
+	BaseClass::PrimaryAttack();
+}
+
+void CTFCrossbow::HandleFireOnEmpty( void )
+{
+	if ( ShouldUseVRCrossbowManualReload() )
+	{
+		if ( CanStartVRAmmoEject() && CanAttack() )
+		{
+			VRStartAmmoEject();
+			return;
+		}
+
+		if ( m_flNextEmptySoundTime < gpGlobals->curtime )
+		{
+			WeaponSound( EMPTY );
+			m_flNextEmptySoundTime = gpGlobals->curtime + 0.5f;
+		}
+		return;
+	}
+
+	BaseClass::HandleFireOnEmpty();
+}
+
 //-----------------------------------------------------------------------------
 void CTFCrossbow::ModifyProjectile( CBaseEntity* pProj )
 {
@@ -1067,9 +1452,27 @@ void CTFCrossbow::ModifyProjectile( CBaseEntity* pProj )
 //-----------------------------------------------------------------------------
 void CTFCrossbow::ItemPostFrame( void )
 {
+	if ( ShouldUseVRCrossbowManualReload() )
+	{
+		VRCrossbowAmmoPostFrame();
+	}
+	else if ( IsVRCrossbowManualReloadBusy() || m_bVRAmmoOut || m_bVRAmmoHeld )
+	{
+		ResetVRCrossbowAmmoState();
+	}
+
 	BaseClass::ItemPostFrame();
 	m_bMilkNextAttack = false;
 }
+
+void CTFCrossbow::ItemBusyFrame( void )
+{
+	if ( ShouldUseVRCrossbowManualReload() )
+		VRCrossbowAmmoPostFrame();
+
+	BaseClass::ItemBusyFrame();
+}
+
 //-----------------------------------------------------------------------------
 float CTFCrossbow::GetProjectileSpeed( void )
 {
@@ -1096,6 +1499,7 @@ void CTFCrossbow::WeaponRegenerate( void )
 {
 	BaseClass::WeaponRegenerate();
 	m_flLastUsedTimestamp = 0;
+	ResetVRCrossbowAmmoState();
 }
 //-----------------------------------------------------------------------------
 inline float CTFCrossbow::GetProgress( void )

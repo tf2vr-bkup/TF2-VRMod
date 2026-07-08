@@ -431,6 +431,7 @@ public:
 	bool GetShotgunManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetShotgunManualReloadShellTarget( Vector &outPos );
 	bool GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseHeavyShellBone = false );
+	bool GetManualReloadMagazinePosition( Vector &outPos, const char *pszBoneName );
 	bool GetPistolManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetPistolMagazineInsertTarget( Vector &outPos );
 	bool GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles );

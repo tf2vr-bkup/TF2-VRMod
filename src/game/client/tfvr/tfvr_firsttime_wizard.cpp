@@ -60,7 +60,8 @@ namespace
 			&& GetCvarInt( "tfvr_pomson_pump_reload", 1 ) == 0
 			&& GetCvarInt( "tfvr_mangler_pump_reload", 1 ) == 0
 			&& GetCvarInt( "tfvr_shotgun_pump_action", 1 ) == 0
-			&& GetCvarInt( "tfvr_pistol_manual_reload", 1 ) == 0;
+			&& GetCvarInt( "tfvr_pistol_manual_reload", 1 ) == 0
+			&& GetCvarInt( "tfvr_syringegun_manual_reload", 1 ) == 0;
 	}
 
 	void SetPumpReloadsAutomatic( bool bAutomatic )
@@ -73,6 +74,7 @@ namespace
 		SetCvarInt( "tfvr_mangler_pump_reload", nManualPumpReload );
 		SetCvarInt( "tfvr_shotgun_pump_action", nManualPumpReload );
 		SetCvarInt( "tfvr_pistol_manual_reload", nManualPumpReload );
+		SetCvarInt( "tfvr_syringegun_manual_reload", nManualPumpReload );
 	}
 }
 

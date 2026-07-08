@@ -31,10 +31,16 @@ bool VRHandLayer_IsHandPass();
 // Called from DrawModel of hand/weapon entities when they detect
 // they should skip world-pass drawing.
 void VRHandLayer_AddRenderable(IClientRenderable *pRenderable);
+void VRHandLayer_AddBaseRenderable(IClientRenderable *pRenderable);
+void VRHandLayer_AddLateRenderable(IClientRenderable *pRenderable);
 
 // Get the collected renderables for drawing.
+int VRHandLayer_GetBaseRenderableCount();
+IClientRenderable *VRHandLayer_GetBaseRenderable(int index);
 int VRHandLayer_GetRenderableCount();
 IClientRenderable *VRHandLayer_GetRenderable(int index);
+int VRHandLayer_GetLateRenderableCount();
+IClientRenderable *VRHandLayer_GetLateRenderable(int index);
 
 // Clear all collected renderables after drawing.
 void VRHandLayer_ClearRenderables();
