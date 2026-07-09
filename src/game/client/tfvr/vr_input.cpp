@@ -1159,8 +1159,10 @@ static void TFVR_UpdateShotgunManualReloadInCmd( CUserCmd *cmd )
 					96, 0.05f );
 			}
 
+			// Don't pull ammo while the offhand is actively two-hand gripping the weapon.
 			if ( !pShotgun->HasVRShotgunShellInHand() && !pShotgun->IsVRShotgunShellInserting()
-				&& bHoldInput && ( bInBackpack || bInChestZone ) )
+				&& bHoldInput && !pOffHand->IsOffhandGripActive()
+				&& ( bInBackpack || bInChestZone ) )
 				cmd->vrShotgunShellPull = true;
 		}
 	}
@@ -1348,7 +1350,9 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 			bool bInChestZone = flChestRadius > 0.0f
 				&& ( offhandPos - chestCenter ).LengthSqr() <= Square( flChestRadius );
 
-			if ( !bHasMagazineInHand && bHoldInput && ( bInBackpack || bInChestZone ) )
+			// Don't pull ammo while the offhand is actively two-hand gripping the weapon.
+			if ( !bHasMagazineInHand && bHoldInput && !pOffHand->IsOffhandGripActive()
+				&& ( bInBackpack || bInChestZone ) )
 				cmd->vrMagazinePull = true;
 		}
 	}
@@ -1485,8 +1489,9 @@ static void TFVR_UpdateRocketManualReloadInCmd( CUserCmd *cmd )
 				&& offhandPos.z <= hmdOrigin.z + tfvr_shotgun_manual_reload_back_top.GetFloat()
 				&& offhandPos.z >= -4.0f;
 
+			// Don't pull ammo while the offhand is actively two-hand gripping the weapon.
 			if ( !pRocketLauncher->HasVRRocketInHand() && !pRocketLauncher->IsVRRocketInserting()
-				&& bHoldInput && bInBackpack )
+				&& bHoldInput && !pOffHand->IsOffhandGripActive() && bInBackpack )
 				cmd->vrRocketPull = true;
 		}
 	}
@@ -1634,7 +1639,8 @@ static void TFVR_UpdateBowManualReloadInCmd( CUserCmd *cmd )
 				&& offhandPos.z <= hmdOrigin.z + tfvr_shotgun_manual_reload_back_top.GetFloat()
 				&& offhandPos.z >= -4.0f;
 
-			if ( bInBackpack )
+			// Don't pull ammo while the offhand is actively two-hand gripping the weapon.
+			if ( bInBackpack && !pOffHand->IsOffhandGripActive() )
 				cmd->vrBowArrowPull = true;
 		}
 	}
