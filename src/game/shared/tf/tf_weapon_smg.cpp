@@ -49,6 +49,7 @@ BEGIN_NETWORK_TABLE( CTFSMG, DT_TFSMG )
 	RecvPropBool( RECVINFO( m_bVRAmmoHeld ) ),
 	RecvPropBool( RECVINFO( m_bVRAmmoExtractHeld ) ),
 	RecvPropInt( RECVINFO( m_iVRAmmoHeldCount ) ),
+	RecvPropBool( RECVINFO( m_bVRAmmoHeldCountRefilled ) ),
 	RecvPropBool( RECVINFO( m_bVRAmmoInsertLatched ) ),
 #else
 	SendPropInt( SENDINFO( m_iVRAmmoPhase ), 3, SPROP_UNSIGNED ),
@@ -57,6 +58,7 @@ BEGIN_NETWORK_TABLE( CTFSMG, DT_TFSMG )
 	SendPropBool( SENDINFO( m_bVRAmmoHeld ) ),
 	SendPropBool( SENDINFO( m_bVRAmmoExtractHeld ) ),
 	SendPropInt( SENDINFO( m_iVRAmmoHeldCount ) ),
+	SendPropBool( SENDINFO( m_bVRAmmoHeldCountRefilled ) ),
 	SendPropBool( SENDINFO( m_bVRAmmoInsertLatched ) ),
 #endif
 END_NETWORK_TABLE()
@@ -69,6 +71,7 @@ BEGIN_PREDICTION_DATA( CTFSMG )
 	DEFINE_PRED_FIELD( m_bVRAmmoHeld, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_bVRAmmoExtractHeld, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_iVRAmmoHeldCount, FIELD_INTEGER, FTYPEDESC_INSENDTABLE ),
+	DEFINE_PRED_FIELD( m_bVRAmmoHeldCountRefilled, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
 	DEFINE_PRED_FIELD( m_bVRAmmoInsertLatched, FIELD_BOOLEAN, FTYPEDESC_INSENDTABLE ),
 #endif
 END_PREDICTION_DATA()
@@ -124,6 +127,7 @@ CTFSMG::CTFSMG()
 	m_bVRAmmoHeld = false;
 	m_bVRAmmoExtractHeld = false;
 	m_iVRAmmoHeldCount = -1;
+	m_bVRAmmoHeldCountRefilled = false;
 	m_bVRAmmoInsertLatched = false;
 #ifdef GAME_DLL
 	m_bVRAmmoPhysSpawned = false;
@@ -279,6 +283,12 @@ bool CTFSMG::CanStartVRAmmoEject() const
 	if ( m_iVRAmmoPhase != VR_SMG_AMMO_PHASE_IDLE || m_bVRAmmoOut )
 		return false;
 
+	// A two-hand extract can keep the ejected clip visually seated until the
+	// off-hand pulls it clear, even after the eject animation returns to idle.
+	// Do not allow another eject while that unresolved clip is still in-flight.
+	if ( m_iVRAmmoHeldCount >= 0 )
+		return false;
+
 	if ( pOwner->GetAmmoCount( m_iPrimaryAmmoType ) <= 0 )
 		return false;
 
@@ -286,6 +296,20 @@ bool CTFSMG::CanStartVRAmmoEject() const
 		return false;
 
 	return true;
+}
+
+void CTFSMG::WeaponRegenerate( void )
+{
+	BaseClass::WeaponRegenerate();
+
+	// Resupply/refill should also refill a physical clip already held in VR.
+	// Fresh pulled mags fill from reserve on insert, but extracted SMG mags
+	// reinsert the saved clip count, so keep that count in sync with refills.
+	if ( m_iVRAmmoHeldCount >= 0 )
+	{
+		m_iVRAmmoHeldCount = GetMaxClip1();
+		m_bVRAmmoHeldCountRefilled = true;
+	}
 }
 
 void CTFSMG::ResetVRSMGAmmoState()
@@ -296,6 +320,7 @@ void CTFSMG::ResetVRSMGAmmoState()
 	m_bVRAmmoHeld = false;
 	m_bVRAmmoExtractHeld = false;
 	m_iVRAmmoHeldCount = -1;
+	m_bVRAmmoHeldCountRefilled = false;
 	m_bVRAmmoInsertLatched = false;
 #ifdef GAME_DLL
 	m_bVRAmmoPhysSpawned = false;
@@ -314,6 +339,7 @@ void CTFSMG::VRStartAmmoEject()
 	m_bVRAmmoPhysSpawned = false;
 #endif
 	m_iVRAmmoHeldCount = m_iClip1;
+	m_bVRAmmoHeldCountRefilled = false;
 	m_iClip1 = 0;
 	m_bVRAmmoExtractHeld = false;
 	m_iVRAmmoPhase = VR_SMG_AMMO_PHASE_EJECTING;
@@ -338,7 +364,7 @@ bool CTFSMG::VRRestoreEjectedAmmo()
 #ifdef GAME_DLL
 	// Eject refunds the clip to reserve on the server; reinserting the same
 	// physical clip restores the old clip state by undoing that refund only.
-	if ( iRestore > 0 )
+	if ( iRestore > 0 && !m_bVRAmmoHeldCountRefilled )
 		pOwner->RemoveAmmo( MIN( iRestore, pOwner->GetAmmoCount( m_iPrimaryAmmoType ) ), m_iPrimaryAmmoType );
 	m_bVRAmmoPhysSpawned = false;
 #endif
@@ -351,6 +377,7 @@ bool CTFSMG::VRRestoreEjectedAmmo()
 	m_bVRAmmoHeld = false;
 	m_bVRAmmoExtractHeld = false;
 	m_iVRAmmoHeldCount = -1;
+	m_bVRAmmoHeldCountRefilled = false;
 	m_bVRAmmoOut = false;
 	m_bVRAmmoInsertLatched = true;
 	m_iVRAmmoPhase = VR_SMG_AMMO_PHASE_IDLE;
@@ -411,6 +438,7 @@ void CTFSMG::VRCommitAmmoInsert()
 	m_bVRAmmoHeld = false;
 	m_bVRAmmoExtractHeld = false;
 	m_iVRAmmoHeldCount = -1;
+	m_bVRAmmoHeldCountRefilled = false;
 	m_bVRAmmoOut = false;
 	m_bVRAmmoInsertLatched = true;
 	m_iVRAmmoPhase = VR_SMG_AMMO_PHASE_FINISHING;
@@ -560,6 +588,7 @@ void CTFSMG::VRSMGAmmoPostFrame()
 			m_bVRAmmoExtractHeld = false;
 			m_bVRAmmoHeld = false;
 			m_iVRAmmoHeldCount = -1;
+			m_bVRAmmoHeldCountRefilled = false;
 #ifdef GAME_DLL
 			if ( !m_bVRAmmoPhysSpawned )
 			{
@@ -635,6 +664,7 @@ void CTFSMG::VRSMGAmmoPostFrame()
 		m_bVRAmmoExtractHeld = false;
 		m_bVRAmmoHeld = false;
 		m_iVRAmmoHeldCount = -1;
+		m_bVRAmmoHeldCountRefilled = false;
 #ifdef GAME_DLL
 		if ( !m_bVRAmmoPhysSpawned )
 		{
@@ -657,6 +687,7 @@ void CTFSMG::VRSMGAmmoPostFrame()
 		m_bVRAmmoExtractHeld = false;
 		m_bVRAmmoHeld = false;
 		m_iVRAmmoHeldCount = -1;
+		m_bVRAmmoHeldCountRefilled = false;
 		m_bVRAmmoOut = true;
 	}
 
@@ -667,6 +698,7 @@ void CTFSMG::VRSMGAmmoPostFrame()
 	{
 		m_bVRAmmoHeld = true;
 		m_iVRAmmoHeldCount = -1;
+		m_bVRAmmoHeldCountRefilled = false;
 #ifdef CLIENT_DLL
 		if ( prediction->IsFirstTimePredicted() )
 			EmitSound( "VR.ManualReloadAmmoGrab" );

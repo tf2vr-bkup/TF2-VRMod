@@ -1869,7 +1869,7 @@ ConVar tfvr_lefthand_mirror_spin("tfvr_lefthand_mirror_spin", "2", FCVAR_ARCHIVE
 ConVar tfvr_twohand_enabled("tfvr_twohand_enabled", "1", FCVAR_ARCHIVE, "Enable two-handed weapon gripping");
 ConVar tfvr_twohand_snap_distance("tfvr_twohand_snap_distance", "8", FCVAR_ARCHIVE, "Distance (inches) at which off-hand snaps to weapon grip");
 ConVar tfvr_twohand_blend_distance("tfvr_twohand_blend_distance", "1", FCVAR_ARCHIVE, "Distance (inches) at which off-hand starts blending towards weapon grip");
-ConVar tfvr_smg_mag_extract_slide_duration("tfvr_smg_mag_extract_slide_duration", "0.20", FCVAR_ARCHIVE, "VR SMG: seconds for the off-hand visual slide from foregrip to mag on eject");
+ConVar tfvr_smg_mag_extract_slide_duration("tfvr_smg_mag_extract_slide_duration", "0.1", FCVAR_ARCHIVE, "VR SMG: seconds for the off-hand visual slide from foregrip to mag on eject");
 ConVar tfvr_smg_mag_extract_under_dist("tfvr_smg_mag_extract_under_dist", "4.0", FCVAR_ARCHIVE, "VR SMG: Source units past seated mag along local down before mag frees");
 ConVar tfvr_smg_mag_extract_lateral("tfvr_smg_mag_extract_lateral", "5.0", FCVAR_ARCHIVE, "VR SMG: legacy lateral gate tolerance (release now keys off authored mag-out distance)");
 ConVar tfvr_smg_mag_extract_grip_threshold("tfvr_smg_mag_extract_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR SMG: off-hand grip analog threshold to hold/throw extracted mag");
@@ -1888,8 +1888,10 @@ ConVar tfvr_offhand_grip_shotgun_range("tfvr_offhand_grip_shotgun_range", "20", 
 ConVar tfvr_offhand_grip_release_mult("tfvr_offhand_grip_release_mult", "6", FCVAR_ARCHIVE, "Multiplier for release distance (hysteresis to prevent accidental ungrip)");
 ConVar tfvr_offhand_grip_shotgun_release_mult("tfvr_offhand_grip_shotgun_release_mult", "6", FCVAR_ARCHIVE, "Multiplier for pump-action shotgun offhand grip release distance");
 ConVar tfvr_offhand_grip_threshold("tfvr_offhand_grip_threshold", "0.5", FCVAR_ARCHIVE, "Grip button threshold (0-1) to activate offhand grip");
-ConVar tfvr_offhand_grip_blend_speed("tfvr_offhand_grip_blend_speed", "15", FCVAR_ARCHIVE, "Speed of hand position grip/ungrip transition (higher = faster)");
-ConVar tfvr_offhand_grip_rotation_blend_speed("tfvr_offhand_grip_rotation_blend_speed", "8", FCVAR_ARCHIVE, "Speed of weapon rotation grip/ungrip transition (higher = faster)");
+ConVar tfvr_offhand_grip_blend_speed("tfvr_offhand_grip_blend_speed", "10", FCVAR_ARCHIVE, "Speed of hand position grip/ungrip transition (higher = faster)");
+ConVar tfvr_offhand_grip_rotation_blend_in_speed("tfvr_offhand_grip_rotation_blend_in_speed", "1", FCVAR_ARCHIVE, "Speed of weapon rotation grip-on transition (higher = faster)");
+ConVar tfvr_offhand_grip_rotation_blend_speed("tfvr_offhand_grip_rotation_blend_speed", "8", FCVAR_ARCHIVE, "Speed of weapon rotation grip-off transition (higher = faster)");
+ConVar tfvr_offhand_grip_rotation_blend_in_ease_power("tfvr_offhand_grip_rotation_blend_in_ease_power", "2.5", FCVAR_ARCHIVE, "Easing power for weapon rotation grip-on transition (1=linear, higher=faster start)");
 ConVar tfvr_offhand_grip_ease_power("tfvr_offhand_grip_ease_power", "1.1", FCVAR_ARCHIVE, "Easing power for grip transitions (1=linear, 2+=ease-out, higher=sharper)");
 ConVar tfvr_offhand_grip_no_anchor("tfvr_offhand_grip_no_anchor", "0", FCVAR_CHEAT, "DEBUG: Disable anchor offset when gripping (use controller directly)");
 ConVar tfvr_medigun_lever_grip_release_mult("tfvr_medigun_lever_grip_release_mult", "3.5", FCVAR_ARCHIVE, "VR medigun lever: release distance multiplier when grip is active (higher = harder to detach)");
@@ -2396,6 +2398,34 @@ static float ApplyEaseOutToBlend(float t, float easePower, bool bBlendingUp)
 		return 1.0f - powf(1.0f - t, easePower);  // Ease-out going up
 	else
 		return powf(t, easePower);  // Ease-out going down
+}
+
+static float ApplyGripRotationVisualBlend(float t, bool bGripActive)
+{
+	float easePower = bGripActive
+		? tfvr_offhand_grip_rotation_blend_in_ease_power.GetFloat()
+		: tfvr_offhand_grip_ease_power.GetFloat();
+	return ApplyEaseOutToBlend(t, easePower, bGripActive);
+}
+
+static float InvertEaseOutBlend(float t, float easePower, bool bBlendingUp)
+{
+	t = clamp(t, 0.0f, 1.0f);
+	easePower = MAX(easePower, 0.001f);
+
+	if (bBlendingUp)
+		return 1.0f - powf(1.0f - t, 1.0f / easePower);
+	else
+		return powf(t, 1.0f / easePower);
+}
+
+static float ConvertGripRotationBlendCurve(float blend, bool bFromGripActive, bool bToGripActive)
+{
+	float visualBlend = ApplyGripRotationVisualBlend(blend, bFromGripActive);
+	float targetEasePower = bToGripActive
+		? tfvr_offhand_grip_rotation_blend_in_ease_power.GetFloat()
+		: tfvr_offhand_grip_ease_power.GetFloat();
+	return InvertEaseOutBlend(visualBlend, targetEasePower, bToGripActive);
 }
 
 //-----------------------------------------------------------------------------
@@ -4324,7 +4354,9 @@ void C_TFVRHand::Update()
 
 				float easePower = tfvr_offhand_grip_ease_power.GetFloat();
 				float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
-				float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
+				float rotBlendSpeed = bAimDirValid
+					? tfvr_offhand_grip_rotation_blend_in_speed.GetFloat()
+					: tfvr_offhand_grip_rotation_blend_speed.GetFloat();
 				// Position attach always eases in. Weapon ROTATION only engages once
 				// the draw line is long enough to be stable, so the bow eases into
 				// aim as the player pulls back instead of spinning at the nock.
@@ -5226,6 +5258,7 @@ void C_TFVRHand::Update()
 
 				// Hysteresis: use larger range to release than to grab (prevents accidental ungrip)
 				bool bWasGripActive = m_bOffhandGripActive;
+				bool bHadOffhandGripBlend = m_bWasOffhandGripActive;
 				float effectiveRange = bWasGripActive
 					? gripRange * flReleaseMult                              // Larger range to release
 					: gripRange;                                              // Normal range to grab
@@ -5282,11 +5315,15 @@ void C_TFVRHand::Update()
 
 					// Only reset rotation blend if we weren't already blending
 					// (i.e., this is a fresh grip, not a re-grip during blend-out)
-					if (!m_bWasOffhandGripActive)
+					if (!bHadOffhandGripBlend && !bPomsonSnapTwoHandOnReattach)
 					{
 						m_flGripRotationBlend = 0.0f;
 					}
-					// Otherwise, keep current blend value - we'll blend UP from here
+					else if (!bWasGripActive && !bPomsonSnapTwoHandOnReattach)
+					{
+						m_flGripRotationBlend = ConvertGripRotationBlendCurve(m_flGripRotationBlend, false, true);
+					}
+					// Otherwise, keep current visual blend and continue from here
 				}
 
 				// If offhand grip is active, calculate the weapon rotation offset
@@ -5402,7 +5439,7 @@ void C_TFVRHand::Update()
 				}
 				if (!bSuppressGripRotation)
 				{
-					float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
+					float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_in_speed.GetFloat();
 					m_flGripRotationBlend = EasedApproach(1.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
 				}
 				else
@@ -5453,6 +5490,10 @@ void C_TFVRHand::Update()
 
 						// Blend out weapon rotation (separate speed) with easing
 						float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
+						if (bWasGripActive)
+						{
+							m_flGripRotationBlend = ConvertGripRotationBlendCurve(m_flGripRotationBlend, true, false);
+						}
 						m_flGripRotationBlend = EasedApproach(0.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
 
 						// Clear when BOTH blends are done
@@ -7212,9 +7253,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					Vector gripPos;
 					MatrixAngles(controllerTransform, gripQuat, gripPos);
 
-					// Blend between pre and post rotation with easing
-					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
-					float easedRotBlend = ApplyEaseOutToBlend(rotationBlend, easePower, bIsGripActive);
+					float easedRotBlend = ApplyGripRotationVisualBlend(rotationBlend, bIsGripActive);
 
 					Quaternion blendedQuat;
 					SafeQuaternionSlerp(preGripQuat, gripQuat, easedRotBlend, blendedQuat);
@@ -8020,6 +8059,11 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					int rightSeq = pRightHand->GetSequence();
 					float rightCycle = pRightHand->GetCycle();
 					float flGripPoseBlend = m_flTwoHandBlend;
+					if (m_bOffhandGripActive)
+					{
+						float flRotationPoseBlend = ApplyGripRotationVisualBlend(m_flGripRotationBlend, true);
+						flGripPoseBlend = MAX(flGripPoseBlend, flRotationPoseBlend);
+					}
 					if (bSMGExtractVisualPose)
 						flGripPoseBlend = 1.0f;
 
@@ -9742,13 +9786,17 @@ void C_TFVRHand::UpdateSMGMagExtract( C_TFVRHand *pWeaponHand, C_TFWeaponBase *p
 		return;
 	}
 
-	// Snap hand onto mag; freeze weapon aim to weapon hand (blend rotation out).
-	m_bOffhandGripActive = true;
+	// Snap hand onto mag, but start releasing weapon rotation immediately when
+	// eject/extract begins instead of waiting for the mag to clear the gun.
+	bool bWasTwoHandGripActive = m_bOffhandGripActive;
+	m_bOffhandGripActive = false;
 	m_bWasOffhandGripActive = true;
 	m_flTwoHandBlend = 1.0f;
 	{
 		float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
 		float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+		if (bWasTwoHandGripActive)
+			m_flGripRotationBlend = ConvertGripRotationBlendCurve(m_flGripRotationBlend, true, false);
 		m_flGripRotationBlend = EasedApproach(0.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
 	}
 
@@ -9869,6 +9917,15 @@ void C_TFVRHand::UpdateSMGMagExtract( C_TFVRHand *pWeaponHand, C_TFWeaponBase *p
 	if ( bGotGate
 		&& flAlong >= tfvr_smg_mag_extract_under_dist.GetFloat() )
 	{
+		Vector releaseVisualPos = m_vecSMGMagExtractVisualPos;
+		QAngle releaseVisualAng = m_angSMGMagExtractVisualAng;
+		if ( GetSMGMagExtractVisualTarget( pWeaponHand, releaseVisualPos, releaseVisualAng ) )
+		{
+			m_vecSMGMagExtractVisualPos = releaseVisualPos;
+			m_angSMGMagExtractVisualAng = releaseVisualAng;
+			m_bSMGMagExtractVisualValid = true;
+		}
+
 		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
 		if ( pOwner && m_bSMGMagExtractVisualValid )
 		{
@@ -10357,8 +10414,7 @@ bool C_TFVRHand::GetOffHandGripTarget(Vector &outPos, QAngle &outAngles, bool bU
 			Vector gripPos;
 			MatrixAngles(controllerTransform, gripQuat, gripPos);
 
-			float easePower = tfvr_offhand_grip_ease_power.GetFloat();
-			float easedRotBlend = ApplyEaseOutToBlend(rotationBlend, easePower, bIsGripActive);
+			float easedRotBlend = ApplyGripRotationVisualBlend(rotationBlend, bIsGripActive);
 
 			Quaternion blendedQuat;
 			SafeQuaternionSlerp(preGripQuat, gripQuat, easedRotBlend, blendedQuat);

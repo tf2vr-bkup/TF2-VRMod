@@ -101,9 +101,9 @@ ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "-50", F
     "Vertical offset for healer notification panel (positive = up)");
 
 // Building status specific offsets
-ConVar tfvr_popup_hud_building_offset_x("tfvr_popup_hud_building_offset_x", "14", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_building_offset_x("tfvr_popup_hud_building_offset_x", "30", FCVAR_ARCHIVE,
     "Horizontal offset for building status panel (positive = right)");
-ConVar tfvr_popup_hud_building_offset_y("tfvr_popup_hud_building_offset_y", "0", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_building_offset_y("tfvr_popup_hud_building_offset_y", "-29", FCVAR_ARCHIVE,
     "Vertical offset for building status panel (positive = up)");
 
 // Voice status UI ConVars

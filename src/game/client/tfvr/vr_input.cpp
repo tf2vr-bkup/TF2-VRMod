@@ -99,8 +99,8 @@ ConVar tfvr_flickstick_eject_deadzone( "tfvr_flickstick_eject_deadzone", "0.1500
 // Pistol manual magazine reload ConVars (zones shared with the shotgun manual reload)
 ConVar tfvr_pistol_mag_insert_radius( "tfvr_pistol_mag_insert_radius", "4.0", FCVAR_ARCHIVE, "VR pistol: distance (inches) between the held mag and the magwell that counts as inserting" );
 ConVar tfvr_pistol_mag_insert_radius_engineer( "tfvr_pistol_mag_insert_radius_engineer", "5.5", FCVAR_ARCHIVE, "VR engineer pistol: distance (inches) between the held mag and the magwell that counts as inserting" );
-ConVar tfvr_smg_reinsert_rearm_radius( "tfvr_smg_reinsert_rearm_radius", "10.0", FCVAR_ARCHIVE, "VR SMG: extracted mag must move this far from the magwell before reinserting is allowed" );
-ConVar tfvr_smg_reinsert_min_delay( "tfvr_smg_reinsert_min_delay", "0.25", FCVAR_ARCHIVE, "VR SMG: seconds after extracting before the same mag can reinsert" );
+ConVar tfvr_smg_reinsert_rearm_radius( "tfvr_smg_reinsert_rearm_radius", "0.0", FCVAR_ARCHIVE, "VR SMG: legacy reinsert rearm radius (currently unused; reinsertion uses delay + insert radius)" );
+ConVar tfvr_smg_reinsert_min_delay( "tfvr_smg_reinsert_min_delay", "0.15", FCVAR_ARCHIVE, "VR SMG: seconds after extracting before the same mag can reinsert" );
 
 // Voice chat gesture ConVars (walkie-talkie style activation)
 ConVar tfvr_voice_gesture_enabled( "tfvr_voice_gesture_enabled", "1", FCVAR_ARCHIVE, "Enable walkie-talkie style voice chat (hold offhand near ear and press trigger)" );
@@ -1412,10 +1412,9 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 				}
 				s_bSMGExtractReinsertWasHolding = true;
 
-				const float flRearmRadius = MAX( tfvr_smg_reinsert_rearm_radius.GetFloat(), flInsertRadius );
 				const float flMinDelay = MAX( tfvr_smg_reinsert_min_delay.GetFloat(), 0.0f );
 				const bool bDelayElapsed = gpGlobals->curtime - s_flSMGExtractReinsertHoldStartTime >= flMinDelay;
-				if ( bDelayElapsed && flDist > flRearmRadius )
+				if ( bDelayElapsed )
 					s_bSMGExtractReinsertArmed = true;
 				bAllowInsert = s_bSMGExtractReinsertArmed;
 			}

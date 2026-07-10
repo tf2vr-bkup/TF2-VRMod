@@ -128,6 +128,7 @@ public:
 	virtual bool	Reload() OVERRIDE;
 	virtual void	HandleFireOnEmpty() OVERRIDE;
 	virtual void	PrimaryAttack() OVERRIDE;
+	virtual void	WeaponRegenerate( void ) OVERRIDE;
 	virtual bool	ShouldSuppressAutoAndSinglyReloadForVR() const OVERRIDE;
 
 	bool			CanHeadshot( void ) const { int iMode = 0; CALL_ATTRIB_HOOK_INT( iMode, set_weapon_mode ); return (iMode == 1); };
@@ -168,6 +169,7 @@ protected:
 	CNetworkVar( bool, m_bVRAmmoExtractHeld );
 	// -1 means a fresh mag pulled from reserve; >=0 means the original ejected clip.
 	CNetworkVar( int, m_iVRAmmoHeldCount );
+	CNetworkVar( bool, m_bVRAmmoHeldCountRefilled );
 	CNetworkVar( bool, m_bVRAmmoInsertLatched );
 
 private:
