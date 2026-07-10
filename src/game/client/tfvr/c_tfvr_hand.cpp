@@ -1868,6 +1868,10 @@ ConVar tfvr_lefthand_mirror_spin("tfvr_lefthand_mirror_spin", "2", FCVAR_ARCHIVE
 ConVar tfvr_twohand_enabled("tfvr_twohand_enabled", "1", FCVAR_ARCHIVE, "Enable two-handed weapon gripping");
 ConVar tfvr_twohand_snap_distance("tfvr_twohand_snap_distance", "8", FCVAR_ARCHIVE, "Distance (inches) at which off-hand snaps to weapon grip");
 ConVar tfvr_twohand_blend_distance("tfvr_twohand_blend_distance", "1", FCVAR_ARCHIVE, "Distance (inches) at which off-hand starts blending towards weapon grip");
+ConVar tfvr_smg_mag_extract_slide_duration("tfvr_smg_mag_extract_slide_duration", "0.20", FCVAR_ARCHIVE, "VR SMG: seconds for the off-hand visual slide from foregrip to mag on eject");
+ConVar tfvr_smg_mag_extract_under_dist("tfvr_smg_mag_extract_under_dist", "4.0", FCVAR_ARCHIVE, "VR SMG: Source units past seated mag along local down before mag frees");
+ConVar tfvr_smg_mag_extract_lateral("tfvr_smg_mag_extract_lateral", "5.0", FCVAR_ARCHIVE, "VR SMG: legacy lateral gate tolerance (release now keys off authored mag-out distance)");
+ConVar tfvr_smg_mag_extract_grip_threshold("tfvr_smg_mag_extract_grip_threshold", "0.5", FCVAR_ARCHIVE, "VR SMG: off-hand grip analog threshold to hold/throw extracted mag");
 ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-handed grip debug info");
 ConVar tfvr_huntsman_debug("tfvr_huntsman_debug", "0", FCVAR_CHEAT, "Show Huntsman VR arrow/nock debug overlays and logs");
 ConVar tfvr_huntsman_aim_min_pull("tfvr_huntsman_aim_min_pull", "5.0", FCVAR_ARCHIVE, "VR Huntsman: minimum draw-hand separation (inches) before two-hand aim rotation engages; prevents the bow spinning erratically right after nocking when the hands are close together");
@@ -2897,6 +2901,24 @@ C_TFVRHand::C_TFVRHand()
 	m_bOffhandGripActive = false;
 	m_bWasOffhandGripActive = false;
 	m_flGripRotationBlend = 0.0f;
+	m_bSMGMagExtractActive = false;
+	m_bSMGMagExtractHeld = false;
+	m_bSMGMagExtractReleased = false;
+	m_bSMGMagExtractDrop = false;
+	m_bSMGMagExtractBlockTwoHand = false;
+	m_vecSMGMagSeatedPos = vec3_origin;
+	m_angSMGMagSeatedAng = vec3_angle;
+	m_vecSMGMagExtractOutDir = Vector( 0, 0, -1 );
+	m_bSMGMagSeatedValid = false;
+	m_vecSMGMagExtractVisualPos = vec3_origin;
+	m_angSMGMagExtractVisualAng = vec3_angle;
+	m_bSMGMagExtractVisualValid = false;
+	SetIdentityMatrix(m_matSMGMagExtractVisualOwnerLocal);
+	m_bSMGMagExtractVisualOwnerLocalValid = false;
+	m_flSMGMagExtractStartTime = 0.0f;
+	m_vecSMGMagExtractStartHandLocal = vec3_origin;
+	m_vecSMGMagExtractOutDirLocal = Vector( 0, 0, -1 );
+	m_bSMGMagExtractGateValid = false;
 	m_vecOffhandGripForward = Vector(1, 0, 0);
 	m_vecOffhandGripUp = Vector(0, 0, 1);
 	m_vecCachedGripDelta = vec3_origin;
@@ -3106,6 +3128,24 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bOffhandGripActive = false;
 	m_bWasOffhandGripActive = false;
 	m_flGripRotationBlend = 0.0f;
+	m_bSMGMagExtractActive = false;
+	m_bSMGMagExtractHeld = false;
+	m_bSMGMagExtractReleased = false;
+	m_bSMGMagExtractDrop = false;
+	m_bSMGMagExtractBlockTwoHand = false;
+	m_vecSMGMagSeatedPos = vec3_origin;
+	m_angSMGMagSeatedAng = vec3_angle;
+	m_vecSMGMagExtractOutDir = Vector( 0, 0, -1 );
+	m_bSMGMagSeatedValid = false;
+	m_vecSMGMagExtractVisualPos = vec3_origin;
+	m_angSMGMagExtractVisualAng = vec3_angle;
+	m_bSMGMagExtractVisualValid = false;
+	SetIdentityMatrix(m_matSMGMagExtractVisualOwnerLocal);
+	m_bSMGMagExtractVisualOwnerLocalValid = false;
+	m_flSMGMagExtractStartTime = 0.0f;
+	m_vecSMGMagExtractStartHandLocal = vec3_origin;
+	m_vecSMGMagExtractOutDirLocal = Vector( 0, 0, -1 );
+	m_bSMGMagExtractGateValid = false;
 	m_bPomsonRightGripWasPressed = false;
 	m_bPomsonSuppressPassiveGripPoint = false;
 	m_bPomsonSuppressReloadGripPoint = false;
@@ -4334,10 +4374,12 @@ void C_TFVRHand::Update()
 			if (pWeapon)
 			{
 				int iWeaponID = pWeapon->GetWeaponID();
-				C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pWeapon);
-				if (pManualMagWeapon && (TFVR_IsManualReloadMagazineBusy(pManualMagWeapon)
-					|| TFVR_IsManualReloadMagazineOut(pManualMagWeapon)
-					|| TFVR_HasManualReloadMagazineInHand(pManualMagWeapon)))
+				CTFPistol *pManualPistol = TFVR_GetManualReloadPistol(pWeapon);
+				// Pistol only: detach off-hand during manual mag reload so it can
+				// pull/insert. SMG/syringe/crossbow keep two-hand grip on eject.
+				if (pManualPistol && (TFVR_IsManualReloadMagazineBusy(pManualPistol)
+					|| TFVR_IsManualReloadMagazineOut(pManualPistol)
+					|| TFVR_HasManualReloadMagazineInHand(pManualPistol)))
 				{
 					bSkipTwoHand = true;
 				}
@@ -4383,9 +4425,9 @@ void C_TFVRHand::Update()
 					// No passive grip while a manual mag reload is in
 					// progress (or a spare mag is in this hand): the off
 					// hand must stay free to fetch and insert the mag.
-					if (pManualMagWeapon && (TFVR_IsManualReloadMagazineBusy(pManualMagWeapon)
-						|| TFVR_IsManualReloadMagazineOut(pManualMagWeapon)
-						|| TFVR_HasManualReloadMagazineInHand(pManualMagWeapon)))
+					if (pManualPistol && (TFVR_IsManualReloadMagazineBusy(pManualPistol)
+						|| TFVR_IsManualReloadMagazineOut(pManualPistol)
+						|| TFVR_HasManualReloadMagazineInHand(pManualPistol)))
 					{
 						bPassiveGripOnly = false;
 						bSkipTwoHand = true;
@@ -4543,6 +4585,24 @@ void C_TFVRHand::Update()
 					m_flTwoHandBlend = 0.0f;
 					m_flGripRotationBlend = 0.0f;
 				}
+			}
+
+			C_TFWeaponBase *pRightManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pRightWpn);
+			CTFSMG *pRightManualSMG = TFVR_GetManualReloadSMG(pRightManualMagWeapon);
+			const bool bSMGExtractBlendOwnsPose = pRightManualSMG
+				&& (pRightManualSMG->HasVRAmmoExtractHeld()
+					|| m_bSMGMagExtractHeld
+					|| m_bSMGMagExtractBlockTwoHand);
+			bool bManualMagazinePoseBusy = pRightManualMagWeapon
+				&& !bSMGExtractBlendOwnsPose
+				&& (TFVR_HasManualReloadMagazineInHand(pRightManualMagWeapon)
+					|| TFVR_IsManualReloadMagazineInserting(pRightManualMagWeapon));
+			if (bManualMagazinePoseBusy)
+			{
+				m_bOffhandGripActive = false;
+				m_bWasOffhandGripActive = false;
+				m_flTwoHandBlend = 0.0f;
+				m_flGripRotationBlend = 0.0f;
 			}
 
 			// Bison dual grip: pick the closer of idle foregrip vs reload
@@ -5090,7 +5150,7 @@ void C_TFVRHand::Update()
 			Vector gripTargetPos;
 			QAngle gripTargetAngles;
 
-			if (!bStickyBusy && !bBisonBusy && !bManglerBusy && !bPomsonBusy && !bShotgunManualReloadBusy && pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
+			if (!bStickyBusy && !bBisonBusy && !bManglerBusy && !bPomsonBusy && !bShotgunManualReloadBusy && !bManualMagazinePoseBusy && pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles))
 			{
 				// Get our current hand position - use OpenXR middle finger base for aiming target
 				// This provides better pivot point alignment than the wrist
@@ -5119,6 +5179,41 @@ void C_TFVRHand::Update()
 				}
 
 				bool bGripButtonPressed = gripValue >= tfvr_offhand_grip_threshold.GetFloat();
+
+				// SMG two-hand extract: snap to mag; block foregrip until grip release.
+				// While extract is active we drive the visual snap ourselves.
+				// Once extract ends (held / latch), keep foregrip from reattaching
+				// but run the normal ungrip blend-out so the weapon eases back.
+				bool bSkipTwoHandSolveForSMGExtract = false;
+				bool bSMGExtractBlendOutOnly = false;
+				if (pRightWpn && TFVR_GetManualReloadSMG(pRightWpn))
+				{
+					UpdateSMGMagExtract(pRightHand, pRightWpn, bGripButtonPressed);
+					if (m_bSMGMagExtractActive)
+					{
+						bSkipTwoHandSolveForSMGExtract = true;
+					}
+					else if (ShouldBlockTwoHandForSMGMagExtract())
+					{
+						// Held / post-extract: no reattach, but allow blend-out.
+						bSMGExtractBlendOutOnly = true;
+						m_bOffhandGripActive = false;
+						m_bWasOffhandGripActive = true;
+					}
+				}
+
+				if (bSMGExtractBlendOutOnly)
+				{
+					float blendSpeed = tfvr_offhand_grip_blend_speed.GetFloat();
+					float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+					float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
+					m_flTwoHandBlend = EasedApproach(0.0f, m_flTwoHandBlend, blendSpeed, gpGlobals->frametime, easePower);
+					m_flGripRotationBlend = EasedApproach(0.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
+					if (m_flTwoHandBlend < 0.001f && m_flGripRotationBlend < 0.001f)
+						m_bWasOffhandGripActive = false;
+				}
+				else if (!bSkipTwoHandSolveForSMGExtract)
+				{
 				float flGripRangeCm = tfvr_offhand_grip_range.GetFloat();
 				float flReleaseMult = tfvr_offhand_grip_release_mult.GetFloat();
 				if ( pRightWpn && IsPumpActionShotgunWeaponID( pRightWpn->GetWeaponID() ) )
@@ -5299,6 +5394,11 @@ void C_TFVRHand::Update()
 				{
 					bSuppressGripRotation = true;
 				}
+				// SMG extract: preserve weapon orientation on the weapon hand.
+				if (!bSuppressGripRotation && m_bSMGMagExtractActive)
+				{
+					bSuppressGripRotation = true;
+				}
 				if (!bSuppressGripRotation)
 				{
 					float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
@@ -5405,6 +5505,7 @@ void C_TFVRHand::Update()
 						}
 					}
 				}
+				} // !bSkipTwoHandSolveForSMGExtract
 			}
 			else
 			{
@@ -7857,7 +7958,9 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			}
 			// When gripping, DON'T apply finger tracking - use the sampled grip pose
 		}
-		else if (IsLeftHand() && m_flTwoHandBlend > 0.01f
+		else if (IsLeftHand()
+			&& (m_flTwoHandBlend > 0.01f
+				|| (m_bSMGMagExtractVisualValid && (m_bSMGMagExtractHeld || m_bSMGMagExtractBlockTwoHand)))
 			&& !(GetLocalPlayerRightHand()
 				&& GetLocalPlayerRightHand()->GetHeldWeapon()
 				&& GetLocalPlayerRightHand()->GetHeldWeapon()->GetWeaponID() == TF_WEAPON_COMPOUND_BOW))
@@ -7876,10 +7979,25 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				Vector gripTargetPos;
 				QAngle gripTargetAngles;
 
+				// SMG extract: target is the hand root that makes the held-ammo
+				// pose's weapon_bone_1 line up with the live mag.
+				bool bSMGExtractVisualPose = false;
+				bool bHaveGripTarget = false;
+				if (GetSMGMagExtractVisualTarget(pRightHand, gripTargetPos, gripTargetAngles))
+				{
+					bSMGExtractVisualPose = true;
+					bHaveGripTarget = true;
+				}
 				// Pass true to get the animated grip position (follows fire animation recoil)
 				// This is for visual positioning - weapon rotation uses separate call with false
-			if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true))
+				else if (pRightHand->GetOffHandGripTarget(gripTargetPos, gripTargetAngles, true))
 				{
+					bHaveGripTarget = true;
+				}
+
+				if (bHaveGripTarget)
+				{
+
 					// Pomson right-hand detach: preserve the left visual hand
 					// offset captured at detach, matching the weapon's captured
 					// left-controller offset.  Fall back to the current hand
@@ -7901,6 +8019,19 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					int rightSeq = pRightHand->GetSequence();
 					float rightCycle = pRightHand->GetCycle();
 					float flGripPoseBlend = m_flTwoHandBlend;
+					if (bSMGExtractVisualPose)
+						flGripPoseBlend = 1.0f;
+
+					if (bSMGExtractVisualPose && pRightHand->m_iShotgunManualReloadSequence >= 0)
+					{
+						const char *pszSeqName = pRightHand->GetSequenceName(pRightHand->m_iShotgunManualReloadSequence);
+						int leftSeq = pszSeqName ? LookupSequence(pszSeqName) : -1;
+						if (leftSeq >= 0)
+						{
+							rightSeq = leftSeq;
+							rightCycle = pRightHand->m_flShotgunManualReloadHoldCycle;
+						}
+					}
 
 					// Stickybomb/Bison pump: the left hand IS the pump hand, so
 					// follow the pump animation for finger pose.  Scattergun
@@ -8161,10 +8292,14 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			CTFCompoundBow *pBow = (pLeftWeapon && pLeftWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 				? static_cast<CTFCompoundBow *>(pLeftWeapon) : NULL;
 			C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pLeftWeapon);
+			CTFSMG *pManualSMG = TFVR_GetManualReloadSMG(pManualMagWeapon);
+			const bool bSMGExtractLocalPose = pManualSMG
+				&& (IsSMGMagExtractActive() || IsSMGMagExtractHeld() || pManualSMG->HasVRAmmoExtractHeld());
 			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
 				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive())
 				|| (pBow && pBow->IsVRBowArrowPoseActive())
-				|| TFVR_IsManualReloadMagazinePoseActive(pManualMagWeapon);
+				|| TFVR_IsManualReloadMagazinePoseActive(pManualMagWeapon)
+				|| bSMGExtractLocalPose;
 			if (pLeftHand && bManualReloadActive
 				&& pLeftHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
@@ -8407,10 +8542,14 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 			CTFCompoundBow *pBow = (pRightWeapon && pRightWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 				? static_cast<CTFCompoundBow *>(pRightWeapon) : NULL;
 			C_TFWeaponBase *pManualMagWeapon = TFVR_GetManualReloadMagazineWeapon(pRightWeapon);
+			CTFSMG *pManualSMG = TFVR_GetManualReloadSMG(pManualMagWeapon);
+			const bool bSMGExtractLocalPose = pManualSMG
+				&& (IsSMGMagExtractActive() || IsSMGMagExtractHeld() || pManualSMG->HasVRAmmoExtractHeld());
 			const bool bManualReloadActive = (pShotgun && pShotgun->IsVRShotgunManualReloadActive())
 				|| (pRocketLauncher && pRocketLauncher->IsVRRocketManualReloadActive())
 				|| (pBow && pBow->IsVRBowArrowPoseActive())
-				|| TFVR_IsManualReloadMagazinePoseActive(pManualMagWeapon);
+				|| TFVR_IsManualReloadMagazinePoseActive(pManualMagWeapon)
+				|| bSMGExtractLocalPose;
 			if (pRightHand && bManualReloadActive
 				&& pRightHand->m_iShotgunManualReloadSequence >= 0 && m_iHandBone >= 0)
 			{
@@ -9152,6 +9291,606 @@ void C_TFVRHand::HideOppositeHand(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C
 			boneMatrix[2][1] = 0.0f;
 			boneMatrix[2][2] = 0.0f;
 		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Clear SMG two-hand mag extract state on the off-hand.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::ClearSMGMagExtractState()
+{
+	m_bSMGMagExtractActive = false;
+	m_bSMGMagExtractHeld = false;
+	m_bSMGMagExtractReleased = false;
+	m_bSMGMagExtractDrop = false;
+	m_bSMGMagExtractBlockTwoHand = false;
+	m_vecSMGMagSeatedPos = vec3_origin;
+	m_angSMGMagSeatedAng = vec3_angle;
+	m_vecSMGMagExtractOutDir = Vector( 0, 0, -1 );
+	m_bSMGMagSeatedValid = false;
+	m_vecSMGMagExtractVisualPos = vec3_origin;
+	m_angSMGMagExtractVisualAng = vec3_angle;
+	m_bSMGMagExtractVisualValid = false;
+	SetIdentityMatrix(m_matSMGMagExtractVisualOwnerLocal);
+	m_bSMGMagExtractVisualOwnerLocalValid = false;
+	m_flSMGMagExtractStartTime = 0.0f;
+	m_vecSMGMagExtractStartHandLocal = vec3_origin;
+	m_vecSMGMagExtractOutDirLocal = Vector( 0, 0, -1 );
+	m_bSMGMagExtractGateValid = false;
+}
+
+bool C_TFVRHand::GetSMGMagExtractVisualTarget( C_TFVRHand *pWeaponHand, Vector &outPos, QAngle &outAngles )
+{
+	if ( m_bSMGMagExtractActive && pWeaponHand )
+	{
+		Vector magPos;
+		QAngle magAng;
+		if ( pWeaponHand->GetSMGMagGripWorld( magPos, magAng ) )
+		{
+			Vector magHandTargetPos;
+			QAngle magHandTargetAng;
+			if ( GetSMGMagHandTargetWorld( pWeaponHand, magPos, magAng, magHandTargetPos, magHandTargetAng ) )
+			{
+				outPos = magHandTargetPos;
+				outAngles = magHandTargetAng;
+
+				Vector foregripPos;
+				QAngle foregripAng;
+				const float flSlideDuration = tfvr_smg_mag_extract_slide_duration.GetFloat();
+				bool bGotForegrip = false;
+				if ( pWeaponHand->m_bMedigunGripTargetValid )
+				{
+					MatrixAngles( pWeaponHand->m_matMedigunGripTarget, foregripAng, foregripPos );
+					bGotForegrip = true;
+				}
+				else
+				{
+					bGotForegrip = pWeaponHand->GetOffHandGripTarget( foregripPos, foregripAng, true );
+				}
+				if ( flSlideDuration > 0.0f && bGotForegrip )
+				{
+					const float flBlend = SimpleSpline( clamp( ( gpGlobals->curtime - m_flSMGMagExtractStartTime ) / flSlideDuration, 0.0f, 1.0f ) );
+					VectorLerp( foregripPos, magHandTargetPos, flBlend, outPos );
+
+					Quaternion foregripQuat, magQuat, outQuat;
+					AngleQuaternion( foregripAng, foregripQuat );
+					AngleQuaternion( magHandTargetAng, magQuat );
+					SafeQuaternionSlerp( foregripQuat, magQuat, flBlend, outQuat );
+					QuaternionAngles( outQuat, outAngles );
+				}
+				return true;
+			}
+
+			outPos = magPos;
+			outAngles = magAng;
+			return true;
+		}
+	}
+
+	if ( !m_bSMGMagExtractVisualValid )
+		return false;
+
+	if ( m_bSMGMagExtractHeld || m_bSMGMagExtractBlockTwoHand )
+	{
+		Vector visualPos = m_vecSMGMagExtractVisualPos;
+		QAngle visualAng = m_angSMGMagExtractVisualAng;
+		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+		if ( pOwner && m_bSMGMagExtractVisualOwnerLocalValid )
+		{
+			matrix3x4_t ownerWorld;
+			AngleMatrix( pOwner->GetAbsAngles(), pOwner->GetAbsOrigin(), ownerWorld );
+
+			matrix3x4_t visualWorld;
+			ConcatTransforms( ownerWorld, m_matSMGMagExtractVisualOwnerLocal, visualWorld );
+			MatrixAngles( visualWorld, visualAng, visualPos );
+		}
+
+		Vector handPos;
+		QAngle handAng;
+		if ( GetCurrentHandTargetWorld( handPos, handAng ) )
+		{
+			const float flBlend = clamp( m_flTwoHandBlend, 0.0f, 1.0f );
+			VectorLerp( handPos, visualPos, flBlend, outPos );
+
+			Quaternion handQuat, magQuat, outQuat;
+			AngleQuaternion( handAng, handQuat );
+			AngleQuaternion( visualAng, magQuat );
+			SafeQuaternionSlerp( handQuat, magQuat, flBlend, outQuat );
+			QuaternionAngles( outQuat, outAngles );
+			return true;
+		}
+	}
+
+	outPos = m_vecSMGMagExtractVisualPos;
+	outAngles = m_angSMGMagExtractVisualAng;
+	return true;
+}
+
+bool C_TFVRHand::GetCurrentHandTargetWorld( Vector &outPos, QAngle &outAngles )
+{
+	UpdateHandTransform();
+
+	matrix3x4_t controllerTransform;
+	AngleMatrix( m_angLastValidAngles, m_vecLastValidPosition, controllerTransform );
+
+	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+	int ownerClass = pOwner ? pOwner->GetPlayerClass()->GetClassIndex() : TF_CLASS_UNDEFINED;
+
+	QAngle rotOffset( 0, 0, 0 );
+	if ( !GetPerClassHandOffset( ownerClass, IsLeftHand(), rotOffset ) )
+	{
+		ConVar *pOffsetPitch = IsLeftHand() ? &tfvr_hands_left_offset_pitch : &tfvr_hands_right_offset_pitch;
+		ConVar *pOffsetYaw = IsLeftHand() ? &tfvr_hands_left_offset_yaw : &tfvr_hands_right_offset_yaw;
+		ConVar *pOffsetRoll = IsLeftHand() ? &tfvr_hands_left_offset_roll : &tfvr_hands_right_offset_roll;
+		rotOffset.x = pOffsetPitch->GetFloat();
+		rotOffset.y = pOffsetYaw->GetFloat();
+		rotOffset.z = pOffsetRoll->GetFloat();
+	}
+	if ( rotOffset.x != 0 || rotOffset.y != 0 || rotOffset.z != 0 )
+	{
+		matrix3x4_t offsetMatrix;
+		AngleMatrix( rotOffset, vec3_origin, offsetMatrix );
+		matrix3x4_t temp;
+		ConcatTransforms( controllerTransform, offsetMatrix, temp );
+		MatrixCopy( temp, controllerTransform );
+	}
+
+	Vector posOffset( 0, 0, 0 );
+	if ( !GetPerClassHandPositionOffset( ownerClass, IsLeftHand(), posOffset ) )
+	{
+		ConVar *pOffsetX = IsLeftHand() ? &tfvr_hands_left_offset_x : &tfvr_hands_right_offset_x;
+		ConVar *pOffsetY = IsLeftHand() ? &tfvr_hands_left_offset_y : &tfvr_hands_right_offset_y;
+		ConVar *pOffsetZ = IsLeftHand() ? &tfvr_hands_left_offset_z : &tfvr_hands_right_offset_z;
+		posOffset.x = pOffsetX->GetFloat();
+		posOffset.y = pOffsetY->GetFloat();
+		posOffset.z = pOffsetZ->GetFloat();
+	}
+	if ( posOffset.x != 0 || posOffset.y != 0 || posOffset.z != 0 )
+	{
+		Vector palmX, palmY, palmZ;
+		MatrixGetColumn( controllerTransform, 0, palmX );
+		MatrixGetColumn( controllerTransform, 1, palmY );
+		MatrixGetColumn( controllerTransform, 2, palmZ );
+		Vector worldOffset = palmX * posOffset.x + palmY * posOffset.y + palmZ * posOffset.z;
+		Vector ctrlPos;
+		MatrixGetColumn( controllerTransform, 3, ctrlPos );
+		ctrlPos += worldOffset;
+		MatrixSetColumn( ctrlPos, 3, controllerTransform );
+	}
+
+	MatrixAngles( controllerTransform, outAngles, outPos );
+	return true;
+}
+
+bool C_TFVRHand::GetSMGWeaponBoneWorld( matrix3x4_t &outTransform )
+{
+	if ( GetLiveWeaponBoneTransform( outTransform ) )
+		return true;
+
+	if ( GetCachedWeaponBoneTransform( outTransform ) )
+		return true;
+
+	Vector handTargetPos;
+	QAngle handTargetAngles;
+	if ( m_bHasIdleWeaponBone && GetCurrentHandTargetWorld( handTargetPos, handTargetAngles ) )
+	{
+		matrix3x4_t controllerTransform;
+		AngleMatrix( handTargetAngles, handTargetPos, controllerTransform );
+		ConcatTransforms( controllerTransform, m_matIdleWeaponBoneLocal, outTransform );
+		return true;
+	}
+
+	if ( m_bHasIdleWeaponBone )
+	{
+		MatrixCopy( m_matIdleWeaponBoneWorld, outTransform );
+		return true;
+	}
+
+	return false;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: World pose of the SMG ammo grip (weapon_bone_1) on the live gun.
+//          This is the off-hand snap target during extract — not the cosmetic
+//          mag mesh origin (which can sit near the weapon base).
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetSMGMagGripWorld( Vector &outPos, QAngle &outAngles )
+{
+	C_TFWeaponBase *pWeapon = m_hHeldWeapon.Get();
+	if ( !TFVR_GetManualReloadSMG( pWeapon ) || m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	// Prefer seated/eject-start cycle so the hand lands on the loaded mag pose.
+	matrix3x4_t magRelWeapon;
+	float flCycle = m_flPistolEjectStartCycle;
+	if ( flCycle <= 0.0f )
+		flCycle = 0.0f;
+	if ( !GetPistolReloadMagRelativeToWeapon( flCycle, magRelWeapon )
+		&& !GetPistolReloadMagRelativeToWeapon( 0.0f, magRelWeapon ) )
+		return false;
+
+	matrix3x4_t liveWeaponBone;
+	if ( !GetSMGWeaponBoneWorld( liveWeaponBone ) )
+		return false;
+
+	matrix3x4_t magWorld;
+	ConcatTransforms( liveWeaponBone, magRelWeapon, magWorld );
+	MatrixAngles( magWorld, outAngles, outPos );
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Compute the off-hand root target that makes the held-ammo pose's
+//          weapon_bone_1 line up with the live SMG mag. This mirrors the
+//          backpack ammo grab path, where the ammo model rides weapon_bone_1
+//          relative to the hand instead of the hand root sitting on the ammo.
+//-----------------------------------------------------------------------------
+bool C_TFVRHand::GetSMGMagHandTargetWorld( C_TFVRHand *pWeaponHand, const Vector &magPos, const QAngle &magAngles, Vector &outPos, QAngle &outAngles )
+{
+	if ( !pWeaponHand || pWeaponHand->m_iShotgunManualReloadSequence < 0 )
+		return false;
+
+	CStudioHdr *pStudioHdr = GetModelPtr();
+	if ( !pStudioHdr || m_iHandBone < 0 )
+		return false;
+
+	const int numBones = MIN( pStudioHdr->numbones(), MAXSTUDIOBONES );
+	if ( m_iHandBone >= numBones )
+		return false;
+
+	int iAmmoBone = LookupBone( VRSMG_AmmoBoneName() );
+	if ( iAmmoBone < 0 || iAmmoBone >= numBones )
+		return false;
+
+	const char *pszSeqName = pWeaponHand->GetSequenceName( pWeaponHand->m_iShotgunManualReloadSequence );
+	int iHeldAmmoSeq = pszSeqName ? LookupSequence( pszSeqName ) : -1;
+	if ( iHeldAmmoSeq < 0 )
+		return false;
+
+	float poseParams[MAXSTUDIOPOSEPARAM];
+	memset( poseParams, 0, sizeof( poseParams ) );
+	IBoneSetup boneSetup( pStudioHdr, BONE_USED_BY_ANYTHING, poseParams );
+
+	Vector posAnim[MAXSTUDIOBONES];
+	Quaternion qAnim[MAXSTUDIOBONES];
+	for ( int i = 0; i < MAXSTUDIOBONES; i++ )
+	{
+		posAnim[i].Init();
+		qAnim[i].Init( 0, 0, 0, 1 );
+	}
+
+	boneSetup.InitPose( posAnim, qAnim );
+	boneSetup.AccumulatePose( posAnim, qAnim, iHeldAmmoSeq,
+		pWeaponHand->m_flShotgunManualReloadHoldCycle, 1.0f, gpGlobals->curtime, NULL );
+
+	matrix3x4_t sampledBones[MAXSTUDIOBONES];
+	for ( int i = 0; i < numBones; i++ )
+	{
+		matrix3x4_t local;
+		QuaternionMatrix( qAnim[i], posAnim[i], local );
+		const mstudiobone_t *pBone = pStudioHdr->pBone( i );
+		if ( !pBone )
+		{
+			SetIdentityMatrix( sampledBones[i] );
+			continue;
+		}
+
+		if ( pBone->parent == -1 )
+			MatrixCopy( local, sampledBones[i] );
+		else if ( pBone->parent >= 0 && pBone->parent < numBones )
+			ConcatTransforms( sampledBones[pBone->parent], local, sampledBones[i] );
+		else
+			SetIdentityMatrix( sampledBones[i] );
+	}
+
+	matrix3x4_t invSampledHand;
+	MatrixInvert( sampledBones[m_iHandBone], invSampledHand );
+
+	matrix3x4_t ammoRelHand;
+	ConcatTransforms( invSampledHand, sampledBones[iAmmoBone], ammoRelHand );
+
+	matrix3x4_t invAmmoRelHand;
+	MatrixInvert( ammoRelHand, invAmmoRelHand );
+
+	matrix3x4_t magWorld;
+	AngleMatrix( magAngles, magPos, magWorld );
+
+	matrix3x4_t handWorld;
+	ConcatTransforms( magWorld, invAmmoRelHand, handWorld );
+	MatrixAngles( handWorld, outAngles, outPos );
+	return true;
+}
+
+bool C_TFVRHand::ConsumeSMGMagExtractReleased()
+{
+	const bool bReleased = m_bSMGMagExtractReleased;
+	m_bSMGMagExtractReleased = false;
+	return bReleased;
+}
+
+bool C_TFVRHand::ConsumeSMGMagExtractDrop()
+{
+	const bool bDrop = m_bSMGMagExtractDrop;
+	m_bSMGMagExtractDrop = false;
+	return bDrop;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: While two-hand gripping an SMG and eject is active, freeze weapon
+//          aim to the weapon hand, snap the off-hand onto the mag, and free
+//          the mag once the controller clears underneath — or drop it if grip
+//          is released early. Two-hand foregrip stays blocked until grip is
+//          fully released after the extract session.
+//-----------------------------------------------------------------------------
+void C_TFVRHand::UpdateSMGMagExtract( C_TFVRHand *pWeaponHand, C_TFWeaponBase *pWeapon, bool bGripHeld )
+{
+	// Do not clear release/drop edges here — CreateMove consumes them.
+
+	CTFSMG *pSMG = TFVR_GetManualReloadSMG( pWeapon );
+	if ( !pWeaponHand || !pSMG )
+	{
+		ClearSMGMagExtractState();
+		return;
+	}
+
+	const bool bEjecting = pSMG->GetVRAmmoPhase() == VR_SMG_AMMO_PHASE_EJECTING;
+	const bool bExtractHeldWeapon = pSMG->HasVRAmmoExtractHeld();
+
+	if ( pSMG->IsVRAmmoInserting() )
+	{
+		m_bSMGMagExtractActive = false;
+		m_bSMGMagExtractHeld = false;
+		m_bSMGMagExtractBlockTwoHand = false;
+		m_bSMGMagExtractVisualValid = false;
+		m_bSMGMagExtractGateValid = false;
+		return;
+	}
+
+	if ( m_bSMGMagExtractActive || m_bSMGMagExtractHeld || bExtractHeldWeapon )
+		m_bSMGMagExtractBlockTwoHand = true;
+
+	// Already holding the extracted mag as a throwable.
+	if ( m_bSMGMagExtractHeld || bExtractHeldWeapon )
+	{
+		m_bSMGMagExtractActive = false;
+		m_bSMGMagExtractHeld = true;
+		// Keep the last mag snap target during blend-out. SetupBones blends
+		// from this target back to the live controller as m_flTwoHandBlend falls.
+		// Blend out of two-hand like a normal ungrip (don't hard-zero).
+		m_bOffhandGripActive = false;
+		m_bWasOffhandGripActive = true;
+
+		if ( !bGripHeld )
+		{
+			ClearSMGMagExtractState();
+			// Keep blend-out going via m_bWasOffhandGripActive until blends finish.
+			m_bWasOffhandGripActive = true;
+		}
+		return;
+	}
+
+	// After extract ended: block foregrip reattach, but allow blend-out.
+	if ( m_bSMGMagExtractBlockTwoHand && !m_bSMGMagExtractActive && !bEjecting )
+	{
+		m_bOffhandGripActive = false;
+		m_bWasOffhandGripActive = true;
+		m_bSMGMagExtractVisualValid = false;
+		if ( !bGripHeld )
+		{
+			m_bSMGMagExtractBlockTwoHand = false;
+			m_bWasOffhandGripActive = true;
+		}
+		return;
+	}
+
+	if ( !bEjecting )
+	{
+		if ( m_bSMGMagExtractActive )
+		{
+			if ( !bGripHeld )
+			{
+				m_bSMGMagExtractDrop = true;
+				m_bSMGMagExtractActive = false;
+				m_bSMGMagExtractHeld = false;
+				m_bSMGMagExtractVisualValid = false;
+				m_bSMGMagExtractBlockTwoHand = false;
+				m_bOffhandGripActive = false;
+				m_bWasOffhandGripActive = true;
+				return;
+			}
+
+			// Still gripping after eject anim: keep mag snap + block foregrip.
+			m_bSMGMagExtractBlockTwoHand = true;
+		}
+		else
+		{
+			if ( !m_bSMGMagExtractBlockTwoHand )
+				ClearSMGMagExtractState();
+			return;
+		}
+	}
+
+	// Enter extract only from an already-active two-hand grip. Merely holding
+	// the grip button near/away from the weapon should not pull the hand to mag.
+	if ( !m_bSMGMagExtractActive )
+	{
+		const bool bWasActivelyTwoHanding = m_bOffhandGripActive && m_flTwoHandBlend > 0.5f;
+		if ( !bGripHeld || !bWasActivelyTwoHanding )
+		{
+			ClearSMGMagExtractState();
+			return;
+		}
+
+		m_bSMGMagExtractActive = true;
+		m_bSMGMagExtractBlockTwoHand = true;
+		m_bSMGMagSeatedValid = false;
+		m_flSMGMagExtractStartTime = gpGlobals->curtime;
+		m_bSMGMagExtractGateValid = false;
+	}
+
+	if ( !bGripHeld )
+	{
+		m_bSMGMagExtractDrop = true;
+		m_bSMGMagExtractActive = false;
+		m_bSMGMagExtractHeld = false;
+		m_bSMGMagExtractVisualValid = false;
+		m_bSMGMagExtractBlockTwoHand = false;
+		// Blend out like a normal two-hand ungrip.
+		m_bOffhandGripActive = false;
+		m_bWasOffhandGripActive = true;
+		return;
+	}
+
+	// Snap hand onto mag; freeze weapon aim to weapon hand (blend rotation out).
+	m_bOffhandGripActive = true;
+	m_bWasOffhandGripActive = true;
+	m_flTwoHandBlend = 1.0f;
+	{
+		float rotBlendSpeed = tfvr_offhand_grip_rotation_blend_speed.GetFloat();
+		float easePower = tfvr_offhand_grip_ease_power.GetFloat();
+		m_flGripRotationBlend = EasedApproach(0.0f, m_flGripRotationBlend, rotBlendSpeed, gpGlobals->frametime, easePower);
+	}
+
+	Vector foregripPos;
+	QAngle foregripAng;
+	bool bGotForegrip = pWeaponHand->GetOffHandGripTarget( foregripPos, foregripAng, true );
+
+	// Snap target = live ammo bone (weapon_bone_1), not the cosmetic mag mesh.
+	Vector magPos = m_vecSMGMagSeatedPos;
+	QAngle magAng = m_angSMGMagSeatedAng;
+	Vector liveMagPos;
+	QAngle liveMagAng;
+	if ( pWeaponHand->GetSMGMagGripWorld( liveMagPos, liveMagAng ) )
+	{
+		magPos = liveMagPos;
+		magAng = liveMagAng;
+		m_vecSMGMagSeatedPos = liveMagPos;
+		m_angSMGMagSeatedAng = liveMagAng;
+		m_bSMGMagSeatedValid = true;
+
+		matrix3x4_t magRelStart, magRelFree;
+		Vector magStartLocal, magFreeLocal;
+		if ( pWeaponHand->GetPistolReloadMagRelativeToWeapon( pWeaponHand->m_flPistolEjectStartCycle, magRelStart )
+			&& pWeaponHand->GetPistolReloadMagRelativeToWeapon( pWeaponHand->m_flPistolMagFreeCycle, magRelFree ) )
+		{
+			MatrixGetColumn( magRelStart, 3, magStartLocal );
+			MatrixGetColumn( magRelFree, 3, magFreeLocal );
+			Vector animOutLocal = magFreeLocal - magStartLocal;
+			if ( animOutLocal.NormalizeInPlace() > 1e-4f )
+			{
+				m_vecSMGMagExtractOutDirLocal = animOutLocal;
+				matrix3x4_t weaponWorld;
+				if ( pWeaponHand->GetSMGWeaponBoneWorld( weaponWorld ) )
+				{
+					VectorRotate( animOutLocal, weaponWorld, m_vecSMGMagExtractOutDir );
+					m_vecSMGMagExtractOutDir.NormalizeInPlace();
+				}
+			}
+		}
+		else
+		{
+			Vector weaponForward, weaponRight, weaponUp;
+			AngleVectors( liveMagAng, &weaponForward, &weaponRight, &weaponUp );
+			Vector outDir = -weaponUp;
+			if ( outDir.NormalizeInPlace() > 1e-4f )
+				m_vecSMGMagExtractOutDir = outDir;
+		}
+	}
+	else if ( !m_bSMGMagSeatedValid )
+	{
+		m_vecSMGMagExtractOutDir = Vector( 0, 0, -1 );
+	}
+
+	// Hard snap so the held-ammo pose's weapon_bone_1 lines up with the mag.
+	if ( m_bSMGMagSeatedValid )
+	{
+		Vector handTargetPos;
+		QAngle handTargetAng;
+		if ( GetSMGMagHandTargetWorld( pWeaponHand, magPos, magAng, handTargetPos, handTargetAng ) )
+		{
+			m_vecSMGMagExtractVisualPos = handTargetPos;
+			m_angSMGMagExtractVisualAng = handTargetAng;
+			m_bSMGMagExtractVisualValid = true;
+		}
+		else
+		{
+			m_vecSMGMagExtractVisualPos = magPos;
+			m_angSMGMagExtractVisualAng = bGotForegrip ? foregripAng : magAng;
+			m_bSMGMagExtractVisualValid = true;
+		}
+	}
+	else if ( bGotForegrip )
+	{
+		m_vecSMGMagExtractVisualPos = foregripPos;
+		m_angSMGMagExtractVisualAng = foregripAng;
+		m_bSMGMagExtractVisualValid = true;
+	}
+
+	if ( !m_bSMGMagSeatedValid )
+		return;
+
+	float flAlong = 0.0f;
+	bool bGotGate = false;
+
+	matrix3x4_t weaponWorld;
+	Vector handTargetPos;
+	QAngle handTargetAng;
+	if ( pWeaponHand->GetSMGWeaponBoneWorld( weaponWorld )
+		&& GetCurrentHandTargetWorld( handTargetPos, handTargetAng ) )
+	{
+		matrix3x4_t invWeaponWorld;
+		MatrixInvert( weaponWorld, invWeaponWorld );
+
+		Vector handLocal;
+		VectorTransform( handTargetPos, invWeaponWorld, handLocal );
+
+		if ( !m_bSMGMagExtractGateValid )
+		{
+			m_vecSMGMagExtractStartHandLocal = handLocal;
+			if ( m_vecSMGMagExtractOutDirLocal.LengthSqr() < 0.1f )
+				VectorIRotate( m_vecSMGMagExtractOutDir, weaponWorld, m_vecSMGMagExtractOutDirLocal );
+			if ( m_vecSMGMagExtractOutDirLocal.NormalizeInPlace() <= 1e-4f )
+				m_vecSMGMagExtractOutDirLocal = Vector( 0, 0, -1 );
+			m_bSMGMagExtractGateValid = true;
+		}
+
+		Vector deltaLocal = handLocal - m_vecSMGMagExtractStartHandLocal;
+		flAlong = DotProduct( deltaLocal, m_vecSMGMagExtractOutDirLocal );
+		bGotGate = true;
+	}
+	else if ( GetCurrentHandTargetWorld( handTargetPos, handTargetAng ) )
+	{
+		Vector delta = handTargetPos - m_vecSMGMagExtractVisualPos;
+		flAlong = DotProduct( delta, m_vecSMGMagExtractOutDir );
+		bGotGate = true;
+	}
+
+	if ( bGotGate
+		&& flAlong >= tfvr_smg_mag_extract_under_dist.GetFloat() )
+	{
+		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+		if ( pOwner && m_bSMGMagExtractVisualValid )
+		{
+			matrix3x4_t ownerWorld;
+			AngleMatrix( pOwner->GetAbsAngles(), pOwner->GetAbsOrigin(), ownerWorld );
+
+			matrix3x4_t invOwnerWorld;
+			MatrixInvert( ownerWorld, invOwnerWorld );
+
+			matrix3x4_t visualWorld;
+			AngleMatrix( m_angSMGMagExtractVisualAng, m_vecSMGMagExtractVisualPos, visualWorld );
+			ConcatTransforms( invOwnerWorld, visualWorld, m_matSMGMagExtractVisualOwnerLocal );
+			m_bSMGMagExtractVisualOwnerLocalValid = true;
+		}
+
+		m_bSMGMagExtractReleased = true;
+		m_bSMGMagExtractHeld = true;
+		m_bSMGMagExtractActive = false;
+		m_bSMGMagExtractBlockTwoHand = true;
+
+		// Blend out of two-hand like a normal ungrip.
+		m_bOffhandGripActive = false;
+		m_bWasOffhandGripActive = true;
 	}
 }
 
@@ -10179,6 +10918,32 @@ bool C_TFVRHand::GetManualReloadMagazinePosition( Vector &outPos, const char *ps
 		return false;
 
 	MatrixGetColumn( bones[iMagBone], 3, outPos );
+	return true;
+}
+
+bool C_TFVRHand::GetManualReloadMagazinePose( Vector &outPos, QAngle &outAngles, const char *pszBoneName )
+{
+	if ( !pszBoneName || !pszBoneName[0] )
+		return false;
+
+	int iMagBone = LookupBone( pszBoneName );
+	if ( iMagBone < 0 || iMagBone >= MAXSTUDIOBONES )
+		return false;
+
+	matrix3x4_t bones[MAXSTUDIOBONES];
+	if ( !SetupBones( bones, MAXSTUDIOBONES, BONE_USED_BY_ANYTHING, gpGlobals->curtime ) )
+		return false;
+
+	if ( !m_bPistolMagBoneInverseValid )
+		EnsurePistolMagazineModel();
+
+	matrix3x4_t magWorld;
+	if ( m_bPistolMagBoneInverseValid )
+		ConcatTransforms( bones[iMagBone], m_matPistolMagBoneInverse, magWorld );
+	else
+		MatrixCopy( bones[iMagBone], magWorld );
+
+	MatrixAngles( magWorld, outAngles, outPos );
 	return true;
 }
 
@@ -19463,6 +20228,15 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 			float flCycle = 0.0f;
 			bool bWantMag = false;
 			const int iPhase = TFVR_GetManualReloadMagazinePhase(pOwnMagWeapon);
+			CTFSMG *pOwnSMG = TFVR_GetManualReloadSMG(pOwnMagWeapon);
+			C_TFVRHand *pOffForExtract = GetOppositeVRHand(this);
+			const bool bSMGExtracting = pOwnSMG && pOffForExtract
+				&& (pOffForExtract->IsSMGMagExtractActive() || pOffForExtract->IsSMGMagExtractHeld()
+					|| pOwnSMG->HasVRAmmoExtractHeld());
+			const bool bSMGExtractHeld = pOwnSMG
+				&& (pOwnSMG->HasVRAmmoExtractHeld()
+					|| (pOffForExtract && pOffForExtract->IsSMGMagExtractHeld()));
+
 			if (iPhase == VR_PISTOL_MAG_PHASE_EJECTING)
 			{
 				// Mag rides the eject animation until it clears the gun (frame 6),
@@ -19470,7 +20244,18 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 				flCycle = Lerp(TFVR_GetManualReloadMagazineProgress(pOwnMagWeapon), m_flPistolEjectStartCycle, m_flPistolPauseCycle);
 				bWantMag = !TFVR_IsManualReloadMagazineOut(pOwnMagWeapon);
 
-				if (!bWantMag && m_hPistolMagazine.Get() && m_bPistolMagLastWorldValid)
+				// SMG two-hand extract: keep seated until underneath gate; then
+				// the off-hand holds the mag (no ballistic fall / world spawn).
+				if (bSMGExtracting && !bSMGExtractHeld)
+				{
+					flCycle = m_flPistolEjectStartCycle;
+					bWantMag = true;
+				}
+				else if (bSMGExtractHeld)
+				{
+					bWantMag = false;
+				}
+				else if (!bWantMag && m_hPistolMagazine.Get() && m_bPistolMagLastWorldValid)
 				{
 					StartPistolMagFall();
 					UpdatePistolMagFall();
@@ -19498,6 +20283,8 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 			{
 				flCycle = 0.0f;
 				bWantMag = !TFVR_IsManualReloadMagazineOut(pOwnMagWeapon);
+				if (bSMGExtractHeld)
+					bWantMag = false;
 			}
 			// INSERTING before the final handoff: the off hand's held mag is the visible one.
 
@@ -19529,11 +20316,29 @@ void C_TFVRHand::UpdatePistolMagazineFromBones(matrix3x4_t *pBoneToWorldOut, int
 		}
 		else
 		{
-			// Off hand: spare mag pulled from the backpack.
+			// Off hand: spare mag pulled from the backpack, or SMG extracted mag.
 			C_TFVRHand *pOtherHand = GetOppositeVRHand(this);
 			C_TFWeaponBase *pOtherWeapon = pOtherHand ? pOtherHand->GetHeldWeapon() : NULL;
 			C_TFWeaponBase *pOtherMagWeapon = TFVR_GetManualReloadMagazineWeapon(pOtherWeapon);
-			if (pOtherMagWeapon && bManualReloadPoseApplied && TFVR_IsManualReloadMagazinePoseActive(pOtherMagWeapon))
+			CTFSMG *pOtherSMG = TFVR_GetManualReloadSMG(pOtherWeapon);
+			const bool bExtractHeldMag = (pOtherSMG && (pOtherSMG->HasVRAmmoExtractHeld() || IsSMGMagExtractHeld()));
+
+			if (bExtractHeldMag)
+			{
+				// Extracted SMG mag rides this off-hand's ammo bone / hand origin.
+				int iMagBone = LookupBone(VRSMG_AmmoBoneName());
+				if (iMagBone >= 0 && iMagBone < nMaxBones && pBoneToWorldOut)
+				{
+					MatrixCopy(pBoneToWorldOut[iMagBone], magBoneWorld);
+					bVisible = true;
+				}
+				else if (m_iHandBone >= 0 && m_iHandBone < nMaxBones && pBoneToWorldOut)
+				{
+					MatrixCopy(pBoneToWorldOut[m_iHandBone], magBoneWorld);
+					bVisible = true;
+				}
+			}
+			else if (pOtherMagWeapon && bManualReloadPoseApplied && TFVR_IsManualReloadMagazinePoseActive(pOtherMagWeapon))
 			{
 				int iMagBone = LookupBone(TFVR_GetManualReloadMagazineBoneName(pOtherMagWeapon));
 				if (iMagBone >= 0 && iMagBone < nMaxBones)

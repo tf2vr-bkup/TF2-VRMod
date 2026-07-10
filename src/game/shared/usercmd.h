@@ -86,9 +86,16 @@ public:
 		vrMagazinePull = false;
 		vrMagazineInsert = false;
 		vrMagazineHold = false;
+		vrMagazineExtractActive = false;
+		vrMagazineExtractRelease = false;
+		vrMagazineExtractDrop = false;
 		vrMagSpawnOrigin.Init();
 		vrMagSpawnAngles.Init();
 		vrMagEjectVel.Init();
+		vrMagThrowVelocity.Init();
+		vrMagThrowOrigin.Init();
+		vrMagThrowAngles.Init();
+		vrMagThrowAngVel.Init();
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.0f;
@@ -162,9 +169,16 @@ public:
 		vrMagazinePull = src.vrMagazinePull;
 		vrMagazineInsert = src.vrMagazineInsert;
 		vrMagazineHold = src.vrMagazineHold;
+		vrMagazineExtractActive = src.vrMagazineExtractActive;
+		vrMagazineExtractRelease = src.vrMagazineExtractRelease;
+		vrMagazineExtractDrop = src.vrMagazineExtractDrop;
 		vrMagSpawnOrigin = src.vrMagSpawnOrigin;
 		vrMagSpawnAngles = src.vrMagSpawnAngles;
 		vrMagEjectVel = src.vrMagEjectVel;
+		vrMagThrowVelocity = src.vrMagThrowVelocity;
+		vrMagThrowOrigin = src.vrMagThrowOrigin;
+		vrMagThrowAngles = src.vrMagThrowAngles;
+		vrMagThrowAngVel = src.vrMagThrowAngVel;
 		vrWeaponArmed = src.vrWeaponArmed;
 		vrWeaponHandIsRight = src.vrWeaponHandIsRight;
 		forwardmove			= src.forwardmove;
@@ -245,9 +259,16 @@ public:
 		CRC32_ProcessBuffer( &crc, &vrMagazinePull, sizeof( vrMagazinePull ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazineInsert, sizeof( vrMagazineInsert ) );
 		CRC32_ProcessBuffer( &crc, &vrMagazineHold, sizeof( vrMagazineHold ) );
+		CRC32_ProcessBuffer( &crc, &vrMagazineExtractActive, sizeof( vrMagazineExtractActive ) );
+		CRC32_ProcessBuffer( &crc, &vrMagazineExtractRelease, sizeof( vrMagazineExtractRelease ) );
+		CRC32_ProcessBuffer( &crc, &vrMagazineExtractDrop, sizeof( vrMagazineExtractDrop ) );
 		CRC32_ProcessBuffer( &crc, &vrMagSpawnOrigin, sizeof( vrMagSpawnOrigin ) );
 		CRC32_ProcessBuffer( &crc, &vrMagSpawnAngles, sizeof( vrMagSpawnAngles ) );
 		CRC32_ProcessBuffer( &crc, &vrMagEjectVel, sizeof( vrMagEjectVel ) );
+		CRC32_ProcessBuffer( &crc, &vrMagThrowVelocity, sizeof( vrMagThrowVelocity ) );
+		CRC32_ProcessBuffer( &crc, &vrMagThrowOrigin, sizeof( vrMagThrowOrigin ) );
+		CRC32_ProcessBuffer( &crc, &vrMagThrowAngles, sizeof( vrMagThrowAngles ) );
+		CRC32_ProcessBuffer( &crc, &vrMagThrowAngVel, sizeof( vrMagThrowAngVel ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponArmed, sizeof( vrWeaponArmed ) );
 		CRC32_ProcessBuffer( &crc, &vrWeaponHandIsRight, sizeof( vrWeaponHandIsRight ) );
 		CRC32_ProcessBuffer( &crc, &forwardmove, sizeof( forwardmove ) );   
@@ -310,9 +331,16 @@ public:
 		vrMagazinePull = false;
 		vrMagazineInsert = false;
 		vrMagazineHold = false;
+		vrMagazineExtractActive = false;
+		vrMagazineExtractRelease = false;
+		vrMagazineExtractDrop = false;
 		vrMagSpawnOrigin.Init();
 		vrMagSpawnAngles.Init();
 		vrMagEjectVel.Init();
+		vrMagThrowVelocity.Init();
+		vrMagThrowOrigin.Init();
+		vrMagThrowAngles.Init();
+		vrMagThrowAngVel.Init();
 		vrWeaponArmed = false;
 		vrWeaponHandIsRight = true;
 		forwardmove = 0.f;
@@ -399,6 +427,11 @@ public:
 	bool	vrMagazinePull;
 	bool	vrMagazineInsert;
 	bool	vrMagazineHold;
+	// SMG two-hand extract: off-hand is sliding/holding the seated mag; server
+	// must not anim-free / spawn the physics mag until extract release + throw.
+	bool	vrMagazineExtractActive;
+	bool	vrMagazineExtractRelease; // underneath gate cleared — hold as throwable
+	bool	vrMagazineExtractDrop;    // grip released before underneath — drop prop now
 	// World transform of the gun's magazine mesh (bone-derived on the client)
 	// so the server can spawn the dropped physics mag exactly where the
 	// visual one was. Zero when no mag is seated/ejecting.
@@ -407,6 +440,11 @@ public:
 	// World-space velocity of the mag in the eject animation (one-frame
 	// delta at the authored 30fps). Zero when unknown.
 	Vector	vrMagEjectVel;
+	// SMG extracted-mag throw (player-relative origin/velocity, like jarate).
+	Vector	vrMagThrowVelocity;
+	Vector	vrMagThrowOrigin;
+	QAngle	vrMagThrowAngles;
+	Vector	vrMagThrowAngVel;
 
 	// VR weapon lever/pump: grip held in position to operate the active weapon's physical mechanic
 	bool	vrWeaponArmed;

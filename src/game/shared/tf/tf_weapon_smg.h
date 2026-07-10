@@ -137,9 +137,10 @@ public:
 	float	GetVRAmmoPhaseProgress() const;
 	bool	IsVRAmmoOut() const					{ return m_bVRAmmoOut; }
 	bool	HasVRAmmoInHand() const				{ return m_bVRAmmoHeld; }
+	bool	HasVRAmmoExtractHeld() const			{ return m_bVRAmmoExtractHeld; }
 	bool	IsVRAmmoInserting() const				{ return m_iVRAmmoPhase == VR_SMG_AMMO_PHASE_INSERTING; }
 	bool	IsVRSMGManualReloadBusy() const		{ return m_iVRAmmoPhase != VR_SMG_AMMO_PHASE_IDLE; }
-	bool	IsVRSMGAmmoPoseActive() const			{ return m_bVRAmmoHeld || IsVRAmmoInserting(); }
+	bool	IsVRSMGAmmoPoseActive() const			{ return m_bVRAmmoHeld || IsVRAmmoInserting() || m_bVRAmmoExtractHeld; }
 	bool	CanStartVRAmmoPull() const;
 	bool	CanStartVRAmmoEject() const;
 
@@ -153,8 +154,9 @@ protected:
 	void	VRStartAmmoEject();
 	void	VRStartAmmoInsert();
 	void	VRCommitAmmoInsert();
+	bool	VRRestoreEjectedAmmo();
 #ifdef GAME_DLL
-	void	VRSpawnEjectedAmmo();
+	void	VRSpawnEjectedAmmo( bool bFromThrow );
 	bool	m_bVRAmmoPhysSpawned;
 #endif
 
@@ -162,6 +164,11 @@ protected:
 	CNetworkVar( float, m_flVRAmmoPhaseStartTime );
 	CNetworkVar( bool, m_bVRAmmoOut );
 	CNetworkVar( bool, m_bVRAmmoHeld );
+	// Client-driven extract hold: mag is free of the gun but still in the off-hand.
+	CNetworkVar( bool, m_bVRAmmoExtractHeld );
+	// -1 means a fresh mag pulled from reserve; >=0 means the original ejected clip.
+	CNetworkVar( int, m_iVRAmmoHeldCount );
+	CNetworkVar( bool, m_bVRAmmoInsertLatched );
 
 private:
 

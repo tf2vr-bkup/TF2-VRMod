@@ -99,6 +99,8 @@ ConVar tfvr_flickstick_eject_deadzone( "tfvr_flickstick_eject_deadzone", "0.1500
 // Pistol manual magazine reload ConVars (zones shared with the shotgun manual reload)
 ConVar tfvr_pistol_mag_insert_radius( "tfvr_pistol_mag_insert_radius", "4.0", FCVAR_ARCHIVE, "VR pistol: distance (inches) between the held mag and the magwell that counts as inserting" );
 ConVar tfvr_pistol_mag_insert_radius_engineer( "tfvr_pistol_mag_insert_radius_engineer", "5.5", FCVAR_ARCHIVE, "VR engineer pistol: distance (inches) between the held mag and the magwell that counts as inserting" );
+ConVar tfvr_smg_reinsert_rearm_radius( "tfvr_smg_reinsert_rearm_radius", "10.0", FCVAR_ARCHIVE, "VR SMG: extracted mag must move this far from the magwell before reinserting is allowed" );
+ConVar tfvr_smg_reinsert_min_delay( "tfvr_smg_reinsert_min_delay", "0.25", FCVAR_ARCHIVE, "VR SMG: seconds after extracting before the same mag can reinsert" );
 
 // Voice chat gesture ConVars (walkie-talkie style activation)
 ConVar tfvr_voice_gesture_enabled( "tfvr_voice_gesture_enabled", "1", FCVAR_ARCHIVE, "Enable walkie-talkie style voice chat (hold offhand near ear and press trigger)" );
@@ -150,11 +152,15 @@ IInput* g_OriginalNonVRInputPtr = nullptr;
 
 // Global variable for snap turning (shared with in_main.cpp)
 float s_flLastSnapTurnTime = 0.0f;
+static bool s_bSMGExtractReinsertArmed = true;
+static bool s_bSMGExtractReinsertWasHolding = false;
+static float s_flSMGExtractReinsertHoldStartTime = 0.0f;
 
 CVRInput::CVRInput()
 {
     m_bThrowHolding = false;
     m_nLastThrowableWeaponID = -1;
+    m_bMagThrowHolding = false;
     m_bInCreateMove = false;
 }
 
@@ -667,6 +673,7 @@ void CVRInput::ProcessVRControllerInput(CUserCmd* cmd)
     if ( tfvr_physical_throw.GetBool() && m_bInCreateMove )
     {
         ProcessThrowGesture( cmd, bPrimaryAttack, bSuppressPrimary );
+        ProcessSMGMagThrowGesture( cmd );
     }
 
     // Use
@@ -1278,6 +1285,18 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 	cmd->vrWeaponHandIsRight = ( pWeaponHand == pRight );
 	cmd->vrMagazineEject = g_pOpenXRManager->IsButtonPressed( "magazine_eject" );
 
+	// SMG two-hand extract flags from the off-hand extract state.
+	if ( pSMG && pOffHand )
+	{
+		const bool bReleased = pOffHand->ConsumeSMGMagExtractReleased();
+		const bool bDrop = pOffHand->ConsumeSMGMagExtractDrop();
+		cmd->vrMagazineExtractActive = pOffHand->IsSMGMagExtractActive() || pOffHand->IsSMGMagExtractHeld()
+			|| pSMG->HasVRAmmoExtractHeld();
+		cmd->vrMagazineExtractRelease = bReleased || pOffHand->IsSMGMagExtractHeld()
+			|| pSMG->HasVRAmmoExtractHeld();
+		cmd->vrMagazineExtractDrop = bDrop;
+	}
+
 	// Report the gun mag's exact world transform (bone-derived) so the server
 	// spawns the dropped physics mag right where the visual mag was, plus the
 	// animation-derived velocity for the initial push.
@@ -1301,7 +1320,15 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 		|| flOffhandTrigger >= 0.5f;
 	cmd->vrMagazineHold = bHoldInput;
 
-	const bool bHasMagazineInHand = pPistol ? pPistol->HasVRMagazineInHand() : ( pSyringeGun ? pSyringeGun->HasVRAmmoInHand() : ( pCrossbow ? pCrossbow->HasVRAmmoInHand() : pSMG->HasVRAmmoInHand() ) );
+	const bool bHasMagazineInHand = pPistol ? pPistol->HasVRMagazineInHand() : ( pSyringeGun ? pSyringeGun->HasVRAmmoInHand() : ( pCrossbow ? pCrossbow->HasVRAmmoInHand() : ( pSMG && ( pSMG->HasVRAmmoInHand() || pSMG->HasVRAmmoExtractHeld() || ( pOffHand && pOffHand->IsSMGMagExtractHeld() ) ) ) ) );
+	const bool bSMGExtractedMagInHand = pSMG && pOffHand
+		&& ( pOffHand->IsSMGMagExtractHeld() || pSMG->HasVRAmmoExtractHeld() );
+	if ( !bSMGExtractedMagInHand )
+	{
+		s_bSMGExtractReinsertArmed = true;
+		s_bSMGExtractReinsertWasHolding = false;
+		s_flSMGExtractReinsertHoldStartTime = 0.0f;
+	}
 	const bool bIsMagOut = pPistol ? pPistol->IsVRMagOut() : ( pSyringeGun ? pSyringeGun->IsVRAmmoOut() : ( pCrossbow ? pCrossbow->IsVRAmmoOut() : pSMG->IsVRAmmoOut() ) );
 	const bool bIsMagInserting = pPistol ? pPistol->IsVRMagInserting() : ( pSyringeGun ? pSyringeGun->IsVRAmmoInserting() : ( pCrossbow ? pCrossbow->IsVRAmmoInserting() : pSMG->IsVRAmmoInserting() ) );
 	const char *pszHeldAmmoBone = pSMG ? VRSMG_AmmoBoneName() : ( ( pSyringeGun || pCrossbow ) ? VRSyringeGun_AmmoBoneName() : "vm_weapon_bone" );
@@ -1374,6 +1401,30 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 			float flInsertRadius = bEngineerPistolVisual
 				? tfvr_pistol_mag_insert_radius_engineer.GetFloat()
 				: tfvr_pistol_mag_insert_radius.GetFloat();
+			const bool bSMGExtractedMag = bSMGExtractedMagInHand;
+			bool bAllowInsert = true;
+			if ( bSMGExtractedMag )
+			{
+				if ( !s_bSMGExtractReinsertWasHolding )
+				{
+					s_bSMGExtractReinsertArmed = false;
+					s_flSMGExtractReinsertHoldStartTime = gpGlobals->curtime;
+				}
+				s_bSMGExtractReinsertWasHolding = true;
+
+				const float flRearmRadius = MAX( tfvr_smg_reinsert_rearm_radius.GetFloat(), flInsertRadius );
+				const float flMinDelay = MAX( tfvr_smg_reinsert_min_delay.GetFloat(), 0.0f );
+				const bool bDelayElapsed = gpGlobals->curtime - s_flSMGExtractReinsertHoldStartTime >= flMinDelay;
+				if ( bDelayElapsed && flDist > flRearmRadius )
+					s_bSMGExtractReinsertArmed = true;
+				bAllowInsert = s_bSMGExtractReinsertArmed;
+			}
+			else
+			{
+				s_bSMGExtractReinsertArmed = true;
+				s_bSMGExtractReinsertWasHolding = false;
+				s_flSMGExtractReinsertHoldStartTime = 0.0f;
+			}
 			if ( tfvr_shotgun_pump_debug.GetBool() && debugoverlay )
 			{
 				debugoverlay->AddBoxOverlay( insertProbePos, Vector( -1, -1, -1 ), Vector( 1, 1, 1 ), vec3_angle, 0, 255, 0, 160, 0.05f );
@@ -1381,8 +1432,13 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 				debugoverlay->AddBoxOverlay( insertTargetPos, Vector( -r, -r, -r ), Vector( r, r, r ), vec3_angle, 255, 128, 0, 80, 0.05f );
 				debugoverlay->AddLineOverlay( insertProbePos, insertTargetPos, 255, 255, 0, false, 0.05f );
 			}
-			if ( flDist <= flInsertRadius )
+			if ( bAllowInsert && flDist <= flInsertRadius )
+			{
 				cmd->vrMagazineInsert = true;
+				s_bSMGExtractReinsertArmed = false;
+				if ( bSMGExtractedMag )
+					pOffHand->ClearSMGMagExtractState();
+			}
 		}
 	}
 }
@@ -2428,6 +2484,117 @@ void CVRInput::ProcessThrowGesture( CUserCmd *cmd, bool bTriggerHeld, bool bSupp
     {
         cmd->buttons &= ~IN_ATTACK;
     }
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Jarate-style hold/release throw for an SMG mag extracted via two-hand eject.
+//-----------------------------------------------------------------------------
+void CVRInput::ProcessSMGMagThrowGesture( CUserCmd *cmd )
+{
+	if ( !cmd || !g_pOpenXRManager || !g_pOpenXRManager->IsActive() )
+		return;
+
+	C_TFPlayer *pPlayer = C_TFPlayer::GetLocalTFPlayer();
+	C_TFVRHand *pRight = GetLocalPlayerRightHand();
+	C_TFVRHand *pLeft = GetLocalPlayerLeftHand();
+	if ( !pPlayer || !pRight || !pLeft )
+	{
+		m_bMagThrowHolding = false;
+		m_magThrowTracker.Reset();
+		return;
+	}
+
+	CTFWeaponBase *pWpn = pPlayer->GetActiveTFWeapon();
+	CTFSMG *pSMG = TFVR_GetManualReloadSMGForInput( pWpn );
+	if ( !pSMG )
+	{
+		m_bMagThrowHolding = false;
+		m_magThrowTracker.Reset();
+		return;
+	}
+
+	C_TFVRHand *pWeaponHand = NULL;
+	C_TFVRHand *pOffHand = NULL;
+	if ( pRight->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pRight;
+		pOffHand = pLeft;
+	}
+	else if ( pLeft->GetHeldWeapon() == pWpn )
+	{
+		pWeaponHand = pLeft;
+		pOffHand = pRight;
+	}
+	else
+	{
+		m_bMagThrowHolding = false;
+		m_magThrowTracker.Reset();
+		return;
+	}
+
+	const bool bHoldingExtractedMag = pOffHand->IsSMGMagExtractHeld() || pSMG->HasVRAmmoExtractHeld();
+	if ( !bHoldingExtractedMag )
+	{
+		m_bMagThrowHolding = false;
+		m_magThrowTracker.Reset();
+		return;
+	}
+
+	const bool bOffIsRight = ( pOffHand == pRight );
+	float flGripForce = g_pOpenXRManager->GetAnalogValue( bOffIsRight ? "right_grip" : "left_grip" );
+	// right_grip_value is Index-style binary release; left only has left_grip.
+	float flGripValue = bOffIsRight
+		? g_pOpenXRManager->GetAnalogValue( "right_grip_value" )
+		: flGripForce;
+	float flTrigger = g_pOpenXRManager->GetAnalogValue( bOffIsRight ? "primary_attack" : "secondary_attack" );
+
+	extern ConVar tfvr_smg_mag_extract_grip_threshold;
+	const float flThresh = tfvr_smg_mag_extract_grip_threshold.GetFloat();
+	bool bGripActivate = ( flGripForce > flThresh ) || ( flTrigger >= 0.5f );
+	bool bGripStillHeld = ( flGripValue > 0.5f ) || ( flTrigger >= 0.5f );
+	bool bGripHeld = m_bMagThrowHolding ? bGripStillHeld : bGripActivate;
+
+	VMatrix controllerPose;
+	bool bPoseValid = bOffIsRight
+		? g_pOpenXRManager->GetRightControllerPose( controllerPose )
+		: g_pOpenXRManager->GetLeftControllerPose( controllerPose );
+	Vector vecHandPos = vec3_origin;
+	QAngle angHand( 0, 0, 0 );
+	if ( bPoseValid )
+	{
+		vecHandPos = controllerPose.GetTranslation() - pPlayer->GetAbsOrigin();
+		MatrixAngles( controllerPose.As3x4(), angHand );
+	}
+
+	if ( !m_bMagThrowHolding )
+	{
+		if ( bGripHeld && bPoseValid )
+		{
+			m_bMagThrowHolding = true;
+			m_magThrowTracker.Reset();
+			m_magThrowTracker.AddSample( vecHandPos, angHand, gpGlobals->curtime );
+		}
+	}
+	else
+	{
+		if ( bPoseValid )
+			m_magThrowTracker.AddSample( vecHandPos, angHand, gpGlobals->curtime );
+
+		if ( !bGripHeld )
+		{
+			Vector vecMagPos;
+			QAngle angMag;
+			const bool bGotMagPose = pOffHand->GetManualReloadMagazinePose( vecMagPos, angMag, VRSMG_AmmoBoneName() );
+			cmd->vrMagThrowVelocity = m_magThrowTracker.GetAveragedVelocity();
+			cmd->vrMagThrowOrigin = bGotMagPose ? ( vecMagPos - pPlayer->GetAbsOrigin() ) : ( bPoseValid ? vecHandPos : vec3_origin );
+			cmd->vrMagThrowAngles = bGotMagPose ? angMag : m_magThrowTracker.GetNewestAngles();
+			cmd->vrMagThrowAngVel = m_magThrowTracker.GetAveragedAngularVelocity();
+
+			m_bMagThrowHolding = false;
+			m_magThrowTracker.Reset();
+			pOffHand->ClearSMGMagExtractState();
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------

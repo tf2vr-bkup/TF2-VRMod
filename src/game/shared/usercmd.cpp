@@ -274,9 +274,16 @@ void WriteUsercmd( bf_write *buf, const CUserCmd *to, const CUserCmd *from )
 	buf->WriteOneBit( to->vrMagazinePull ? 1 : 0 );
 	buf->WriteOneBit( to->vrMagazineInsert ? 1 : 0 );
 	buf->WriteOneBit( to->vrMagazineHold ? 1 : 0 );
+	buf->WriteOneBit( to->vrMagazineExtractActive ? 1 : 0 );
+	buf->WriteOneBit( to->vrMagazineExtractRelease ? 1 : 0 );
+	buf->WriteOneBit( to->vrMagazineExtractDrop ? 1 : 0 );
 	WriteVec3Diff( buf, to->vrMagSpawnOrigin, from->vrMagSpawnOrigin );
 	WriteVec3Diff( buf, to->vrMagSpawnAngles, from->vrMagSpawnAngles );
 	WriteVec3Diff( buf, to->vrMagEjectVel, from->vrMagEjectVel );
+	WriteVec3Diff( buf, to->vrMagThrowVelocity, from->vrMagThrowVelocity );
+	WriteVec3Diff( buf, to->vrMagThrowOrigin, from->vrMagThrowOrigin );
+	WriteVec3Diff( buf, to->vrMagThrowAngles, from->vrMagThrowAngles );
+	WriteVec3Diff( buf, to->vrMagThrowAngVel, from->vrMagThrowAngVel );
 	buf->WriteOneBit( to->vrWeaponArmed ? 1 : 0 );
 	buf->WriteOneBit( to->vrWeaponHandIsRight ? 1 : 0 );
 
@@ -472,9 +479,16 @@ void ReadUsercmd( bf_read *buf, CUserCmd *move, CUserCmd *from )
 	move->vrMagazinePull = buf->ReadOneBit() ? true : false;
 	move->vrMagazineInsert = buf->ReadOneBit() ? true : false;
 	move->vrMagazineHold = buf->ReadOneBit() ? true : false;
+	move->vrMagazineExtractActive = buf->ReadOneBit() ? true : false;
+	move->vrMagazineExtractRelease = buf->ReadOneBit() ? true : false;
+	move->vrMagazineExtractDrop = buf->ReadOneBit() ? true : false;
 	ReadVec3Diff( buf, move->vrMagSpawnOrigin );
 	ReadVec3Diff( buf, move->vrMagSpawnAngles );
 	ReadVec3Diff( buf, move->vrMagEjectVel );
+	ReadVec3Diff( buf, move->vrMagThrowVelocity );
+	ReadVec3Diff( buf, move->vrMagThrowOrigin );
+	ReadVec3Diff( buf, move->vrMagThrowAngles );
+	ReadVec3Diff( buf, move->vrMagThrowAngVel );
 	move->vrWeaponArmed = buf->ReadOneBit() ? true : false;
 	move->vrWeaponHandIsRight = buf->ReadOneBit() ? true : false;
 

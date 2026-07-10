@@ -224,6 +224,24 @@ public:
 	float GetGripRotationBlend() const { return m_flGripRotationBlend; }   // Separate blend for weapon rotation
 	const Vector& GetOffhandGripForward() const { return m_vecOffhandGripForward; }
 	const Vector& GetOffhandGripUp() const { return m_vecOffhandGripUp; }
+
+	// SMG two-hand mag extract (visual slide + underneath release + throwable hold)
+	bool IsSMGMagExtractActive() const { return m_bSMGMagExtractActive; }
+	bool IsSMGMagExtractHeld() const { return m_bSMGMagExtractHeld; }
+	bool IsSMGMagExtractReleased() const { return m_bSMGMagExtractReleased; }
+	bool ShouldBlockTwoHandForSMGMagExtract() const
+	{
+		return m_bSMGMagExtractActive || m_bSMGMagExtractHeld || m_bSMGMagExtractBlockTwoHand;
+	}
+	bool ConsumeSMGMagExtractReleased();
+	bool ConsumeSMGMagExtractDrop();
+	bool GetSMGMagExtractVisualTarget( C_TFVRHand *pWeaponHand, Vector &outPos, QAngle &outAngles );
+	bool GetCurrentHandTargetWorld( Vector &outPos, QAngle &outAngles );
+	bool GetSMGWeaponBoneWorld( matrix3x4_t &outTransform );
+	bool GetSMGMagGripWorld( Vector &outPos, QAngle &outAngles );
+	bool GetSMGMagHandTargetWorld( C_TFVRHand *pWeaponHand, const Vector &magPos, const QAngle &magAngles, Vector &outPos, QAngle &outAngles );
+	void ClearSMGMagExtractState();
+	void UpdateSMGMagExtract( C_TFVRHand *pWeaponHand, C_TFWeaponBase *pWeapon, bool bGripHeld );
 	
 	// Animation state getters (for cross-hand animation sampling)
 	int GetIdleSequenceIndex() const { return m_iIdleSequence; }
@@ -433,6 +451,7 @@ public:
 	bool GetShotgunManualReloadShellTarget( Vector &outPos );
 	bool GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseHeavyShellBone = false );
 	bool GetManualReloadMagazinePosition( Vector &outPos, const char *pszBoneName );
+	bool GetManualReloadMagazinePose( Vector &outPos, QAngle &outAngles, const char *pszBoneName );
 	bool GetPistolManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetPistolMagazineInsertTarget( Vector &outPos );
 	bool GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles );
@@ -485,6 +504,26 @@ public:
 	Vector m_vecOffhandGripUp;         // Up reference from weapon hand controller
 	Vector m_vecCachedGripDelta;       // Cached initial pivot axis from grip start
 	Vector m_vecCachedGripYAxis;       // Cached initial weapon Y-axis from grip start
+
+	// SMG two-hand extract: aim grip stays at foregrip; visual hand snaps to mag.
+	bool m_bSMGMagExtractActive;
+	bool m_bSMGMagExtractHeld;         // Mag cleared underneath; free-track + throwable hold
+	bool m_bSMGMagExtractReleased;     // Edge: underneath gate just fired
+	bool m_bSMGMagExtractDrop;         // Edge: grip released before underneath (drop prop)
+	bool m_bSMGMagExtractBlockTwoHand; // Latch: no foregrip reattach until grip fully released
+	Vector m_vecSMGMagSeatedPos;       // Seated mag world pos (tracked live while extracting)
+	QAngle m_angSMGMagSeatedAng;
+	Vector m_vecSMGMagExtractOutDir;   // World-space mag-out axis
+	bool m_bSMGMagSeatedValid;
+	Vector m_vecSMGMagExtractVisualPos;
+	QAngle m_angSMGMagExtractVisualAng;
+	bool m_bSMGMagExtractVisualValid;
+	matrix3x4_t m_matSMGMagExtractVisualOwnerLocal;
+	bool m_bSMGMagExtractVisualOwnerLocalValid;
+	float m_flSMGMagExtractStartTime;
+	Vector m_vecSMGMagExtractStartHandLocal;
+	Vector m_vecSMGMagExtractOutDirLocal;
+	bool m_bSMGMagExtractGateValid;
 	
 	// Aim stabilization - counteracts grip/trigger-induced palm movement
 	// Uses controller aim pose as stable reference; derives palm from controller movement

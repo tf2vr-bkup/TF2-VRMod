@@ -37,6 +37,7 @@ protected:
 
     // Physical throw gesture handling
     void ProcessThrowGesture(CUserCmd* cmd, bool bTriggerHeld, bool bSuppressTrigger);
+    void ProcessSMGMagThrowGesture(CUserCmd* cmd);
     static bool IsThrowableWeapon( C_TFWeaponBase *pWeapon );
 
     // Mouth proximity activation for lunchbox items and soldier horns
@@ -47,6 +48,8 @@ private:
     CVRVelocityTracker m_throwTracker;
     bool m_bThrowHolding;
     int m_nLastThrowableWeaponID;
+    CVRVelocityTracker m_magThrowTracker;
+    bool m_bMagThrowHolding;
     bool m_bInCreateMove;
 };
 
@@ -54,4 +57,4 @@ private:
 extern CVRInput g_VRInput;
 extern IInput* g_OriginalNonVRInputPtr;
 
-#endif // VR_INPUT_H 
+#endif // VR_INPUT_H
