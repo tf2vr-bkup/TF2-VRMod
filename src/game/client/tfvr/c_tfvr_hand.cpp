@@ -1501,11 +1501,12 @@ public:
 	virtual bool IsTransparent() OVERRIDE
 	{
 		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
-		if (pOwner)
+		if (pOwner && pOwner->GetPercentInvisible() > 0.0f)
 		{
-			return pOwner->GetPercentInvisible() > 0.0f;
+			return true;
 		}
-		return false;
+
+		return BaseClass::IsTransparent();
 	}
 
 	// Override DrawModel to apply ubercharge effect

@@ -40,8 +40,14 @@ C_TFVRWeaponMagazine::~C_TFVRWeaponMagazine()
 
 bool C_TFVRWeaponMagazine::ShouldDrawInVRHandLayer() const
 {
-	return m_iWeaponType == TF_WEAPON_SYRINGEGUN_MEDIC
+	const bool bSyringeAmmo = m_iWeaponType == TF_WEAPON_SYRINGEGUN_MEDIC
 		|| m_iWeaponType == TF_WEAPON_CROSSBOW;
+	if ( !bSyringeAmmo )
+		return false;
+
+	// The hand-layer bridge is only needed while the fresh physics prop
+	// replaces the local ejected ammo visual near the weapon.
+	return gpGlobals->curtime - m_flClientSpawnTime <= 0.75f;
 }
 
 int C_TFVRWeaponMagazine::DrawModel( int flags )

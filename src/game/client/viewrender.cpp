@@ -1209,6 +1209,61 @@ void CViewRender::DrawViewModels( const CViewSetup &viewRender, bool drawViewmod
 static ConVar tfvr_hands_over_hud("tfvr_hands_over_hud", "1", FCVAR_ARCHIVE,
 	"Render VR hands/weapons in front of popup HUD elements (stencil masking)");
 
+static bool VRHandLayer_IsTranslucentRenderable( IClientRenderable *pRenderable )
+{
+	return pRenderable && pRenderable->IsTransparent();
+}
+
+static void VRHandLayer_DrawRenderable( IClientRenderable *pRenderable, bool bTranslucent, bool bAllowNoDraw = false )
+{
+	if ( !pRenderable )
+		return;
+
+	C_BaseEntity *pEntity = NULL;
+	IClientUnknown *pUnknown = pRenderable->GetIClientUnknown();
+	if ( pUnknown )
+		pEntity = pUnknown->GetBaseEntity();
+
+	const bool bWasNoDraw = bAllowNoDraw && pEntity && pEntity->IsEffectActive( EF_NODRAW );
+	if ( bWasNoDraw )
+		pEntity->RemoveEffects( EF_NODRAW );
+
+	int flags = STUDIO_RENDER;
+	if ( bTranslucent )
+	{
+		flags |= STUDIO_TRANSPARENCY;
+		if ( pRenderable->IsTwoPass() )
+			flags |= STUDIO_TWOPASS;
+
+		if ( pRenderable->UsesPowerOfTwoFrameBufferTexture() )
+			UpdateRefractTexture();
+		if ( pRenderable->UsesFullFrameBufferTexture() )
+			UpdateScreenEffectTexture();
+
+		pRenderable->ComputeFxBlend();
+		const float flBlend = (float)pRenderable->GetFxBlend() / 255.0f;
+		if ( flBlend > 0.0f )
+		{
+			float color[3];
+			pRenderable->GetColorModulation( color );
+			render->SetColorModulation( color );
+			render->SetBlend( flBlend );
+			pRenderable->DrawModel( flags );
+		}
+
+		float one[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		render->SetColorModulation( one );
+		render->SetBlend( 1.0f );
+	}
+	else
+	{
+		pRenderable->DrawModel( flags );
+	}
+
+	if ( bWasNoDraw )
+		pEntity->AddEffects( EF_NODRAW );
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: Draw VR hands/weapons on a separate layer from the world.
 //          Uses the world's depth buffer for occlusion (no depth clear).
@@ -1223,8 +1278,9 @@ void CViewRender::DrawVRHands( const CViewSetup &viewRender )
 
 	int nBaseRenderables = VRHandLayer_GetBaseRenderableCount();
 	int nRenderables = VRHandLayer_GetRenderableCount();
+	int nLateRenderables = VRHandLayer_GetLateRenderableCount();
 	int nParticles = VRHandLayer_GetDeferredParticleCount();
-	if (nBaseRenderables == 0 && nRenderables == 0 && nParticles == 0)
+	if (nBaseRenderables == 0 && nRenderables == 0 && nLateRenderables == 0 && nParticles == 0)
 	{
 		VRHandLayer_ClearRenderables();
 		VRHandLayer_ClearDeferredParticles();
@@ -1327,41 +1383,41 @@ void CViewRender::DrawVRHands( const CViewSetup &viewRender )
 	for (int i = 0; i < nBaseRenderables; i++)
 	{
 		IClientRenderable *pRenderable = VRHandLayer_GetBaseRenderable(i);
-		if (pRenderable)
-		{
-			pRenderable->DrawModel( STUDIO_RENDER );
-		}
+		VRHandLayer_DrawRenderable(pRenderable, false);
 	}
 
 	for (int i = 0; i < nRenderables; i++)
 	{
 		IClientRenderable *pRenderable = VRHandLayer_GetRenderable(i);
-		if (pRenderable)
-		{
-			pRenderable->DrawModel( STUDIO_RENDER );
-		}
+		VRHandLayer_DrawRenderable(pRenderable, false);
 	}
 
-	int nLateRenderables = VRHandLayer_GetLateRenderableCount();
+	nLateRenderables = VRHandLayer_GetLateRenderableCount();
 	for (int i = 0; i < nLateRenderables; i++)
 	{
 		IClientRenderable *pRenderable = VRHandLayer_GetLateRenderable(i);
-		if (pRenderable)
-		{
-			C_BaseEntity *pEntity = NULL;
-			IClientUnknown *pUnknown = pRenderable->GetIClientUnknown();
-			if (pUnknown)
-				pEntity = pUnknown->GetBaseEntity();
+		VRHandLayer_DrawRenderable(pRenderable, false, true);
+	}
 
-			const bool bWasNoDraw = pEntity && pEntity->IsEffectActive(EF_NODRAW);
-			if (bWasNoDraw)
-				pEntity->RemoveEffects(EF_NODRAW);
+	for (int i = 0; i < nBaseRenderables; i++)
+	{
+		IClientRenderable *pRenderable = VRHandLayer_GetBaseRenderable(i);
+		if (VRHandLayer_IsTranslucentRenderable(pRenderable))
+			VRHandLayer_DrawRenderable(pRenderable, true);
+	}
 
-			pRenderable->DrawModel( STUDIO_RENDER );
+	for (int i = 0; i < nRenderables; i++)
+	{
+		IClientRenderable *pRenderable = VRHandLayer_GetRenderable(i);
+		if (VRHandLayer_IsTranslucentRenderable(pRenderable))
+			VRHandLayer_DrawRenderable(pRenderable, true);
+	}
 
-			if (bWasNoDraw)
-				pEntity->AddEffects(EF_NODRAW);
-		}
+	for (int i = 0; i < nLateRenderables; i++)
+	{
+		IClientRenderable *pRenderable = VRHandLayer_GetLateRenderable(i);
+		if (VRHandLayer_IsTranslucentRenderable(pRenderable))
+			VRHandLayer_DrawRenderable(pRenderable, true, true);
 	}
 
 	// Stop writing stencil before particles so translucent effects
