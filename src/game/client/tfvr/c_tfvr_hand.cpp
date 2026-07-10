@@ -1876,6 +1876,9 @@ ConVar tfvr_smg_mag_extract_grip_threshold("tfvr_smg_mag_extract_grip_threshold"
 ConVar tfvr_twohand_debug("tfvr_twohand_debug", "0", FCVAR_CHEAT, "Show two-handed grip debug info");
 ConVar tfvr_huntsman_debug("tfvr_huntsman_debug", "0", FCVAR_CHEAT, "Show Huntsman VR arrow/nock debug overlays and logs");
 ConVar tfvr_huntsman_aim_min_pull("tfvr_huntsman_aim_min_pull", "5.0", FCVAR_ARCHIVE, "VR Huntsman: minimum draw-hand separation (inches) before two-hand aim rotation engages; prevents the bow spinning erratically right after nocking when the hands are close together");
+ConVar tfvr_huntsman_draw_target_forward("tfvr_huntsman_draw_target_forward", "2", FCVAR_ARCHIVE, "VR Huntsman: local forward/back offset applied to the draw-hand rotation target");
+ConVar tfvr_huntsman_draw_target_right("tfvr_huntsman_draw_target_right", "5", FCVAR_ARCHIVE, "VR Huntsman: local right/left offset applied to the draw-hand rotation target");
+ConVar tfvr_huntsman_draw_target_up("tfvr_huntsman_draw_target_up", "-2", FCVAR_ARCHIVE, "VR Huntsman: local up/down offset applied to the draw-hand rotation target");
 ConVar tfvr_pomson_grip_debug("tfvr_pomson_grip_debug", "0", FCVAR_CHEAT, "Show Pomson right-hand grip target/easing debug overlays");
 ConVar tfvr_shotgun_manual_reload_pose_blend_fraction("tfvr_shotgun_manual_reload_pose_blend_fraction", "0.35", FCVAR_ARCHIVE, "Fraction of pump-shotgun shell insert animation spent easing the offhand into the authored reload pose");
 ConVar tfvr_shotgun_manual_reload_pose_blend_out_time("tfvr_shotgun_manual_reload_pose_blend_out_time", "0.12", FCVAR_ARCHIVE, "Seconds spent easing the offhand out of the pump-shotgun shell reload pose");
@@ -4247,6 +4250,32 @@ void C_TFVRHand::Update()
 				// Use the support controller/grip point as the pull anchor. The
 				// visible hand pose anchors its arrow grip bone to this same point.
 				Vector supportGripPos = m_vecLastValidPosition;
+				if (m_pHandTracker)
+				{
+					Vector fingerBasePos;
+					QAngle fingerBaseAngles;
+					if (m_pHandTracker->GetHandJoint(IsLeftHand(), XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fingerBasePos, fingerBaseAngles))
+					{
+						supportGripPos = fingerBasePos;
+					}
+				}
+
+				const Vector vecTargetOffset(
+					tfvr_huntsman_draw_target_forward.GetFloat(),
+					tfvr_huntsman_draw_target_right.GetFloat(),
+					tfvr_huntsman_draw_target_up.GetFloat() );
+				if (vecTargetOffset != vec3_origin)
+				{
+					matrix3x4_t supportFrame;
+					AngleMatrix(m_angLastValidAngles, supportGripPos, supportFrame);
+					Vector vecForward, vecRight, vecUp;
+					MatrixGetColumn(supportFrame, 0, vecForward);
+					MatrixGetColumn(supportFrame, 1, vecRight);
+					MatrixGetColumn(supportFrame, 2, vecUp);
+					supportGripPos += vecForward * vecTargetOffset.x
+						+ vecRight * vecTargetOffset.y
+						+ vecUp * vecTargetOffset.z;
+				}
 
 				Vector weaponWristPos = pWeaponHand->GetAbsOrigin();
 				COpenXRHandTracker *pWeaponHandTracker = pWeaponHand->GetHandTracker();
@@ -6157,7 +6186,79 @@ bool C_TFVRHand::RefreshCurrentOffhandGripDirection(C_TFVRHand *pWeaponHand)
 
 	C_TFWeaponBase *pGripWeapon = pWeaponHand->GetHeldWeapon();
 	if (pGripWeapon && pGripWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
-		return false;
+	{
+		UpdateHandTransform();
+		pWeaponHand->UpdateHandTransform();
+
+		Vector weaponWristPos = pWeaponHand->GetAbsOrigin();
+		COpenXRHandTracker *pWeaponHandTracker = pWeaponHand->GetHandTracker();
+		if (pWeaponHandTracker)
+		{
+			Vector wristPos;
+			QAngle wristAngles;
+			if (pWeaponHandTracker->GetHandJoint(pWeaponHand->IsLeftHand(), XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
+			{
+				weaponWristPos = wristPos;
+			}
+		}
+
+		Vector supportGripPos = m_vecLastValidPosition;
+		if (m_pHandTracker)
+		{
+			Vector fingerBasePos;
+			QAngle fingerBaseAngles;
+			if (m_pHandTracker->GetHandJoint(IsLeftHand(), XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, fingerBasePos, fingerBaseAngles))
+			{
+				supportGripPos = fingerBasePos;
+			}
+		}
+
+		const Vector vecTargetOffset(
+			tfvr_huntsman_draw_target_forward.GetFloat(),
+			tfvr_huntsman_draw_target_right.GetFloat(),
+			tfvr_huntsman_draw_target_up.GetFloat() );
+		if (vecTargetOffset != vec3_origin)
+		{
+			matrix3x4_t supportFrame;
+			AngleMatrix(m_angLastValidAngles, supportGripPos, supportFrame);
+			Vector vecForward, vecRight, vecUp;
+			MatrixGetColumn(supportFrame, 0, vecForward);
+			MatrixGetColumn(supportFrame, 1, vecRight);
+			MatrixGetColumn(supportFrame, 2, vecUp);
+			supportGripPos += vecForward * vecTargetOffset.x
+				+ vecRight * vecTargetOffset.y
+				+ vecUp * vecTargetOffset.z;
+		}
+
+		Vector drawDirection = weaponWristPos - supportGripPos;
+		const float flDrawSeparation = drawDirection.Length();
+		if (flDrawSeparation <= tfvr_huntsman_aim_min_pull.GetFloat())
+			return false;
+
+		drawDirection /= flDrawSeparation;
+		if (TFVR_ShouldMirrorWeaponHand(pGripWeapon))
+		{
+			matrix3x4_t reflectFrame;
+			AngleMatrix(pWeaponHand->m_angLastValidAngles, vec3_origin, reflectFrame);
+			TFVR_ReflectVectorInControllerFrame(drawDirection, reflectFrame);
+			drawDirection.NormalizeInPlace();
+		}
+
+		Vector weaponWristUp(0, 0, 1);
+		if (pWeaponHandTracker)
+		{
+			Vector wristPos;
+			QAngle wristAngles;
+			if (pWeaponHandTracker->GetHandJoint(pWeaponHand->IsLeftHand(), XR_HAND_JOINT_WRIST_EXT, wristPos, wristAngles))
+			{
+				AngleVectors(wristAngles, nullptr, nullptr, &weaponWristUp);
+			}
+		}
+
+		m_vecOffhandGripForward = drawDirection;
+		m_vecOffhandGripUp = weaponWristUp;
+		return true;
+	}
 
 	UpdateHandTransform();
 	pWeaponHand->UpdateHandTransform();
