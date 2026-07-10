@@ -1286,6 +1286,7 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 	cmd->vrMagazineEject = g_pOpenXRManager->IsButtonPressed( "magazine_eject" );
 
 	// SMG two-hand extract flags from the off-hand extract state.
+	bool bSMGExtractSpawnFromOffhand = false;
 	if ( pSMG && pOffHand )
 	{
 		const bool bReleased = pOffHand->ConsumeSMGMagExtractReleased();
@@ -1295,15 +1296,44 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 		cmd->vrMagazineExtractRelease = bReleased || pOffHand->IsSMGMagExtractHeld()
 			|| pSMG->HasVRAmmoExtractHeld();
 		cmd->vrMagazineExtractDrop = bDrop;
+		bSMGExtractSpawnFromOffhand = bDrop || pOffHand->IsSMGMagExtractHeld() || pSMG->HasVRAmmoExtractHeld();
 	}
 
-	// Report the gun mag's exact world transform (bone-derived) so the server
-	// spawns the dropped physics mag right where the visual mag was, plus the
-	// animation-derived velocity for the initial push.
+	// Prefer the visible extracted mag pose, but reject stale bone/model poses
+	// that have drifted far from the mag pose implied by the live offhand target.
 	Vector vecMagPos;
 	QAngle angMag;
 	Vector vecEjectVel;
-	if ( pWeaponHand->GetPistolGunMagazineWorld( vecMagPos, angMag, vecEjectVel ) )
+	Vector vecOffhandTargetPos;
+	QAngle angOffhandTarget;
+	bool bGotOffhandTarget = bSMGExtractSpawnFromOffhand
+		&& pOffHand->GetCurrentHandTargetWorld( vecOffhandTargetPos, angOffhandTarget );
+	Vector vecOffhandMagPos;
+	QAngle angOffhandMag;
+	bool bGotOffhandMagPose = bGotOffhandTarget
+		&& pOffHand->GetManualReloadMagazinePoseFromHandTarget( pWeaponHand, vecOffhandTargetPos,
+			angOffhandTarget, vecOffhandMagPos, angOffhandMag, VRSMG_AmmoBoneName() );
+	bool bGotExtractMagPose = bSMGExtractSpawnFromOffhand
+		&& ( pOffHand->GetVisibleManualReloadMagazinePose( vecMagPos, angMag )
+			|| pOffHand->GetManualReloadMagazinePose( vecMagPos, angMag, VRSMG_AmmoBoneName() ) );
+	if ( bSMGExtractSpawnFromOffhand && bGotExtractMagPose && bGotOffhandMagPose
+		&& ( vecMagPos - vecOffhandMagPos ).LengthSqr() > Square( 18.0f ) )
+	{
+		vecMagPos = vecOffhandMagPos;
+		angMag = angOffhandMag;
+	}
+	if ( bSMGExtractSpawnFromOffhand && ( bGotExtractMagPose || bGotOffhandMagPose ) )
+	{
+		if ( !bGotExtractMagPose )
+		{
+			vecMagPos = vecOffhandMagPos;
+			angMag = angOffhandMag;
+		}
+		cmd->vrMagSpawnOrigin = vecMagPos;
+		cmd->vrMagSpawnAngles = angMag;
+		cmd->vrMagEjectVel = vec3_origin;
+	}
+	else if ( pWeaponHand->GetPistolGunMagazineWorld( vecMagPos, angMag, vecEjectVel ) )
 	{
 		cmd->vrMagSpawnOrigin = vecMagPos;
 		cmd->vrMagSpawnAngles = angMag;
@@ -1321,6 +1351,10 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 	cmd->vrMagazineHold = bHoldInput;
 
 	const bool bHasMagazineInHand = pPistol ? pPistol->HasVRMagazineInHand() : ( pSyringeGun ? pSyringeGun->HasVRAmmoInHand() : ( pCrossbow ? pCrossbow->HasVRAmmoInHand() : ( pSMG && ( pSMG->HasVRAmmoInHand() || pSMG->HasVRAmmoExtractHeld() || ( pOffHand && pOffHand->IsSMGMagExtractHeld() ) ) ) ) );
+	const bool bSMGExtractInputLocked = pSMG && pOffHand
+		&& ( pOffHand->IsSMGMagExtractActive()
+			|| ( pOffHand->ShouldBlockTwoHandForSMGMagExtract()
+				&& pOffHand->GetTwoHandBlendAmount() > 0.01f ) );
 	const bool bSMGExtractedMagInHand = pSMG && pOffHand
 		&& ( pOffHand->IsSMGMagExtractHeld() || pSMG->HasVRAmmoExtractHeld() );
 	if ( !bSMGExtractedMagInHand )
@@ -1380,13 +1414,17 @@ static void TFVR_UpdatePistolMagazineInCmd( CUserCmd *cmd )
 			// Don't pull ammo while the offhand is actively two-hand gripping the weapon.
 			if ( !bHasMagazineInHand && bHoldInput && !pOffHand->IsOffhandGripActive()
 				&& ( bInBackpack || bInChestZone ) )
+			{
 				cmd->vrMagazinePull = true;
+				if ( pSMG )
+					pOffHand->ClearSMGMagExtractState();
+			}
 		}
 	}
 
 	// Insert proximity: held mag's vm_weapon_bone against the magwell target
 	// sampled from p_reload on the weapon hand.
-	if ( bHasMagazineInHand && bIsMagOut && !bIsMagInserting )
+	if ( bHasMagazineInHand && bIsMagOut && !bIsMagInserting && !bSMGExtractInputLocked )
 	{
 		Vector insertProbePos;
 		Vector insertTargetPos;
@@ -2583,10 +2621,30 @@ void CVRInput::ProcessSMGMagThrowGesture( CUserCmd *cmd )
 		{
 			Vector vecMagPos;
 			QAngle angMag;
-			const bool bGotMagPose = pOffHand->GetManualReloadMagazinePose( vecMagPos, angMag, VRSMG_AmmoBoneName() );
+			Vector vecOffhandTargetPos;
+			QAngle angOffhandTarget;
+			bool bGotOffhandTarget = pOffHand->GetCurrentHandTargetWorld( vecOffhandTargetPos, angOffhandTarget );
+			Vector vecOffhandMagPos;
+			QAngle angOffhandMag;
+			bool bGotOffhandMagPose = bGotOffhandTarget
+				&& pOffHand->GetManualReloadMagazinePoseFromHandTarget( pWeaponHand, vecOffhandTargetPos,
+					angOffhandTarget, vecOffhandMagPos, angOffhandMag, VRSMG_AmmoBoneName() );
+			const bool bGotMagPose = pOffHand->GetVisibleManualReloadMagazinePose( vecMagPos, angMag )
+				|| pOffHand->GetManualReloadMagazinePose( vecMagPos, angMag, VRSMG_AmmoBoneName() );
+			if ( bGotMagPose && bGotOffhandMagPose
+				&& ( vecMagPos - vecOffhandMagPos ).LengthSqr() > Square( 18.0f ) )
+			{
+				vecMagPos = vecOffhandMagPos;
+				angMag = angOffhandMag;
+			}
+			else if ( !bGotMagPose && bGotOffhandMagPose )
+			{
+				vecMagPos = vecOffhandMagPos;
+				angMag = angOffhandMag;
+			}
 			cmd->vrMagThrowVelocity = m_magThrowTracker.GetAveragedVelocity();
-			cmd->vrMagThrowOrigin = bGotMagPose ? ( vecMagPos - pPlayer->GetAbsOrigin() ) : ( bPoseValid ? vecHandPos : vec3_origin );
-			cmd->vrMagThrowAngles = bGotMagPose ? angMag : m_magThrowTracker.GetNewestAngles();
+			cmd->vrMagThrowOrigin = ( bGotMagPose || bGotOffhandMagPose ) ? ( vecMagPos - pPlayer->GetAbsOrigin() ) : ( bPoseValid ? vecHandPos : vec3_origin );
+			cmd->vrMagThrowAngles = ( bGotMagPose || bGotOffhandMagPose ) ? angMag : m_magThrowTracker.GetNewestAngles();
 			cmd->vrMagThrowAngVel = m_magThrowTracker.GetAveragedAngularVelocity();
 
 			m_bMagThrowHolding = false;

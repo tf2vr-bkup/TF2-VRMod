@@ -430,11 +430,11 @@ public:
 	// SMG two-hand extract: off-hand is sliding/holding the seated mag; server
 	// must not anim-free / spawn the physics mag until extract release + throw.
 	bool	vrMagazineExtractActive;
-	bool	vrMagazineExtractRelease; // underneath gate cleared — hold as throwable
+	bool	vrMagazineExtractRelease; // extracted mag should be held as throwable
 	bool	vrMagazineExtractDrop;    // grip released before underneath — drop prop now
-	// World transform of the gun's magazine mesh (bone-derived on the client)
-	// so the server can spawn the dropped physics mag exactly where the
-	// visual one was. Zero when no mag is seated/ejecting.
+	// World transform used when spawning a dropped manual-reload magazine.
+	// The client prefers the visible mag pose and may fall back to a mag pose
+	// computed from the live offhand target. Zero when no mag is active.
 	Vector	vrMagSpawnOrigin;
 	QAngle	vrMagSpawnAngles;
 	// World-space velocity of the mag in the eject animation (one-frame

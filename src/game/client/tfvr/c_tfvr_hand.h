@@ -238,7 +238,7 @@ public:
 	bool GetSMGMagExtractVisualTarget( C_TFVRHand *pWeaponHand, Vector &outPos, QAngle &outAngles );
 	bool GetCurrentHandTargetWorld( Vector &outPos, QAngle &outAngles );
 	bool GetSMGWeaponBoneWorld( matrix3x4_t &outTransform );
-	bool GetSMGMagGripWorld( Vector &outPos, QAngle &outAngles );
+	bool GetSMGMagGripWorld( Vector &outPos, QAngle &outAngles, bool bUseAnimatedCycle = true );
 	bool GetSMGMagHandTargetWorld( C_TFVRHand *pWeaponHand, const Vector &magPos, const QAngle &magAngles, Vector &outPos, QAngle &outAngles );
 	void ClearSMGMagExtractState();
 	void UpdateSMGMagExtract( C_TFVRHand *pWeaponHand, C_TFWeaponBase *pWeapon, bool bGripHeld );
@@ -452,6 +452,9 @@ public:
 	bool GetShotgunManualReloadShellPosition( Vector &outPos, bool bUseHeavyShellBone = false );
 	bool GetManualReloadMagazinePosition( Vector &outPos, const char *pszBoneName );
 	bool GetManualReloadMagazinePose( Vector &outPos, QAngle &outAngles, const char *pszBoneName );
+	bool GetManualReloadMagazinePoseFromHandTarget( C_TFVRHand *pWeaponHand, const Vector &handPos,
+		const QAngle &handAngles, Vector &outPos, QAngle &outAngles, const char *pszBoneName );
+	bool GetVisibleManualReloadMagazinePose( Vector &outPos, QAngle &outAngles ) const;
 	bool GetPistolManualReloadTarget( Vector &outPos, QAngle &outAngles );
 	bool GetPistolMagazineInsertTarget( Vector &outPos );
 	bool GetRocketManualReloadTarget( Vector &outPos, QAngle &outAngles );

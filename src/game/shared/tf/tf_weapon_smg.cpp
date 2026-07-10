@@ -560,12 +560,18 @@ void CTFSMG::VRSMGAmmoPostFrame()
 
 	if ( m_bVRAmmoOut && m_iVRAmmoPhase == VR_SMG_AMMO_PHASE_IDLE && m_iClip1 > 0 )
 		m_bVRAmmoOut = false;
+	if ( m_iVRAmmoPhase == VR_SMG_AMMO_PHASE_IDLE && m_iClip1 > 0
+		&& !m_bVRAmmoOut && !m_bVRAmmoHeld && !m_bVRAmmoExtractHeld && m_iVRAmmoHeldCount >= 0 )
+	{
+		m_iVRAmmoHeldCount = -1;
+		m_bVRAmmoHeldCountRefilled = false;
+	}
 
 	const CUserCmd *pCmd = pOwner->GetCurrentUserCommand();
 	const bool bExtractActive = pCmd && pCmd->vrMagazineExtractActive;
 	const bool bExtractRelease = pCmd && pCmd->vrMagazineExtractRelease;
 	const bool bExtractDrop = pCmd && pCmd->vrMagazineExtractDrop;
-	const bool bMagThrow = pCmd && pCmd->vrMagThrowVelocity != vec3_origin;
+	const bool bMagThrow = pCmd && ( pCmd->vrMagThrowVelocity != vec3_origin || pCmd->vrMagThrowOrigin != vec3_origin );
 
 	if ( pCmd && pCmd->vrMagazineInsert && m_bVRAmmoHeld && m_bVRAmmoOut && m_iVRAmmoHeldCount >= 0 )
 	{
@@ -611,6 +617,8 @@ void CTFSMG::VRSMGAmmoPostFrame()
 		else if ( !m_bVRAmmoOut && flProgress >= flAmmoFreeProgress )
 		{
 			m_bVRAmmoOut = true;
+			m_iVRAmmoHeldCount = -1;
+			m_bVRAmmoHeldCountRefilled = false;
 #ifdef GAME_DLL
 			if ( !m_bVRAmmoPhysSpawned )
 			{
@@ -697,6 +705,7 @@ void CTFSMG::VRSMGAmmoPostFrame()
 	if ( pCmd->vrMagazinePull && CanStartVRAmmoPull() )
 	{
 		m_bVRAmmoHeld = true;
+		m_bVRAmmoExtractHeld = false;
 		m_iVRAmmoHeldCount = -1;
 		m_bVRAmmoHeldCountRefilled = false;
 #ifdef CLIENT_DLL
