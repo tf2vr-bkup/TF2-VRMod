@@ -65,6 +65,64 @@ static bool TFVR_ValidateHandRenderable(C_BaseAnimating *pRenderable, const char
 static void TFVR_ReflectBonesInControllerFrame(matrix3x4_t *pBones, int nBoneCount, const matrix3x4_t &controllerFrame);
 static void SafeQuaternionSlerp(const Quaternion &from, const Quaternion &to, float t, Quaternion &result);
 
+static void TFVR_SyncWeaponParticleEffects(C_BaseAnimating *pTarget, C_TFWeaponBase *pSourceWeapon)
+{
+	if (!pTarget || !pSourceWeapon)
+		return;
+
+	CUtlVector<const attachedparticlesystem_t *> vecParticleSystems;
+	pSourceWeapon->GetEconParticleSystems(&vecParticleSystems);
+	if (vecParticleSystems.Count() == 0)
+		return;
+
+	pTarget->RemoveEffects(EF_BONEMERGE_FASTCULL);
+
+	FOR_EACH_VEC(vecParticleSystems, i)
+	{
+		const attachedparticlesystem_t *pSystem = vecParticleSystems[i];
+		if (!pSystem || !pSystem->pszSystemName || !pSystem->pszSystemName[0])
+			continue;
+
+		// Custom type particles are handled by individual weapon code.
+		if (pSystem->iCustomType)
+			continue;
+
+		if (g_pParticleSystemMgr->FindParticleSystem(pSystem->pszSystemName) == NULL)
+			continue;
+
+		const char *pszAttachmentName = pSystem->pszControlPoints[0];
+		int iAttachment = INVALID_PARTICLE_ATTACHMENT;
+		if (pszAttachmentName && pszAttachmentName[0])
+			iAttachment = pTarget->LookupAttachment(pszAttachmentName);
+
+		CNewParticleEffect *pEffect = NULL;
+		if (iAttachment != INVALID_PARTICLE_ATTACHMENT)
+		{
+			pEffect = pTarget->ParticleProp()->Create(pSystem->pszSystemName, PATTACH_POINT_FOLLOW, pszAttachmentName);
+		}
+		else if (pSystem->bFollowRootBone)
+		{
+			pEffect = pTarget->ParticleProp()->Create(pSystem->pszSystemName, PATTACH_ROOTBONE_FOLLOW);
+		}
+		else
+		{
+			pEffect = pTarget->ParticleProp()->Create(pSystem->pszSystemName, PATTACH_ABSORIGIN_FOLLOW);
+		}
+
+		if (pEffect)
+		{
+			for (int j = 1; j < ARRAYSIZE(pSystem->pszControlPoints); ++j)
+			{
+				const char *pszControlPointName = pSystem->pszControlPoints[j];
+				if (pszControlPointName && pszControlPointName[0] != '\0')
+				{
+					pTarget->ParticleProp()->AddControlPoint(pEffect, j, pTarget, PATTACH_POINT_FOLLOW, pszControlPointName);
+				}
+			}
+		}
+	}
+}
+
 static bool TFVR_IsManualRocketLauncherWeaponID(int iWeaponID)
 {
 	return iWeaponID == TF_WEAPON_ROCKETLAUNCHER || iWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT;
@@ -1416,69 +1474,7 @@ public:
 	void SyncParticleEffects()
 	{
 		C_TFWeaponBase *pSourceWeapon = m_hSourceWeapon.Get();
-		if (!pSourceWeapon)
-			return;
-
-		// Get the particle systems from the source weapon
-		CUtlVector<const attachedparticlesystem_t *> vecParticleSystems;
-		pSourceWeapon->GetEconParticleSystems(&vecParticleSystems);
-
-		if (vecParticleSystems.Count() == 0)
-			return;
-
-		// We can't have fastcull on if we want particles attached to us
-		RemoveEffects(EF_BONEMERGE_FASTCULL);
-
-		FOR_EACH_VEC(vecParticleSystems, i)
-		{
-			const attachedparticlesystem_t *pSystem = vecParticleSystems[i];
-			if (!pSystem || !pSystem->pszSystemName || !pSystem->pszSystemName[0])
-				continue;
-
-			// Skip custom type particles (weapons handle them in custom ways)
-			if (pSystem->iCustomType)
-				continue;
-
-			// Check if this particle system exists
-			if (g_pParticleSystemMgr->FindParticleSystem(pSystem->pszSystemName) == NULL)
-				continue;
-
-			// Get attachment point
-			const char *pszAttachmentName = pSystem->pszControlPoints[0];
-			int iAttachment = INVALID_PARTICLE_ATTACHMENT;
-			if (pszAttachmentName && pszAttachmentName[0])
-			{
-				iAttachment = LookupAttachment(pszAttachmentName);
-			}
-
-			// Create the particle effect
-			CNewParticleEffect *pEffect = NULL;
-			if (iAttachment != INVALID_PARTICLE_ATTACHMENT)
-			{
-				pEffect = ParticleProp()->Create(pSystem->pszSystemName, PATTACH_POINT_FOLLOW, pszAttachmentName);
-			}
-			else if (pSystem->bFollowRootBone)
-			{
-				pEffect = ParticleProp()->Create(pSystem->pszSystemName, PATTACH_ROOTBONE_FOLLOW);
-			}
-			else
-			{
-				pEffect = ParticleProp()->Create(pSystem->pszSystemName, PATTACH_ABSORIGIN_FOLLOW);
-			}
-
-			if (pEffect)
-			{
-				// Add additional control points if defined
-				for (int j = 1; j < ARRAYSIZE(pSystem->pszControlPoints); ++j)
-				{
-					const char *pszControlPointName = pSystem->pszControlPoints[j];
-					if (pszControlPointName && pszControlPointName[0] != '\0')
-					{
-						ParticleProp()->AddControlPoint(pEffect, j, this, PATTACH_POINT_FOLLOW, pszControlPointName);
-					}
-				}
-			}
-		}
+		TFVR_SyncWeaponParticleEffects(this, pSourceWeapon);
 	}
 
 	// Stop all particle effects on this render weapon
@@ -1735,6 +1731,142 @@ C_TFPlayer *GetVRRenderWeaponOwner( CBaseEntity *pEntity )
 		return dynamic_cast<C_TFPlayer*>( pRenderWeapon->GetOwnerViaInterface() );
 	return NULL;
 }
+
+//-----------------------------------------------------------------------------
+// Purpose: Standalone magazine/ammo visual for manual reload weapons.
+//          It is not an econ entity, so it delegates material overrides,
+//          owner lookup, and weapon particles back to the source weapon.
+//-----------------------------------------------------------------------------
+class C_VRMagazineModel : public C_BaseAnimating, public IHasOwner
+{
+	DECLARE_CLASS(C_VRMagazineModel, C_BaseAnimating);
+
+public:
+	C_VRMagazineModel()
+		: m_hOwnerPlayer(NULL), m_hSourceWeapon(NULL), m_bParticleEffectsSynced(false),
+		  m_pCritBoostEffect(NULL), m_bCritBoostActive(false)
+	{
+	}
+
+	void SetOwnerPlayer(C_TFPlayer *pPlayer) { m_hOwnerPlayer = pPlayer; }
+	void SetSourceWeapon(C_TFWeaponBase *pWeapon)
+	{
+		if (m_hSourceWeapon.Get() == pWeapon)
+			return;
+
+		StopWeaponEffects();
+		m_hSourceWeapon = pWeapon;
+	}
+
+	C_TFWeaponBase *GetSourceWeapon() const { return m_hSourceWeapon.Get(); }
+
+	virtual CBaseEntity *GetOwnerViaInterface(void) OVERRIDE
+	{
+		return m_hOwnerPlayer.Get();
+	}
+
+	virtual IMaterial *GetEconWeaponMaterialOverride(int iTeam) OVERRIDE
+	{
+		C_TFWeaponBase *pWeapon = m_hSourceWeapon.Get();
+		if (pWeapon)
+			return pWeapon->GetEconWeaponMaterialOverride(pWeapon->GetTeamNumber());
+		return NULL;
+	}
+
+	void SyncWeaponEffects()
+	{
+		if (m_bParticleEffectsSynced)
+			return;
+
+		C_TFWeaponBase *pWeapon = m_hSourceWeapon.Get();
+		if (!pWeapon)
+			return;
+
+		TFVR_SyncWeaponParticleEffects(this, pWeapon);
+		m_bParticleEffectsSynced = true;
+	}
+
+	void StopWeaponEffects()
+	{
+		ParticleProp()->StopEmission();
+		if (m_pCritBoostEffect.IsValid())
+		{
+			m_pCritBoostEffect->StopEmission();
+			m_pCritBoostEffect = NULL;
+		}
+		m_bParticleEffectsSynced = false;
+		m_bCritBoostActive = false;
+	}
+
+	void UpdateCritBoostEffect()
+	{
+		C_TFPlayer *pPlayer = m_hOwnerPlayer.Get();
+		C_TFWeaponBase *pWeapon = m_hSourceWeapon.Get();
+		if (!pPlayer || !pWeapon)
+		{
+			if (m_pCritBoostEffect.IsValid())
+			{
+				m_pCritBoostEffect->StopEmission();
+				m_pCritBoostEffect = NULL;
+			}
+			m_bCritBoostActive = false;
+			return;
+		}
+
+		bool bShouldDisplay = pPlayer->m_Shared.IsCritBoosted()
+			|| pPlayer->m_Shared.InCond(TF_COND_ENERGY_BUFF)
+			|| pPlayer->m_Shared.InCond(TF_COND_SNIPERCHARGE_RAGE_BUFF);
+		bShouldDisplay &= pWeapon->CanBeCritBoosted();
+		bShouldDisplay &= !pPlayer->m_Shared.IsStealthed();
+
+		if (bShouldDisplay && m_bCritBoostActive && m_pCritBoostEffect.IsValid())
+			return;
+
+		if (bShouldDisplay == m_bCritBoostActive)
+			return;
+
+		m_bCritBoostActive = bShouldDisplay;
+		if (!bShouldDisplay)
+		{
+			if (m_pCritBoostEffect.IsValid())
+			{
+				m_pCritBoostEffect->StopEmission();
+				m_pCritBoostEffect = NULL;
+			}
+			return;
+		}
+
+		const char *pEffectName = (pPlayer->GetTeamNumber() == TF_TEAM_RED)
+			? "critgun_weaponmodel_red"
+			: "critgun_weaponmodel_blu";
+		m_pCritBoostEffect = ParticleProp()->Create(pEffectName, PATTACH_ABSORIGIN_FOLLOW);
+	}
+
+	virtual int DrawModel(int flags) OVERRIDE
+	{
+		UpdateCritBoostEffect();
+
+		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+		const bool bInvuln = pOwner && pOwner->m_Shared.IsInvulnerable();
+
+		if (bInvuln && (flags & STUDIO_RENDER))
+			modelrender->ForcedMaterialOverride(*pOwner->GetInvulnMaterialRef());
+
+		int ret = BaseClass::DrawModel(flags);
+
+		if (bInvuln && (flags & STUDIO_RENDER))
+			modelrender->ForcedMaterialOverride(NULL);
+
+		return ret;
+	}
+
+private:
+	CHandle<C_TFPlayer> m_hOwnerPlayer;
+	CHandle<C_TFWeaponBase> m_hSourceWeapon;
+	bool m_bParticleEffectsSynced;
+	CSmartPtr<CNewParticleEffect> m_pCritBoostEffect;
+	bool m_bCritBoostActive;
+};
 
 //-----------------------------------------------------------------------------
 // Purpose: Standalone VGUI panel for the VR spy watch cloak meter.
@@ -15766,6 +15898,19 @@ int C_TFVRHand::DrawModel(int flags)
 			if (TFVR_ValidateHandRenderable(pShield, "left hand shield"))
 				VRHandLayer_AddRenderable(pShield);
 		}
+		if (m_hPistolMagazine.Get())
+		{
+			C_BaseAnimating *pMag = m_hPistolMagazine.Get();
+			if (TFVR_ValidateHandRenderable(pMag, "pistol magazine"))
+			{
+				C_VRMagazineModel *pVRMag = dynamic_cast<C_VRMagazineModel *>(pMag);
+				if (pVRMag)
+					pVRMag->UpdateCritBoostEffect();
+
+				VRHandLayer_AddLateRenderable(pMag);
+				VRHandLayer_AddParticleOwner(pMag);
+			}
+		}
 
 		return 0;
 	}
@@ -20367,14 +20512,24 @@ bool C_TFVRHand::EnsurePistolMagazineModel()
 		const char *pszCurrentModel = modelinfo && m_hPistolMagazine->GetModel()
 			? modelinfo->GetModelName(m_hPistolMagazine->GetModel()) : NULL;
 		if (pszCurrentModel && !Q_stricmp(pszCurrentModel, pszMagModel))
+		{
+			C_VRMagazineModel *pVRMag = dynamic_cast<C_VRMagazineModel *>(m_hPistolMagazine.Get());
+			if (pVRMag)
+			{
+				pVRMag->SetOwnerPlayer(GetOwnerPlayer());
+				pVRMag->SetSourceWeapon(TFVR_GetManualReloadMagazineWeapon(pMagWeapon));
+				pVRMag->SyncWeaponEffects();
+				pVRMag->UpdateCritBoostEffect();
+			}
 			return true;
+		}
 
 		RemovePistolMagazineModel();
 	}
 
 	CBaseEntity::PrecacheModel(pszMagModel);
 
-	C_BaseAnimating *pMag = new C_BaseAnimating();
+	C_VRMagazineModel *pMag = new C_VRMagazineModel();
 	if (!pMag)
 		return false;
 
@@ -20391,7 +20546,11 @@ bool C_TFVRHand::EnsurePistolMagazineModel()
 
 	C_TFPlayer *pOwner = GetOwnerPlayer();
 	if (pOwner)
+	{
 		pMag->SetOwnerEntity(pOwner);
+		pMag->SetOwnerPlayer(pOwner);
+	}
+	pMag->SetSourceWeapon(TFVR_GetManualReloadMagazineWeapon(pMagWeapon));
 
 	pMag->AddEffects(EF_NODRAW);
 	pMag->AddEffects(EF_NOINTERP);
@@ -20421,6 +20580,8 @@ bool C_TFVRHand::EnsurePistolMagazineModel()
 	}
 
 	m_hPistolMagazine = pMag;
+	pMag->SyncWeaponEffects();
+	pMag->UpdateCritBoostEffect();
 	return true;
 }
 
@@ -20431,6 +20592,10 @@ void C_TFVRHand::RemovePistolMagazineModel()
 {
 	if (m_hPistolMagazine.Get())
 	{
+		C_VRMagazineModel *pMag = dynamic_cast<C_VRMagazineModel *>(m_hPistolMagazine.Get());
+		if (pMag)
+			pMag->StopWeaponEffects();
+
 		m_hPistolMagazine->Release();
 		m_hPistolMagazine = NULL;
 	}
