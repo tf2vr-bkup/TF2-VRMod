@@ -17,6 +17,7 @@
 #include <vgui_controls/EditablePanel.h>
 #include <vgui_controls/ProgressBar.h>
 #include "tf_weaponbase.h"
+#include "tf_weapon_compound_bow.h"
 #include "c_tf_projectile_arrow.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -227,13 +228,36 @@ void CHudBowChargeMeter::OnTick( void )
 		return;
 
 	CTFWeaponBase *pWpn = pPlayer->GetActiveTFWeapon();
-	ITFChargeUpWeapon *pChargeupWeapon = dynamic_cast< ITFChargeUpWeapon *>( pWpn );
-
-	if ( !pWpn || !pChargeupWeapon )
+	if ( !pWpn )
 		return;
 
 	if ( m_pChargeMeter )
 	{
+		if ( pWpn->GetWeaponID() == TF_WEAPON_COMPOUND_BOW )
+		{
+			CTFCompoundBow *pBow = static_cast< CTFCompoundBow * >( pWpn );
+			float flPercentCharged = 0.0f;
+			if ( pBow->IsUsingVRBowManualReload() )
+			{
+				flPercentCharged = clamp( pBow->GetVRBowArrowPull(), 0.0f, 1.0f );
+			}
+			else
+			{
+				const float flChargeMaxTime = pBow->GetChargeMaxTime();
+				flPercentCharged = ( flChargeMaxTime > 0.0f )
+					? clamp( pBow->GetCurrentCharge() / flChargeMaxTime, 0.0f, 1.0f )
+					: 0.0f;
+			}
+
+			m_pChargeMeter->SetProgress( flPercentCharged );
+			SetDialogVariable( "charge", (int)( flPercentCharged * 100.0f ) );
+			return;
+		}
+
+		ITFChargeUpWeapon *pChargeupWeapon = dynamic_cast< ITFChargeUpWeapon *>( pWpn );
+		if ( !pChargeupWeapon )
+			return;
+
 		float flChargeMaxTime = pChargeupWeapon->GetChargeMaxTime();
 
 		if ( flChargeMaxTime != 0 )

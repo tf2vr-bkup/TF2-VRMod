@@ -88,6 +88,9 @@ bool CHudDemomanChargeMeter::ShouldDraw( void )
 	if ( !pWpn || !pChargeupWeapon || !pChargeupWeapon->CanCharge() )
 		return false;
 
+	if ( pWpn->GetWeaponID() == TF_WEAPON_COMPOUND_BOW )
+		return false;
+
 
 	if ( pPlayer->m_Shared.InCond( TF_COND_HALLOWEEN_GHOST_MODE ) )
 		return false;
@@ -116,6 +119,9 @@ void CHudDemomanChargeMeter::OnTick( void )
 
 	ITFChargeUpWeapon *pChargeupWeapon = dynamic_cast< ITFChargeUpWeapon *>( pWpn );
 	if ( !pWpn || !pChargeupWeapon || !pChargeupWeapon->CanCharge() )
+		return;
+
+	if ( pWpn->GetWeaponID() == TF_WEAPON_COMPOUND_BOW )
 		return;
 
 	if ( m_pChargeMeter )

@@ -79,6 +79,7 @@ public:
 	bool			IsVRBowArrowNocked() const { return m_bVRBowArrowNocked; }
 	bool			IsVRBowArrowPoseActive() const { return m_bVRBowArrowHeld || m_bVRBowArrowNockActive || m_bVRBowArrowNocked; }
 	float			GetVRBowArrowNockProgress() const;
+	float			GetVRBowArrowPull() const { return m_flVRBowArrowPull; }
 	float			GetVRBowChargeBeginTime() const { return GetInternalChargeBeginTime(); }
 	bool			IsUsingVRBowManualReload() { return ShouldUseVRBowManualReload(); }
 

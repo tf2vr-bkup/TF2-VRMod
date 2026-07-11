@@ -6904,9 +6904,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 				if (pBow->IsVRBowArrowNocking())
 				{
 					seqToSample = m_iShotgunManualReloadSequence;
-					cycleToSample = Lerp(TFVR_GetBowNockVisualProgress(pBow),
-						m_flShotgunManualReloadHoldCycle,
-						m_flShotgunManualReloadCommitCycle);
+					cycleToSample = m_flShotgunManualReloadCommitCycle;
 				}
 				else if (pBow->IsVRBowArrowNocked())
 				{
@@ -7152,7 +7150,7 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 							targetBones[nTargetBones++] = iHandBone;
 
 						int iArrowBone = LookupBone("weapon_bone_4");
-						if (iArrowBone >= 0 && iHandBone < 0)
+						if (iArrowBone >= 0)
 							targetBones[nTargetBones++] = iArrowBone;
 
 						TFVR_BlendPoseBonesRelativeToReference(pStudioHdr, numBones,
@@ -8639,6 +8637,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					{
 						if (bSMGExtractLocalPose)
 							flCycle = IsSMGMagExtractActive() ? pLeftHand->m_flPistolEjectStartCycle : pLeftHand->m_flPistolPauseCycle;
+						else if (pBow && pBow->IsVRBowArrowNocking())
+							flCycle = pLeftHand->m_flShotgunManualReloadCommitCycle;
 						else
 							flCycle = (pBow && pBow->IsVRBowArrowNocked() && pLeftHand->IsPlayingChargeAnim())
 								? pLeftHand->GetCycle()
@@ -8892,6 +8892,8 @@ bool C_TFVRHand::SetupBones(matrix3x4_t *pBoneToWorldOut, int nMaxBones, int bon
 					{
 						if (bSMGExtractLocalPose)
 							flCycle = IsSMGMagExtractActive() ? pRightHand->m_flPistolEjectStartCycle : pRightHand->m_flPistolPauseCycle;
+						else if (pBow && pBow->IsVRBowArrowNocking())
+							flCycle = pRightHand->m_flShotgunManualReloadCommitCycle;
 						else
 							flCycle = (pBow && pBow->IsVRBowArrowNocked() && pRightHand->IsPlayingChargeAnim())
 								? pRightHand->GetCycle()
@@ -11833,19 +11835,12 @@ bool C_TFVRHand::GetBowManualReloadTarget( Vector &outPos, QAngle &outAngles, ma
 		iWeaponBone < 0 || iWeaponBone >= numBones || iWeaponBone >= MAXSTUDIOBONES )
 		return false;
 
-	// Sample the pose that the bow hand is actually showing so the arrow nock
-	// tracks the pull. While nocking, lerp the draw pose; once nocked, sample
-	// the live charge animation (this is read-only for the visual attach and no
-	// longer feeds the aim solve, so there is no feedback loop).
+	// Sample the final nocked target while the hand eases in. Using intermediate
+	// bw_draw frames as the target makes the hand chase a tilted pose and then
+	// snap when the arrow becomes fully nocked.
 	int iSequence = m_iShotgunManualReloadSequence;
 	float flCycle = m_flShotgunManualReloadCommitCycle;
-	if ( pBow->IsVRBowArrowNocking() )
-	{
-		flCycle = Lerp( TFVR_GetBowNockVisualProgress( pBow ),
-			m_flShotgunManualReloadHoldCycle,
-			m_flShotgunManualReloadCommitCycle );
-	}
-	else if ( pBow->IsVRBowArrowNocked() && m_bPlayingChargeAnim && GetSequence() >= 0 )
+	if ( pBow->IsVRBowArrowNocked() && m_bPlayingChargeAnim && GetSequence() >= 0 )
 	{
 		iSequence = GetSequence();
 		flCycle = GetCycle();
@@ -15063,9 +15058,7 @@ void C_TFVRHand::ApplyWeaponPose(matrix3x4_t *pBoneToWorldOut, int nMaxBones, C_
 		if (pBow->IsVRBowArrowNocking())
 		{
 			sequence = m_iShotgunManualReloadSequence;
-			cycle = Lerp(TFVR_GetBowNockVisualProgress(pBow),
-				m_flShotgunManualReloadHoldCycle,
-				m_flShotgunManualReloadCommitCycle);
+			cycle = m_flShotgunManualReloadCommitCycle;
 			usedName = "bow_draw";
 		}
 		else if (pBow->IsVRBowArrowNocked())
@@ -16542,18 +16535,30 @@ void C_TFVRHand::EquipWeapon(C_TFWeaponBase *pWeapon)
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 		{
-			// The nocked/draw-hand attach pose comes from bw_charge (the arrow
-			// pull-back pose), NOT bw_draw. bw_draw scrubs a full drawing motion
-			// that sweeps/dips the bow, which caused a visible dip at nock. We
-			// drive the actual pull with the controller/charge instead, so the
-			// nock pose is simply bw_charge frame 0 (arrow nocked, unpulled) and
-			// the charge animation scrubs the pull-back from there.
-			m_iShotgunManualReloadSequence = LookupSequence("bw_charge");
+			// Use the authored fully-nocked bw_draw frame as the manual reload
+			// target. The nock progress controls the blend toward this single
+			// frame; it should not scrub through the earlier tilted draw frames.
+			const float flBowDrawNockFrame = 35.0f;
+			m_iShotgunManualReloadSequence = LookupSequence("bw_draw");
 			m_flShotgunManualReloadHoldCycle = 0.0f;
 			m_flShotgunManualReloadCommitCycle = 0.0f;
+			if (m_iShotgunManualReloadSequence >= 0)
+			{
+				CStudioHdr *pHdr = GetModelPtr();
+				if (pHdr)
+				{
+					float poseParams[MAXSTUDIOPOSEPARAM] = {};
+					int maxFrame = Studio_MaxFrame(pHdr, m_iShotgunManualReloadSequence, poseParams);
+					if (maxFrame > 0)
+					{
+						m_flShotgunManualReloadCommitCycle = clamp(flBowDrawNockFrame / (float)maxFrame, 0.0f, 1.0f);
+						m_flShotgunManualReloadHoldCycle = m_flShotgunManualReloadCommitCycle;
+					}
+				}
+			}
 
-			DevMsg("VR: Bow manual arrow sequence 'bw_charge': seq=%d nock pose at frame 0 on '%s'\n",
-				m_iShotgunManualReloadSequence, GetModelName());
+			DevMsg("VR: Bow manual arrow sequence 'bw_draw': seq=%d nock frame %.1f cycle %.3f on '%s'\n",
+				m_iShotgunManualReloadSequence, flBowDrawNockFrame, m_flShotgunManualReloadCommitCycle, GetModelName());
 		}
 		else if (VRPistol_IsManualReloadWeaponID(pWeapon->GetWeaponID()))
 		{
