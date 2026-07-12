@@ -5,6 +5,7 @@
 //=============================================================================
 
 #include "cbase.h"
+#include "physics.h"
 #include "tfvr_weapon_magazine.h"
 #include "tf/tf_player.h"
 #include "tfvr/tfvr_weapon_gun.h"
@@ -33,6 +34,10 @@ END_DATADESC()
 
 LINK_ENTITY_TO_CLASS( tfvr_weapon_magazine, CTFVRWeaponMagazine );
 
+static const char *TFVR_WEAPON_MAGAZINE_DEFAULT_MODEL = "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+static const Vector TFVR_WEAPON_MAGAZINE_FALLBACK_MINS( -2.0f, -2.0f, -2.0f );
+static const Vector TFVR_WEAPON_MAGAZINE_FALLBACK_MAXS( 2.0f, 2.0f, 2.0f );
+
 //-----------------------------------------------------------------------------
 // Purpose: Constructor
 //-----------------------------------------------------------------------------
@@ -58,25 +63,50 @@ CTFVRWeaponMagazine::~CTFVRWeaponMagazine()
 //-----------------------------------------------------------------------------
 void CTFVRWeaponMagazine::Spawn()
 {
-	Precache();
-
 	const char *pszModel = m_iszMagazineModel != NULL_STRING
 		? STRING( m_iszMagazineModel )
-		: "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl";
+		: TFVR_WEAPON_MAGAZINE_DEFAULT_MODEL;
+
+	// CPhysicsProp's base precache path expects the normal model name key to
+	// already be populated. Runtime-spawned magazines set it explicitly here.
+	SetModelName( AllocPooledString( pszModel ) );
+	Precache();
 	SetModel( pszModel );
-	
-	BaseClass::Spawn();
-	
-	// Enable physics
-	SetSolid( SOLID_VPHYSICS );
-	SetMoveType( MOVETYPE_VPHYSICS );
-	
-	// Create physics object
-	VPhysicsInitNormal( SOLID_VPHYSICS, 0, false );
-	
-	// Set collision group
+
+	CBaseAnimating::Spawn();
+
 	SetCollisionGroup( COLLISION_GROUP_WEAPON );
-	
+
+	IPhysicsObject *pPhys = VPhysicsInitNormal( SOLID_VPHYSICS, 0, false );
+	if ( !pPhys )
+	{
+		Vector vecMins = CollisionProp()->OBBMins();
+		Vector vecMaxs = CollisionProp()->OBBMaxs();
+		if ( vecMins == vec3_origin && vecMaxs == vec3_origin )
+		{
+			vecMins = TFVR_WEAPON_MAGAZINE_FALLBACK_MINS;
+			vecMaxs = TFVR_WEAPON_MAGAZINE_FALLBACK_MAXS;
+		}
+
+		SetSolid( SOLID_BBOX );
+		SetSize( vecMins, vecMaxs );
+
+		pPhys = PhysModelCreateBox( this, WorldAlignMins(), WorldAlignMaxs(), GetAbsOrigin(), false );
+		if ( pPhys )
+		{
+			VPhysicsSetObject( pPhys );
+			SetMoveType( MOVETYPE_VPHYSICS );
+			pPhys->Wake();
+		}
+		else
+		{
+			Warning( "ERROR!: Can't create fallback physics object for %s\n", pszModel );
+			SetMoveType( MOVETYPE_NONE );
+		}
+	}
+
+	m_bAwake = pPhys != NULL;
+
 	// Set lifetime (30 seconds by default)
 	SetLifetime( 30.0f );
 }
@@ -86,7 +116,15 @@ void CTFVRWeaponMagazine::Spawn()
 //-----------------------------------------------------------------------------
 void CTFVRWeaponMagazine::Precache()
 {
-	PrecacheModel( "models/weapons/vr_models/vr_pistol/vr_pistol_ammo.mdl" );
+	if ( GetModelName() == NULL_STRING )
+	{
+		const char *pszModel = m_iszMagazineModel != NULL_STRING
+			? STRING( m_iszMagazineModel )
+			: TFVR_WEAPON_MAGAZINE_DEFAULT_MODEL;
+		SetModelName( AllocPooledString( pszModel ) );
+	}
+
+	PrecacheModel( TFVR_WEAPON_MAGAZINE_DEFAULT_MODEL );
 	PrecacheModel( "models/weapons/vr_models/vr_winger_pistol/vr_winger_pistol_ammo.mdl" );
 	PrecacheModel( "models/weapons/vr_models/vr_pep_pistol/vr_pep_pistol_ammo.mdl" );
 	PrecacheModel( "models/weapons/vr_models/vr_invasion_pistol/vr_invasion_pistol_ammo.mdl" );

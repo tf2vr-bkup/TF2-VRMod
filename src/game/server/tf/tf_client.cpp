@@ -120,7 +120,11 @@ const char *GetGameDescription()
 	if ( g_pGameRules ) // this function may be called before the world has spawned, and the game rules initialized
 		return g_pGameRules->GetGameDescription();
 	else
+#ifdef TFVR_MOD
+		return "Team Fortress 2: VR Mod";
+#else
 		return "Team Fortress";
+#endif
 }
 
 
