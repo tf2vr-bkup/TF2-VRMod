@@ -101,7 +101,7 @@ bool CHudTFCrosshair::ShouldDraw( void )
 
 		// VR: hide crosshair on melee weapons (physical melee is always active)
 		// Exception: ball-launching bats show the crosshair during ball aim mode
-		if ( pPlayer->IsInVRMode() )
+		if ( UseVR() )
 		{
 			CTFWeaponBase *pWeapon = pPlayer->GetActiveTFWeapon();
 			if ( pWeapon )

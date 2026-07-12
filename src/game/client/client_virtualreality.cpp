@@ -47,8 +47,6 @@ EXPOSE_SINGLE_INTERFACE_GLOBALVAR( CClientVirtualReality, IClientVirtualReality,
 // --------------------------------------------------------------------
 // A huge pile of VR convars
 // --------------------------------------------------------------------
-ConVar vr_activate_default( "vr_activate_default",		"1", FCVAR_ARCHIVE, "If this is true the game will switch to VR mode once startup is complete." );
-
 // Debug visualization ConVars
 ConVar tfvr_debug_playspace_origin( "tfvr_debug_playspace_origin", "0", FCVAR_NONE, "Draw a debug cube at the calculated playspace origin in world coordinates" );
 ConVar tfvr_bow_crosshair_roll( "tfvr_bow_crosshair_roll", "0", FCVAR_ARCHIVE, "Roll (degrees) applied to the Huntsman crosshair on top of the computed arrow roll." );
@@ -2210,7 +2208,15 @@ void CClientVirtualReality::Deactivate()
 	if( !UseVR() )
 		return;
 
+	// Stop the DXVK menu/loading compositor before marking OpenXR inactive;
+	// otherwise its present hooks can continue throttling flat rendering.
+	dxvkSetSourceState( SOURCE_STATE_GAMEPLAY );
 	g_pOpenXRManager->Deactivate();
+	vgui::ivgui()->SetVRMode( false );
+
+	int width = 0, height = 0;
+	vgui::surface()->GetScreenSize( width, height );
+	g_pMatSystemSurface->SetFullscreenViewportAndRenderTarget( 0, 0, width, height, NULL );
 
 	// CRITICAL: Notify server that VR mode is deactivated
 	// This disables server-side VR features like head collision detection
@@ -2263,8 +2269,13 @@ void CClientVirtualReality::Deactivate()
 // Called when startup is complete
 void CClientVirtualReality::StartupComplete()
 {
-	if ( vr_activate_default.GetBool() || ShouldForceVRActive() )
-		Activate();
+	// TF2VR starts in VR unless the process was explicitly launched in flat
+	// mode. Keeping this decision entirely on the command line also makes it
+	// available before config files and startup +commands are processed.
+	if ( CommandLine()->FindParm( "-novr" ) )
+		return;
+
+	Activate();
 }
 
 // --------------------------------------------------------------------

@@ -74,20 +74,23 @@ void CGlowObjectManager::RenderGlowEffects( const CViewSetup *pSetup, int nSplit
 	}
 }
 
-static void SetRenderTargetAndViewPort( ITexture *rt, int w, int h )
+static bool SetRenderTargetAndViewPort( CMatRenderContextPtr &pRenderContext, ITexture *rt, int w, int h )
 {
-	CMatRenderContextPtr pRenderContext( materials );
+	if ( !rt || IsErrorTexture( rt ) || !rt->IsRenderTarget() || w <= 0 || h <= 0 )
+		return false;
+
 	pRenderContext->SetRenderTarget(rt);
 	pRenderContext->Viewport(0,0,w,h);
+	return true;
 }
 
-void CGlowObjectManager::RenderGlowModels( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext )
+bool CGlowObjectManager::RenderGlowModels( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext )
 {
 	//==========================================================================================//
 	// This renders solid pixels with the correct coloring for each object that needs the glow.	//
 	// After this function returns, this image will then be blurred and added into the frame	//
 	// buffer with the objects stenciled out.													//
-	//==========================================================================================//
+	//==========================================================================================//tf
 	pRenderContext->PushRenderTargetAndViewport();
 
 	// Save modulation color and blend
@@ -97,9 +100,19 @@ void CGlowObjectManager::RenderGlowModels( const CViewSetup *pSetup, int nSplitS
 
 	// Get pointer to FullFrameFB
 	ITexture *pRtFullFrame = NULL;
-	pRtFullFrame = materials->FindTexture( FULL_FRAME_TEXTURE, TEXTURE_GROUP_RENDER_TARGET );
+	pRtFullFrame = materials->FindTexture( FULL_FRAME_TEXTURE, TEXTURE_GROUP_RENDER_TARGET, false );
 
-	SetRenderTargetAndViewPort( pRtFullFrame, pSetup->width, pSetup->height );
+	if ( !SetRenderTargetAndViewPort( pRenderContext, pRtFullFrame, pSetup->width, pSetup->height ) )
+	{
+		static bool s_bWarnedInvalidFullFrameTarget = false;
+		if ( !s_bWarnedInvalidFullFrameTarget )
+		{
+			Warning( "Entity glow disabled: %s is not a valid render target\n", FULL_FRAME_TEXTURE );
+			s_bWarnedInvalidFullFrameTarget = true;
+		}
+		pRenderContext->PopRenderTargetAndViewport();
+		return false;
+	}
 
 	pRenderContext->ClearColor3ub( 0, 0, 0 );
 	pRenderContext->ClearBuffers( true, false, false );
@@ -150,6 +163,7 @@ void CGlowObjectManager::RenderGlowModels( const CViewSetup *pSetup, int nSplitS
 	stencilStateDisable.SetStencilState( pRenderContext );
 
 	pRenderContext->PopRenderTargetAndViewport();
+	return true;
 }
 
 void CGlowObjectManager::ApplyEntityGlowEffects( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext, float flBloomScale, int x, int y, int w, int h )
@@ -264,7 +278,8 @@ void CGlowObjectManager::ApplyEntityGlowEffects( const CViewSetup *pSetup, int n
 	//=============================================
 	{
 		PIXEvent pixEvent( pRenderContext, "RenderGlowModels" );
-		RenderGlowModels( pSetup, nSplitScreenSlot, pRenderContext );
+		if ( !RenderGlowModels( pSetup, nSplitScreenSlot, pRenderContext ) )
+			return;
 	}
 	
 	// Get viewport

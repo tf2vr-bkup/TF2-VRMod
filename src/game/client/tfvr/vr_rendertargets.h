@@ -42,10 +42,10 @@ private:
 	CTextureReference		m_VRHandsRenderTarget;
 	CTextureReference		m_ItemModelPanelRTs[ITEM_MODEL_IMAGE_CACHE_SIZE_VR];
 	CTextureReference		m_ModelImagePanelRT;
-	int						m_currentMsaa;
+	int						m_currentMsaa = 0;
 
-	int						m_origThreadMode;
-	bool					m_changedThreadMode;
+	int						m_origThreadMode = 0;
+	bool					m_changedThreadMode = false;
 
 	ITexture* CreateWaterReflectionTexture( IMaterialSystem* pMaterialSystem, int iSize = 1024 );
 	ITexture* CreateVRWaterReflectionTexture( IMaterialSystem* pMaterialSystem, int iSize = 1024 );

@@ -2438,8 +2438,8 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 			RenderMenuTextureToScreen(viewRender, false);
 			return;
 		}
-		// When VR is off, proceed with normal rendering
-		whatToDraw = 0;
+		// When VR is off, proceed with the caller's normal draw flags intact.
+		// In particular, clearing these flags suppresses RENDERVIEW_DRAWVIEWMODEL.
 	}
 	whatToDraw |= RENDERVIEW_DRAWHUD;
 
@@ -2737,7 +2737,48 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 		pRenderContext->ClearBuffers(false, true, !bKeepStencil);
 		pRenderContext.SafeRelease();
 
-		RenderHUD(viewRender);
+		if ( UseVR() )
+		{
+			RenderHUD( viewRender );
+		}
+		else
+		{
+			VPROF_BUDGET( "VGui_DrawHud", VPROF_BUDGETGROUP_OTHER_VGUI );
+
+			const int viewWidth = viewRender.m_nUnscaledWidth;
+			const int viewHeight = viewRender.m_nUnscaledHeight;
+
+			pRenderContext = materials->GetRenderContext();
+			pRenderContext->PushRenderTargetAndViewport(
+				NULL, NULL,
+				viewRender.m_nUnscaledX, viewRender.m_nUnscaledY,
+				viewWidth, viewHeight );
+			pRenderContext.SafeRelease();
+
+			tmZone( TELEMETRY_LEVEL0, TMZF_NONE, "VGui_DrawHud", __FUNCTION__ );
+			VGui_PreRender();
+
+			vgui::surface()->ForceScreenSizeOverride( false, 0, 0 );
+
+			vgui::VPANEL root = enginevgui->GetPanel( PANEL_CLIENTDLL );
+			if ( root != 0 )
+				vgui::ipanel()->SetSize( root, viewWidth, viewHeight );
+
+			root = enginevgui->GetPanel( PANEL_CLIENTDLL_TOOLS );
+			if ( root != 0 )
+				vgui::ipanel()->SetSize( root, viewWidth, viewHeight );
+
+			AllowCurrentViewAccess( true );
+			render->VGui_Paint( PAINT_INGAMEPANELS );
+			AllowCurrentViewAccess( false );
+
+			VGui_PostRender();
+			g_pClientMode->PostRenderVGui();
+
+			pRenderContext = materials->GetRenderContext();
+			pRenderContext->PopRenderTargetAndViewport();
+			pRenderContext.SafeRelease();
+		}
 
 		/*
 		VPROF_BUDGET( "VGui_DrawHud", VPROF_BUDGETGROUP_OTHER_VGUI );

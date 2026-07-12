@@ -622,7 +622,7 @@ void TF2VR_SetLoadingState(bool isLoading)
         s_lastLoadingState = isLoading;
 
         // Notify DXVK when loading state changes
-        if (g_pVRMenuManager) {
+        if (UseVR() && g_pVRMenuManager) {
             SourceEngineState newState = g_pVRMenuManager->DetermineSourceState();
             dxvkSetSourceState(newState);
         }

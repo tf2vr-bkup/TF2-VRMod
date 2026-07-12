@@ -165,8 +165,7 @@ void CVrRenderTargets::UpdateVRRenderTargets()
 	GetDesiredFullFrameBufferDimensions(fullFrameWidth, fullFrameHeight);
 	
 	ITexture *tex = m_VRTwoEyesHMDRenderTargets[0];
-	if (tex == nullptr)
-		return;
+	bool vrTargetsMissing = tex == nullptr;
 
 	uint32_t vguiDesiredW, vguiDesiredH;
 	g_pOpenXRManager->GetSpectatorScreenDims(vguiDesiredW, vguiDesiredH);
@@ -176,7 +175,7 @@ void CVrRenderTargets::UpdateVRRenderTargets()
 	ITexture *fullFrameTex0 = materials->FindTexture("_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET, false);
 	bool baseTexturesNeedUpdate = fullFrameTex0 && (fullFrameTex0->GetActualWidth() != fullFrameWidth || fullFrameTex0->GetActualHeight() != fullFrameHeight);
 
-	if (tex->GetActualWidth() != desiredWidth || tex->GetActualHeight() != desiredHeight || msaaChanged || baseTexturesNeedUpdate || vguiNeedsUpdate)
+	if (vrTargetsMissing || tex->GetActualWidth() != desiredWidth || tex->GetActualHeight() != desiredHeight || msaaChanged || baseTexturesNeedUpdate || vguiNeedsUpdate)
 	{
 		ConVarRef mat_queue_mode("mat_queue_mode");
 		if (mat_queue_mode.GetInt() != 0)
@@ -197,6 +196,8 @@ void CVrRenderTargets::UpdateVRRenderTargets()
 		}
 		m_VROneEyeTextureQuarterSize.Init(CreateVROneEyeTextureQuarterSize(materials));
 		m_VRHandsRenderTarget.Init(CreateVRHandsRenderTarget(materials));
+		m_VRWaterReflectionTexture.Init(CreateVRWaterReflectionTexture(materials));
+		m_VRScreenEffectTexture.Init(CreateVRScreenEffectTexture(materials));
 
 		m_VGuiTexture.Init(CreateVGuiTexture(materials));
 
@@ -276,8 +277,6 @@ void CVrRenderTargets::UpdateBaseGameTextures(IMaterialSystem* pMaterialSystem)
 }
 
 
-extern ConVar vr_activate_default;
-
 //-----------------------------------------------------------------------------
 // Purpose: Called by the engine in material system init and shutdown.
 //			Clients should override this in their inherited version, but the base
@@ -287,7 +286,7 @@ extern ConVar vr_activate_default;
 //-----------------------------------------------------------------------------
 void CVrRenderTargets::InitClientRenderTargets( IMaterialSystem* pMaterialSystem, IMaterialSystemHardwareConfig* pHardwareConfig )
 {
-	if (vr_activate_default.GetBool())
+	if (!CommandLine()->FindParm("-novr"))
 	{
 		m_VGuiTexture.Init(CreateVGuiTexture(pMaterialSystem));
 
@@ -304,10 +303,14 @@ void CVrRenderTargets::InitClientRenderTargets( IMaterialSystem* pMaterialSystem
 
 		m_origThreadMode = ConVarRef("mat_queue_mode").GetInt();
 		m_changedThreadMode = false;
-	}
 
-	// VR hands render target (for sniper scope / isolated hand rendering)
-	m_VRHandsRenderTarget.Init( CreateVRHandsRenderTarget( pMaterialSystem ) );
+		// These depend on initialized OpenXR dimensions and are never used by
+		// the mono renderer. Creating them in flat mode produced HMD-sized
+		// targets from inactive/default OpenXR state.
+		m_VRHandsRenderTarget.Init( CreateVRHandsRenderTarget( pMaterialSystem ) );
+		m_VRWaterReflectionTexture.Init( CreateVRWaterReflectionTexture( pMaterialSystem ) );
+		m_VRScreenEffectTexture.Init( CreateVRScreenEffectTexture( pMaterialSystem ) );
+	}
 
 	// Item model panel render targets (war paints, festivized items, etc.)
 	{
@@ -334,9 +337,7 @@ void CVrRenderTargets::InitClientRenderTargets( IMaterialSystem* pMaterialSystem
 
 	// Water effects
 	m_WaterReflectionTexture.Init( CreateWaterReflectionTexture( pMaterialSystem ) );
-	m_VRWaterReflectionTexture.Init( CreateVRWaterReflectionTexture( pMaterialSystem ) );
 	m_WaterRefractionTexture.Init( CreateWaterRefractionTexture( pMaterialSystem ) );
-	m_VRScreenEffectTexture.Init( CreateVRScreenEffectTexture( pMaterialSystem ) );
 
 	// Monitors
 	m_CameraTexture.Init( CreateCameraTexture( pMaterialSystem ) );

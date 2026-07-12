@@ -3,6 +3,7 @@
 #include "cbase.h"
 #include "vr_hand_render.h"
 #include "iclientrenderable.h"
+#include "sourcevr/isourcevirtualreality.h"
 
 static ConVar tfvr_hand_layer("tfvr_hand_layer", "100", FCVAR_ARCHIVE,
 	"Render VR hands on a separate layer from the world (enables close inspection and future sniper scope)");
@@ -120,7 +121,7 @@ void VRHandLayer_ClearRenderables()
 
 bool VRHandLayer_IsEnabled()
 {
-	return tfvr_hand_layer.GetBool();
+	return UseVR() && tfvr_hand_layer.GetBool();
 }
 
 float VRHandLayer_GetZNearOverride()

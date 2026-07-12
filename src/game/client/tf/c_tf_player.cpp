@@ -4415,8 +4415,10 @@ QAngle C_TFPlayer::Weapon_ShootAngles( void )
 //-----------------------------------------------------------------------------
 C_BaseAnimating* C_TFPlayer::GetRenderedWeaponModel()
 {
-	// Check if VR is active and we have a VR render weapon
-	if (IsLocalPlayer() && (IsInVRMode() || UseVR()))
+	// Replicated VR state can remain set while testing a flat local client.
+	// Only substitute local hand-attached weapon models when this client is
+	// actually rendering in VR.
+	if (IsLocalPlayer() && UseVR())
 	{
 		// Determine which physical hand holds the weapon (handedness + per-weapon flip)
 		C_TFWeaponBase* pActiveWeapon = GetActiveTFWeapon();
@@ -7058,6 +7060,9 @@ extern ConVar tfvr_roomscale_min_move;
 
 void C_TFPlayer::ComputeFullBodyIK( CUserCmd *pCmd )
 {
+	if ( !UseVR() )
+		return;
+
 	if (!m_isCalibrated)
 	{
 		Log("Calibrating VR base position\n");
