@@ -33,7 +33,7 @@ ConVar tfvr_damage_indicator_scale("tfvr_damage_indicator_scale", "0.5", FCVAR_A
     "Scale of the damage indicator panel");
 ConVar tfvr_damage_indicator_offset_x("tfvr_damage_indicator_offset_x", "0", FCVAR_ARCHIVE,
     "Horizontal offset (-1 to 1, positive = right)");
-ConVar tfvr_damage_indicator_offset_y("tfvr_damage_indicator_offset_y", "-1", FCVAR_ARCHIVE,
+ConVar tfvr_damage_indicator_offset_y("tfvr_damage_indicator_offset_y", "0", FCVAR_ARCHIVE,
     "Vertical offset (-1 to 1, positive = up)");
 
 ConVar tfvr_damage_indicator_follow_speed("tfvr_damage_indicator_follow_speed", "10", FCVAR_ARCHIVE,

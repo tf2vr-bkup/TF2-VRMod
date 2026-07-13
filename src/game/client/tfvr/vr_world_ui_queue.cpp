@@ -42,7 +42,7 @@ static bool TFVR_IsValidWorldUIDimensions(int pixelWidth, int pixelHeight, float
         && worldWidth < 10000.0f && worldHeight < 10000.0f;
 }
 
-static bool TFVR_IsValidWorldUITransform(const VMatrix& transform)
+static bool TFVR_IsValidWorldUITransform(const VMatrix& transform, const Vector& headPos)
 {
     for (int row = 0; row < 4; ++row)
     {
@@ -57,16 +57,18 @@ static bool TFVR_IsValidWorldUITransform(const VMatrix& transform)
     Vector panelUp(transform[0][1], transform[1][1], transform[2][1]);
     Vector panelForward(transform[0][2], transform[1][2], transform[2][2]);
     Vector panelPos = transform.GetTranslation();
+    Vector panelOffset = panelPos - headPos;
 
     return panelRight.LengthSqr() > 0.0001f
         && panelUp.LengthSqr() > 0.0001f
         && panelForward.LengthSqr() > 0.0001f
-        && panelPos.LengthSqr() < 100000000.0f;
+        && panelOffset.LengthSqr() < 100000000.0f;
 }
 
 static bool TFVR_ShouldRenderWorldUIPanel(vgui::Panel* pPanel, const VMatrix& transform,
                                           int pixelWidth, int pixelHeight,
                                           float worldWidth, float worldHeight,
+                                          const Vector& headPos,
                                           const char *pszContext)
 {
     if (!pPanel)
@@ -79,7 +81,7 @@ static bool TFVR_ShouldRenderWorldUIPanel(vgui::Panel* pPanel, const VMatrix& tr
         return false;
     }
 
-    if (!TFVR_IsValidWorldUITransform(transform))
+    if (!TFVR_IsValidWorldUITransform(transform, headPos))
     {
         Vector pos = transform.GetTranslation();
         DevMsg("VR World UI Queue: skipping invalid panel transform in %s panel='%s' pos=(%.3f %.3f %.3f)\n",
@@ -147,7 +149,7 @@ void CVRWorldUIQueue::QueuePanel(vgui::Panel* pPanel, const VMatrix& transform,
         return;
 
     if (!TFVR_ShouldRenderWorldUIPanel(pPanel, transform, pixelWidth, pixelHeight,
-                                       worldWidth, worldHeight, "QueuePanel"))
+                                       worldWidth, worldHeight, m_headPos, "QueuePanel"))
     {
         if (bRestoreBounds)
         {
@@ -270,7 +272,7 @@ void CVRWorldUIQueue::FlushRenderQueue()
         VRWorldUIRenderItem& item = m_renderQueue[i];
 
         if (!TFVR_ShouldRenderWorldUIPanel(item.pPanel, item.transform, item.pixelWidth, item.pixelHeight,
-                                           item.worldWidth, item.worldHeight, "FlushRenderQueue"))
+                                           item.worldWidth, item.worldHeight, m_headPos, "FlushRenderQueue"))
         {
             if (item.bRestoreBounds)
             {
