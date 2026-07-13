@@ -48,6 +48,7 @@
 #include "VGuiMatSurface/IMatSystemSurface.h"
 #include "iclientmode.h"
 #include "materialsystem/imaterialsystem.h"
+#include "prediction.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -3000,6 +3001,7 @@ C_TFVRHand::C_TFVRHand()
 	m_bLoopIdleOnHand = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_iLastFireAnimCommandNumber = -1;
 	m_iDrawSequence = -1;
 	m_bPlayingDrawAnim = false;
 	m_flDrawAnimStartTime = 0.0f;
@@ -3257,6 +3259,7 @@ bool C_TFVRHand::Initialize(C_TFPlayer *pOwner, VRHandSide handSide)
 	m_bLoopIdleOnHand = false;
 	m_bPlayingFireAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_iLastFireAnimCommandNumber = -1;
 	m_iDrawSequence = -1;
 	m_bPlayingDrawAnim = false;
 	m_flDrawAnimStartTime = 0.0f;
@@ -17356,6 +17359,7 @@ void C_TFVRHand::UnequipWeapon()
 	m_bPlayingChargeAnim = false;
 	m_bPlayingDrawAnim = false;
 	m_flFireAnimStartTime = 0.0f;
+	m_iLastFireAnimCommandNumber = -1;
 	m_flDrawAnimStartTime = 0.0f;
 	m_eDrawAnimScope = VR_DRAW_ANIM_NONE;
 	m_bHandBoneOffsetValid = false;
@@ -19259,11 +19263,29 @@ void C_TFVRHand::PlayWeaponFireAnimation()
 	if (!tfvr_weapon_fire_anim.GetBool())
 		return;
 
-	int sequenceToPlay = m_iFireSequence;
-	bool bSuppressRenderWeaponFireAnim = false;
-
 	C_TFWeaponBase *pHeldWeapon = m_hHeldWeapon.Get();
 	C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+
+	// Weapon attacks are predicted immediately, then may be replayed several
+	// times while reconciling delayed server commands. Only the first pass for
+	// a command is a new visual shot; replaying it would reset the sequence to
+	// cycle zero and produce the latency-dependent stall/stutter.
+	if (prediction && prediction->InPrediction())
+	{
+		if (!prediction->IsFirstTimePredicted())
+			return;
+
+		const int iCommandNumber = pOwner ? pOwner->CurrentCommandNumber() : -1;
+		if (iCommandNumber >= 0)
+		{
+			if (iCommandNumber == m_iLastFireAnimCommandNumber)
+				return;
+			m_iLastFireAnimCommandNumber = iCommandNumber;
+		}
+	}
+
+	int sequenceToPlay = m_iFireSequence;
+	bool bSuppressRenderWeaponFireAnim = false;
 	if (pHeldWeapon && pOwner && IsPumpActionShotgunWeaponID(pHeldWeapon->GetWeaponID()))
 	{
 		if (tfvr_shotgun_pump_action.GetBool())
@@ -19440,6 +19462,21 @@ void C_TFVRHand::PlayWeaponAltFireAnimation()
 		}
 		PlayWeaponFireAnimation();
 		return;
+	}
+
+	if (prediction && prediction->InPrediction())
+	{
+		if (!prediction->IsFirstTimePredicted())
+			return;
+
+		C_TFPlayer *pOwner = m_hOwnerPlayer.Get();
+		const int iCommandNumber = pOwner ? pOwner->CurrentCommandNumber() : -1;
+		if (iCommandNumber >= 0)
+		{
+			if (iCommandNumber == m_iLastFireAnimCommandNumber)
+				return;
+			m_iLastFireAnimCommandNumber = iCommandNumber;
+		}
 	}
 
 	SetSequence(m_iAltFireSequence);

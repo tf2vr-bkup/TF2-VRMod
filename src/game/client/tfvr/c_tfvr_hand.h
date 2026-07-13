@@ -307,6 +307,7 @@ private:
 	bool m_bLoopIdleOnHand;        // Hand idle animation should advance (e.g. sapper screen animation)
 	bool m_bPlayingFireAnim;       // Currently playing fire animation
 	float m_flFireAnimStartTime;   // When fire animation started
+	int m_iLastFireAnimCommandNumber; // Prevent prediction replays from restarting the same shot
 	
 	// Draw animation (played on weapon equip/deploy)
 	int m_iDrawSequence;              // Draw animation sequence index on hand model
