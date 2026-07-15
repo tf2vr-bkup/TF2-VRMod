@@ -57,7 +57,6 @@
 #include "tfvr/openxr_manager.h"
 #include "tfvr/vr_laser_pointer.h"
 #include "tfvr/vr_hand_hud_compositor.h"
-#include "tfvr/vr_spring_hud.h"
 #include "tfvr/vr_damage_indicator.h"
 #include "tfvr/vr_weapon_select.h"
 #include "tfvr/vr_popup_hud.h"
@@ -3007,12 +3006,6 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 
 				if (!bHideVRHudElements)
 				{
-					// Render VR Spring HUD (head-relative: kill feed)
-					if (g_pVRSpringHUDManager)
-					{
-						g_pVRSpringHUDManager->Render();
-					}
-
 					// Render VR Damage Indicator (head-relative: damage direction)
 					if (g_pVRDamageIndicatorManager)
 					{
@@ -3049,12 +3042,12 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
 					{
 						g_pVRDamageNumberManager->Render();
 					}
-				}
 
-				// Render VR Weapon Select Menu (radial weapon selection)
-				if (g_pVRWeaponSelectManager)
-				{
-					g_pVRWeaponSelectManager->Render();
+					// Render VR Weapon Select Menu (radial weapon selection)
+					if (g_pVRWeaponSelectManager)
+					{
+						g_pVRWeaponSelectManager->Render();
+					}
 				}
 
 			// Flush the VR World UI queue - renders all panels sorted by distance

@@ -8,26 +8,9 @@
 #include "mathlib/vmatrix.h"
 #include "vgui_controls/Panel.h"
 #include "vgui_controls/EditablePanel.h"
-#include "utlvector.h"
 
 // Forward declarations
 class CHudElement;
-
-//-----------------------------------------------------------------------------
-// Purpose: Render item for distance-sorted 3D UI rendering
-//-----------------------------------------------------------------------------
-struct VRPanelRenderItem
-{
-    vgui::Panel* pPanel;        // The panel to render
-    VMatrix transform;          // World transform for rendering
-    int pixelWidth;             // Panel width in pixels
-    int pixelHeight;            // Panel height in pixels
-    float worldWidth;           // World width in units
-    float worldHeight;          // World height in units
-    float distanceFromHead;     // Distance from head (for sorting)
-    bool bRestoreVisibility;    // Whether to restore visibility after render
-    bool bWasVisible;           // Original visibility state
-};
 
 //-----------------------------------------------------------------------------
 // Purpose: Simple wrapper panel that paints a target panel at (0,0) offset
@@ -116,6 +99,9 @@ private:
     
     // Render chat panel (text chat window)
     void RenderChat(const VMatrix& baseTransform);
+
+    // Render kill feed on the shared popup spring
+    void RenderKillFeed(const VMatrix& baseTransform);
     
     // Distance-sorted rendering
     void QueuePanelForRender(vgui::Panel* pPanel, const VMatrix& transform, 
@@ -123,10 +109,7 @@ private:
                              float worldWidth, float worldHeight,
                              const Vector& headPos,
                              bool bRestoreVisibility = false, bool bWasVisible = false);
-    void RenderQueuedPanels();
-    void ClearRenderQueue();
     
-    CUtlVector<VRPanelRenderItem> m_renderQueue;
     Vector m_headPosForSort;  // Cached head position for distance calculations
     
 private:
@@ -155,6 +138,10 @@ private:
     // Chat panel
     vgui::Panel* m_pChatPanel;            // CHudChat - text chat window
     CHudElement* m_pChatElement;          // CHudElement pointer for ShouldDraw() check
+
+    // Kill feed panel
+    vgui::Panel* m_pKillFeedPanel;        // CTFHudDeathNotice
+    CHudElement* m_pKillFeedElement;      // CHudElement pointer for ShouldDraw() check
     
     // Wrapper panel for rendering match status without clipping
     CVRPanelWrapper* m_pMatchStatusWrapper;

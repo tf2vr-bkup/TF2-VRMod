@@ -7,6 +7,7 @@
 
 #include "cbase.h"
 #include "vr_damage_numbers.h"
+#include "vr_hud_scaling.h"
 #include "c_tf_player.h"
 #include "c_basecombatcharacter.h"
 #include "view.h"
@@ -375,8 +376,8 @@ void CVRDamageNumberManager::Render()
     // Base panel size
     int basePanelWidth = 64;
     int basePanelHeight = 32;
-    int renderWidth = basePanelWidth * m_nRenderScale;
-    int renderHeight = basePanelHeight * m_nRenderScale;
+    int renderWidth = TFVR_ScaleHUDPixels(basePanelWidth * m_nRenderScale);
+    int renderHeight = TFVR_ScaleHUDPixels(basePanelHeight * m_nRenderScale);
     
     m_pRenderPanel->SetSize(renderWidth, renderHeight);
     

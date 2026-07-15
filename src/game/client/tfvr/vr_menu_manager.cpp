@@ -25,7 +25,6 @@
 #include "tf/vgui/class_loadout_panel.h"
 #include "tf/vgui/character_info_panel.h"
 #include "vr_hand_hud_compositor.h"
-#include "vr_spring_hud.h"
 #include "vr_damage_indicator.h"
 #include "vr_weapon_select.h"
 #include "vr_popup_hud.h"
@@ -109,7 +108,6 @@ CVRMenuManager::CVRMenuManager()
     , m_nLastVRTrackingUpdateFrame(-1)
     , m_pVRStatusHUDManager(nullptr)
     , m_pVRWeaponHUDManager(nullptr)
-    , m_pVRSpringHUDManager(nullptr)
     , m_pVRDamageIndicatorManager(nullptr)
     , m_pVRWeaponSelectManager(nullptr)
     , m_pVRPopupHUDManager(nullptr)
@@ -182,23 +180,6 @@ void CVRMenuManager::Initialize()
             delete m_pVRWeaponHUDManager;
             m_pVRWeaponHUDManager = nullptr;
             Warning("VR Menu Manager: Failed to initialize Weapon HUD Manager\n");
-        }
-    }
-
-    // Initialize VR Spring HUD Manager (head-relative: kill feed)
-    if (!m_pVRSpringHUDManager)
-    {
-        m_pVRSpringHUDManager = new CVRSpringHUDManager();
-        if (m_pVRSpringHUDManager->Initialize())
-        {
-            g_pVRSpringHUDManager = m_pVRSpringHUDManager;
-            DevMsg("VR Menu Manager: Spring HUD Manager initialized\n");
-        }
-        else
-        {
-            delete m_pVRSpringHUDManager;
-            m_pVRSpringHUDManager = nullptr;
-            Warning("VR Menu Manager: Failed to initialize Spring HUD Manager\n");
         }
     }
 
@@ -382,15 +363,6 @@ void CVRMenuManager::Shutdown()
         g_pVRWeaponHUDManager = nullptr;
     }
 
-    // Shutdown VR Spring HUD Manager
-    if (m_pVRSpringHUDManager)
-    {
-        m_pVRSpringHUDManager->Shutdown();
-        delete m_pVRSpringHUDManager;
-        m_pVRSpringHUDManager = nullptr;
-        g_pVRSpringHUDManager = nullptr;
-    }
-
     // Shutdown VR Damage Indicator Manager
     if (m_pVRDamageIndicatorManager)
     {
@@ -547,12 +519,6 @@ void CVRMenuManager::Update()
     if (m_pVRWeaponHUDManager)
     {
         m_pVRWeaponHUDManager->Update();
-    }
-
-    // Update VR Spring HUD Manager (kill feed)
-    if (m_pVRSpringHUDManager)
-    {
-        m_pVRSpringHUDManager->Update(gpGlobals->frametime);
     }
 
     // Update VR Damage Indicator Manager (damage direction)
@@ -1004,10 +970,6 @@ void CVRMenuManager::HandleMenuInput()
             if (m_pVRWeaponHUDManager)
             {
                 m_pVRWeaponHUDManager->ResetState();
-            }
-            if (m_pVRSpringHUDManager)
-            {
-                m_pVRSpringHUDManager->ResetState();
             }
             // Reset spectator camera on map change to avoid lingering smoothing state
             if (m_pVRSpectatorCamera)
