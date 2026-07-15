@@ -5,6 +5,7 @@
 
 #include "cbase.h"
 #include "vr_weapon_select.h"
+#include "vr_hud_scaling.h"
 #include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "tf_weaponbase.h"
@@ -490,8 +491,8 @@ void CVRWeaponSelectPanel::DrawWeaponInQuadrant(C_TFWeaponBase *pWeapon, int slo
 			int iconWidth = pTexture->Width();
 			int iconHeight = pTexture->Height();
 
-			// Scale icon to fit in quadrant (1.2x for 1024 panel resolution)
-			float scale = 1.2f;
+			// Scale the fallback sprite with the mirror-resolution canvas.
+			float scale = 1.2f * TFVR_GetHUDPixelScale();
 			int scaledWidth = (int)(iconWidth * scale);
 			int scaledHeight = (int)(iconHeight * scale);
 
@@ -542,17 +543,13 @@ void CVRWeaponSelectPanel::DrawWeaponInQuadrant(C_TFWeaponBase *pWeapon, int slo
 
 		if (wszName[0])
 		{
-			// Select font size based on ConVar
-			// Default (3) uses HudSelectionText - the authentic TF2 weapon select font
-			vgui::HFont font = m_hWeaponNameFontLarge; // Default to TF2 font
-			int textSizeOption = tfvr_weapon_select_text_size.GetInt();
-			switch (textSizeOption)
+			vgui::HFont font = m_hWeaponNameFontLarge;
+			switch (clamp(tfvr_weapon_select_text_size.GetInt(), 0, 3))
 			{
 				case 0: font = m_hWeaponNameFontSmallest; break;
 				case 1: font = m_hWeaponNameFontSmall; break;
 				case 2: font = m_hWeaponNameFontMedium; break;
-				case 3: font = m_hWeaponNameFontLarge; break;  // HudSelectionText (TF2 font)
-				default: font = m_hWeaponNameFontLarge; break; // Default to TF2 font
+				default: break;
 			}
 
 			if (font == vgui::INVALID_FONT)
@@ -566,8 +563,9 @@ void CVRWeaponSelectPanel::DrawWeaponInQuadrant(C_TFWeaponBase *pWeapon, int slo
 			int numLines = WrapTextToLines(wszName, font, maxTextWidth, lines, MAX_NAME_LINES);
 
 			// Get text offset from ConVar
-			int textOffset = tfvr_weapon_select_text_offset.GetInt();
+			int textOffset = (int)(tfvr_weapon_select_text_offset.GetInt() * TFVR_GetHUDPixelScale());
 			int lineHeight = vgui::surface()->GetFontTall(font);
+			int shadowOffset = TFVR_ScaleHUDPixels(3);
 
 			vgui::surface()->DrawSetTextFont(font);
 
@@ -581,7 +579,7 @@ void CVRWeaponSelectPanel::DrawWeaponInQuadrant(C_TFWeaponBase *pWeapon, int slo
 
 				// Draw drop shadow first (offset for visibility at higher resolution)
 				vgui::surface()->DrawSetTextColor(Color(0, 0, 0, selected ? 255 : 180));
-				vgui::surface()->DrawSetTextPos(textX + 3, textY + 3);
+				vgui::surface()->DrawSetTextPos(textX + shadowOffset, textY + shadowOffset);
 				vgui::surface()->DrawPrintText(lines[i], wcslen(lines[i]));
 
 				// Draw main text
@@ -602,9 +600,11 @@ void CVRWeaponSelectPanel::Paint()
 	if (!pPlayer)
 		return;
 
-	// Update layout from convars
-	m_nQuadrantRadius = tfvr_weapon_select_quadrant_radius.GetInt();
-	m_nCenterDeadzone = tfvr_weapon_select_deadzone.GetInt();
+	// Keep logical layout in the original 1280x720 coordinate space while
+	// increasing the panel's capture density with mirror resolution.
+	m_nQuadrantRadius = TFVR_ScaleHUDPixels(tfvr_weapon_select_quadrant_radius.GetInt());
+	m_nQuadrantSize = TFVR_ScaleHUDPixels(256);
+	m_nCenterDeadzone = TFVR_ScaleHUDPixels(tfvr_weapon_select_deadzone.GetInt());
 
 	int centerX = GetWide() / 2;
 	int centerY = GetTall() / 2;
@@ -627,9 +627,13 @@ void CVRWeaponSelectPanel::Paint()
 	}
 
 	// Draw hand cursor
+	int cursorRadius = TFVR_ScaleHUDPixels(8);
+	int cursorHalfSize = TFVR_ScaleHUDPixels(2);
 	vgui::surface()->DrawSetColor(255, 255, 255, 200);
-	vgui::surface()->DrawOutlinedCircle(m_handX, m_handY, 8, 16);
-	vgui::surface()->DrawFilledRect(m_handX - 2, m_handY - 2, m_handX + 2, m_handY + 2);
+	vgui::surface()->DrawOutlinedCircle(m_handX, m_handY, cursorRadius, 16);
+	vgui::surface()->DrawFilledRect(
+		m_handX - cursorHalfSize, m_handY - cursorHalfSize,
+		m_handX + cursorHalfSize, m_handY + cursorHalfSize);
 
 	// Debug: draw center deadzone
 	if (tfvr_weapon_select_debug.GetBool())
@@ -677,6 +681,8 @@ bool CVRWeaponSelectManager::Initialize()
 		return true;
 
 	// Create the panel
+	m_nPanelPixelWidth = TFVR_ScaleHUDPixels(1024);
+	m_nPanelPixelHeight = TFVR_ScaleHUDPixels(1024);
 	m_pPanel = new CVRWeaponSelectPanel(nullptr, "VRWeaponSelectPanel");
 	m_pPanel->SetBounds(0, 0, m_nPanelPixelWidth, m_nPanelPixelHeight);
 	m_pPanel->SetVisible(false);
@@ -1020,6 +1026,15 @@ void CVRWeaponSelectManager::Update(float deltaTime)
 {
 	if (!m_bInitialized)
 		return;
+
+	int panelPixelWidth = TFVR_ScaleHUDPixels(1024);
+	int panelPixelHeight = TFVR_ScaleHUDPixels(1024);
+	if (panelPixelWidth != m_nPanelPixelWidth || panelPixelHeight != m_nPanelPixelHeight)
+	{
+		m_nPanelPixelWidth = panelPixelWidth;
+		m_nPanelPixelHeight = panelPixelHeight;
+		m_pPanel->SetBounds(0, 0, m_nPanelPixelWidth, m_nPanelPixelHeight);
+	}
 
 	// Check for weapon select button
 	bool bWeaponSelectHeld = false;

@@ -7,6 +7,7 @@
 
 #include "cbase.h"
 #include "vr_spectator_extras.h"
+#include "vr_hud_scaling.h"
 #include "c_tf_player.h"
 #include "c_team.h"
 #include "c_playerresource.h"
@@ -437,8 +438,8 @@ void CVRSpectatorExtrasManager::Render()
     // Base panel size
     int basePanelWidth = 128;
     int basePanelHeight = 48;
-    int renderWidth = basePanelWidth * m_nRenderScale;
-    int renderHeight = basePanelHeight * m_nRenderScale;
+    int renderWidth = TFVR_ScaleHUDPixels(basePanelWidth * m_nRenderScale);
+    int renderHeight = TFVR_ScaleHUDPixels(basePanelHeight * m_nRenderScale);
 
     m_pRenderPanel->SetSize(renderWidth, renderHeight);
 

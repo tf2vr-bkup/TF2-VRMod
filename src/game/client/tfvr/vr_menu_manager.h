@@ -13,7 +13,6 @@ class C_TFPlayer;
 class COpenXRManager;
 class CVRStatusHUDManager;
 class CVRWeaponHUDManager;
-class CVRSpringHUDManager;
 class CVRDamageIndicatorManager;
 class CVRWeaponSelectManager;
 class CVRPopupHUDManager;
@@ -164,9 +163,6 @@ private:
     
     // VR Weapon HUD (right hand: ammo, meters, charges)
     CVRWeaponHUDManager* m_pVRWeaponHUDManager;
-    
-    // VR Spring HUD (head-relative: kill feed with spring-arm behavior)
-    CVRSpringHUDManager* m_pVRSpringHUDManager;
     
     // VR Damage Indicator (head-relative: damage direction with spring-arm behavior)
     CVRDamageIndicatorManager* m_pVRDamageIndicatorManager;

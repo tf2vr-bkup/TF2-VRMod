@@ -1,5 +1,6 @@
 #include "cbase.h"
 #include "vr_damage_indicator.h"
+#include "vr_hud_scaling.h"
 #include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "hudelement.h"
@@ -33,7 +34,7 @@ ConVar tfvr_damage_indicator_scale("tfvr_damage_indicator_scale", "0.5", FCVAR_A
     "Scale of the damage indicator panel");
 ConVar tfvr_damage_indicator_offset_x("tfvr_damage_indicator_offset_x", "0", FCVAR_ARCHIVE,
     "Horizontal offset (-1 to 1, positive = right)");
-ConVar tfvr_damage_indicator_offset_y("tfvr_damage_indicator_offset_y", "0", FCVAR_ARCHIVE,
+ConVar tfvr_damage_indicator_offset_y("tfvr_damage_indicator_offset_y", "-1", FCVAR_ARCHIVE,
     "Vertical offset (-1 to 1, positive = up)");
 
 ConVar tfvr_damage_indicator_follow_speed("tfvr_damage_indicator_follow_speed", "10", FCVAR_ARCHIVE,
@@ -249,11 +250,8 @@ void CVRDamageIndicatorManager::Update(float deltaTime)
     m_flMaxLagAngle = tfvr_damage_indicator_max_lag.GetFloat();
     m_flOffsetX = tfvr_damage_indicator_offset_x.GetFloat();
     m_flOffsetY = tfvr_damage_indicator_offset_y.GetFloat();
-    int sw, sh;
-    vgui::surface()->GetScreenSize(sw, sh);
-    float sf = (float)sw / 1280.0f;
-    m_nPanelPixelWidth = (int)(tfvr_damage_indicator_width.GetInt() * sf);
-    m_nPanelPixelHeight = (int)(tfvr_damage_indicator_height.GetInt() * sf);
+    m_nPanelPixelWidth = TFVR_ScaleHUDPixels(tfvr_damage_indicator_width.GetInt());
+    m_nPanelPixelHeight = TFVR_ScaleHUDPixels(tfvr_damage_indicator_height.GetInt());
 
     // Calculate world size from scale
     float scale = tfvr_damage_indicator_scale.GetFloat();

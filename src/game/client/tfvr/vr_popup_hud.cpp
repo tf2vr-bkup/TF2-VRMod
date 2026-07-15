@@ -5,6 +5,8 @@
 
 #include "cbase.h"
 #include "vr_popup_hud.h"
+#include "vr_hud_scaling.h"
+#include "vr_spring_hud.h"
 #include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "hudelement.h"
@@ -81,7 +83,7 @@ ConVar tfvr_popup_hud_matchstatus_content_y("tfvr_popup_hud_matchstatus_content_
 // Bottom-center notification area ConVars
 ConVar tfvr_popup_hud_notifications_enabled("tfvr_popup_hud_notifications_enabled", "1", FCVAR_ARCHIVE,
     "Enable VR rendering of bottom-center notifications (notification panel, spectator target, building status)");
-ConVar tfvr_popup_hud_notifications_offset_x("tfvr_popup_hud_notifications_offset_x", "16.5", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_notifications_offset_x("tfvr_popup_hud_notifications_offset_x", "-12.8", FCVAR_ARCHIVE,
     "Horizontal offset of notification area (positive = right)");
 ConVar tfvr_popup_hud_notifications_offset_y("tfvr_popup_hud_notifications_offset_y", "-12", FCVAR_ARCHIVE,
     "Vertical offset of notification area below timer (negative = down)");
@@ -95,15 +97,15 @@ ConVar tfvr_popup_hud_notifications_debug("tfvr_popup_hud_notifications_debug", 
     "Debug output for notification panel rendering");
 
 // Healer panel specific offsets
-ConVar tfvr_popup_hud_healer_offset_x("tfvr_popup_hud_healer_offset_x", "19.25", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_healer_offset_x("tfvr_popup_hud_healer_offset_x", "12.8", FCVAR_ARCHIVE,
     "Horizontal offset for healer notification panel (positive = right)");
-ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "-50", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_healer_offset_y("tfvr_popup_hud_healer_offset_y", "-28", FCVAR_ARCHIVE,
     "Vertical offset for healer notification panel (positive = up)");
 
 // Building status specific offsets
-ConVar tfvr_popup_hud_building_offset_x("tfvr_popup_hud_building_offset_x", "30", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_building_offset_x("tfvr_popup_hud_building_offset_x", "14", FCVAR_ARCHIVE,
     "Horizontal offset for building status panel (positive = right)");
-ConVar tfvr_popup_hud_building_offset_y("tfvr_popup_hud_building_offset_y", "-29", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_building_offset_y("tfvr_popup_hud_building_offset_y", "15", FCVAR_ARCHIVE,
     "Vertical offset for building status panel (positive = up)");
 
 // Voice status UI ConVars
@@ -115,13 +117,13 @@ ConVar tfvr_popup_hud_voice_scale("tfvr_popup_hud_voice_scale", ".25", FCVAR_ARC
     "Scale multiplier for voice status panels");
 
 // Self-status (local player speaking icon) positioning
-ConVar tfvr_popup_hud_voice_self_offset_x("tfvr_popup_hud_voice_self_offset_x", "-140", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_voice_self_offset_x("tfvr_popup_hud_voice_self_offset_x", "-90", FCVAR_ARCHIVE,
     "Horizontal offset for self speaking icon (positive = right)");
 ConVar tfvr_popup_hud_voice_self_offset_y("tfvr_popup_hud_voice_self_offset_y", "50", FCVAR_ARCHIVE,
     "Vertical offset for self speaking icon (positive = up)");
 
 // Other players speaking list positioning
-ConVar tfvr_popup_hud_voice_others_offset_x("tfvr_popup_hud_voice_others_offset_x", "-120", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_voice_others_offset_x("tfvr_popup_hud_voice_others_offset_x", "-80", FCVAR_ARCHIVE,
     "Horizontal offset for other players speaking list (positive = right)");
 ConVar tfvr_popup_hud_voice_others_offset_y("tfvr_popup_hud_voice_others_offset_y", "20", FCVAR_ARCHIVE,
     "Vertical offset for other players speaking list (positive = up)");
@@ -136,7 +138,7 @@ ConVar tfvr_popup_hud_chat_enabled("tfvr_popup_hud_chat_enabled", "1", FCVAR_ARC
     "Enable VR rendering of the text chat window on the popup HUD");
 ConVar tfvr_popup_hud_chat_offset_x("tfvr_popup_hud_chat_offset_x", "-20", FCVAR_ARCHIVE,
     "Horizontal offset for chat panel (positive = right)");
-ConVar tfvr_popup_hud_chat_offset_y("tfvr_popup_hud_chat_offset_y", "40", FCVAR_ARCHIVE,
+ConVar tfvr_popup_hud_chat_offset_y("tfvr_popup_hud_chat_offset_y", "23", FCVAR_ARCHIVE,
     "Vertical offset for chat panel (positive = up)");
 ConVar tfvr_popup_hud_chat_scale("tfvr_popup_hud_chat_scale", ".2", FCVAR_ARCHIVE,
     "Scale multiplier for chat panel (relative to main popup scale)");
@@ -237,6 +239,10 @@ CVRPopupHUDManager::CVRPopupHUDManager()
     // Chat panel
     m_pChatPanel = nullptr;
     m_pChatElement = nullptr;
+
+    // Kill feed panel
+    m_pKillFeedPanel = nullptr;
+    m_pKillFeedElement = nullptr;
 
     m_flCurrentYaw = 0.0f;
     m_flTargetYaw = 0.0f;
@@ -349,6 +355,10 @@ void CVRPopupHUDManager::Shutdown()
     // Clear chat panel pointer
     m_pChatPanel = nullptr;
     m_pChatElement = nullptr;
+
+    // Clear kill feed panel pointer
+    m_pKillFeedPanel = nullptr;
+    m_pKillFeedElement = nullptr;
 
     m_bInitialized = false;
 }
@@ -550,6 +560,20 @@ void CVRPopupHUDManager::AcquirePanels()
         }
     }
 
+    // CTFHudDeathNotice - kill feed, rendered on the shared popup spring
+    if (!m_pKillFeedPanel)
+    {
+        m_pKillFeedElement = gHUD.FindElement("CTFHudDeathNotice");
+        if (m_pKillFeedElement)
+        {
+            m_pKillFeedPanel = dynamic_cast<vgui::Panel*>(m_pKillFeedElement);
+            if (m_pKillFeedPanel)
+            {
+                DevMsg("VR Popup HUD: Found kill feed panel\n");
+            }
+        }
+    }
+
     if (bFirstAcquire && (m_pScoreboardPanel || m_pWinPanel))
     {
         DevMsg("VR Popup HUD: Acquired panels - Scoreboard=%p, WinPanel=%p, ArenaWin=%p, MatchSummary=%p\n",
@@ -710,10 +734,14 @@ void CVRPopupHUDManager::Update(float deltaTime)
     m_flChatOffsetY = tfvr_popup_hud_chat_offset_y.GetFloat();
     m_flChatScale = tfvr_popup_hud_chat_scale.GetFloat();
 
-    // Try to acquire panels if we don't have them yet
-    if (!m_pScoreboardPanel && !m_pWinPanel)
+    // Some HUD elements are created after this manager. Retry missing essentials
+    // at a low frequency instead of traversing the viewport every frame.
+    static float s_flNextPanelAcquireTime = 0.0f;
+    if ((!m_pKillFeedPanel || (!m_pScoreboardPanel && !m_pWinPanel)) &&
+        gpGlobals->curtime >= s_flNextPanelAcquireTime)
     {
         AcquirePanels();
+        s_flNextPanelAcquireTime = gpGlobals->curtime + 1.0f;
     }
 
     // Update spring position
@@ -819,6 +847,10 @@ void CVRPopupHUDManager::Render()
         m_headPosForSort = pPlayer->EyePosition();
     }
 
+    // The kill feed shares this manager's spring transform with the other
+    // popup HUD elements instead of maintaining an independent spring.
+    RenderKillFeed(panelToWorld);
+
     // Determine if we have a main popup panel to render
     bool bHasActivePanel = m_pActivePanel && m_pActivePanel->IsVisible();
 
@@ -887,12 +919,12 @@ void CVRPopupHUDManager::Render()
     if (panelWidth <= 0 || panelWidth > 4096) panelWidth = 1024;
     if (panelHeight <= 0 || panelHeight > 4096) panelHeight = 768;
 
-    // Capture dimensions - use panel size
+    // Standard VGUI panels already report resolution-scaled pixel dimensions.
     int captureWidth = panelWidth;
     int captureHeight = panelHeight;
 
     // Calculate world size maintaining the aspect ratio
-    float aspectRatio = (float)captureWidth / (float)captureHeight;
+    float aspectRatio = (float)panelWidth / (float)panelHeight;
     float worldHeight = m_flScale;
     float worldWidth = worldHeight * aspectRatio;
 
@@ -921,7 +953,7 @@ void CVRPopupHUDManager::Render()
     float panelCenterX, panelCenterY;
     if (bMatchStatusSpecialHandling)
     {
-        // We'll relocate the panel to (0,0), so center is based on capture dimensions
+        // We'll relocate the panel to (0,0), so center it in capture space.
         panelCenterX = captureWidth * 0.5f;
         panelCenterY = captureHeight * 0.5f;
     }
@@ -990,7 +1022,8 @@ void CVRPopupHUDManager::Render()
         topLeft += panelUp * (cropBottom * worldHeight);
     }
 
-    panelToWorld.SetTranslation(topLeft);
+    VMatrix mainPanelTransform = panelToWorld;
+    mainPanelTransform.SetTranslation(topLeft);
 
     // Queue the main panel for distance-sorted rendering
     // For match status, use the wrapper panel which applies ForceScreenPosOffset during paint
@@ -1006,14 +1039,14 @@ void CVRPopupHUDManager::Render()
         m_pMatchStatusWrapper->SetVisible(true);
 
         // Queue the wrapper panel
-        QueuePanelForRender(m_pMatchStatusWrapper, panelToWorld,
+        QueuePanelForRender(m_pMatchStatusWrapper, mainPanelTransform,
                            captureWidth, captureHeight, worldWidth, worldHeight,
                            m_headPosForSort, true, false);
     }
     else
     {
         // Queue normal panel for rendering
-        QueuePanelForRender(m_pActivePanel, panelToWorld,
+        QueuePanelForRender(m_pActivePanel, mainPanelTransform,
                            captureWidth, captureHeight, worldWidth, worldHeight,
                            m_headPosForSort);
     }
@@ -1065,7 +1098,7 @@ void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMat
     float notificationScale = m_flScale * m_flNotificationsScale;
 
     // Scale panel to world size based on a reference height (e.g., 100 pixels = notificationScale units)
-    float pixelsPerUnit = 100.0f;
+    float pixelsPerUnit = 100.0f * TFVR_GetHUDPixelScale();
     float worldWidth = (panelWidth / pixelsPerUnit) * notificationScale;
     float worldHeight = (panelHeight / pixelsPerUnit) * notificationScale;
 
@@ -1100,7 +1133,8 @@ void CVRPopupHUDManager::RenderNotificationPanel(vgui::Panel* pPanel, const VMat
 
     // Queue the panel for distance-sorted rendering
     QueuePanelForRender(pPanel, notificationTransform, panelWidth, panelHeight,
-                        worldWidth, worldHeight, m_headPosForSort, bRestoreVisibility, bWasVisible);
+                        worldWidth, worldHeight, m_headPosForSort,
+                        bRestoreVisibility, bWasVisible);
 }
 
 void CVRPopupHUDManager::RenderNotifications(const VMatrix& baseTransform)
@@ -1242,7 +1276,7 @@ void CVRPopupHUDManager::RenderVoiceStatus(const VMatrix& /*baseTransform*/)
 
     // Calculate voice panel scale (use m_flScale as base, which is the popup HUD scale)
     float voiceScale = m_flScale * m_flVoiceScale;
-    float pixelsPerUnit = 100.0f;
+    float pixelsPerUnit = 100.0f * TFVR_GetHUDPixelScale();
 
     // Check if local player is speaking (use voice manager, not panel visibility)
     // In test mode, always pretend local player is speaking
@@ -1352,6 +1386,49 @@ void CVRPopupHUDManager::RenderVoiceStatus(const VMatrix& /*baseTransform*/)
     }
 }
 
+void CVRPopupHUDManager::RenderKillFeed(const VMatrix& baseTransform)
+{
+    if (!tfvr_killfeed_enabled.GetBool() || !m_pKillFeedPanel || !m_pKillFeedElement)
+        return;
+
+    if (!m_pKillFeedElement->ShouldDraw())
+        return;
+
+    C_TFPlayer* pPlayer = C_TFPlayer::GetLocalTFPlayer();
+    if (!pPlayer || pPlayer->IsObserver())
+        return;
+
+    int pixelWidth = TFVR_ScaleHUDPixels(tfvr_killfeed_width.GetInt());
+    int pixelHeight = TFVR_ScaleHUDPixels(tfvr_killfeed_height.GetInt());
+    if (pixelWidth <= 0 || pixelHeight <= 0)
+        return;
+
+    float aspectRatio = (float)pixelWidth / (float)pixelHeight;
+    float worldHeight = m_flDistance * tfvr_killfeed_scale.GetFloat();
+    float worldWidth = worldHeight * aspectRatio;
+
+    Vector basePos = baseTransform.GetTranslation();
+    Vector panelRight(baseTransform[0][0], baseTransform[1][0], baseTransform[2][0]);
+    Vector panelUp(baseTransform[0][1], baseTransform[1][1], baseTransform[2][1]);
+
+    float horizontalOffset = tfvr_killfeed_offset_x.GetFloat() * m_flDistance * 0.5f;
+    float verticalOffset = tfvr_killfeed_offset_y.GetFloat() * m_flDistance * 0.3f;
+
+    Vector topLeft = basePos
+        - panelRight * (worldWidth * 0.5f)
+        + panelUp * (worldHeight * 0.5f)
+        + panelRight * horizontalOffset
+        + panelUp * verticalOffset;
+
+    VMatrix killFeedTransform = baseTransform;
+    killFeedTransform.SetTranslation(topLeft);
+
+    bool bWasVisible = m_pKillFeedPanel->IsVisible();
+    QueuePanelForRender(m_pKillFeedPanel, killFeedTransform,
+                        pixelWidth, pixelHeight, worldWidth, worldHeight,
+                        m_headPosForSort, true, bWasVisible);
+}
+
 void CVRPopupHUDManager::RenderChat(const VMatrix& /*baseTransform*/)
 {
     if (!m_pChatPanel)
@@ -1390,7 +1467,7 @@ void CVRPopupHUDManager::RenderChat(const VMatrix& /*baseTransform*/)
 
     // Calculate world dimensions
     float chatScale = m_flScale * m_flChatScale;
-    float pixelsPerUnit = 100.0f;
+    float pixelsPerUnit = 100.0f * TFVR_GetHUDPixelScale();
     float worldWidth = (panelWidth / pixelsPerUnit) * chatScale;
     float worldHeight = (panelHeight / pixelsPerUnit) * chatScale;
 
@@ -1475,18 +1552,6 @@ void CVRPopupHUDManager::QueuePanelForRender(vgui::Panel* pPanel, const VMatrix&
         if (bRestoreVisibility)
             pPanel->SetVisible(bWasVisible);
     }
-}
-
-void CVRPopupHUDManager::RenderQueuedPanels()
-{
-    // No longer needed - global queue handles rendering
-    // Kept for API compatibility
-}
-
-void CVRPopupHUDManager::ClearRenderQueue()
-{
-    // No longer needed - global queue handles clearing
-    // Kept for API compatibility
 }
 
 void CVRPopupHUDManager::ResetState()

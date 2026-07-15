@@ -1,5 +1,6 @@
 #include "cbase.h"
 #include "vr_hand_hud_compositor.h"
+#include "vr_hud_scaling.h"
 #include "vr_world_ui_queue.h"
 #include "c_tf_player.h"
 #include "c_tfvr_hand.h"
@@ -36,13 +37,6 @@ bool g_bTFVRHUDCompositorPaintOffsetActive = false;
 extern ConVar tfvr_lefthand_mirror_axis;
 extern ConVar tfvr_lefthand_mirror_spin;
 
-static float GetVRScreenScaleFactor()
-{
-	int w, h;
-	vgui::surface()->GetScreenSize(w, h);
-	return (float)w / 1280.0f;
-}
-
 //=============================================================================
 // ConVars - Status HUD (left hand: health/objective)
 //=============================================================================
@@ -63,9 +57,9 @@ ConVar tfvr_status_hud_scale("tfvr_status_hud_scale", "9", FCVAR_ARCHIVE,
     "Scale of the hand HUD in world units");
 ConVar tfvr_status_hud_center_on_palm("tfvr_status_hud_center_on_palm", "1", FCVAR_ARCHIVE,
     "Auto-center the HUD on the palm bone (1=centered, 0=use offsets from palm)");
-ConVar tfvr_status_hud_offset_x("tfvr_status_hud_offset_x", "-1.2", FCVAR_ARCHIVE,
+ConVar tfvr_status_hud_offset_x("tfvr_status_hud_offset_x", "-1.8", FCVAR_ARCHIVE,
     "X offset from palm center (right/left in palm space)");
-ConVar tfvr_status_hud_offset_y("tfvr_status_hud_offset_y", "0", FCVAR_ARCHIVE,
+ConVar tfvr_status_hud_offset_y("tfvr_status_hud_offset_y", "-0.4", FCVAR_ARCHIVE,
     "Y offset from palm center (up/down in palm space)");
 ConVar tfvr_status_hud_offset_z("tfvr_status_hud_offset_z", "0", FCVAR_ARCHIVE,
     "Z offset from palm center (forward/back in palm space)");
@@ -77,7 +71,7 @@ ConVar tfvr_status_hud_base_roll("tfvr_status_hud_base_roll", "-90", FCVAR_ARCHI
     "Base roll rotation for panel orientation");
 ConVar tfvr_status_hud_mirror_surface_roll("tfvr_status_hud_mirror_surface_roll", "180", FCVAR_ARCHIVE,
     "Extra in-plane roll for the mirrored/off-hand status HUD");
-ConVar tfvr_status_hud_pitch("tfvr_status_hud_pitch", "0", FCVAR_ARCHIVE,
+ConVar tfvr_status_hud_pitch("tfvr_status_hud_pitch", "8", FCVAR_ARCHIVE,
     "Additional pitch rotation adjustment");
 ConVar tfvr_status_hud_yaw("tfvr_status_hud_yaw", "0", FCVAR_ARCHIVE,
     "Additional yaw rotation adjustment");
@@ -1222,7 +1216,7 @@ void CVRStatusHUDCompositor::RefreshHUDReferences()
 //-----------------------------------------------------------------------------
 void CVRStatusHUDCompositor::UpdateLayout()
 {
-    float sf = GetVRScreenScaleFactor();
+    float sf = TFVR_GetHUDPixelScale();
     SetCompositorSize((int)(tfvr_status_hud_width.GetInt() * sf), (int)(tfvr_status_hud_height.GetInt() * sf));
     m_bShowDebugBackground = tfvr_status_hud_debug_bg.GetBool();
 
@@ -1485,7 +1479,7 @@ void CVRWeaponHUDCompositor::RefreshDynamicElements()
 //-----------------------------------------------------------------------------
 void CVRWeaponHUDCompositor::UpdateLayout()
 {
-    float sf = GetVRScreenScaleFactor();
+    float sf = TFVR_GetHUDPixelScale();
     VRWeaponHudProfile_t profile = ResolveWeaponHudProfile(GetActiveHudWeapon(), true);
     SetCompositorSize((int)(profile.placement.nWidth * sf), (int)(profile.placement.nHeight * sf));
     m_bShowDebugBackground = tfvr_weapon_hud_debug_bg.GetBool();
@@ -1511,7 +1505,7 @@ void CVRWeaponHUDCompositor::UpdateLayout()
 //-----------------------------------------------------------------------------
 void CVRWeaponHUDCompositor::UpdateMeterLayout()
 {
-    float sf = GetVRScreenScaleFactor();
+    float sf = TFVR_GetHUDPixelScale();
     VRWeaponHudProfile_t profile = ResolveWeaponHudProfile(GetActiveHudWeapon(), true);
     int metersY = (int)(profile.layout.nMetersY * sf);
     int spacing = (int)(profile.layout.nMetersSpacing * sf);
