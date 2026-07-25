@@ -1125,10 +1125,6 @@ void CVRControllerModelManager::RenderController(const GameControllerModel& mode
 	float r21 = 2.0f * (yz + wx);
 	float r22 = 1.0f - 2.0f * (xx + yy);
 	
-	// Dynamic vertex buffer limit is 32768; use non-indexed batches for large meshes
-	static const int MAX_VERTS_PER_BATCH = 30000;
-	static const int MAX_TRIS_PER_BATCH = MAX_VERTS_PER_BATCH / 3;
-	
 	for (int nodeIdx = 0; nodeIdx < model.nodes.Count(); nodeIdx++)
 	{
 		const GameControllerNode& node = model.nodes[nodeIdx];
@@ -1167,19 +1163,90 @@ void CVRControllerModelManager::RenderController(const GameControllerModel& mode
 		pRenderContext->Bind(pMaterialToUse);
 		
 		int numVerts = (int)mesh.positions.size();
-		int numIndices = (int)mesh.indices.size();
-		int totalTris = numIndices / 3;
+		int totalTris = (int)mesh.indices.size() / 3;
 		
-		if (numVerts <= MAX_VERTS_PER_BATCH && numIndices <= INDEX_BUFFER_SIZE)
+		// The dynamic mesh budget is a byte budget internally, so how many vertices
+		// fit depends on the bound material's vertex format. Ask the material system
+		// instead of assuming a fixed ceiling.
+		int maxBatchVerts = pRenderContext->GetMaxVerticesToRender(pMaterialToUse);
+		int maxBatchIndices = pRenderContext->GetMaxIndicesToRender();
+		if (maxBatchVerts < 3 || maxBatchIndices < 3)
 		{
-			// Fast path: mesh fits in a single indexed batch
+			// Nothing can be legally submitted. Skip the mesh rather than let the
+			// material system raise a fatal "too many verts" error.
+			continue;
+		}
+		
+		m_vertexRemap.SetCount(numVerts);
+		for (int vi = 0; vi < numVerts; vi++)
+			m_vertexRemap[vi] = -1;
+		
+		int triCursor = 0;
+		while (triCursor < totalTris)
+		{
+			m_batchVerts.RemoveAll();
+			m_batchIndices.RemoveAll();
+			
+			// Accumulate triangles, remapping their vertices into a batch-local
+			// window, until either the vertex or the index budget is spent.
+			while (triCursor < totalTris)
+			{
+				// Reversed winding order for coordinate system flip
+				const unsigned int srcTri[3] = {
+					mesh.indices[triCursor * 3 + 0],
+					mesh.indices[triCursor * 3 + 2],
+					mesh.indices[triCursor * 3 + 1]
+				};
+				
+				if (srcTri[0] >= (unsigned int)numVerts ||
+					srcTri[1] >= (unsigned int)numVerts ||
+					srcTri[2] >= (unsigned int)numVerts)
+				{
+					// Malformed asset; drop the triangle instead of reading out of bounds
+					triCursor++;
+					continue;
+				}
+				
+				int newVerts = 0;
+				for (int v = 0; v < 3; v++)
+				{
+					if (m_vertexRemap[srcTri[v]] < 0)
+						newVerts++;
+				}
+				
+				if (m_batchVerts.Count() + newVerts > maxBatchVerts ||
+					m_batchIndices.Count() + 3 > maxBatchIndices)
+				{
+					break;
+				}
+				
+				for (int v = 0; v < 3; v++)
+				{
+					int src = (int)srcTri[v];
+					if (m_vertexRemap[src] < 0)
+					{
+						m_vertexRemap[src] = m_batchVerts.Count();
+						m_batchVerts.AddToTail(src);
+					}
+					m_batchIndices.AddToTail(m_vertexRemap[src]);
+				}
+				
+				triCursor++;
+			}
+			
+			// Only possible when every remaining triangle was malformed
+			if (m_batchIndices.Count() == 0)
+				break;
+			
 			IMesh* pMesh = pRenderContext->GetDynamicMesh(true, NULL, NULL, pMaterialToUse);
 			
 			CMeshBuilder meshBuilder;
-			meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, numVerts, numIndices);
+			meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, m_batchVerts.Count(), m_batchIndices.Count());
 			
-			for (int vi = 0; vi < numVerts; vi++)
+			for (int bv = 0; bv < m_batchVerts.Count(); bv++)
 			{
+				int vi = m_batchVerts[bv];
+				
 				Vector worldPos;
 				TransformControllerVertex(mesh.positions[vi], nodeMatrix3x4, model,
 					r00, r01, r02, r10, r11, r12, r20, r21, r22,
@@ -1196,70 +1263,18 @@ void CVRControllerModelManager::RenderController(const GameControllerModel& mode
 				meshBuilder.AdvanceVertex();
 			}
 			
-			for (int tri = 0; tri < totalTris; tri++)
+			for (int bi = 0; bi < m_batchIndices.Count(); bi++)
 			{
-				meshBuilder.Index(mesh.indices[tri * 3 + 0]);
-				meshBuilder.AdvanceIndex();
-				meshBuilder.Index(mesh.indices[tri * 3 + 2]);
-				meshBuilder.AdvanceIndex();
-				meshBuilder.Index(mesh.indices[tri * 3 + 1]);
+				meshBuilder.Index(m_batchIndices[bi]);
 				meshBuilder.AdvanceIndex();
 			}
 			
 			meshBuilder.End();
 			pMesh->Draw();
-		}
-		else
-		{
-			// Batched path: mesh exceeds vertex buffer limit, render as
-			// non-indexed triangles in batches that fit within the limit.
-			int triOffset = 0;
-			while (triOffset < totalTris)
-			{
-				int trisThisBatch = MIN(totalTris - triOffset, MAX_TRIS_PER_BATCH);
-				int vertsThisBatch = trisThisBatch * 3;
-				
-				IMesh* pMesh = pRenderContext->GetDynamicMesh(true, NULL, NULL, pMaterialToUse);
-				
-				CMeshBuilder meshBuilder;
-				meshBuilder.Begin(pMesh, MATERIAL_TRIANGLES, vertsThisBatch);
-				
-				for (int tri = 0; tri < trisThisBatch; tri++)
-				{
-					int globalTri = triOffset + tri;
-					// Reversed winding order for coordinate system flip
-					int indices[3] = {
-						(int)mesh.indices[globalTri * 3 + 0],
-						(int)mesh.indices[globalTri * 3 + 2],
-						(int)mesh.indices[globalTri * 3 + 1]
-					};
-					
-					for (int v = 0; v < 3; v++)
-					{
-						int vi = indices[v];
-						
-						Vector worldPos;
-						TransformControllerVertex(mesh.positions[vi], nodeMatrix3x4, model,
-							r00, r01, r02, r10, r11, r12, r20, r21, r22,
-							xrPose, worldScale, headInverse, smoothedHeadWorld, worldPos);
-						
-						meshBuilder.Position3fv(worldPos.Base());
-						meshBuilder.Color4f(r, g, b, a);
-						
-						if (vi < (int)mesh.texCoords.size())
-							meshBuilder.TexCoord2fv(0, &mesh.texCoords[vi].x);
-						else
-							meshBuilder.TexCoord2f(0, 0, 0);
-						
-						meshBuilder.AdvanceVertex();
-					}
-				}
-				
-				meshBuilder.End();
-				pMesh->Draw();
-				
-				triOffset += trisThisBatch;
-			}
+			
+			// Clear only the entries this batch touched
+			for (int bv = 0; bv < m_batchVerts.Count(); bv++)
+				m_vertexRemap[m_batchVerts[bv]] = -1;
 		}
 	}
 	
