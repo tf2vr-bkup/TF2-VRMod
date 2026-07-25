@@ -15422,8 +15422,8 @@ void CTFGameRules::RequestClientInventory( CSteamID steamID )
 	if ( !pPlayer )
 		return;
 
-	// Send them a user message to ask them to send us their inventory.
-	// The client returns it through the chunked tf2vr_sdkinv_* command path.
+	// Send them a user message to ask them to send us their inventory
+	// It will come back via a KeyValues message "sdk_inventory".
 	CSingleUserRecipientFilter filter( pPlayer );
 	UserMessageBegin( filter, "SdkRequestEquipment" );
 	MessageEnd();
