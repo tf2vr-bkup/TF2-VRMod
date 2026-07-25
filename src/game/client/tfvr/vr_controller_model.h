@@ -178,6 +178,12 @@ private:
 	
 	// Material for rendering
 	IMaterial* m_pControllerMaterial;
+	
+	// Scratch buffers for splitting meshes across dynamic mesh batches.
+	// Kept as members so they retain their capacity between frames.
+	CUtlVector<int> m_vertexRemap;    // source vertex -> index within current batch, -1 if absent
+	CUtlVector<int> m_batchVerts;     // source vertex index for each vertex in the current batch
+	CUtlVector<int> m_batchIndices;   // batch-local indices, three per triangle
 };
 
 extern CVRControllerModelManager* g_pVRControllerModelManager;

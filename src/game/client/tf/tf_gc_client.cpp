@@ -60,7 +60,6 @@ ConVar tf_mm_debug_level( "tf_mm_debug_level", "4" );
 
 
 static ConVar mod_inventory_request_timeout( "mod_inventory_request_timeout", "300", FCVAR_NONE, "Seconds to wait for TF inventory before assuming failure" );
-static ConVar tfvr_inventory_debug_keyvalues( "tfvr_inventory_debug_keyvalues", "0", FCVAR_NONE, "Also send the legacy sdk_inventory KeyValues command for debugging." );
 
 
 using namespace GCSDK;
@@ -78,69 +77,6 @@ static const char* GetWebBaseUrl()
 		return "https://www.teamfortress.com/";
 	}
 }
-
-static void SDK_BuildInventoryLoadoutString( KeyValues *pKV, CUtlString *pOut )
-{
-	pOut->Set( "" );
-
-	KeyValues *pLoadoutKV = pKV ? pKV->FindKey( "local_loadout" ) : NULL;
-	if ( !pLoadoutKV )
-		return;
-
-	bool bFirst = true;
-	FOR_EACH_TRUE_SUBKEY( pLoadoutKV, pClassKey )
-	{
-		const int iClass = V_atoi( pClassKey->GetName() );
-		FOR_EACH_SUBKEY( pClassKey, pLoadoutEntry )
-		{
-			const itemid_t uItemId = pLoadoutEntry->GetUint64();
-			if ( uItemId == INVALID_ITEM_ID || uItemId == 0 )
-				continue;
-
-			const int iSlot = V_atoi( pLoadoutEntry->GetName() );
-			char szEntry[128];
-			V_snprintf( szEntry, sizeof( szEntry ), "%s%d_%d_%llu", bFirst ? "" : ".", iClass, iSlot, uItemId );
-			pOut->Append( szEntry );
-			bFirst = false;
-		}
-	}
-}
-
-static void SDK_SendInventoryCommandField( const char *pszField, const char *pszValue )
-{
-	if ( !pszValue || !pszValue[0] )
-		return;
-
-	const int kChunkSize = 160;
-	const int nValueLen = V_strlen( pszValue );
-	for ( int nOffset = 0; nOffset < nValueLen; nOffset += kChunkSize )
-	{
-		const int nRemaining = nValueLen - nOffset;
-		const int nChunkLen = nRemaining < kChunkSize ? nRemaining : kChunkSize;
-		char szChunk[kChunkSize + 1];
-		memcpy( szChunk, pszValue + nOffset, nChunkLen );
-		szChunk[nChunkLen] = '\0';
-
-		engine->ServerCmd( CFmtStr( "tf2vr_sdkinv_chunk %s %s\n", pszField, szChunk ) );
-	}
-}
-
-static void SDK_SendInventoryCommandPayload( const char *pszMsg, const char *pszTicket, const char *pszLoadout )
-{
-	const int nMsgLen = V_strlen( pszMsg );
-	CUtlMemory<char> strMsgHex;
-	strMsgHex.EnsureCapacity( 2 * nMsgLen + 1 );
-	V_binarytohex( ( const byte * )pszMsg, nMsgLen, strMsgHex.Base(), strMsgHex.Count() );
-
-	// ServerCmdKeyValues no longer reliably delivers this inventory payload, so send it as
-	// small reliable text-command chunks and reconstruct the KeyValues server-side.
-	engine->ServerCmd( "tf2vr_sdkinv_begin\n" );
-	SDK_SendInventoryCommandField( "msghex", strMsgHex.Base() );
-	SDK_SendInventoryCommandField( "ticket", pszTicket );
-	SDK_SendInventoryCommandField( "loadout", pszLoadout );
-	engine->ServerCmd( "tf2vr_sdkinv_end\n" );
-}
-
 
 static CTFGCClientSystem s_TFGCClientSystem;
 CTFGCClientSystem *GTFGCClientSystem() { return &s_TFGCClientSystem; }
@@ -642,22 +578,10 @@ void CTFGCClientSystem::WebapiInventoryThink()
 		// Add any server-specific fields so it knows what to do with the given inventory items (per-mod loadout may not match the user's real tf2 loadout)
 		SDK_AddServerInventoryInfo( kv, GetSOCache( SteamUser()->GetSteamID() ) );
 
-		CUtlString strCompactLoadout;
-		SDK_BuildInventoryLoadoutString( kv, &strCompactLoadout );
-		kv->SetString( "compact_loadout", strCompactLoadout.Get() );
-
 		// Send to the server
-		SDK_SendInventoryCommandPayload( state.m_strMsgItems.Base(), strHexToken.Base(), strCompactLoadout.Get() );
-
-		if ( tfvr_inventory_debug_keyvalues.GetBool() )
-		{
-			DevMsg( "[TF2VR Inventory] Also sending legacy sdk_inventory KeyValues command.\n" );
-			engine->ServerCmdKeyValues( kv );
-		}
-		else
-		{
-			kv->deleteThis();
-		}
+		DevMsg( "[TF2VR Inventory] Sending sdk_inventory KeyValues command. msg_bytes=%d ticket_bytes=%d\n",
+				V_strlen( state.m_strMsgItems.Base() ), V_strlen( strHexToken.Base() ) );
+		engine->ServerCmdKeyValues( kv );
 
 		state.m_eState = kWebapiInventoryState_SentToServer;
 		break;
